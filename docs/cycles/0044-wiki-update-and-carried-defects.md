@@ -319,6 +319,29 @@ New findings in Cursor: the **Show Variables** button does nothing and leaves "E
 
 The working context was compacted a fourth time, after the Cursor rows were recorded (`d1bb463`). The mandatory entry was repeated from the files on disk: PRODUCT_GOAL (v9), the three feature contracts, IMPLEMENTATION, DESIGN, DEVELOPMENT and the local TypeScript rules in full; PROJECT_STATE in full, all 126 lines, read with the padding of its tables collapsed (its header table, the assignment, all thirteen gap rows, the resume section and every historical checkpoint under it); this record in full. The approved PNG was opened with the image viewer again (SHA-256 unchanged, `f189ee82…`): region 1 shows the native Run and Debug column, the Create Invoice application above `actions.ts` with one highlighted line, the standard chat on the right and "Recording explanation · Save learning replay" at the bottom; region 2 the same composition with "(recorded state)" values, the Learning summary with its sequence diagram and "I understand this step", and one transport at 00:42 / 02:18 with "Unrecorded interval"; region 3 the chapter list, the article with "Relevant source files" and its flow diagram, the Ask composer and the right rail ("Source changed · Update available", **Update LLM Wiki**, "On this page", "Open in VS Code", "Output: project folder / Change location"); the shortcut strip the "Keyboard shortcuts ?" control and the searchable dialog. Checkout at that point: this branch at `d1bb463`, clean. One sequencing fault is recorded: the delegated agent that fixes **Show Variables** in Cursor and repeats the native rows was started in its own worktree before these reads were finished; no source of this branch was changed and no merge was made before they were.
 
+### Local review, 2026-10-04
+
+Local CodeRabbit CLI: NOT RUN (the owner has not run `coderabbit auth login` on this host; that coverage is missing, not clean). `open-code-review-delegate` on the range `c549da6..d1bb463`: OCR selected 126 reviewable files of 220 and excluded 94 (89 test files by its default path rule, two of them deleted; 4 Markdown files as an unsupported type; 1 deleted source file); its one rule group for TypeScript and JavaScript and one for the HTML shell were applied. The host reviewed the 126 files in four batches with delegated read-only reviewers: 126 reviewed, 0 skipped. This is not an independent external-provider review.
+
+| Batch | Files | Critical | High | Medium | Low |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| A: `studyWorkspace.ts`, the replay debugger, the server, the publisher and shell, the pane | 16 | 0 | 1 | 1 | 7 |
+| B: `extension.ts`, `configuredBrowserRun.ts`, the service, library, recording store, reader, CI workflow | 18 | 0 | 1 | 3 | 8 |
+| C: `extension/src/utils/` | 90 | 0 | 1 | 2 | 10 |
+| D: test harnesses and helpers | 15 | 0 | 0 | 4 | 12 |
+
+No finding is critical. Five findings are defects this cycle's own changes introduced; they are fixed before the delivery (`12f1cff`), each with a test that is red without the fix (the compiled file reverted, the named test run, the file restored and compared):
+
+| Finding | Defect | Fix | Test |
+| --- | --- | --- | --- |
+| A-H1 | Save learning replay with its capture in flight and a confirmed removal of the same study waited on each other until the window was reloaded | `5cf46fa`: the save's checkpoint does not wait for the move; the save answers "Study archive is unavailable." and the removal drops or writes the queued capture | `studyWorkspaceRemoval`: two tests (the removal moves the study; the removal moves nothing) |
+| A-M1 | Two different files of the same name (`app/a/page.tsx`, `app/b/page.tsx`) closed each other's captured-source tab | `5180294`: the declared source path is compared | `studyWorkspaceReplay`: "a saved study that stops in another file of the same name keeps the earlier study's captured-source tab open beside its own" |
+| B-H1 | After the last stop was continued, a pause the debugger made for itself and resumed after more than 1 s ended the run, although the bound for that state is 3 s | `7945031`: the 1 s bound applies only while an announced stop still waits for its own pause | `nativeParticipants`: "a server pause the debugger makes for itself after the last stop was continued and resumes after more than a second, within its three seconds, is retired and the run does not fail" |
+| B-M1 | A Wiki update still in its start checks when the window closed began afterwards; in Cursor the agent was started and nothing stopped it | `8165fc6`: nothing starts in a closing window, and a VS Code run whose chat opens during the close ends as cancelled | `wikiUpdateFlow`: three tests |
+| C-H1 | Two windows that met one stale storage lock could both take it over, and a release removed whichever lock was at the path | `584df4d`: a takeover needs an exclusive claim and judges the lock again under it; the release removes only this writer's lock | `withStorageLock` (new, four tests); four real writer processes with planted stale locks for 4 s: 0 violations of the exclusion, 1,054 with the earlier code |
+
+Every other finding goes to the next cycle's Issue (B-M2, B-M3, C-M1, C-M2, D-M1 to D-M4 and the 37 low ones; the list is under "Defects this cycle leaves unfixed"). The fixes themselves were not reviewed by a second reader. Not proven: the takeover claim on Windows (a directory rename onto an existing directory is written from the documented behaviour).
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
