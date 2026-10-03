@@ -14,6 +14,7 @@ import {
 import type { CONFIGURED_CAPTURE_PHASES } from './constants'
 import {
   ACTIVE_TIMEOUT_MS,
+  ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
   MAX_EVENTS,
   MAX_QUEUED_EVIDENCE_BYTES,
   MAX_RETAINED_EVENT_BYTES,
@@ -28,6 +29,7 @@ import {
   REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT,
   REPOSITORY_SETUP_TIMEOUT_MS,
   REPOSITORY_STACK_FRAME_LIMIT,
+  SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
 } from './constants'
 import { StudyError } from './errors'
 import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
@@ -1598,7 +1600,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             ? candidate
             : undefined
         },
-        'source-bound CDP stop',
+        SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
         CAPTURE_TIMEOUT_MS,
         this.abort.signal,
       )
@@ -1996,7 +1998,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     current()
     await waitUntil(
       () => this.adapterPausesRetired(),
-      'adapter pause retirement',
+      ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
     )
@@ -2005,7 +2007,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     current()
     await waitUntil(
       () => this.adapterPausesRetired(),
-      'adapter pause retirement',
+      ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
     )

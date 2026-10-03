@@ -2,9 +2,13 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { setTimeout } from 'node:timers/promises'
 
+import {
+  ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
+  SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
+} from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { pausedIntervalBoundary } from '../utils/pausedIntervalBoundary'
 
 import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
 
@@ -1489,9 +1493,11 @@ test('a run does not complete while the server is still paused at a pause the de
     if (view.failures.length) throw new Error(view.failures.join('; '))
     return view.operation?.inputAcknowledged
   }, 'input acknowledged')
-  // Act: three polling intervals pass, then the adapter resumes its pause.
-  const threePollingIntervalsMs = 150
-  await setTimeout(threePollingIntervalsMs)
+  // Act: the run reaches its wait for the adapter's pause to be resumed (Cycle 0044, 0042-SR34: an observable event instead of a 150 ms sleep); then the adapter resumes its pause.
+  await waitUntil(
+    () => harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
+    'the wait for the adapter pause to be resumed',
+  )
   const whilePaused = {
     status: harness.run.view().status,
     afterVerified: harness.run.view().operation?.afterVerified,
@@ -1774,19 +1780,12 @@ test('a pause the debugger makes for itself in the browser while a server stop i
     'completed after both stops',
   )
   await harness.run.stop()
-  // Assert: the replay ends a committed stop's paused interval at the first of these events after its commit.
-  const intervalEnds = [
-    'continue.accepted',
-    'cdp.resumed',
-    'session.terminated',
-    'run.failed',
-    'cleanup.started',
-  ]
-  const types = harness.run.view().events.map((event) => event.type)
+  // Assert: the replay's own rule says where the committed stop's paused interval ends (Cycle 0044, 0042-SR7: read from the source, not a copied list).
+  const events = harness.run.view().events
+  const types = events.map((event) => event.type)
   const serverCommitted = types.indexOf('snapshot.committed')
-  const serverIntervalEnd = types.findIndex(
-    (type, index) => index > serverCommitted && intervalEnds.includes(type),
-  )
+  const intervalEnd = pausedIntervalBoundary(server, events)
+  const serverIntervalEnd = events.findIndex((event) => event === intervalEnd)
   assert.equal(harness.run.view().failures.join('; '), '')
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
   assert.equal(types[serverIntervalEnd], 'continue.accepted')
@@ -1882,7 +1881,7 @@ for (const held of [
     assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
   })
 
-// Value: protects=an accepted stop whose own pause never arrives failing as that stop's missing pause, while a pause the debugger holds in another script stays its own; fails_when=the end of the wait for the stop's pause adopts a held pause from any script, so the adapter's pause is judged as the declared stop; why_new=the adoption test pauses inside the stop's module, and no test holds a pause in another script when the wait ends (Cycle 0042 ER4); seam=none
+// Value: protects=an accepted stop whose own pause never arrives failing as that stop's missing pause, while a pause the debugger holds in another script stays its own; fails_when=the end of the wait for the stop's pause adopts a held pause from any script, so the adapter's pause is judged as the declared stop; why_new=the adoption test pauses inside the stop's module, and no test holds a pause in another script when the wait ends (Cycle 0042 ER4); seam=expireSourceBoundWait
 test('an accepted server stop whose own pause never arrives fails waiting for it, without adopting a pause the debugger holds in another script', async (context) => {
   // Arrange: the first stop is continued, and the adapter's hook holds the server in a script of its own.
   const harness = await nativeParticipantsHarness(
@@ -2374,4 +2373,128 @@ test('a later server stop in a loaded module that the adapter acknowledged on th
     1,
   )
   assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0044 (0042-SR32): harness self-test; red while the hold flag was never cleared, so the stop after the held one was held too and never paused.
+test('the harness holds only the next declared stop: after the held stop is released, the following stop pauses by itself', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'server',
+    'server',
+  ])
+  await harness.run.prepare()
+  const heldStop = harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  heldStop.paused()
+  heldStop.stopped()
+  const second = await waitUntil(() => {
+    const snapshot = harness.run.view().participants.server?.snapshot
+    return snapshot && snapshot.id !== first.id ? snapshot : undefined
+  }, 'second committed stop')
+  // Act
+  await harness.run.continue('server', second.pause)
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots.length === 3
+  }, 'third stop pausing by itself')
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().snapshots.length, 3)
+})
+
+// Cycle 0044 (0042-SR8): harness self-test; red when the run's wait for an accepted stop's own pause no longer carries the description the harness substitutes.
+test('the harness’s substitution of the wait for an accepted stop’s own pause engages for that wait', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  // Act
+  harness.run.action('once', 'repository-click')
+  await pauseReady(harness, 'server')
+  await harness.run.stop()
+  // Assert
+  assert.equal(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION, 'source-bound CDP stop')
+  assert.equal(harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION), true)
+})
+
+// Cycle 0044 (0042-SR11): red while any cdp.resumed after a commit, also the resume of the other participant's instrumentation pause, ended the held stop's paused interval in the replay.
+test('the runtime’s own instrumentation pause and resume in the browser while a server stop is held leaves that stop’s replay interval ending at its continuation', async (context) => {
+  // Arrange: the server stop is committed and held for the learner.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  harness.announceScript(
+    'browser',
+    'chunk',
+    'webpack-internal:///(app-pages-browser)/./app/ui/chunk.ts',
+  )
+  // Act: the browser runtime pauses for a source map and is resumed; then both declared stops are continued.
+  harness.emitUnannouncedPause('browser', {
+    scriptId: 'chunk',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: [],
+    reason: 'instrumentation',
+  })
+  harness.emitResume('browser')
+  await harness.run.continue('server', server.pause)
+  const browser = await pauseReady(harness, 'browser')
+  await harness.run.continue('browser', browser.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after both stops',
+  )
+  await harness.run.stop()
+  // Assert
+  const events = harness.run.view().events
+  const instrumentationResume = events.find(
+    (event) =>
+      event.type === 'cdp.resumed' && event.elapsedMs >= server.elapsedMs,
+  )
+  const intervalEnd = pausedIntervalBoundary(server, events)
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(intervalEnd?.type, 'continue.accepted')
+  assert.equal(
+    instrumentationResume !== undefined &&
+      intervalEnd !== undefined &&
+      instrumentationResume.sequence < intervalEnd.sequence,
+    true,
+  )
+})
+
+// Cycle 0044 (0042-SR27): run-level test on the server harness's clock; red when the deadline's place sentence is not added for a server pause (only the browser shape was tested).
+test('a continuation that reaches no next stop while the server stays paused at a pause the debugger made for itself ends the run naming where the server is paused', async (context) => {
+  // Arrange: the first server stop is continued, and the adapter's entry breakpoint holds the server on source line 2.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { ...TWO_LINE_SERVER_MODULE, manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  emitEntryBreakpointPause(harness)
+  // Act: nothing resumes the server and the active-progress budget passes.
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'next server stop not hit',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The server is paused at src/mode.ts:2 without a debugger stop.',
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
 })

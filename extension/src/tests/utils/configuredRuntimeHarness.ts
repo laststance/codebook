@@ -7,6 +7,7 @@ import type { DebugSession } from 'vscode'
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+import { SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION } from '../../constants'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import type { BundleSource } from '../../repositoryBundle'
 import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
@@ -17,6 +18,7 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 
 import { createConfiguredStudy } from './createConfiguredStudy'
+import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 
@@ -265,20 +267,15 @@ export async function configuredRuntimeHarness(
     },
   }
   const emitCdpPause = (): void => {
-    listeners.get('Debugger.paused')?.({
-      reason: 'other',
-      hitBreakpoints: ['mapped-source'],
-      callFrames: [
-        {
-          callFrameId: 'selected-frame',
-          location: {
-            scriptId: 'actual',
-            lineNumber: currentLine - 1,
-            columnNumber: currentColumn - 1,
-          },
-        },
-      ],
-    })
+    listeners.get('Debugger.paused')?.(
+      debuggerPausedEvent({
+        callFrameId: 'selected-frame',
+        scriptId: 'actual',
+        lineNumber: currentLine - 1,
+        columnNumber: currentColumn - 1,
+        hitBreakpoints: ['mapped-source'],
+      }),
+    )
   }
   const emitPause = (column = 1, line = 1): void => {
     currentColumn = column
@@ -614,7 +611,7 @@ export async function configuredRuntimeHarness(
           }
           // A held wait for the accepted stop's own pause looks until the pause is there or the test releases it, then ends as its 3 s bound would.
           const heldWait = sourceBoundWait
-          if (heldWait && description === 'source-bound CDP stop') {
+          if (heldWait && description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) {
             for (;;) {
               signal?.throwIfAborted()
               const value = await read()
@@ -686,21 +683,9 @@ export async function configuredRuntimeHarness(
       functionName: string
       hitBreakpoints: string[]
     }): void {
-      listeners.get('Debugger.paused')?.({
-        reason: 'other',
-        hitBreakpoints: place.hitBreakpoints,
-        callFrames: [
-          {
-            callFrameId: 'adapter-frame',
-            functionName: place.functionName,
-            location: {
-              scriptId: place.scriptId,
-              lineNumber: place.lineNumber,
-              columnNumber: place.columnNumber,
-            },
-          },
-        ],
-      })
+      listeners.get('Debugger.paused')?.(
+        debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
+      )
     },
     setScreenshot(base64: string): void {
       screenshot = base64

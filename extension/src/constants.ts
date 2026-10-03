@@ -564,6 +564,11 @@ export const UNANNOUNCED_PAUSE_UNKNOWN_PLACE = 'an unknown place'
 /** Stands in that sentence for the URL of a script the runtime never announced; the generated position follows it. */
 export const UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT = 'an unknown script'
 export const REPOSITORY_STACK_FRAME_LIMIT = 10
+/** Names the bounded wait for an accepted stop's own runtime pause; its timeout text and the test harnesses' substitution of that wait both key on it. */
+export const SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION = 'source-bound CDP stop'
+/** Names the waits before and after the after capture for every pause the debugger made for itself to be resumed. */
+export const ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION =
+  'adapter pause retirement'
 
 export const REPLAY_DEBUG_TYPE = 'codebook-replay'
 export const REPLAY_DEBUG_THREAD_ID = 1
