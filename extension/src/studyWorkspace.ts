@@ -8340,12 +8340,23 @@ export class StudyWorkspace {
           return
         }
       }
-      const grid = await this.readMainEditorGrid(
+      let grid = await this.readMainEditorGrid(
         signal,
         assertCurrent,
         focus?.acquireSourceFocus,
         beforeScopeFocus,
       )
+      // The editor closes a disposed pane's tab a moment after dispose(); a grid it measured before that still counts the retired Study group as occupied.
+      if (retiredContextGroup && this.hasRetiredStudyPaneTab()) {
+        await this.retiredStudyPaneClosed(signal)
+        assertCurrent()
+        grid = await this.readMainEditorGrid(
+          signal,
+          assertCurrent,
+          focus?.acquireSourceFocus,
+          beforeScopeFocus,
+        )
+      }
       const groupCount = this.studyGroupCount()
       // Only the just-retired, now-empty owned summary group can disappear during live entry.
       const canRetireContext =
@@ -8425,6 +8436,49 @@ export class StudyWorkspace {
       }
       this.errors.delete('layout')
       this.publish()
+    })
+  }
+
+  /**
+   * Says whether the tab of a Study pane this reader disposed is still in the editor's tab model; called by {@link arrange} on a live or recording entry.
+   * This host has one Study pane at most, so while it holds none, a Study pane tab that is not an earlier host's leftover is the disposed one.
+   * @returns `true` until the editor has closed the disposed pane's tab.
+   * @example if (retiredContextGroup && this.hasRetiredStudyPaneTab()) await this.retiredStudyPaneClosed(signal)
+   */
+  private hasRetiredStudyPaneTab(): boolean {
+    return (
+      !this.contextPanel &&
+      vscode.window.tabGroups.all.some((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputWebview &&
+            isCodebookPaneViewType(
+              tab.input.viewType,
+              'codebook.studyContext',
+            ) &&
+            !this.inheritedPaneTabs.has(tab),
+        ),
+      )
+    )
+  }
+
+  /**
+   * Waits until the editor has closed the tab of the Study pane a live or recording entry disposed, so {@link arrange} measures the groups that remain.
+   * VS Code closes a disposed editor from a worker that runs after the calls already queued for its window, and then removes the group the tab left empty; a grid read answered before that named three groups in a window that holds only Codebook's panes ("Existing editor groups were preserved").
+   * @param signal - The entry's cancellation.
+   * @returns Once the tab is gone, or after {@link PRESENTATION_READY_TIMEOUT_MS}: the arrangement then judges the groups as they are.
+   * @throws The signal's reason once it aborts.
+   * @example await this.retiredStudyPaneClosed(signal)
+   */
+  private async retiredStudyPaneClosed(signal?: AbortSignal): Promise<void> {
+    await waitUntil(
+      () => !this.hasRetiredStudyPaneTab(),
+      'the retired Study pane to close',
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    ).catch(() => {
+      // A pane the editor keeps is no reason to end the entry; only the caller's own cancellation is.
+      signal?.throwIfAborted()
     })
   }
 

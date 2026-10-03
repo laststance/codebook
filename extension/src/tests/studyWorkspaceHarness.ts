@@ -379,6 +379,9 @@ export async function workspaceHarness(
     explicitEditorLayout = false,
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
+  let closeDisposedPanelTabsLater = false
+  /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
+  const pendingDisposedTabCloses: (() => void)[] = []
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
     settledLayout: unknown,
@@ -485,6 +488,56 @@ export async function workspaceHarness(
           0,
         )
       : 1
+  }
+  /**
+   * Removes one leaf of a measured editor layout, as the editor does when it closes an emptied group: a branch left with one child is replaced by that child.
+   * @param layout - The layout the editor reports, with nested `groups`.
+   * @param leafIndex - The zero-based position of the removed group among the layout's leaves.
+   * @returns The layout without that leaf; a root left with a single branch takes that branch's children and the other orientation.
+   * @example layoutWithoutLeaf({ orientation: 0, groups: [{ groups: [{}, {}] }, {}] }, 2) // => { orientation: 1, groups: [{}, {}] }
+   */
+  function layoutWithoutLeaf(layout: unknown, leafIndex: number): unknown {
+    let seen = 0
+    const prune = (node: unknown): unknown[] => {
+      const children =
+        node && typeof node === 'object'
+          ? Reflect.get(node, 'groups')
+          : undefined
+      if (!Array.isArray(children)) return seen++ === leafIndex ? [] : [node]
+      const kept = children.flatMap((child: unknown) => prune(child))
+      // A branch with one child left is that child; an emptied branch disappears.
+      return kept.length > 1 ? [{ ...Object(node), groups: kept }] : kept
+    }
+    const root = structuredClone(layout),
+      orientation = Number(Reflect.get(Object(root), 'orientation') ?? 0),
+      children = Reflect.get(Object(root), 'groups')
+    const kept = Array.isArray(children)
+      ? children.flatMap((child: unknown) => prune(child))
+      : []
+    const only = kept.length === 1 ? kept[0] : undefined
+    const nested =
+      only && typeof only === 'object' ? Reflect.get(only, 'groups') : undefined
+    return Array.isArray(nested)
+      ? { orientation: orientation === 0 ? 1 : 0, groups: nested }
+      : { orientation, groups: kept }
+  }
+  /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
+  function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
+    const main = groups
+      .filter((candidate) => candidate !== separateEditorPart?.group)
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)
+    // The editor keeps its last group even when it is empty.
+    if (main.length < 2 || !groups.includes(emptied)) return
+    editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
+    groups.splice(groups.indexOf(emptied), 1)
+    for (const remaining of groups)
+      if (remaining.viewColumn > emptied.viewColumn) remaining.viewColumn--
+    for (const retained of panels)
+      retained.viewColumn = groups.find((candidate) =>
+        candidate.tabs.includes(retained.nativeTab),
+      )?.viewColumn
+    if (activeTabGroup === emptied) activeTabGroup = groups[0]!
+    changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
   }
   /** Models Cursor's refusal to place a normal reader in its separate chat part; panel and text opens share this boundary. @example nativeReaderColumn(2) // 1 when only main column one and chat column two exist */
   function nativeReaderColumn(requested: number): number {
@@ -915,10 +968,21 @@ export async function workspaceHarness(
       },
       dispose(): void {
         if (!panels.delete(value)) return
-        for (const group of groups) {
-          group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
-          if (group.activeTab === nativeTab) group.activeTab = undefined
+        const closeTab = (): void => {
+          const emptied = groups.filter(
+            (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
+          )
+          for (const group of groups) {
+            group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
+            if (group.activeTab === nativeTab) group.activeTab = undefined
+          }
+          // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
+          if (closeDisposedPanelTabsLater)
+            for (const group of emptied) removeEmptiedGroup(group)
         }
+        // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
+        if (closeDisposedPanelTabsLater) pendingDisposedTabCloses.push(closeTab)
+        else closeTab()
         for (const listener of disposed) listener()
       },
     }
@@ -1412,6 +1476,12 @@ export async function workspaceHarness(
             if (asynchronousLayoutReads)
               await new Promise<void>((resolve) => setImmediate(resolve))
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
+            // The disposed panels' tabs close one task after this read is answered.
+            const dueTabCloses = pendingDisposedTabCloses.splice(0)
+            if (dueTabCloses.length)
+              setImmediate(() => {
+                for (const close of dueTabCloses) close()
+              })
             const layout = JSON.parse(
               JSON.stringify(
                 separateEditorPart?.focused
@@ -2369,6 +2439,14 @@ export async function workspaceHarness(
     },
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
+    },
+    /**
+     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
+     * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
+     * @example harness.closeDisposedPanelTabsLater()
+     */
+    closeDisposedPanelTabsLater(): void {
+      closeDisposedPanelTabsLater = true
     },
     automaticallyClosedColumns: () => [...automaticallyClosedColumns],
     useCursorGroupWrappers(twoEventContraction = false): void {
