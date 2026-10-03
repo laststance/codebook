@@ -1810,7 +1810,7 @@ test('Show Variables opens Run and Debug with Variables expanded and then expand
 
     // Assert
     assert.deepEqual(harness.commands.slice(commandsBefore), [
-      'workbench.debug.variablesView.focus',
+      'workbench.debug.action.focusVariablesView',
       'list.focusFirst',
       'list.expand',
     ])
@@ -1819,12 +1819,12 @@ test('Show Variables opens Run and Debug with Variables expanded and then expand
   }
 })
 
-// Value: protects=Show Variables in Cursor, which registers no command that focuses Variables; fails_when=the reader runs `workbench.debug.variablesView.focus` without asking the host, so the button does nothing and "command … not found" stays in the Learning summary and the panel; why_new=Cycle 0044 (row 0031-U1 in Cursor 3.23.12, seen natively); seam=vscode.commands.getCommands and executeCommand, modelled by the harness
+// Value: protects=Show Variables on a host that registers no command that focuses Variables; fails_when=the reader runs a command without asking the host, so the button does nothing and "command … not found" stays in the Learning summary and the panel; why_new=Cycle 0044 (row 0031-U1: `workbench.debug.variablesView.focus`, which no host has, left that error in Cursor 3.23.12); seam=vscode.commands.getCommands and executeCommand, modelled by the harness
 test('Show Variables on a host without a Variables focus command opens Run and Debug and leaves no error', async () => {
   // Arrange
   const harness = await workspaceHarness()
   try {
-    harness.removeHostCommands('workbench.debug.variablesView.focus')
+    harness.removeHostCommands('workbench.debug.action.focusVariablesView')
     await harness.reader.open()
     const commandsBefore = harness.commands.length
 
@@ -1885,7 +1885,7 @@ test('Show Variables on a host with the Variables focus command runs only the st
       [],
     )
     assert.deepEqual(harness.commands.slice(commandsBefore), [
-      'workbench.debug.variablesView.focus',
+      'workbench.debug.action.focusVariablesView',
       'list.focusFirst',
     ])
     assert.deepEqual(harness.informationMessages, [])
@@ -1900,7 +1900,7 @@ test('Show Variables on a host with neither a Variables nor a Run and Debug comm
   const harness = await workspaceHarness()
   try {
     harness.removeHostCommands(
-      'workbench.debug.variablesView.focus',
+      'workbench.debug.action.focusVariablesView',
       'workbench.view.debug',
     )
     await harness.reader.open()

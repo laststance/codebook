@@ -207,11 +207,11 @@ export const PRESENTATION_FOCUS_ACTIONS = [
 ] as const
 /** Native commands the reader's Show Variables control runs in order: open Run and Debug with Variables expanded and focused, then expand its first scope, which holds the recorded values. A host runs only the ones it registers; a host without the first one opens {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND} instead. */
 export const SHOW_NATIVE_VARIABLES_COMMANDS = [
-  'workbench.debug.variablesView.focus',
+  'workbench.debug.action.focusVariablesView',
   'list.focusFirst',
   'list.expand',
 ] as const
-/** The host's own Run and Debug view command, which Show Variables runs when the host registers no command that focuses Variables (Cursor 3.23.12 has no `workbench.debug.variablesView.focus`). */
+/** The host's own Run and Debug view command, which Show Variables runs when the host registers no command that focuses Variables. VS Code 1.140 and Cursor 3.23 register `workbench.debug.action.focusVariablesView` (the view's own focus command; a `workbench.debug.variablesView.focus` does not exist in either). */
 export const NATIVE_RUN_AND_DEBUG_VIEW_COMMAND = 'workbench.view.debug'
 /** What Show Variables tells the learner when the host registers neither a Variables focus command nor {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND}. */
 export const SHOW_NATIVE_VARIABLES_MANUAL_STEP =

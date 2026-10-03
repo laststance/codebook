@@ -59,7 +59,7 @@ export async function workspaceHarness(
   let hostAppName = 'Visual Studio Code'
   /** Native commands the fake editor answers `getCommands` with: the ones the reader asks the host about before it runs them. */
   const nativeHostCommands = [
-    'workbench.debug.variablesView.focus',
+    'workbench.debug.action.focusVariablesView',
     'list.focusFirst',
     'list.expand',
     'workbench.view.debug',
@@ -2218,7 +2218,7 @@ export async function workspaceHarness(
     useHostAppName(name: string): void {
       hostAppName = name
     },
-    /** Models a host that does not register the named native commands: `getCommands` omits them and running one fails as the editor does. @example harness.removeHostCommands('workbench.debug.variablesView.focus') */
+    /** Models a host that does not register the named native commands: `getCommands` omits them and running one fails as the editor does. @example harness.removeHostCommands('workbench.debug.action.focusVariablesView') */
     removeHostCommands(...names: string[]): void {
       for (const name of names) absentHostCommands.add(name)
     },

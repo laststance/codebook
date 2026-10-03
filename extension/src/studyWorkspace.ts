@@ -7168,7 +7168,7 @@ export class StudyWorkspace {
   /**
    * Shows the recorded values in the host's own Variables view; called by {@link action} for the reader's Show Variables control.
    *
-   * Hosts register different commands (Cursor 3.23.12 has no `workbench.debug.variablesView.focus`), and running a missing one
+   * A host may not register a command (neither VS Code 1.140 nor Cursor 3.23 has a `workbench.debug.variablesView.focus`), and running a missing one
    * leaves "command … not found" in the reader, so the host is asked which commands exist before any of them runs.
    *
    * @returns Resolves once the Variables commands the host registers ran, or its Run and Debug view opened, or the learner was told the manual step.
