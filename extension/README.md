@@ -129,7 +129,7 @@ CI runs the product/runtime tests and real packaging/failure tests before upload
 
 This existing three-variant interface is scheduled for retirement. It is not the current design target and must not be confused with the separate learning replay and Wiki screens retained by version 9.
 
-Choose **Codebook: Select Presentation**; 0.2.12 removed the **Presentation** selector from the explanation pane. Study workspace places application above source beside the explanation; Living book gives reading the larger left pane; Guided walkthrough places application and source side by side above the explanation. Overview, Live and Recording remain independent content tabs. The same learner selection, understanding and runtime remain in place.
+Codebook arranges the Study workspace layout: application above source beside the explanation. 0.2.12 removed the **Presentation** selector from the explanation pane, and the **Codebook: Select Presentation** command is removed as well; the Living book and Guided walkthrough layouts are retired (`codebook_presentation` refuses to select them and keeps one only where a saved preference already shows it). Overview, Live and Recording remain independent content tabs. The same learner selection, understanding and runtime remain in place.
 
 | Mode                 | Intended use                                  | Native arrangement                                                   |
 | -------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
@@ -313,8 +313,8 @@ Unit doubles cover transport, ownership, source integrity and persistence withou
 
 From 0.2.22 the refusal names what you can do at your limit:
 
-- below 256: `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Existing learning was kept.`
-- at 256: `Study library is full at its maximum of 256 saved studies. Delete a saved study from Saved studies in the Study workspace before starting another run. Existing learning was kept.`
+- below 256: `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Only the learner can do either; an editor agent cannot. Existing learning was kept.`
+- at 256: `Study library is full at its maximum of 256 saved studies. Delete a saved study from Saved studies in the Study workspace before starting another run. Only the learner can delete a saved study; an editor agent cannot. Existing learning was kept.`
 
 The messages for a study that cannot be saved and for a recording that cannot start follow the same pattern (`…then retry storage.`, `Recording library is full…delete a saved study that has a recording…`). A refused run is not saved later either: it leaves no study behind, the Study pane shows `The last run did not start: <message>` without offering **Retry storage / refresh** for it, and its run resource reports its history as unavailable. A limit setting that is not an integer from 1 to 256 also ends a run with `PREREQUISITE_MISSING` and `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to 256. Existing learning was kept.` The check at the start of a run reserves nothing: when two editor windows of the same workspace each start a run for the last free place, both starts are accepted, and the study saved second is refused at its save with the `…then retry storage.` message; raise the limit or delete a saved study, then use **Retry storage / refresh**.
 
