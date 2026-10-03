@@ -1758,3 +1758,188 @@ test('a browser stop the debugger binds two lines below, across a line the seale
   assert.equal(run.view().finalOutcome, 'demonstrated')
   assert.equal(mouse.length, 2)
 })
+
+/** Reads the detail of every journal entry of one type of a run. @example journalDetails(run, 'cdp.resumed').length // 2 */
+const journalDetails = (
+  run: Awaited<ReturnType<typeof configuredRuntimeHarness>>['run'],
+  type: string,
+): unknown[] =>
+  run
+    .view()
+    .events.filter((event) => event.type === type)
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+
+const SECOND_STOP = [
+  {
+    line: 1,
+    column: 7,
+    inspections: [{ path: 'enabled', mode: 'value' as const, required: true }],
+  },
+]
+
+// Cycle 0044 (0042-SR2): red while the replay of a queued pause journaled it a second time and restarted its clock, so its resume understated how long it lasted.
+test('a next stop’s pause that waited for the preceding continuation’s receipts is journaled once, and its resume counts from when it was first observed', async (context) => {
+  // Arrange: the first stop is being continued and only its command response is still missing.
+  const { run, holdContinuation, emitCdpPauseAt, emitStopped, setPausedFrame } =
+    await configuredRuntimeHarness(context, undefined, SECOND_STOP)
+  const receipts = holdContinuation()
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  const firstContinuation = run.continue('browser', first.pause)
+  await receipts.started
+  receipts.dap()
+  receipts.cdp()
+  // Act: the second stop's pause is observed and queued, 60 ms pass, and then the first continuation completes.
+  emitCdpPauseAt({
+    scriptId: 'actual',
+    lineNumber: 0,
+    columnNumber: 6,
+    functionName: 'configured',
+    hitBreakpoints: ['mapped-source'],
+  })
+  await setTimeout(60)
+  receipts.response()
+  await firstContinuation
+  setPausedFrame(7)
+  emitStopped()
+  const second = await waitUntil(() => {
+    const snapshot = run.view().participants.browser.snapshot
+    return snapshot && snapshot.id !== first.id ? snapshot : undefined
+  }, 'second stop')
+  const secondContinuation = run
+    .continue('browser', second.pause)
+    .catch(() => undefined)
+  await waitUntil(
+    () => journalDetails(run, 'continue.accepted').length === 2,
+    'second continuation accepted',
+  )
+  receipts.dap()
+  receipts.cdp()
+  receipts.response()
+  await secondContinuation
+  await run.stop()
+  // Assert
+  const resumed = journalDetails(run, 'cdp.resumed').at(-1)
+  assert.equal(journalDetails(run, 'cdp.pause-observed').length, 2)
+  assert.ok(resumed && typeof resumed === 'object' && 'pausedForMs' in resumed)
+  assert.equal(
+    typeof resumed.pausedForMs === 'number' && resumed.pausedForMs >= 60,
+    true,
+  )
+})
+
+// Cycle 0044 (0042-SR14 / 0042-ER-limit1): red while a pause on the expected stop's line at another column counted as that stop, so the adapter's resume of it ended the run as a foreign resume.
+test('a pause the debugger makes at another column of the expected stop’s line and resumes is retired, and the stop itself is then captured', async (context) => {
+  // Arrange: the first stop is bound at 1:1; generated 0:6 is another statement of that line, at source 1:7.
+  const { run, suppressInputPause, emitCdpPauseAt, manualResume, emitPause } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA,MAAM',
+    })
+  suppressInputPause()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  // Act
+  emitCdpPauseAt({
+    scriptId: 'actual',
+    lineNumber: 0,
+    columnNumber: 6,
+    functionName: '',
+    hitBreakpoints: ['adapter-internal'],
+  })
+  manualResume()
+  emitPause()
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'the stop itself captured')
+  await run.stop()
+  // Assert
+  assert.equal(snapshot.source.column, 1)
+  assert.equal(journalDetails(run, 'cdp.adapter-pause-retired').length, 1)
+})
+
+// Cycle 0044 (0042-SR21): red while the first stop's turn began when the action was accepted, so a pause on its line before the click was captured as the click's effect.
+test('a pause on the first stop’s line before the input is sent is not captured as that stop when the debugger announces it later', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, emitCdpPause, emitStopped, mouse } =
+    await configuredRuntimeHarness(context)
+  suppressInputPause()
+  await run.prepare()
+  // Act: the line runs while the accepted action is still checking its input; the debugger announces that pause after the click.
+  run.action('one', 'repository-click')
+  emitCdpPause()
+  await waitUntil(() => mouse.length === 2, 'click sent')
+  emitStopped()
+  await waitUntil(() => run.view().status === 'failed', 'early pause rejected')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Error: Declared stop src/theme.ts:1 paused at src/theme.ts:1 before its turn: its line ran before the input was sent, so that pause is no observation of this stop; declare a line that runs only after it',
+  )
+  assert.equal(run.view().snapshots.length, 0)
+})
+
+// Cycle 0044 (0042-SR28): red while only the progress and hold deadlines added where a participant is paused.
+test('the whole-run deadline that expires while the page is paused with no debugger stop names where it is paused', async (context) => {
+  // Arrange: the run is ready for 590 s, then its action is accepted and the adapter's hook pauses the page.
+  const { run, suppressInputPause, announceScript, emitCdpPauseAt, advance } =
+    await configuredRuntimeHarness(context)
+  suppressInputPause()
+  await run.prepare()
+  announceScript('hook', 'eval-ca9ab6a4.cdp')
+  advance(590_000)
+  run.action('one', 'repository-click')
+  emitCdpPauseAt({
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  // Act: the ten-minute budget passes before the 20 s progress deadline of the action.
+  advance(10_000)
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository whole-run deadline exceeded. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.',
+  )
+})
+
+// Cycle 0044 (0042-SR31): red while a browser stop whose binding the debugger moved after arming failed with "DAP frame differs from exact configured source" instead of saying where it bound.
+test('a browser stop the debugger moves to another line after it was armed fails naming the declared stop and where it is bound now', async (context) => {
+  // Arrange: the stop is verified at 1:1 while it is armed; afterwards the debugger reports it at 2:1 and pauses there.
+  const { run, bindFirstStopAt, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: { source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\n' },
+    })
+  await run.prepare()
+  bindFirstStopAt(2, 1)
+  const wait = holdSourceBoundWait()
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => journalDetails(run, 'dap.stopped').length === 1,
+    'stop announced',
+  )
+  wait.release()
+  await waitUntil(() => run.view().status === 'failed', 'moved stop rejected')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(run.view().snapshots.length, 0)
+})

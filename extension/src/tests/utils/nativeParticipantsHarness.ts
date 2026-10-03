@@ -16,6 +16,7 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
+import { pausePlace } from '../../utils/pausePlace'
 
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
@@ -49,6 +50,8 @@ export async function nativeParticipantsHarness(
     >
     /** Opts the run into a clock that only `advance` moves, so a test can let a 20 s deadline expire without waiting for it; by default the run keeps real timers. */
     manualClock?: boolean
+    /** Gives a participant's sealed map a second original, so a map such as 'AAAA;ACAA' puts generated line 1 in that other source. */
+    otherOriginal?: Partial<Record<Participant, boolean>>
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -156,7 +159,13 @@ export async function nativeParticipantsHarness(
     server: { lineNumber: 0, columnNumber: 0 },
   }
   let revokeDuringDom = false,
-    afterReadyBeforeInput = false
+    afterReadyBeforeInput = false,
+    afterReadyAfterInput = true,
+    afterReadCount = 0
+  // The failure a test makes the run's place naming throw, as a sealed map that cannot be read would.
+  let pausePlaceFailure: string | undefined
+  // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
+  let earlyBrowserPause: 'pending' | 'sent' | undefined
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
@@ -178,8 +187,12 @@ export async function nativeParticipantsHarness(
       javascript: source.text,
       sourceMap: JSON.stringify({
         version: 3,
-        sources: [sourcePath],
-        sourcesContent: [source.text],
+        sources: options.otherOriginal?.[name]
+          ? [sourcePath, `${sourcePath}.other.ts`]
+          : [sourcePath],
+        sourcesContent: options.otherOriginal?.[name]
+          ? [source.text, 'other();']
+          : [source.text],
         names: [],
         mappings: options.mappings?.[name] ?? 'AAAA',
       }),
@@ -245,6 +258,11 @@ export async function nativeParticipantsHarness(
           ],
         }
       if (command === 'continue') {
+        // No round trip on the browser channel came first, so the earlier pause is read only now, after the continuation exists.
+        if (earlyBrowserPause === 'pending') {
+          earlyBrowserPause = 'sent'
+          emitDeclaredPause('browser')
+        }
         run.onRequest(sessions[name], {
           type: 'request',
           seq: ++sequence,
@@ -373,6 +391,22 @@ export async function nativeParticipantsHarness(
         failedRegistration = true
         acknowledge(bundle('server').sourcePath)
       }
+      // A round trip on the browser channel delivers the pause the page made before it.
+      if (
+        name === 'browser' &&
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'undefined' &&
+        earlyBrowserPause === 'pending'
+      ) {
+        earlyBrowserPause = 'sent'
+        emitDeclaredPause('browser')
+      }
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression &&
+        run.view().operation?.inputDispatched
+      )
+        afterReadCount++
       if (method === 'Runtime.evaluate')
         return {
           result: {
@@ -385,7 +419,8 @@ export async function nativeParticipantsHarness(
                     ? {
                         ready:
                           afterReadyBeforeInput ||
-                          Boolean(run.view().operation?.inputDispatched),
+                          (afterReadyAfterInput &&
+                            Boolean(run.view().operation?.inputDispatched)),
                       }
                     : { ready: true, x: 12, y: 18 },
           },
@@ -640,6 +675,12 @@ export async function nativeParticipantsHarness(
           return waitUntil(read, description, timeoutMs, signal)
         },
       },
+      './utils/pausePlace': {
+        pausePlace: (...placeArguments: Parameters<typeof pausePlace>) => {
+          if (pausePlaceFailure) throw new Error(pausePlaceFailure)
+          return pausePlace(...placeArguments)
+        },
+      },
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async (
           _workspace: string,
@@ -696,6 +737,8 @@ export async function nativeParticipantsHarness(
           clearTimeout: (id: number): void => {
             manualTimers.delete(id)
           },
+          // The run measures how long it held a pause on this clock.
+          performance: { now: () => manualClockMs },
         }
       : {},
   )
@@ -736,6 +779,22 @@ export async function nativeParticipantsHarness(
     },
     satisfyAfterBeforeInput(): void {
       afterReadyBeforeInput = true
+    },
+    /** Makes the after conditions hold or not after the input, so a test can change the page's answer between two reads. */
+    setAfterReady(value: boolean): void {
+      afterReadyAfterInput = value
+    },
+    /** How many times the run read the after conditions after the input. */
+    afterReads(): number {
+      return afterReadCount
+    },
+    /** Makes naming a paused place throw this failure, as a sealed map that cannot be read would at a deadline. */
+    failPausePlace(message: string): void {
+      pausePlaceFailure = message
+    },
+    /** Lets the page pause on the browser stop's declared line before the server's continue is requested; the run reads that pause when it asks the browser channel for earlier events, or else with the continue request. */
+    pauseBrowserBeforeContinueRequest(): void {
+      earlyBrowserPause = 'pending'
     },
     failRegistration(): void {
       failedRegistration = true

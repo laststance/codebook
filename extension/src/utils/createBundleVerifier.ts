@@ -29,6 +29,30 @@ export function createBundleVerifier(input: BundleSource) {
   if (canonicalSource(bundle.sourcePath) !== originalPath)
     throw new Error('Map original differs from native source path')
   const sourceMap = new SourceMap(payload)
+  /** Reads the sealed original position of a generated location for `originalLine` and `originalColumn`; unmapped generated code has none. */
+  const originalPosition = (
+    location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
+  ): { line: number; column: number } | undefined => {
+    const generatedColumn = location.columnNumber ?? 0
+    // A location past the end of the executed module is no place of it.
+    if (
+      !isSourcePosition(bundle.javascript, location.lineNumber, generatedColumn)
+    )
+      return undefined
+    const mapping = sourceMap.findEntry(location.lineNumber, generatedColumn)
+    // The map answers the nearest earlier mapping, also one of an earlier generated line or a segment without an original: either means the location itself is unmapped code.
+    if (
+      !('originalSource' in mapping) ||
+      typeof mapping.originalSource !== 'string' ||
+      mapping.generatedLine !== location.lineNumber ||
+      !isSameOriginal(mapping.originalSource, originalPath)
+    )
+      return undefined
+    return {
+      line: mapping.originalLine + 1,
+      column: mapping.originalColumn + 1,
+    }
+  }
   const hashes = Object.freeze({
     typescript: sha256(bundle.source),
     javascript: sha256(bundle.javascript),
@@ -50,25 +74,47 @@ export function createBundleVerifier(input: BundleSource) {
      * Called by {@link isPauseAtStop} to tell a declared stop's pause from one the debug adapter makes for itself, and by {@link pausePlace} to name where a participant is paused.
      * @param location - A generated position in this module; a missing column is column 0.
      * @returns
-     * - The 1-based original line of the nearest mapping at or before the location
-     * - `undefined` before the first mapping, and for a mapping that names another original of the bundle
+     * - The 1-based original line of the mapping at or before the location on the same generated line
+     * - `undefined` for unmapped generated code: before the first mapping of its line, past the end of the module, in a segment without an original, and for a mapping that names another original of the bundle
      * @example
      * verifier.originalLine({ lineNumber: 0, columnNumber: 0 }) // => 1
      */
     originalLine(
       location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
     ): number | undefined {
+      return originalPosition(location)?.line
+    },
+    /**
+     * Maps a generated location of this module back to a column of the sealed original, so {@link isPauseAtBoundColumn} can tell the bound position of a stop from another statement on its line.
+     * @param location - A generated position in this module; a missing column is column 0.
+     * @returns The 1-based original column under the rule of `originalLine`, or `undefined` for unmapped generated code.
+     * @example
+     * verifier.originalColumn({ lineNumber: 0, columnNumber: 0 }) // => 1
+     */
+    originalColumn(
+      location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
+    ): number | undefined {
+      return originalPosition(location)?.column
+    },
+    /**
+     * Tells whether a generated location of this module belongs to another original of the bundle, so a pause there is never taken for a stop of this source ({@link ConfiguredBrowserRun} asks before it adopts a held pause).
+     * @param location - A generated position in this module; a missing column is column 0.
+     * @returns `true` when the nearest mapping at or before the location names another original; `false` for this original and for unmapped code.
+     * @example
+     * verifier.isInAnotherOriginal({ lineNumber: 2, columnNumber: 0 }) // => true where the map puts generated line 2 in other.tsx
+     */
+    isInAnotherOriginal(
+      location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
+    ): boolean {
       const mapping = sourceMap.findEntry(
         location.lineNumber,
         location.columnNumber ?? 0,
       )
-      // The map answers the nearest earlier mapping, so only a location before the first one has no entry.
-      if (
-        !('originalSource' in mapping) ||
+      return (
+        'originalSource' in mapping &&
+        typeof mapping.originalSource === 'string' &&
         !isSameOriginal(mapping.originalSource, originalPath)
       )
-        return undefined
-      return mapping.originalLine + 1
     },
     /** Confirms exact source and generated coordinates for the guarded paused inspector. @example verifier.verify(js, tsx, location, 'script-1', 19, 5) */
     verify(

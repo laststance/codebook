@@ -667,6 +667,20 @@ export async function configuredRuntimeHarness(
     releases,
     emitPause,
     emitCdpPause,
+    /** Sets the source position the debugger reports as the paused top frame, for a pause a test sends in parts. */
+    setPausedFrame(column: number, line = 1): void {
+      currentColumn = column
+      currentLine = line
+    },
+    /** Sends the debugger's `stopped` alone, for a pause the runtime reported earlier. */
+    emitStopped(): void {
+      run.onEvent(selected, {
+        seq: ++requestSequence,
+        type: 'event',
+        event: 'stopped',
+        body: { threadId: 1, reason: 'breakpoint' },
+      })
+    },
     /** Announces a script of the owned page, as the debugger does for every module it parses. */
     announceScript(scriptId: string, url: string): void {
       listeners.get('Debugger.scriptParsed')?.({
