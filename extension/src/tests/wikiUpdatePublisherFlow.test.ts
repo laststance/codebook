@@ -370,3 +370,185 @@ test('a running Cursor update parses the candidates once while nothing is writte
     await wiki.close()
   }
 })
+
+test('a publish the real publisher refuses over the learner’s file ends the watched run as a conflict, and the previous site, its manifest, its receipt and the learner’s files are byte-identical', async () => {
+  // Arrange
+  const wiki = await openPublishedWikiWindow()
+  await mkdir(join(wiki.outputDirectory, 'pages'))
+  await writeFile(join(wiki.outputDirectory, 'pages', 'notes.html'), 'mine')
+  const hashBefore = await wiki.hashOutput()
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+
+    // Act: the agent prepares the default stage, writes a page where the learner's file is, and tries to publish.
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/notes.html'],
+    })
+    await assert.rejects(
+      wiki.publish(stage),
+      /A manual Wiki file conflicts with the update: pages\/notes\.html/,
+    )
+    const ended = await waitForStatus(wiki.status, hasEnded)
+
+    // Assert
+    assert.equal(ended.state, 'conflict')
+    assert.deepEqual(
+      ended.state === 'conflict'
+        ? { cause: ended.cause, paths: ended.paths, site: ended.site }
+        : {},
+      { cause: 'learner-file', paths: ['pages/notes.html'], site: 'kept' },
+    )
+    assert.equal(await wiki.hashOutput(), hashBefore)
+    assert.equal(await readFile(wiki.learnerFile, 'utf8'), 'my own notes\n')
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('cancelling a watched run while the agent has a candidate staged leaves the whole Wiki folder byte-identical', async () => {
+  // Arrange
+  const progress: CancellableProgress[] = []
+  const wiki = await openPublishedWikiWindow({ cancellable: progress })
+  const hashBefore = await wiki.hashOutput()
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, { heading: 'Second' })
+    await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running' && current.candidateStaged,
+    )
+
+    // Act
+    progress[0]?.cancel()
+    const ended = await waitForStatus(wiki.status, hasEnded)
+
+    // Assert
+    assert.equal(ended.state, 'cancelled')
+    assert.equal(ended.state === 'cancelled' ? ended.site : '', 'kept')
+    assert.equal(await wiki.hashOutput(), hashBefore)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test(
+  'a watched run in which nothing is published ends as timed out when its fifteen minutes have passed, warns in the editor and leaves the Wiki folder byte-identical',
+  { timeout: 30_000 },
+  async () => {
+    // Arrange: the watch's clock is the test's, so fifteen minutes pass in as many looks without waiting.
+    let nowMs = 0
+    const wiki = await openPublishedWikiWindow({
+      watchClock: {
+        now: () => nowMs,
+        sleep: async (delayMs: number): Promise<void> => {
+          nowMs += delayMs
+          await new Promise((resolveTurn) => setImmediate(resolveTurn))
+        },
+      },
+    })
+    const hashBefore = await wiki.hashOutput()
+    try {
+      // Act
+      await wiki.clickUpdate()
+      const ended = await waitForStatus(wiki.status, hasEnded, 20_000)
+
+      // Assert
+      assert.equal(ended.state, 'timed-out')
+      assert.deepEqual(
+        ended.state === 'timed-out' ? [ended.timeoutMs, ended.site] : [],
+        [900_000, 'kept'],
+      )
+      assert.equal(nowMs, 900_000)
+      assert.equal(wiki.warnings.length, 1)
+      assert.match(
+        wiki.warnings[0] ?? '',
+        /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing has been replaced\. Check the VS Code chat: it may be waiting for you or have reported a problem\. Press Update LLM Wiki to start again\.$/,
+      )
+      assert.equal(await wiki.hashOutput(), hashBefore)
+    } finally {
+      await wiki.close()
+    }
+  },
+)
+
+test('a publish into a configured Wiki folder is seen there, ends the run as succeeded and keeps the learner’s file', async () => {
+  // Arrange
+  const wiki = await openPublishedWikiWindow({ outputSetting: 'docs/my-wiki' })
+  try {
+    await wiki.clickUpdate()
+    const whileRunning = wiki.status()
+    await agentTakesAMoment()
+
+    // Act: the agent publishes a new generation through the real publisher.
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/overview.html'],
+    })
+    wiki.setFreshness({ status: 'current', changedPaths: [], addedPaths: [] })
+    await wiki.publish(stage)
+    const ended = await waitForStatus(wiki.status, hasEnded)
+
+    // Assert
+    assert.equal(
+      whileRunning.state === 'running' ? whileRunning.outputLabel : '',
+      'docs/my-wiki',
+    )
+    assert.equal(ended.state, 'succeeded')
+    assert.deepEqual(
+      ended.state === 'succeeded'
+        ? [ended.identity, ended.outputDirectory]
+        : [],
+      ['a1b2c3d4e5f6+0e819f59', join(wiki.projectRoot, 'docs/my-wiki')],
+    )
+    assert.equal(
+      await readFile(
+        join(wiki.projectRoot, 'docs/my-wiki/notes/mine.md'),
+        'utf8',
+      ),
+      'my own notes\n',
+    )
+    assert.match(
+      await readFile(
+        join(wiki.projectRoot, 'docs/my-wiki/pages/overview.html'),
+        'utf8',
+      ),
+      /Additional source explanation\./,
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a real publish that keeps the sources and the revision and only excludes a new file is seen and ends the run as succeeded', async () => {
+  // Arrange
+  const wiki = await openPublishedWikiWindow()
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+
+    // Act: the same source hash and revision go into the new manifest; the page text and the exclusions differ.
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, {
+      heading: 'First, with scratch files left out',
+      excludedPaths: ['scratch'],
+    })
+    wiki.setFreshness({ status: 'current', changedPaths: [], addedPaths: [] })
+    await wiki.publish(stage)
+    const ended = await waitForStatus(wiki.status, hasEnded)
+
+    // Assert: the displayed identity is the one the first generation had.
+    assert.equal(ended.state, 'succeeded')
+    assert.equal(
+      ended.state === 'succeeded' ? ended.identity : '',
+      'a1b2c3d4e5f6+0e819f59',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
