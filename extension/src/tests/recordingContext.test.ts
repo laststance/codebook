@@ -654,6 +654,35 @@ test('a checkpoint that loses a confirmed phase image while copying it is discar
   }
 })
 
+// Value: protects=a checkpoint racing a newer run state that withdrew an observation's sealed source; fails_when=the withdrawn source read fails the refresh instead of discarding the stale copy; why_new=Cycle 0044 (0032-T6f / 0033-S7d); seam=ControlledRuntime.source
+test('a checkpoint whose observation source is withdrawn while it is read is discarded instead of failing the refresh', async () => {
+  // Arrange: one committed observation; reading its source finds it withdrawn by a newer run state.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+    harness.clock(100)
+    service.action({
+      ...harness.receipt,
+      key: 'input',
+      action: 'repository-click',
+    })
+    assert.equal(service.state(record).observations.length, 1)
+    runtime.source = () => {
+      delete runtime.captures.after
+      return undefined
+    }
+
+    // Act
+    const discarded = await captureStudy(service, record, workspaceKey)
+
+    // Assert: the stale copy is dropped; the newer state is left for the next checkpoint.
+    assert.equal(discarded, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=tampered sealed evidence surfacing even when a newer checkpoint changes state during the same read; fails_when=every EVIDENCE_UNAVAILABLE after a signature change is discarded as withdrawn; why_new=Cycle 0033 M1 (b); seam=none
 test('a checkpoint still fails on a tampered phase image when the run state also changes during the read', async () => {
   // Arrange: the saved before image bytes were altered on disk, and the runtime will withdraw another image mid-read.

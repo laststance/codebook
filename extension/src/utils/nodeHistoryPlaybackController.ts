@@ -24,6 +24,8 @@ export class NodeHistoryPlaybackController {
   private timer?: ReturnType<typeof setInterval>
   private pending?: Promise<void>
   private generation = 0
+  /** The generation {@link dispose} last ended, so a presentation started before it settles without publishing to a closed reader. */
+  private disposedGeneration = -1
   private readonly clock: () => number
 
   constructor(private readonly dependencies: NodeHistoryPlaybackDependencies) {
@@ -192,6 +194,7 @@ export class NodeHistoryPlaybackController {
   /** Clears playback ownership when the reader closes or selects another history. @example controller.dispose() */
   dispose(): void {
     this.generation++
+    this.disposedGeneration = this.generation
     this.mode = 'paused'
     this.stopTimer()
     this.events = []
@@ -211,8 +214,8 @@ export class NodeHistoryPlaybackController {
     } finally {
       if (this.pending === operation) {
         this.pending = undefined
-        // Publish settled controls only after the native event is no longer loading, even for an abandoned or superseded event: nothing else reports that loading ended.
-        this.dependencies.changed()
+        // Publish settled controls only after the native event is no longer loading, even for an abandoned or superseded event: nothing else reports that loading ended. A disposed controller publishes nothing.
+        if (this.disposedGeneration <= generation) this.dependencies.changed()
       }
     }
   }

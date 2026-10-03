@@ -573,6 +573,8 @@ export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
+/** Frames native Call Stack loads for a stop before the learner asks for more (VS Code: the top frame, then 19 more); it focuses the top frame when none of them has source. */
+export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
 /** Ceiling on one owned replay settle: the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}) plus one capture timeout each for retiring and starting the historical session; a stall before painting still ends here. A pending startup that the retirement waits for first and the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}) come on top, so the slowest healthy sequence can outlast this ceiling; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
 export const PRESENTATION_SETTLE_CEILING_MS =
   PRESENTATION_READY_TIMEOUT_MS + 2 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS

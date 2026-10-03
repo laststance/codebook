@@ -4,6 +4,9 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 /** A saved Node test stop, the only journal entry that carries captured source and a debugger snapshot. */
 type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
 
+/** Verdicts per parsed (immutable) journal stop, so every reader publish of the same selected stop hashes its captured text only once. */
+const verdicts = new WeakMap<NodeTestHistoryStop, boolean>()
+
 /**
  * Tells whether a saved Node stop's captured source is verified and matches where it stopped, independently of whether the native session shows it.
  *
@@ -20,6 +23,15 @@ type NodeTestHistoryStop = Extract<NodeTestHistoryEntry, { type: 'stop' }>
  * nodeStopSourceMatches({ ...stopAtDataLine217, source: { ...stopAtDataLine217.source, line: 218 } }) // => false
  */
 export function nodeStopSourceMatches(entry: NodeTestHistoryStop): boolean {
+  const known = verdicts.get(entry)
+  if (known !== undefined) return known
+  const verdict = verifyNodeStopSource(entry)
+  verdicts.set(entry, verdict)
+  return verdict
+}
+
+/** Computes the uncached verdict for {@link nodeStopSourceMatches}. @example verifyNodeStopSource(stopAtDataLine217) // => true */
+function verifyNodeStopSource(entry: NodeTestHistoryStop): boolean {
   const frame = entry.debuggerSnapshot.frames[0]
   const source = frame?.source
   if (!source) return false
