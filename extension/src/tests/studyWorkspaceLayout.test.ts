@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -14,7 +15,9 @@ import {
   openRetainedStudy,
   recordedReaderHarness,
   articleRecordingLayoutHarness,
+  readerSeams,
 } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
   advanceClock,
   advanceClockUntilSettled,
@@ -3572,6 +3575,62 @@ test('an evidence navigation cancelled while its frame paints ends with the canc
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
     neverPainted.release()
+    await harness.close()
+  }
+})
+
+/**
+ * Opens the Study layout on one saved study and saves a second one, so a test can choose it in Saved studies.
+ * @returns The reader harness with the first study shown and the second study, which the Saved studies list holds.
+ * @example const { harness, second } = await studyLayoutWithSecondSavedStudy()
+ */
+async function studyLayoutWithSecondSavedStudy() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  await openRetainedStudy(harness)
+  const library = await harness.reader.learningStorage(),
+    second = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of second.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      second.runId,
+      runId,
+    )
+  second.workspaceKey = library.workspaceKey
+  second.runId = runId
+  second.id = `${second.instanceId}_${runId}`
+  second.savedAt = '2026-09-20T00:00:01.000Z'
+  await library.saveStudy(second)
+  // Retry storage / refresh reloads the catalog the reader shows.
+  await harness.reader.action('retry')
+  return { harness, second }
+}
+
+// Value: protects=the maximized bottom panel of a learner who works through Saved studies (0038-N7-e); fails_when=a choice shows the study's source at once, which brings the hidden editor area back and takes the panel out of its maximized state, so the Saved studies section leaves the view; why_new=native run of 2026-10-04 (two choices, c05-chosen-7s.png, c08-chosen2.png); seam=workspace harness with a maximized bottom panel
+test('choosing another saved study while the bottom panel is maximized leaves the panel maximized and shows the chosen study in it', async () => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+
+    // Act: the learner chooses the other entry in the panel's Saved studies list, and the reader's timer runs once.
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    await readerSeams(harness).refresh()
+
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(harness.isPanelMaximized(), true)
+    assert.equal(view.model.selection.studyId, second.id)
+    assert.equal(view.loading, false)
+    assert.equal(view.errors.join(' | '), '')
+  } finally {
     await harness.close()
   }
 })

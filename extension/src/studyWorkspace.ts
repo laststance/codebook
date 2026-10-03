@@ -131,6 +131,7 @@ import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import {
   editorLayoutSchema,
   isProportionalEditorLayout,
@@ -529,6 +530,11 @@ export class StudyWorkspace {
     openRequest: PaneOpenRequest['openRequest']
   }[] = []
   private rendering: Promise<void> = Promise.resolve()
+  /** The saved study the learner chose while the editor area was hidden (a maximized bottom panel): its panes are shown once the area is back, so the choice itself leaves the panel as it is. `arrange` is set when a live or summary composition was up, which the study replaces through {@link open}. */
+  private studyAwaitingEditorArea?: {
+    selectionRevision: number
+    arrange: boolean
+  }
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
   private lastActiveRegion: 'app' | 'context' | 'source' = 'context'
@@ -4563,6 +4569,7 @@ export class StudyWorkspace {
     this.revision++
     this.lifetime++
     this.pendingHistory = undefined
+    this.studyAwaitingEditorArea = undefined
     this.lastRendered = undefined
     this.presentationTransition?.cancellation.abort(
       new Error('Presentation reader closed.'),
@@ -4877,7 +4884,9 @@ export class StudyWorkspace {
         !this.closing &&
         !this.recordingActive &&
         this.repositoryNavigation === undefined &&
-        !this.presentationTransition
+        !this.presentationTransition &&
+        // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.
+        !this.studyAwaitsEditorArea()
       )
         await this.renderSelection(true, false, signal)
     })()
@@ -4887,6 +4896,7 @@ export class StudyWorkspace {
     } finally {
       if (this.refreshing === attempt) this.refreshing = undefined
     }
+    await this.showStudyAwaitingEditorArea(signal)
     const current = this.currentRecord()
     // Ordinary chat may never request source reveal; enter live once per run after releasing the refresh lock.
     if (
@@ -6364,6 +6374,8 @@ export class StudyWorkspace {
       this.pendingHistory !== undefined
     )
       return Promise.resolve()
+    // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer.
+    this.studyAwaitingEditorArea = undefined
     const lifetime = this.lifetime
     await this.refreshCitations()
     // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.
@@ -10194,12 +10206,79 @@ export class StudyWorkspace {
     // The archive is held here, not only by the caller: a removal that settled since the caller read it may have dropped what was held.
     this.selectedArchive = archive
     this.selectArchive(archive)
+    this.studyAwaitingEditorArea = undefined
+    // With the bottom panel maximized the editor area is hidden; showing the study's panes now would bring the area back and take the panel, where the learner is choosing, out of its maximized state.
+    if (this.opened && !this.closing && (await this.editorAreaHidden())) {
+      this.studyAwaitingEditorArea = {
+        selectionRevision: this.readerSelectionRevision,
+        arrange: this.needsReaderArrangement(),
+      }
+      this.errors.delete('reading')
+      this.loading = false
+      this.publish()
+      await this.saveSelection()
+      return
+    }
     // A live or summary composition is arranged for what it showed; a saved study needs the reader's own arrangement.
     if (this.needsReaderArrangement()) await this.open()
     // The reason an earlier study could not be arranged or read does not outlive the study that is shown now.
     this.errors.delete('reading')
     await render()
     await this.saveSelection()
+  }
+
+  /**
+   * Says whether the editor area is hidden, as it is while the bottom panel is maximized; called before the reader shows or reveals a pane.
+   * @returns `true` when the editor reports its stacked groups without height (see {@link isCollapsedEditorLayout}); `false` for a visible area, a layout without stacked groups, or a host that reports no pixels.
+   * @example if (await this.editorAreaHidden()) return
+   */
+  private async editorAreaHidden(): Promise<boolean> {
+    return isCollapsedEditorLayout(
+      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+    )
+  }
+
+  /** Says whether the selected saved study still waits for the editor area the learner hid before choosing it; the reader's timer then leaves the panes as they are, while an explicit entry, selection or placement shows them. @example if (!this.studyAwaitsEditorArea()) await this.renderSelection(true, false, signal) */
+  private studyAwaitsEditorArea(): boolean {
+    return (
+      !this.recordingActive &&
+      this.studyAwaitingEditorArea?.selectionRevision ===
+        this.readerSelectionRevision
+    )
+  }
+
+  /**
+   * Shows the saved study that was chosen while the editor area was hidden, once the area is back; called by every {@link refresh} after it released its lock.
+   * A study that is no longer the selection, or a recording opened meanwhile, ends the wait without showing anything.
+   * @param signal - The refresh's cancellation.
+   * @example await this.showStudyAwaitingEditorArea(signal)
+   */
+  private async showStudyAwaitingEditorArea(
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const awaited = this.studyAwaitingEditorArea
+    if (!awaited) return
+    if (!this.studyAwaitsEditorArea() || !this.opened || this.closing) {
+      this.studyAwaitingEditorArea = undefined
+      return
+    }
+    if (
+      this.presentationTransition ||
+      this.repositoryNavigation !== undefined ||
+      (await this.editorAreaHidden())
+    )
+      return
+    // A newer choice or a close during the read owns the reader now.
+    if (this.studyAwaitingEditorArea !== awaited || this.closing) return
+    this.studyAwaitingEditorArea = undefined
+    try {
+      if (awaited.arrange && this.needsReaderArrangement())
+        await this.open(signal)
+      await this.renderSelection(true, true, signal)
+    } catch (error) {
+      signal?.throwIfAborted()
+      this.report('reading', error)
+    }
   }
 
   /** Says whether an open reader still shows a live or summary composition, which a saved study replaces through {@link open}. @example if (this.needsReaderArrangement()) await this.open() */

@@ -380,6 +380,8 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
+  let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
   const pendingDisposedTabCloses: (() => void)[] = []
   const automaticallyClosedColumns: number[] = []
@@ -520,6 +522,135 @@ export async function workspaceHarness(
     return Array.isArray(nested)
       ? { orientation: orientation === 0 ? 1 : 0, groups: nested }
       : { orientation, groups: kept }
+  }
+  // The editor area the fake window gives its groups, and the least an editor group takes (VS Code's DEFAULT_EDITOR_MIN_DIMENSIONS).
+  const EDITOR_AREA_PX = { width: 1100, height: 840 },
+    GROUP_MINIMUM_PX = { width: 220, height: 70 }
+  /** Reads the child groups of a layout node and whether they are stacked; sizes alternate between widths and heights by nesting level. */
+  const layoutChildren = (node: unknown): unknown[] | undefined => {
+    const children =
+      node && typeof node === 'object' ? Reflect.get(node, 'groups') : undefined
+    return Array.isArray(children) ? children : undefined
+  }
+  const layoutSize = (node: unknown): number =>
+    Number(Reflect.get(Object(node), 'size') ?? 1)
+  /**
+   * Projects the measured layout as a hidden editor area reports it: an area without height clamps every stacked group to its minimum height.
+   * @example collapsedLayout({ orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] })
+   * // => { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 70 }, { size: 70 }] }, { size: 0.45 }] }
+   */
+  function collapsedLayout(layout: unknown): unknown {
+    const collapse = (node: unknown, isStack: boolean): unknown => {
+      const children = layoutChildren(node)
+      return {
+        ...Object(node),
+        ...(children
+          ? {
+              groups: children.map((child) => ({
+                ...Object(collapse(child, !isStack)),
+                ...(isStack ? { size: GROUP_MINIMUM_PX.height } : {}),
+              })),
+            }
+          : {}),
+      }
+    }
+    return collapse(layout, Reflect.get(Object(layout), 'orientation') === 1)
+  }
+  /**
+   * Applies the editor's "expand group" to the measured layout: on every level above the group, its branch takes all but the minimum of each sibling.
+   * VS Code does this whenever an editor is opened or revealed in a group that sits at its minimum size, which every stacked group of a hidden editor area does.
+   * @param column - The view column of the revealed group.
+   * @example expandGroup(2) // the source group takes the stack; the Application group keeps 70 of 840 px, the Study pane 220 of 1100 px
+   */
+  function expandGroup(column: number): void {
+    let seen = 0
+    const expand = (
+      node: unknown,
+      isStack: boolean,
+    ): { node: unknown; holdsTarget: boolean } => {
+      const children = layoutChildren(node)
+      if (!children) return { node, holdsTarget: ++seen === column }
+      const expanded = children.map((child) => expand(child, !isStack))
+      const target = expanded.findIndex((child) => child.holdsTarget)
+      if (target < 0)
+        return {
+          node: {
+            ...Object(node),
+            groups: expanded.map((child) => child.node),
+          },
+          holdsTarget: false,
+        }
+      const total = children.reduce(
+          (sum: number, child) => sum + layoutSize(child),
+          0,
+        ),
+        // Sizes are in the layout's own unit (pixels or proportions), so the minimum is taken as its share of the area.
+        minimum =
+          total *
+          (isStack
+            ? GROUP_MINIMUM_PX.height / EDITOR_AREA_PX.height
+            : GROUP_MINIMUM_PX.width / EDITOR_AREA_PX.width)
+      return {
+        node: {
+          ...Object(node),
+          groups: expanded.map((child, index) => ({
+            ...Object(child.node),
+            size:
+              index === target
+                ? total - minimum * (children.length - 1)
+                : minimum,
+          })),
+        },
+        holdsTarget: true,
+      }
+    }
+    editorLayout = expand(
+      editorLayout,
+      Reflect.get(Object(editorLayout), 'orientation') === 1,
+    ).node
+  }
+  /**
+   * Models what VS Code 1.140 does when an editor is opened or revealed while the bottom panel is maximized.
+   * The revealed group sits at its minimum height, so the editor expands it; a changed active editor or an activated group then brings the editor area back, which takes the panel out of its maximized state.
+   * @param column - The view column of the group that was revealed into.
+   * @param changesVisibleEditors - Whether the group shows another editor now or was activated; a reveal of the editor already in front only expands its group.
+   * @example revealIntoHiddenEditorArea(2, true)
+   */
+  function revealIntoHiddenEditorArea(
+    column: number,
+    changesVisibleEditors: boolean,
+  ): void {
+    if (!panelMaximized) return
+    expandGroup(column)
+    if (changesVisibleEditors) panelMaximized = false
+  }
+  /** Measures one group of the fake editor area in pixels, from the proportions or pixels of the measured layout. @example groupHeightPx(1) // 420 for the Application group of the Study layout */
+  function groupHeightPx(column: number): number | undefined {
+    let seen = 0,
+      found: number | undefined
+    const measure = (node: unknown, isStack: boolean, height: number): void => {
+      const children = layoutChildren(node)
+      if (!children) {
+        if (++seen === column) found = Math.round(height)
+        return
+      }
+      const total = children.reduce(
+        (sum: number, child) => sum + layoutSize(child),
+        0,
+      )
+      for (const child of children)
+        measure(
+          child,
+          !isStack,
+          isStack ? (height * layoutSize(child)) / total : height,
+        )
+    }
+    measure(
+      editorLayout,
+      Reflect.get(Object(editorLayout), 'orientation') === 1,
+      EDITOR_AREA_PX.height,
+    )
+    return found
   }
   /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
   function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
@@ -792,11 +923,20 @@ export async function workspaceHarness(
           nextMovedPanelLayout = undefined
         }
         {
+          const wasInFront = groups.some(
+            (group) =>
+              group.activeTab === nativeTab &&
+              group.viewColumn === value.viewColumn,
+          )
           for (const group of groups) {
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
             if (group.activeTab === nativeTab) group.activeTab = undefined
           }
           const group = nativeGroup(value.viewColumn ?? 1)
+          revealIntoHiddenEditorArea(
+            group.viewColumn,
+            !wasInFront || !preserveFocus,
+          )
           if (
             nativeLayout &&
             previousColumn !== value.viewColumn &&
@@ -1486,7 +1626,9 @@ export async function workspaceHarness(
               JSON.stringify(
                 separateEditorPart?.focused
                   ? (separatePartLayoutReport ?? separateEditorPart.layout)
-                  : editorLayout,
+                  : panelMaximized
+                    ? collapsedLayout(editorLayout)
+                    : editorLayout,
                 (key, value) =>
                   key === 'groups' && Array.isArray(value)
                     ? value.map((group) => ({ size: 1, ...group }))
@@ -1745,6 +1887,10 @@ export async function workspaceHarness(
                 tab.input.uri.toString() === sourceDocument.uri.toString(),
             ) ?? { input: new TabInputText(sourceDocument.uri) }
           if (!group.tabs.includes(tab)) group.tabs.push(tab)
+          revealIntoHiddenEditorArea(
+            group.viewColumn,
+            group.activeTab !== tab || !options?.preserveFocus,
+          )
           group.activeTab = tab
           if (!options?.preserveFocus) {
             activeTabGroup = group
@@ -2444,6 +2590,21 @@ export async function workspaceHarness(
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
     },
+    /**
+     * Maximizes the bottom panel as its title bar's "Maximize Panel Size" does: the editor area is hidden until the learner restores the panel or an editor is opened or revealed.
+     * While hidden, the fake editor reports every stacked group at its minimum height (70 px), expands a group an editor is revealed in, and brings the area back when that reveal changes a group's visible editor.
+     * @example harness.maximizePanel()
+     */
+    maximizePanel(): void {
+      panelMaximized = true
+    },
+    /** Restores the bottom panel to its normal height, as the learner does with "Restore Panel Size"; the editor area returns with the group sizes it had. @example harness.restorePanel() */
+    restorePanel(): void {
+      panelMaximized = false
+    },
+    isPanelMaximized: (): boolean => panelMaximized,
+    /** The height of one editor group in a fake editor area of 840 px, by view column. @example harness.groupHeightPx(1) // 420 */
+    groupHeightPx,
     /**
      * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
      * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
