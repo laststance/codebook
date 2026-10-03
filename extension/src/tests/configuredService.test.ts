@@ -7,8 +7,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
 
+import { StudyError } from '../errors'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { actionSchema } from '../schemas'
 import { startServer } from '../server'
 
@@ -952,6 +954,99 @@ test('MCP resources/read returns an observation’s inspection, its pages and it
       blob: Buffer.from('snapshot png fixture').toString('base64'),
     },
   )
+})
+
+// Value: protects=an agent that sends codebook_reveal and codebook_continue for the same stop together; fails_when=the reveal answers EVIDENCE_UNAVAILABLE ("Matching captured source is not displayed") because the continuation retired the pause the reader presents; why_new=reveal tests never ran beside a continuation (Cycle 0044 row N-13, native N12-a); seam=the synthetic runtime's reveal, which fails like the reader once the pause is gone
+for (const order of ['reveal first', 'continue first'] as const)
+  test(`a reveal and a continuation of the same stop issued together, ${order}, never answer an evidence failure`, async (context) => {
+    // Arrange
+    const { service, configuration, runtimes } =
+      await configuredServiceHarness(context)
+    const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: 'repository-browser',
+        key: `together-${order}`,
+        configuration,
+      }),
+      record = service.record(receipt)
+    await record.preparation
+    service.action({ ...receipt, action: 'repository-click', key: 'one' })
+    const runtime = runtimes[0]!,
+      browser = service.state(record).participants.browser,
+      snapshotUri = browser.snapshotUri!
+    let release!: () => void,
+      entered = false
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // The reader presents a source only while its snapshot is the live pause.
+    runtime.reveal = async (): Promise<void> => {
+      entered = true
+      await barrier
+      if (runtime.gate.phase !== 'paused')
+        throw new StudyError(
+          'EVIDENCE_UNAVAILABLE',
+          'Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
+        )
+    }
+    // Act
+    if (order === 'reveal first') {
+      const revealing = service.reveal({ ...receipt, snapshotUri })
+      await waitUntil(() => entered, 'source reveal started', 1_000)
+      const continuing = service.continue(browser.continueArguments!)
+      await Promise.resolve()
+      const statusWhileRevealing = runtime.status
+      release()
+      const revealed = await revealing,
+        continued = await continuing
+      // Assert: the continuation waited for the accepted reveal, then resumed.
+      assert.equal(statusWhileRevealing, 'paused-browser')
+      assert.equal(revealed.revealed, true)
+      assert.equal(continued.accepted, true)
+      assert.equal(runtime.status, 'running')
+    } else {
+      release()
+      const continued = await service.continue(browser.continueArguments!)
+      // Assert: the reveal names the retired pause and the remedy, and the reader is never asked.
+      await assert.rejects(service.reveal({ ...receipt, snapshotUri }), {
+        code: 'STALE_PAUSE',
+        message:
+          'Reveal shows only the current pause, and this snapshot is no longer it: its continuation was accepted or the debugger moved on. Reveal a stop before continuing it; its captured source stays readable at sourceUri.',
+      })
+      assert.equal(continued.accepted, true)
+      assert.equal(entered, false)
+    }
+  })
+
+test('a reveal whose pause the learner resumes in the debugger meanwhile answers STALE_PAUSE instead of an evidence failure', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'manual-resume',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    snapshotUri = service.state(record).participants.browser.snapshotUri!
+  runtime.reveal = async (): Promise<void> => {
+    // The learner presses Continue in the native debugger while the source is being presented.
+    runtime.gate.invalidate(true)
+    throw new StudyError(
+      'EVIDENCE_UNAVAILABLE',
+      'Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
+    )
+  }
+  // Act / Assert
+  await assert.rejects(service.reveal({ ...receipt, snapshotUri }), {
+    code: 'STALE_PAUSE',
+    causeDetail:
+      'Error: Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
+  })
 })
 
 test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
