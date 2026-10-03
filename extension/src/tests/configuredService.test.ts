@@ -796,7 +796,7 @@ test('configured help tells an agent when a binding on another line fails for ea
   assert.doesNotMatch(help.text, /fails at once/)
   assert.equal(
     contract.sequence[3]?.endsWith(
-      "Earlier observations remain immutable. A manual or competing resume of a captured pause, or a second stop the debugger announces, invalidates this operation. A pause the debugger makes for itself away from the next declared stop's line and resumes by itself is retired: the journal records it as cdp.adapter-pause-retired with its place and pausedForMs, and the run goes on.",
+      "Earlier observations remain immutable. A manual or competing resume of a captured pause, or a second stop the debugger announces, invalidates this operation. A pause the debugger makes for itself away from the next declared stop's bound place and resumes by itself is retired: the journal records it as cdp.adapter-pause-retired with its place and pausedForMs (the first 100 such pauses of a run; the rest are counted), and the run goes on. A pause no stop announced that is resumed only after more than 3 seconds, or after more than 1 second while a stop of that participant is announced and still waits for its own pause, ends the run as a manual or competing resume. A stop announced for a pause that came before its turn (before the input was sent or before the preceding continuation was requested) fails naming that early pause.",
     ),
     true,
   )
