@@ -1583,7 +1583,7 @@ export class StudyWorkspace {
   /**
    * Retains the logical reading region for one admitted handoff; foreign editors still require an exact source receipt. Called by {@link admitPresentation} before a selection or restore changes any pane.
    * @param focusedTabClosed - `true` when the tab that had focus was a leftover captured source this selection just closed: the tab the editor activated in its place was never the learner's reading position, so only the group focus is kept.
-   * @returns The function that gives focus back once the presentation is placed.
+   * @returns The function that gives focus back once the presentation is placed. Its third argument is `true` only after a confirmed placement: a learner's document that shares the captured source's group then stays open behind that source instead of covering it.
    * @throws `PRESENTATION_UNAVAILABLE` when the focused editor is a foreign non-text editor whose focus cannot be given back.
    * @example
    * ```ts
@@ -1592,7 +1592,11 @@ export class StudyWorkspace {
    */
   private capturePresentationFocus(
     focusedTabClosed: boolean,
-  ): (signal?: AbortSignal, assertSourceFocus?: () => void) => Promise<void> {
+  ): (
+    signal?: AbortSignal,
+    assertSourceFocus?: () => void,
+    placedSourceStays?: boolean,
+  ) => Promise<void> {
     const assertOwnedFocus = (assertSourceFocus?: () => void): void => {
       if (this.app?.active || this.contextPanel?.active) return
       // Placement may finish on its stationary source; only its exact focus/selection receipt permits restoration.
@@ -1632,7 +1636,11 @@ export class StudyWorkspace {
         selections = editor.selections,
         restoreReadingPosition = retainEditorReadingPosition(editor),
         preview = group.activeTab?.isPreview ?? false
-      return async (signal, assertSourceFocus): Promise<void> => {
+      return async (
+        signal,
+        assertSourceFocus,
+        placedSourceStays,
+      ): Promise<void> => {
         assertOwnedFocus(assertSourceFocus)
         // Edits can retain the same tab/group while invalidating its captured selections and reading position.
         if (document.version !== documentVersion)
@@ -1658,6 +1666,15 @@ export class StudyWorkspace {
           throw new Error(
             'The previously focused source group changed; focus was not guessed.',
           )
+        // The learner's document stays open behind a captured source that was placed in its own group.
+        if (
+          this.staysBehindPlacedSource(
+            document,
+            currentGroup,
+            placedSourceStays,
+          )
+        )
+          return
         const restored = await vscode.window.showTextDocument(document, {
           viewColumn: currentGroup.viewColumn,
           preserveFocus: false,
@@ -1681,6 +1698,31 @@ export class StudyWorkspace {
     throw new StudyError(
       'PRESENTATION_UNAVAILABLE',
       'Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely.',
+    )
+  }
+
+  /**
+   * Tells the focus restoration of {@link capturePresentationFocus} that a confirmed placement put the captured source into the group of the learner's focused document; fronting that document again would cover the source and leave the layout unconfirmed.
+   * @param document - The learner's document that had focus when the presentation change was admitted.
+   * @param group - The group that holds that document now.
+   * @param placedSourceStays - `true` only when the placement was confirmed; a failed change gives the document its focus back.
+   * @returns
+   * - `true` when the document shares the placed source's group: it stays open behind the source, in the group that has the focus.
+   * - `false` when the change failed, the document is the captured source itself, or it sits in another group.
+   * @example
+   * ```ts
+   * if (this.staysBehindPlacedSource(document, currentGroup, true)) return
+   * ```
+   */
+  private staysBehindPlacedSource(
+    document: vscode.TextDocument,
+    group: vscode.TabGroup,
+    placedSourceStays = false,
+  ): boolean {
+    return (
+      placedSourceStays &&
+      group === this.studyPanePositions().sourceGroup &&
+      document.uri.toString() !== String(this.sourceUri)
     )
   }
 
@@ -1910,7 +1952,7 @@ export class StudyWorkspace {
           assertRetainedPlacement()
         }
         restoreFocusAttempted = true
-        await restoreFocus?.(signal, assertSourceFocus)
+        await restoreFocus?.(signal, assertSourceFocus, true)
         assertCurrent()
         assertRetainedPlacement = this.retainPresentationPlacement()
         const receipt = this.layoutReceipt,
@@ -2835,7 +2877,7 @@ export class StudyWorkspace {
       )
       const selections = source?.selections,
         restoreReadingPosition = retainEditorReadingPosition(source)
-      // Prepared immutable sources may be kept; workspace files and dirty drafts remain learner-owned.
+      // Unedited text previews are kept by pinning them in place; an edited or non-text preview stays learner-owned and refuses the move.
       const ownedKinds = ['codebook.scopedBrowser', 'codebook.studyContext']
       const isOwnedPreview = (tab: vscode.Tab) =>
         tab.input instanceof vscode.TabInputWebview &&
@@ -2844,18 +2886,29 @@ export class StudyWorkspace {
             tab.input instanceof vscode.TabInputWebview &&
             [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
         )
-      const assertPreviewOwnership = (): void => {
-        if (
-          !vscode.window.tabGroups.all.some((group) =>
-            group.tabs.some((tab) => tab.isPreview && !isOwnedPreview(tab)),
-          )
+      const isKeptPreview = (tab: vscode.Tab) =>
+        tab.input instanceof vscode.TabInputText && !tab.isDirty
+      // A moved pane replaces the preview tab of its destination group, so the refusal names that tab and the one step that keeps it.
+      const refusePreview = (
+        tab: vscode.Tab,
+        openedWhileArranging = false,
+      ): StudyError =>
+        new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          `The preview tab "${tab.input instanceof vscode.TabInputText ? basename(tab.input.uri.path) : tab.label}" ${
+            openedWhileArranging && isKeptPreview(tab)
+              ? 'was opened while the Codebook panes were being arranged and was left as it is. Change the presentation again.'
+              : 'would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.'
+          }`,
         )
-          return
+      const assertPreviewOwnership = (): void => {
+        const foreignPreview = vscode.window.tabGroups.all
+          .flatMap((group) => group.tabs)
+          .find((tab) => tab.isPreview && !isOwnedPreview(tab))
+        if (!foreignPreview) return
         // A preview opened during a passive await belongs to the learner, including its current focus.
         this.presentationMovedFocus = false
-        throw new Error(
-          'A destination group contains a foreign preview. Keep or move that editor explicitly before switching.',
-        )
+        throw refusePreview(foreignPreview, true)
       }
       const preparedPreviews: {
         uri: vscode.Uri
@@ -2865,20 +2918,12 @@ export class StudyWorkspace {
       for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs.filter((tab) => tab.isPreview)) {
           if (isOwnedPreview(tab)) continue
-          if (
-            tab.input instanceof vscode.TabInputText &&
-            tab.input.uri.scheme === 'file' &&
-            this.runtimeSourcePaths.has(tab.input.uri.fsPath) &&
-            !tab.isDirty
-          )
+          if (tab.input instanceof vscode.TabInputText && isKeptPreview(tab))
             preparedPreviews.push({ uri: tab.input.uri, group, tab })
-          else
-            throw new Error(
-              'A destination group contains a foreign preview. Keep or move that editor explicitly before switching.',
-            )
+          else throw refusePreview(tab)
         }
       }
-      // Reject known foreign previews before even borrowing focus to identify the native editor part.
+      // Reject previews that cannot be kept before even borrowing focus to identify the native editor part.
       const grid = await this.readMainEditorGrid(signal, () => {
         assertCurrent()
         assertEvidence()
@@ -2906,12 +2951,15 @@ export class StudyWorkspace {
             'An editor group was added during placement; it was preserved.',
           )
       }
-      // Native debugger stops open prepared repository files as previews even while the captured reader is active.
+      // Native debugger stops open prepared repository files as previews even while the captured reader is active, and a learner's single click opens a workspace file as one; both stay, pinned.
       for (const prepared of preparedPreviews) {
         const assertPreparedPlacement = this.retainPresentationPlacement()
-        const sourceDocument = await vscode.workspace.openTextDocument(
-          prepared.uri,
-        )
+        const sourceDocument = await Promise.resolve(
+          vscode.workspace.openTextDocument(prepared.uri),
+        ).catch(() => {
+          // A text tab whose document the editor cannot open again cannot be pinned through the API.
+          throw refusePreview(prepared.tab)
+        })
         assertPlacement()
         assertPreparedPlacement()
         if (
