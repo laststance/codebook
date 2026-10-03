@@ -28,6 +28,9 @@ export type ReplayInspection = 'inspected' | 'uninspected' | 'no-values'
 /** Why {@link ReplayDebugger} asks the reader to re-evaluate its Run and Debug hint and Node debugger availability. */
 export type ReplayDebuggerChange = 'values-loaded' | 'session-ended'
 
+/** What {@link ReplayDebugger.awaitRetrieval} waits for native Variables to have asked of the presented stop: its inspection frame's scopes, or also the first scope's values. */
+export type ReplayRetrievalStage = 'scopes' | 'values'
+
 /** How one {@link ReplayDebugger} inspection wait ends: with a presentation outcome or with the error that ended it. */
 type InspectionOutcome = { inspection: ReplayInspection } | { error: unknown }
 
@@ -56,7 +59,7 @@ export class ReplayDebugger {
   private lastPresentedSnapshot?: ReplayDebugSnapshot
   /** The last committed moment's values were not loaded and native Run and Debug has requested none since. */
   private valuesUnrequested = false
-  /** Pending {@link awaitInspection} checks, re-run whenever values load, a `stopped` event is sent or ownership changes. */
+  /** Pending {@link awaitInspection} and {@link awaitRetrieval} checks, re-run whenever the native client's request was served, values load, a `stopped` event is sent or ownership changes. */
   private readonly inspectionWaiters = new Set<() => void>()
 
   /**
@@ -130,7 +133,11 @@ export class ReplayDebugger {
               ))
             return new this.editor.DebugAdapterInlineImplementation({
               onDidSendMessage: events.event,
-              handleMessage: (message) => adapter.handleMessage(message),
+              handleMessage: (message) => {
+                adapter.handleMessage(message)
+                // A served request may be the one a wait is for (the presented stop's scopes), and only the adapter knows which.
+                this.wakeInspection()
+              },
               dispose: () => {
                 adapter.dispose()
                 events.dispose()
@@ -390,6 +397,47 @@ export class ReplayDebugger {
     // Only a loaded Variables page (the adapter's report) clears this; a gap or scope-less stop proves nothing about Variables.
     if (inspection === 'uninspected') this.valuesUnrequested = true
     return inspection
+  }
+
+  /**
+   * Waits until native Variables retrieved the presented stop's scopes or its first values, on behalf of {@link StudyWorkspace.showNativeVariables}, without polling.
+   *
+   * A Variables view that was hidden while the stop changed loads it only in its own deferred refresh (400 ms after it is shown
+   * again in VS Code 1.140); its tree holds no row of the stop until then. The adapter serving `scopes` for the stop's inspection
+   * frame is the earliest moment that tree can hold those rows, and serving the first scope's `variables` is the moment they are listed.
+   *
+   * @param stage - `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
+   * @param timeoutMs - Longest wait; a view that shows another session, or a host that never asks, ends it there.
+   * @returns
+   * - `true` once native Variables retrieved that stage of the presented stop (at once when it already had)
+   * - `false` when `timeoutMs` elapsed first, or at once when the owned session ends: the reader closed, the learner stopped it, or Codebook restarts it for another stop
+   * @example
+   * await debuggerView.awaitRetrieval('scopes', 2_000) // => true about 400 ms after a hidden Variables view is shown
+   */
+  awaitRetrieval(
+    stage: ReplayRetrievalStage,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      const finish = (retrieved: boolean): void => {
+        clearTimeout(timer)
+        this.inspectionWaiters.delete(check)
+        resolve(retrieved)
+      }
+      const check = (): void => {
+        // An ended session answers no request, so nothing is left to wait for; the next stop's session is another press's concern.
+        if (this.closed || this.detached) return finish(false)
+        if (
+          stage === 'scopes'
+            ? this.adapter?.scopesRetrieved
+            : this.adapter?.inspectionReady
+        )
+          finish(true)
+      }
+      const timer = setTimeout(() => finish(false), timeoutMs)
+      this.inspectionWaiters.add(check)
+      check()
+    })
   }
 
   /**
@@ -661,7 +709,7 @@ export class ReplayDebugger {
     )
   }
 
-  /** Re-runs every pending {@link awaitInspection} check after values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */
+  /** Re-runs every pending {@link awaitInspection} and {@link awaitRetrieval} check after a native request was served, values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */
   private wakeInspection(): void {
     for (const check of [...this.inspectionWaiters]) check()
   }

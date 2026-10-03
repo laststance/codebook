@@ -16,7 +16,7 @@ import type {
   PresentationPoseRestore,
 } from '../presentationSchemas'
 import { RecordingStore } from '../recordingStore'
-import type { ReplayInspection } from '../replayDebugger'
+import type { ReplayInspection, ReplayRetrievalStage } from '../replayDebugger'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { RepositoryBookStore } from '../repositoryBook'
 import type * as RepositoryReaderModule from '../repositoryReader'
@@ -36,6 +36,19 @@ import { ControlledConfiguredRuntime } from './utils/configuredServiceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
+
+/** How long the fake host's Variables view defers the refresh that loads a stop it missed while hidden, counted from the moment it is shown again; VS Code 1.140 waits 400 ms. */
+const NATIVE_VARIABLES_REFRESH_MS = 400
+/** How long the fake host's Variables view, opened for the first time in the editor session, needs before its tree holds the rows that list commands act on; VS Code 1.140 took about 60 ms. */
+const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
+/**
+ * How the fake host's Variables view missed the presented stop, as observed in VS Code 1.140:
+ * - `'never-opened'`: Run and Debug was not opened in this editor session; the view asks for the stop's scopes as soon as it is shown, fills its tree a moment later and expands nothing by itself
+ * - `'missed-the-stop'`: the view showed an earlier stop and was hidden while the recording moved on; its tree is empty until a deferred refresh loads the stop and expands the first scope by itself
+ * - `'shows-another-session'`: the view keeps another debug session's frame and never asks for the recorded stop
+ */
+type NativeVariablesHiding =
+  'never-opened' | 'missed-the-stop' | 'shows-another-session'
 
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 export async function workspaceHarness(
@@ -66,6 +79,21 @@ export async function workspaceHarness(
   ]
   /** Commands this host does not register; see `removeHostCommands`. */
   const absentHostCommands = new Set<string>()
+  /** The fake host's own Variables view for the presented stop, which the native commands of Show Variables act on; a view no test hides already lists the values. See `hideNativeVariables`. */
+  const nativeVariables: {
+    hiding?: NativeVariablesHiding
+    scopesRetrieved: boolean
+    treeHoldsStop: boolean
+    firstScopeFocused: boolean
+    valuesListed: boolean
+  } = {
+    scopesRetrieved: true,
+    treeHoldsStop: true,
+    firstScopeFocused: false,
+    valuesListed: true,
+  }
+  /** Pending `awaitRetrieval` checks of the fake historical debugger, re-run whenever the fake Variables view asks for scopes or lists values. */
+  const nativeVariablesWaiters = new Set<() => void>()
   const trashMoves: { path: string; options: unknown }[] = []
   let rejectsTrashMove: (path: string) => boolean = () => false
   let beforeTrashMove: (path: string) => Promise<void> = async () => {}
@@ -342,6 +370,30 @@ export async function workspaceHarness(
       }
       return historicalDebugInspection
     }
+    /** Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter. @example await debuggerView.awaitRetrieval('scopes', 2_000) // => false when the view never asks */
+    awaitRetrieval(
+      stage: ReplayRetrievalStage,
+      timeoutMs: number,
+    ): Promise<boolean> {
+      return new Promise((resolve) => {
+        const finish = (retrieved: boolean): void => {
+          clearTimeout(timer)
+          nativeVariablesWaiters.delete(check)
+          resolve(retrieved)
+        }
+        const check = (): void => {
+          if (
+            stage === 'scopes'
+              ? nativeVariables.scopesRetrieved
+              : nativeVariables.valuesListed
+          )
+            finish(true)
+        }
+        const timer = setTimeout(() => finish(false), timeoutMs)
+        nativeVariablesWaiters.add(check)
+        check()
+      })
+    }
     /** Mirrors the real owner's cancellable retirement of a different recorded stop; no native session exists here. @example await debuggerView.retire(snapshot, signal) */
     async retire(
       _snapshot: ReplayDebugSnapshot | undefined,
@@ -366,6 +418,36 @@ export async function workspaceHarness(
       }
       registeredHistoricalDebuggers--
     }
+  }
+  /** Lists the first scope's recorded values in the fake host's Variables view and tells every owner, as the debug adapter does once the native client asked for them. @example listNativeValues() */
+  const listNativeValues = (): void => {
+    if (nativeVariables.valuesListed) return
+    nativeVariables.valuesListed = true
+    historicalDebugInspection = 'inspected'
+    for (const check of [...nativeVariablesWaiters]) check()
+    for (const debuggerView of historicalDebuggers)
+      debuggerView.changed('values-loaded')
+  }
+  /** Shows the fake host's Variables view as its focus command does; what the view then loads, and when, depends on how it missed the stop. @example showNativeVariablesView() */
+  const showNativeVariablesView = (): void => {
+    const hiding = nativeVariables.hiding
+    nativeVariables.hiding = undefined
+    if (hiding === 'never-opened') {
+      // The view asks for the scopes while it renders, but its tree takes list commands only a moment later.
+      nativeVariables.scopesRetrieved = true
+      for (const check of [...nativeVariablesWaiters]) check()
+      setTimeout(() => {
+        nativeVariables.treeHoldsStop = true
+      }, NATIVE_VARIABLES_FIRST_RENDER_MS).unref()
+    }
+    if (hiding === 'missed-the-stop')
+      // The deferred refresh loads the stop and expands the first scope by itself.
+      setTimeout(() => {
+        nativeVariables.scopesRetrieved = true
+        nativeVariables.treeHoldsStop = true
+        for (const check of [...nativeVariablesWaiters]) check()
+        listNativeValues()
+      }, NATIVE_VARIABLES_REFRESH_MS).unref()
   }
   let sourceOpenFailure = false
   let delayedPanelKind: string | undefined
@@ -1540,6 +1622,13 @@ export async function workspaceHarness(
             for (const listener of summaryVisibilityListeners) listener()
           }
           commands.push(name)
+          if (name === 'workbench.debug.action.focusVariablesView')
+            showNativeVariablesView()
+          // A list command acts on the rows the focused tree holds at that moment; an empty tree gives it nothing to focus or expand.
+          if (name === 'list.focusFirst' && nativeVariables.treeHoldsStop)
+            nativeVariables.firstScopeFocused = true
+          if (name === 'list.expand' && nativeVariables.firstScopeFocused)
+            listNativeValues()
           const held = nextCommand
           if (held?.name === name) {
             nextCommand = undefined
@@ -2221,6 +2310,28 @@ export async function workspaceHarness(
     /** Models a host that does not register the named native commands: `getCommands` omits them and running one fails as the editor does. @example harness.removeHostCommands('workbench.debug.action.focusVariablesView') */
     removeHostCommands(...names: string[]): void {
       for (const name of names) absentHostCommands.add(name)
+    },
+    /**
+     * Models the host's own Variables view missing the presented stop, so Show Variables meets it as the editor leaves it.
+     * @param hiding - How the view missed the stop; each kind loads the stop differently once the focus command shows the view.
+     * @example harness.hideNativeVariables('never-opened')
+     */
+    hideNativeVariables(hiding: NativeVariablesHiding): void {
+      nativeVariables.hiding = hiding
+      nativeVariables.scopesRetrieved = false
+      nativeVariables.treeHoldsStop = false
+      nativeVariables.firstScopeFocused = false
+      nativeVariables.valuesListed = false
+    },
+    /** What the fake host's Variables view shows of the presented stop. @example harness.nativeVariablesView() // => { firstScopeFocused: true, valuesListed: true } */
+    nativeVariablesView(): {
+      firstScopeFocused: boolean
+      valuesListed: boolean
+    } {
+      return {
+        firstScopeFocused: nativeVariables.firstScopeFocused,
+        valuesListed: nativeVariables.valuesListed,
+      }
     },
     /** Decides how the learner answers the reader's next native warning dialogs; unanswered dialogs are dismissed. @example harness.answerWarningDialogs(async ([confirm]) => confirm) */
     answerWarningDialogs(

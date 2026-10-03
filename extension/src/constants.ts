@@ -205,12 +205,18 @@ export const PRESENTATION_FOCUS_ACTIONS = [
   'enlarge-context',
   'show-variables',
 ] as const
-/** Native commands the reader's Show Variables control runs in order: open Run and Debug with Variables expanded and focused, then expand its first scope, which holds the recorded values. A host runs only the ones it registers; a host without the first one opens {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND} instead. */
+/** Native commands the reader's Show Variables control runs in order: open Run and Debug with Variables expanded and focused, then expand its first scope, which holds the recorded values. The two list commands act on the rows of whichever list holds the focus, so they run only once Variables can hold the presented stop's rows and has not listed its values by itself (see {@link SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS} and {@link SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS}). A host runs only the ones it registers; a host without the first one opens {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND} instead. */
 export const SHOW_NATIVE_VARIABLES_COMMANDS = [
   'workbench.debug.action.focusVariablesView',
   'list.focusFirst',
   'list.expand',
 ] as const
+/** Longest Show Variables waits, after it focused Variables, for that view to ask for the presented stop's scopes. VS Code 1.140 refreshes a Variables view that missed a stop while hidden 400 ms after it is shown again; its tree holds no row of the stop until then, so list commands that run earlier focus and expand nothing. A view that shows another session never asks, and the wait ends here. */
+export const SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS = 2_000
+/** How long Show Variables gives the host's Variables view, once it could ask for the presented stop's scopes, to list the first scope's values by itself before the list commands of {@link SHOW_NATIVE_VARIABLES_COMMANDS} expand that scope. VS Code 1.140 expands it 2 ms after a deferred refresh, and a Variables view opened for the first time in the editor session (which does not expand it) took 60 ms to give its tree the rows the list commands act on. */
+export const SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS = 200
+/** How many times Show Variables runs the list commands of {@link SHOW_NATIVE_VARIABLES_COMMANDS}, each after {@link SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS} without the values: the second covers a host whose tree had no rows yet at the first. */
+export const SHOW_NATIVE_VARIABLES_EXPAND_ATTEMPTS = 2
 /** The host's own Run and Debug view command, which Show Variables runs when the host registers no command that focuses Variables. VS Code 1.140 and Cursor 3.23 register `workbench.debug.action.focusVariablesView` (the view's own focus command; a `workbench.debug.variablesView.focus` does not exist in either). */
 export const NATIVE_RUN_AND_DEBUG_VIEW_COMMAND = 'workbench.view.debug'
 /** What Show Variables tells the learner when the host registers neither a Variables focus command nor {@link NATIVE_RUN_AND_DEBUG_VIEW_COMMAND}. */

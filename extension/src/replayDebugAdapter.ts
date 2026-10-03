@@ -103,6 +103,20 @@ export class ReplayDebugAdapter {
   }
 
   /**
+   * Tells {@link ReplayDebugger.awaitRetrieval} whether native Variables can hold the current selection's rows, which list commands act on.
+   * @returns Whether the native client retrieved the scopes of the current selection's inspection frame; `false` for a gap, which has no frame.
+   * @example adapter.select(snapshot, 'Recorded pause · 55.87 s'); adapter.scopesRetrieved // => false until native Variables asks for the frame's scopes
+   */
+  get scopesRetrieved(): boolean {
+    return (
+      !this.closed &&
+      this.configured &&
+      this.selectionValid &&
+      this.inspectedScopes
+    )
+  }
+
+  /**
    * Lets {@link ReplayDebugger.present} commit gaps and scope-less stops at once: only a selection whose inspection frame has recorded scopes can load values in native Variables.
    *
    * The synthetic "Recording limitations" scope explains missing capture; it holds no recorded values, so it does not count.

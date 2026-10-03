@@ -2652,3 +2652,112 @@ test('a recorded stop is shown at once, without its values, while a paused frame
     await fixture.owner.dispose()
   }
 })
+
+// Value: protects=Show Variables acting on a Variables tree that holds the presented stop; fails_when=the wait for native Variables ends before that view asked for the stop's scopes, so list commands run on an empty tree again, or it never ends; why_new=Cycle 0044 (0031-U1 in VS Code 1.140: a hidden Variables view asks for a stop's scopes only 400 ms after it is shown); seam=none
+test('a wait for native Variables ends when that view asks for the presented stop scopes, and its values wait ends when the first scope is listed', async () => {
+  // Arrange: Variables is hidden, so the stop commits without the native client asking for its scopes.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    let scopesOutcome: boolean | 'pending' = 'pending',
+      valuesOutcome: boolean | 'pending' = 'pending'
+    const scopesWait = fixture.owner
+        .awaitRetrieval('scopes', 5_000)
+        .then((retrieved) => {
+          scopesOutcome = retrieved
+        }),
+      valuesWait = fixture.owner
+        .awaitRetrieval('values', 5_000)
+        .then((retrieved) => {
+          valuesOutcome = retrieved
+        })
+
+    // Act: the shown view refreshes, as native Variables does: threads and stack, then the frame's scopes, then the first scope's values.
+    const thread = fixture.request('threads').body.threads[0]
+    const frame = fixture.request('stackTrace', { threadId: thread.id }).body
+      .stackFrames[0]
+    await flushNative()
+    const scopesBeforeTheViewAsked = scopesOutcome
+    const scope = fixture.request('scopes', { frameId: frame.id }).body
+      .scopes[0]
+    await scopesWait
+    await flushNative()
+    const valuesBeforeTheScopeWasListed = valuesOutcome
+    fixture.request('variables', {
+      variablesReference: scope.variablesReference,
+    })
+    await valuesWait
+
+    // Assert
+    assert.equal(scopesBeforeTheViewAsked, 'pending')
+    assert.equal(scopesOutcome, true)
+    assert.equal(valuesBeforeTheScopeWasListed, 'pending')
+    assert.equal(valuesOutcome, true)
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Show Variables finishing when Run and Debug shows another session or never opens; fails_when=the wait for native Variables has no bound, so the button's action hangs, or it reports the scopes as retrieved although nobody asked; why_new=Cycle 0044 (0031-U1: the wait must end when the signal never comes); seam=none
+test('a wait for native Variables that never asks for the stop ends at its bound without the scopes', async (context) => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    let outcome: boolean | 'pending' = 'pending'
+    const waiting = fixture.owner
+      .awaitRetrieval('scopes', 2_000)
+      .then((retrieved) => {
+        outcome = retrieved
+      })
+
+    // Act
+    context.mock.timers.tick(1_999)
+    await flushNative()
+    const beforeTheBound = outcome
+    context.mock.timers.tick(1)
+    await waiting
+
+    // Assert
+    assert.equal(beforeTheBound, 'pending')
+    assert.equal(outcome, false)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Show Variables returning at once after the learner stopped the recorded session; fails_when=the wait for native Variables sits out its whole bound on a session that can answer nothing; why_new=Cycle 0044 (0031-U1); seam=none
+test('a wait for native Variables ends at once without the scopes when the learner stops the recorded session', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    const waiting = fixture.owner.awaitRetrieval('scopes', 60_000)
+
+    // Act
+    fixture.terminate()
+    const outcome = await Promise.race([
+      waiting,
+      delay(1_000, 'still waiting for native Variables'),
+    ])
+
+    // Assert
+    assert.equal(outcome, false)
+  } finally {
+    await fixture.owner.dispose()
+  }
+})

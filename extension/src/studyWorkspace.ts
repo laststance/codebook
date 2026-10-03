@@ -30,7 +30,10 @@ import {
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
   SHOW_NATIVE_VARIABLES_COMMANDS,
+  SHOW_NATIVE_VARIABLES_EXPAND_ATTEMPTS,
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
+  SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
+  SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
@@ -7171,18 +7174,45 @@ export class StudyWorkspace {
    * A host may not register a command (neither VS Code 1.140 nor Cursor 3.23 has a `workbench.debug.variablesView.focus`), and running a missing one
    * leaves "command … not found" in the reader, so the host is asked which commands exist before any of them runs.
    *
-   * @returns Resolves once the Variables commands the host registers ran, or its Run and Debug view opened, or the learner was told the manual step.
+   * The list commands act on the rows of the focused list, and Variables has none of the presented stop right after it took the focus:
+   * a view that was hidden while the stop changed asks for the stop's scopes only in its deferred refresh (which then expands the first
+   * scope itself), and a view opened for the first time needs a moment to fill its tree. So they run only after
+   * {@link ReplayDebugger.awaitRetrieval} saw those scopes asked for and the values not arrive by themselves; every wait is bounded.
+   *
+   * @returns Resolves once Variables listed the recorded values or the list commands the host registers ran their bounded attempts, or its Run and Debug view opened, or the learner was told the manual step.
    * @throws Whatever a command the host does register throws.
    * @example await this.showNativeVariables()
    */
   private async showNativeVariables(): Promise<void> {
     const hostCommands = new Set(await vscode.commands.getCommands(true))
-    const [focusVariablesCommand] = SHOW_NATIVE_VARIABLES_COMMANDS
-    // The list commands act on whichever list holds focus, so they run only after Variables took it.
+    const [focusVariablesCommand, ...listCommands] =
+      SHOW_NATIVE_VARIABLES_COMMANDS
     if (hostCommands.has(focusVariablesCommand)) {
-      for (const command of SHOW_NATIVE_VARIABLES_COMMANDS)
-        if (hostCommands.has(command))
-          await vscode.commands.executeCommand(command)
+      await vscode.commands.executeCommand(focusVariablesCommand)
+      const debuggerView = this.replayDebugger
+      // Until Variables asked for this stop's scopes its tree holds no row of it; the bound covers a view that never asks.
+      await debuggerView?.awaitRetrieval(
+        'scopes',
+        SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
+      )
+      for (
+        let attempt = 1;
+        attempt <= SHOW_NATIVE_VARIABLES_EXPAND_ATTEMPTS;
+        attempt++
+      ) {
+        // A refreshed view expands the first scope itself; the same wait lets a view that just opened fill its tree.
+        const valuesListed = await debuggerView?.awaitRetrieval(
+          'values',
+          SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
+        )
+        // A reader closed during the wait must not move the focus of whatever list the learner went on to.
+        if (valuesListed || this.closing || this.disposed) return
+        for (const command of listCommands)
+          if (hostCommands.has(command))
+            await vscode.commands.executeCommand(command)
+        // Without a historical session that can report the values, a second attempt has nothing to wait for.
+        if (!debuggerView?.available) return
+      }
       return
     }
     // Run and Debug is the nearest place this host can open; the reader's hint names the step that remains.

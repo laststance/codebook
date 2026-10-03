@@ -16,6 +16,11 @@ import {
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 test('restored Observed moments leaves its loading state after workspace initialization', async () => {
   // Arrange
@@ -1934,6 +1939,137 @@ test('Show Variables on a host with neither a Variables nor a Run and Debug comm
     ])
     assert.deepEqual(harness.commands.slice(commandsBefore), [])
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=one press of Show Variables listing the recorded values when Run and Debug was not opened before; fails_when=the list commands run before the just-opened Variables tree holds the stop's rows, so nothing is expanded, the hint stays and the learner must press again; why_new=Cycle 0044 (0031-U1 in VS Code 1.140: with Explorer in front and Variables never shown, the first press left every scope collapsed); seam=the harness's fake Variables view, which fills its tree 60 ms after it asked for the scopes
+test('Show Variables lists the recorded values on its first press when Run and Debug was not opened in the editor session', async () => {
+  // Arrange: a recorded stop presented while the host's Variables view was never shown, so its values are not loaded.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('never-opened')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const hintBefore = harness.postedMessages().slice(-1)[0]
+      ?.recording?.nativeValuesUninspected
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('show-variables')
+
+    // Assert
+    assert.equal(hintBefore, true)
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: true,
+      valuesListed: true,
+    })
+    assert.equal(
+      harness.postedMessages().slice(-1)[0]?.recording?.nativeValuesUninspected,
+      false,
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+      'list.focusFirst',
+      'list.expand',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables leaving a Variables view alone that loads the stop by itself; fails_when=the list commands run while that view's tree is still empty (they then act on whichever list last held the focus), or the press ends before the values are listed; why_new=Cycle 0044 (0031-U1 in VS Code 1.140: a Variables view hidden while the recording moved on loads the stop 400 ms after it is shown and expands the first scope itself); seam=the harness's fake Variables view and its deferred refresh
+test('Show Variables waits for a Variables view that missed the stop while hidden and sends it no list command once it listed the values itself', async () => {
+  // Arrange: a recorded stop presented while the host's Variables view, which showed an earlier stop, was hidden.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('missed-the-stop')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('show-variables')
+
+    // Assert
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: false,
+      valuesListed: true,
+    })
+    assert.equal(
+      harness.postedMessages().slice(-1)[0]?.recording?.nativeValuesUninspected,
+      false,
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables ending when the host's Variables view never loads the recorded stop; fails_when=the press waits without a bound, reports an error, or stops trying the list commands a host without that signal still needs; why_new=Cycle 0044 (0031-U1: the wait for the view must not hang or fail when its signal never comes); seam=the harness's fake Variables view showing another debug session, and a faked clock
+test('Show Variables finishes without an error when Run and Debug keeps showing another debug session', async (context) => {
+  // Arrange: a recorded stop whose values the host's Variables view never asks for.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('shows-another-session')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const commandsBefore = harness.commands.length
+    enableFakeClock(context)
+
+    // Act
+    const press = harness.reader.action('show-variables').then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    const elapsedMs = await advanceClockUntilSettled(context, press, 10_000)
+
+    // Assert: 2,000 ms for the scopes, then 200 ms before each of the two attempts.
+    assert.equal(await press, 'completed')
+    assert.equal(elapsedMs, 2_400)
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+      'list.focusFirst',
+      'list.expand',
+      'list.focusFirst',
+      'list.expand',
+    ])
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: false,
+      valuesListed: false,
+    })
+    assert.equal(
+      harness.postedMessages().slice(-1)[0]?.recording?.nativeValuesUninspected,
+      true,
+    )
+  } finally {
+    resetFakeClock(context)
     await harness.close()
   }
 })
