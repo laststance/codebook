@@ -1797,6 +1797,90 @@ test('closing the reader drops the Run and Debug hint of a saved Node stop', asy
   }
 })
 
+// Value: protects=one click from the Run and Debug hint to the recorded values; fails_when=Show Variables stops opening Run and Debug, expanding Variables or expanding its first scope, so the learner must do each by hand again; why_new=Cycle 0044 (0031-U1 / 0031-D4a); seam=vscode.commands.executeCommand, recorded by the harness
+test('Show Variables opens Run and Debug with Variables expanded and then expands its first scope', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('show-variables')
+
+    // Assert
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.variablesView.focus',
+      'list.focusFirst',
+      'list.expand',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=no enabled Inspect on a Node stop that can never be shown natively; fails_when=the reader is told about a source mismatch only for the selected stop, so an unselected stop with edited captured text keeps an Inspect that fails on every press; why_new=Cycle 0044 (0033-F3a / 0034-C3); seam=the loaded journal entry replaced in memory by one with edited captured text
+test('a shown Node stop whose captured text no longer matches its hash is reported to the reader even while another event is selected', async () => {
+  // Arrange: a loaded Node history whose first event (test output) is selected.
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    const verifiedBefore =
+      harness.reader.inspect().view!.nodeHistoryUnverifiedStops
+    const loaded = harness.reader['selectedNodeHistory']!
+    const stopIndex = loaded.entries.findIndex((entry) => entry.type === 'stop')
+    const stop = loaded.entries[stopIndex]!
+    assert.ok(stop.type === 'stop')
+
+    // Act: the stop's captured text differs from the text its hash sealed.
+    loaded.entries[stopIndex] = {
+      ...stop,
+      debuggerSnapshot: {
+        ...stop.debuggerSnapshot,
+        frames: stop.debuggerSnapshot.frames.map((frame, index) =>
+          index === 0 && frame.source
+            ? {
+                ...frame,
+                source: {
+                  ...frame.source,
+                  text: `${frame.source.text}// edited`,
+                },
+              }
+            : frame,
+        ),
+      },
+    }
+
+    // Assert
+    assert.deepEqual([...(verifiedBefore ?? [])], [])
+    assert.deepEqual(
+      [...(harness.reader.inspect().view!.nodeHistoryUnverifiedStops ?? [])],
+      [stop.sequence],
+    )
+    assert.equal(
+      harness.reader.inspect().view!.nodeHistoryPosition?.sequence,
+      1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Inspect offered again for a saved Node stop after closing disposed its native session; fails_when=close() keeps the stop's debugger availability, so the reopened reader hides Inspect although no session shows the stop; why_new=Cycle 0044 (0032-T6d / 0033-S7c); seam=none
 test('a saved Node stop shown in Run and Debug before the reader closed offers Inspect again after the reader reopens', async () => {
   // Arrange

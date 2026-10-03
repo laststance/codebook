@@ -169,6 +169,13 @@ export const PRESENTATION_FOCUS_ACTIONS = [
   'arrange',
   'enlarge-app',
   'enlarge-context',
+  'show-variables',
+] as const
+/** Native commands the reader's Show Variables control runs in order: open Run and Debug with Variables expanded and focused, then expand its first scope, which holds the recorded values. */
+export const SHOW_NATIVE_VARIABLES_COMMANDS = [
+  'workbench.debug.variablesView.focus',
+  'list.focusFirst',
+  'list.expand',
 ] as const
 export const PRESENTATION_MODE_IDS = [
   'study-workspace',

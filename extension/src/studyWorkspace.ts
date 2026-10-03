@@ -18,6 +18,7 @@ import {
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
+  SHOW_NATIVE_VARIABLES_COMMANDS,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
@@ -168,6 +169,7 @@ const actionSchema = z.enum([
   'arrange',
   'retry',
   'reload-recording',
+  'show-variables',
 ])
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
@@ -4070,6 +4072,10 @@ export class StudyWorkspace {
     }
     if (action === 'outline')
       await vscode.commands.executeCommand('codebook.learningOutline.focus')
+    // One click replaces opening Run and Debug, expanding Variables and expanding its first scope by hand.
+    if (action === 'show-variables')
+      for (const command of SHOW_NATIVE_VARIABLES_COMMANDS)
+        await vscode.commands.executeCommand(command)
     if (action === 'arrange') {
       try {
         // A Study click can precede Cursor's native focus notification after unmaximizing Application.
@@ -5880,6 +5886,16 @@ export class StudyWorkspace {
       },
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
       nodeHistoryLearningMaterial: this.selectedNodeHistoryLearningMaterial,
+      // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
+      nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries
+        .slice(
+          this.selectedNodeHistoryPage * NODE_HISTORY_READER_PAGE_SIZE,
+          (this.selectedNodeHistoryPage + 1) * NODE_HISTORY_READER_PAGE_SIZE,
+        )
+        .filter(
+          (entry) => entry.type === 'stop' && !nodeStopSourceMatches(entry),
+        )
+        .map((entry) => entry.sequence),
       nodeHistoryPlayback: this.nodeHistoryPlaybackController?.state(),
       nodeHistoryPosition: selectedNodeHistoryEvent && {
         sequence: selectedNodeHistoryEvent.sequence,
