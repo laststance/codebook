@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import { readResource } from '../resources'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { actionSchema } from '../schemas'
 import { startServer } from '../server'
 
@@ -670,7 +671,7 @@ for (const version of [1, 2])
     }
   })
 
-test('configured help tells an agent that only the next stop is armed and that a stop binds anywhere on its declared line', async (context) => {
+test('configured help tells an agent that only the next stop is armed and where its binding may lie', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -702,7 +703,15 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.match(
     contract.sourceBinding,
-    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position, and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\. A moved binding can lie in a branch the action skips; the stop then fails at the 20 second deadline, whose text names the bound place\. Any other binding on another line fails at once; declare the bound place instead, in a citation that covers it\./,
+    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position \(a kept comment is not one\), and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, and never when that line does not run; declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /A declared line without a mapped position \(a blank line, or a comment the generated module kept\) fails preparation before input; a blank or comment-only line fails there also when the map is too large to scan completely\./,
   )
   assert.match(
     contract.sequence[2] ?? '',
@@ -859,6 +868,90 @@ test('an observation committed on the line the debugger moved its stop to report
   assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
   assert.equal(facts.source.line, 2)
   assert.equal(facts.source.column, 1)
+})
+
+// Value: protects=an editor chat that reads an observation's inspectionUri, its pages or its imageUri with the standard MCP resources/read; fails_when=those URIs answer "Resource … not found" and are readable only through codebook_read_resource; why_new=resource tests read these URIs through the service, never through MCP templates (Cycle 0044 rows N-5, N-13); seam=the synthetic runtime's snapshot capture
+test('MCP resources/read returns an observation’s inspection, its pages and its snapshot image', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    endpoint = await startServer(service)
+  context.after(() => endpoint.close())
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'mcp-evidence',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    snapshot = runtime.snapshots[0]!,
+    image = Buffer.from('snapshot png fixture')
+  await writeFile(join(runtime.evidence.directory, 'snapshot-1.png'), image)
+  const view = runtime.view.bind(runtime)
+  runtime.view = () => ({
+    ...view(),
+    snapshotCaptures: {
+      [snapshot.id]: {
+        status: 'captured',
+        file: 'snapshot-1.png',
+        renderer: { epoch: 'fixture', id: 1, hash: sha256(image) },
+      },
+    },
+  })
+  const observation = service.state(record).observations[0]!
+  const client = new Client({ name: 'mcp-evidence-test', version: '1.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${endpoint.descriptor.token}` },
+      },
+    }),
+  )
+  context.after(() => client.close())
+  // Act
+  const inspection = await client.readResource({
+    uri: observation.inspectionUri,
+  })
+  const inspectionPage = z
+    .object({ contentHash: z.string(), content: z.string() })
+    .parse(
+      JSON.parse(
+        z.object({ text: z.string() }).parse(inspection.contents[0]).text,
+      ),
+    )
+  const firstPage = await client.readResource({
+    uri: `${observation.inspectionUri}/pages/${inspectionPage.contentHash}/0`,
+  })
+  const snapshotImage = await client.readResource({
+    uri: observation.imageUri!,
+  })
+  // Assert
+  assert.equal(
+    JSON.stringify(JSON.parse(inspectionPage.content).requestedSource),
+    '{"line":1,"column":1}',
+  )
+  assert.equal(
+    z
+      .object({ content: z.string() })
+      .parse(
+        JSON.parse(
+          z.object({ text: z.string() }).parse(firstPage.contents[0]).text,
+        ),
+      ).content,
+    inspectionPage.content,
+  )
+  assert.deepEqual(
+    z
+      .object({ mimeType: z.string(), blob: z.string() })
+      .parse(snapshotImage.contents[0]),
+    {
+      mimeType: 'image/png',
+      blob: Buffer.from('snapshot png fixture').toString('base64'),
+    },
+  )
 })
 
 test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {

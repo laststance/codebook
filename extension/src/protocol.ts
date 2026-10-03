@@ -413,6 +413,21 @@ export function createProtocol(service: StudyService): McpServer {
       'Immutable captured values and source binding; reading does not make it a live pause.',
     ],
     [
+      'inspection',
+      'codebook://{instance}/runs/{run}/snapshots/{snapshot}/inspection',
+      "An observation's inspectionUri: bound source position beside requestedSource and the captured values, as a bounded JSON page with nextUri.",
+    ],
+    [
+      'inspection-page',
+      'codebook://{instance}/runs/{run}/snapshots/{snapshot}/inspection/pages/{hash}/{offset}',
+      'A later page of an inspection; use only the returned nextUri. Concatenate every page in order before parsing.',
+    ],
+    [
+      'snapshot-image',
+      'codebook://{instance}/runs/{run}/snapshots/{snapshot}/image',
+      "An observation's imageUri: the confirmed PNG of the application at that stop; unavailable is explicit.",
+    ],
+    [
       'source',
       'codebook://{instance}/runs/{run}/snapshots/{snapshot}/source/{kind}',
       'Sealed typescript/javascript/map bytes. These remain historical after local source changes.',

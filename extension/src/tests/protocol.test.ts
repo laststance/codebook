@@ -282,7 +282,7 @@ test('real MCP discovery, action and reconnect retain one runtime and one click 
       'codebook_status',
       'codebook_stop',
     ])
-    assert.equal(templates.resourceTemplates.length, 17)
+    assert.equal(templates.resourceTemplates.length, 20)
     assert.equal(accepted.isError, undefined)
     assert.deepEqual(repeated.structuredContent, accepted.structuredContent)
     assert.equal(harness.runtimes[0]?.dispatches, 1)
@@ -682,7 +682,7 @@ test('cancelled MCP calls release HTTP capacity without closing their shared ses
     assert.equal(
       (await connection.client.listResourceTemplates()).resourceTemplates
         .length,
-      17,
+      20,
     )
     assert.equal(harness.runtimes.length, 0)
   } finally {
