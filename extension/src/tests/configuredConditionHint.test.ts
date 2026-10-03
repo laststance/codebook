@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { RepositoryCondition } from '../repositoryConfigSchemas'
+import {
+  configuredDomFailureSchema,
+  type RepositoryCondition,
+} from '../repositoryConfigSchemas'
 import { configuredConditionHint } from '../utils/configuredConditionHint'
 
 // Value: protects=an agent whose text condition timed out reading the comparison rule it cannot see from the page; fails_when=the rule sentence drifts or is dropped for a plain mismatch; why_new=a text mismatch had no hint; seam=none
-test('a timed-out text condition tells the agent that the whole text is compared with whitespace collapsed', () => {
+// Cycle 0044 (0041-F6): red while the rule omitted "trimmed" and that child texts join without a space.
+test('a timed-out text condition tells the agent that textContent is compared trimmed with whitespace collapsed and child texts joined without a space', () => {
   // Arrange
   const condition: RepositoryCondition = {
     kind: 'text',
@@ -19,7 +23,7 @@ test('a timed-out text condition tells the agent that the whole text is compared
   // Assert
   assert.equal(
     hint,
-    " A text condition compares the element's whole text, child elements included, with whitespace collapsed.",
+    " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied.",
   )
 })
 
@@ -43,11 +47,11 @@ test('a text condition whose element holds more text gets a fix that fits a befo
   // Assert
   assert.equal(
     beforeHint,
-    " A text condition compares the element's whole text, child elements included, with whitespace collapsed. Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.",
+    " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.",
   )
   assert.equal(
     afterHint,
-    " A text condition compares the element's whole text, child elements included, with whitespace collapsed. Here the element holds the expected text beside other text; keep the text check and choose a selector whose element holds only that text.",
+    " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the element holds the expected text beside other text; keep the text check and choose a selector whose element holds only that text.",
   )
 })
 
@@ -66,7 +70,7 @@ test('an attribute mismatch keeps its before-input sentence for a before value a
     attribute: 'class',
     equals: 'primary',
   }
-  const failure = { reason: 'attribute-mismatch' }
+  const failure = { reason: 'attribute-mismatch' } as const
   // Act
   const valueBeforeInput = configuredConditionHint(
     'before',
@@ -121,4 +125,39 @@ test('a failure whose reason already names the cause gets no hint', () => {
   assert.equal(notVisible, '')
   assert.equal(clickTargetObscured, '')
   assert.equal(attributeWithoutCondition, '')
+})
+
+// Cycle 0044 (0041-F8 / 0041-OCR1): red while the hint accepted any reason string, so a reason the page never sends compiled and silently got no hint.
+test('a timed-out failure reason the page never reports does not compile into a hint request', () => {
+  // Arrange
+  const condition: RepositoryCondition = { kind: 'visible', selector: 'h1' }
+  // Act
+  const hint = configuredConditionHint('before', condition, {
+    // @ts-expect-error A reason outside the page's failure schema is a type error, so a renamed reason cannot drift from its hint.
+    reason: 'text-differs',
+  })
+  // Assert
+  assert.equal(hint, '')
+})
+
+// Cycle 0044 (0041-F8 / 0041-OCR1): red while the schema accepted a text relation on any reason.
+test('a page failure that carries a text relation on another reason than a text mismatch is refused', () => {
+  // Arrange
+  const relationOnAttribute = {
+    conditionIndex: 0,
+    reason: 'attribute-mismatch',
+    textDifference: 'surrounding-text',
+  }
+  const relationOnText = {
+    conditionIndex: 0,
+    reason: 'text-mismatch',
+    textDifference: 'surrounding-text',
+  }
+  // Act
+  const attributeResult =
+    configuredDomFailureSchema.safeParse(relationOnAttribute)
+  const textResult = configuredDomFailureSchema.safeParse(relationOnText)
+  // Assert
+  assert.equal(attributeResult.success, false)
+  assert.deepEqual(textResult.data, relationOnText)
 })

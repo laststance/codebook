@@ -32,6 +32,7 @@ import {
 import { StudyError } from './errors'
 import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
 import type { BundleSource } from './repositoryBundle'
+import { configuredDomFailureSchema } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
 import type {
   ConfiguredRuntimeSnapshot,
@@ -142,26 +143,7 @@ const domResultSchema = z.object({
   ready: z.boolean(),
   x: z.number().finite().optional(),
   y: z.number().finite().optional(),
-  failure: z
-    .object({
-      conditionIndex: z.number().int().nonnegative().optional(),
-      reason: z.enum([
-        'invalid-selector',
-        'selector-missing',
-        'selector-not-unique',
-        'not-visible',
-        'text-mismatch',
-        'attribute-mismatch',
-        'click-target-missing',
-        'click-target-not-unique',
-        'click-target-not-visible',
-        'click-target-disabled',
-        'click-target-obscured',
-      ]),
-      // The only relation the page reports about a text mismatch; any other value fails the read instead of being dropped.
-      textDifference: z.literal('surrounding-text').optional(),
-    })
-    .optional(),
+  failure: configuredDomFailureSchema.optional(),
 })
 const bindingSchema = z.object({
   verified: z.literal(true),

@@ -527,7 +527,7 @@ test('a text condition holds when the element’s text and the declared text dif
     '#login': 'Log in ',
     '#result': '  Invalid\n credentials. ',
     '#plain': 'Log in',
-    '#nonBreaking': 'Log in\tnow',
+    '#nonBreaking': 'Log\u00a0in\tnow',
   }
   const environment = {
     document: {
@@ -756,4 +756,123 @@ test('required undefined remains an observed value distinct from null strings an
     result.unavailableValues.map((value) => value.path),
     ['value:fake', 'value:huge', 'value:invalid', 'value:handler'],
   )
+})
+
+/**
+ * Reads what the owned page answers for one declared text condition against an element holding the given text.
+ * @param elementText - The element's textContent.
+ * @param equals - The declared literal.
+ * @returns The page's serialized answer.
+ * @example
+ * readTextCondition('Log in', 'Log in') // => { ready: true }
+ */
+function readTextCondition(elementText: string, equals: string): unknown {
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector === '#target' ? [{ textContent: elementText }] : [],
+    },
+  }
+  return JSON.parse(
+    JSON.stringify(
+      runInNewContext(
+        configuredDomExpression([
+          { kind: 'text', selector: '#target', equals },
+        ]),
+        environment,
+      ),
+    ),
+  )
+}
+
+// Cycle 0044 (0041-F5 / 0041-CR2 / 0041-OCR2): red while the relation was a plain substring test, so a hint sent the agent to another selector although only the word differed.
+test('a declared text that is only part of a word of the element’s text is a plain text mismatch, not text beside other text', () => {
+  // Arrange
+  const cases = [
+    { elementText: 'Login failed', equals: 'Log' },
+    { elementText: 'Log into Acme', equals: 'Log in' },
+    { elementText: '10', equals: '1' },
+    { elementText: 'Online', equals: 'On' },
+  ]
+  // Act
+  const answers = cases.map(({ elementText, equals }) =>
+    readTextCondition(elementText, equals),
+  )
+  // Assert
+  for (const answer of answers)
+    assert.deepEqual(answer, {
+      ready: false,
+      failure: { conditionIndex: 0, reason: 'text-mismatch' },
+    })
+})
+
+// Cycle 0044 (0041-F5): the relation still holds for whole words beside punctuation or other words.
+test('a declared text that stands as whole words beside other text or punctuation still reports that relation', () => {
+  // Arrange
+  const besideWords = { elementText: 'Log in to Acme', equals: 'Log in' }
+  const besidePunctuation = { elementText: 'Total: 10 items', equals: '10' }
+  // Act
+  const wordsAnswer = readTextCondition(
+    besideWords.elementText,
+    besideWords.equals,
+  )
+  const punctuationAnswer = readTextCondition(
+    besidePunctuation.elementText,
+    besidePunctuation.equals,
+  )
+  // Assert
+  const relation = {
+    ready: false,
+    failure: {
+      conditionIndex: 0,
+      reason: 'text-mismatch',
+      textDifference: 'surrounding-text',
+    },
+  }
+  assert.deepEqual(wordsAnswer, relation)
+  assert.deepEqual(punctuationAnswer, relation)
+})
+
+// Cycle 0044 (0041-F7): red under a comparison that strips every whitespace character instead of collapsing runs.
+test('a text condition whose declared words are run together in the element is a text mismatch', () => {
+  // Arrange
+  const elementText = 'Login'
+  // Act
+  const answer = readTextCondition(elementText, 'Log in')
+  // Assert
+  assert.deepEqual(answer, {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'text-mismatch' },
+  })
+})
+
+// Cycle 0044 (0041-F7): red under an attribute comparison that collapses whitespace like the text comparison.
+test('an attribute condition is compared exactly, so a value that differs only in a doubled space is a mismatch', () => {
+  // Arrange
+  const element = {
+    getAttribute: (name: string) => (name === 'data-state' ? 'a  b' : null),
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector === '#target' ? [element] : [],
+    },
+  }
+  const expression = configuredDomExpression([
+    {
+      kind: 'attribute',
+      selector: '#target',
+      attribute: 'data-state',
+      equals: 'a b',
+    },
+  ])
+  // Act
+  const answer = JSON.parse(
+    JSON.stringify(runInNewContext(expression, environment)),
+  )
+  // Assert
+  assert.deepEqual(answer, {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'attribute-mismatch' },
+  })
 })

@@ -5,14 +5,17 @@ import {
   TEXT_BESIDE_OTHER_TEXT_BEFORE_HINT,
   TEXT_CONDITION_RULE_HINT,
 } from '../constants'
-import type { RepositoryCondition } from '../repositoryConfigSchemas'
+import type {
+  ConfiguredDomFailure,
+  RepositoryCondition,
+} from '../repositoryConfigSchemas'
 
 type ConditionPhase = 'before' | 'after'
-/** What the owned page reported for the condition that never held; `textDifference` is a relation to the declared literal, never page text. */
-interface TimedOutConditionFailure {
-  reason: string
-  textDifference?: 'surrounding-text'
-}
+/** The relation a text mismatch may report to the declared literal, never page text. */
+type TextDifference = Extract<
+  ConfiguredDomFailure,
+  { reason: 'text-mismatch' }
+>['textDifference']
 
 /**
  * Tells the editor agent how to correct a declared DOM condition that timed out, called by {@link ConfiguredBrowserRun} when it composes the timeout text of before and after conditions.
@@ -26,13 +29,13 @@ interface TimedOutConditionFailure {
  * - Every other failure: `''`
  * @example
  * configuredConditionHint('before', { kind: 'text', selector: 'button', equals: 'Log in' }, { reason: 'text-mismatch' })
- * // => " A text condition compares the element's whole text, child elements included, with whitespace collapsed."
+ * // => " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; …"
  * configuredConditionHint('before', { kind: 'visible', selector: 'h1' }, { reason: 'not-visible' }) // => ''
  */
 export function configuredConditionHint(
   phase: ConditionPhase,
   condition: RepositoryCondition | undefined,
-  failure: TimedOutConditionFailure,
+  failure: ConfiguredDomFailure,
 ): string {
   if (failure.reason === 'text-mismatch')
     return textConditionHint(phase, failure.textDifference)
@@ -55,7 +58,7 @@ const VALUE_ATTRIBUTE_HINT_BY_PHASE: Record<ConditionPhase, string> = {
 /** Adds the phase's fix only when the element holds the expected text beside other text. */
 function textConditionHint(
   phase: ConditionPhase,
-  textDifference: TimedOutConditionFailure['textDifference'],
+  textDifference: TextDifference,
 ): string {
   if (textDifference !== 'surrounding-text') return TEXT_CONDITION_RULE_HINT
   return TEXT_CONDITION_RULE_HINT + TEXT_BESIDE_OTHER_TEXT_HINT_BY_PHASE[phase]

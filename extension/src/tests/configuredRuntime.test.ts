@@ -128,7 +128,7 @@ test('a before text condition whose element holds more text ends the run with th
   // The run is loaded in its own module context, so its error is read by shape, not by `instanceof`.
   assert.equal(
     thrownMessage(failure),
-    "Timed out waiting for configured before conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole text, child elements included, with whitespace collapsed. Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.",
+    "Timed out waiting for configured before conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.",
   )
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
@@ -154,7 +154,7 @@ test('a before text condition on other text ends the run with the comparison rul
   // The run is loaded in its own module context, so its error is read by shape, not by `instanceof`.
   assert.equal(
     thrownMessage(failure),
-    "Timed out waiting for configured before conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole text, child elements included, with whitespace collapsed.",
+    "Timed out waiting for configured before conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied.",
   )
   assert.equal(mouse.length, 0)
 })

@@ -527,7 +527,7 @@ export const REPOSITORY_BINDING_HINT_EDGE_LINES = 20
 export const REPOSITORY_BINDING_HINT_NEAR_LINES = 40
 /** Appended to every timed-out `text` condition: the comparison rule, which the agent cannot read from the failure reason. Each hint begins with one space because it follows the reason's period. */
 export const TEXT_CONDITION_RULE_HINT =
-  " A text condition compares the element's whole text, child elements included, with whitespace collapsed."
+  " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied."
 /** Added for a before `text` condition whose element holds the expected text beside other text; a visible condition is enough when only presence matters. */
 export const TEXT_BESIDE_OTHER_TEXT_BEFORE_HINT =
   ' Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.'

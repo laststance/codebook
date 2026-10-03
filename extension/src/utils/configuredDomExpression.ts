@@ -8,7 +8,7 @@ export function configuredDomExpression(
   return `(${inspectDom.toString()})(${JSON.stringify(conditions)},${JSON.stringify(selector) ?? 'undefined'})`
 }
 
-/** Evaluates unique-node conditions (text with whitespace collapsed, attributes exactly) and an optional hittable click center inside the owned page; it is serialized with `toString()`, so everything it calls is declared inside it. @example inspectDom([{kind:'visible',selector:'button'}], 'button').ready */
+/** Evaluates unique-node conditions (textContent trimmed with whitespace runs collapsed, attributes exactly) and an optional hittable click center inside the owned page; it is serialized with `toString()`, so everything it calls is declared inside it. @example inspectDom([{kind:'visible',selector:'button'}], 'button').ready */
 function inspectDom(
   conditions: RepositoryConfiguration['action']['before'],
   selector?: string,
@@ -33,15 +33,21 @@ function inspectDom(
       style.opacity !== '0'
     )
   }
-  // Text is compared as a reader sees it: whitespace runs collapse to one space and both ends are trimmed, on both sides.
+  // Text is compared on textContent, on both sides: whitespace runs collapse to one space and both ends are trimmed. Child texts join without a space, and CSS white-space, zero-width spaces and soft hyphens are not applied.
   const collapseWhitespace = (value: string | null) =>
     (value ?? '').replace(/\s+/g, ' ').trim()
+  // The declared text stands as whole words in the element's text: no letter or digit touches it on either side ("Log in" in "Log in to Acme", never in "Log into Acme").
+  const holdsAsWords = (elementText: string, expectedText: string) =>
+    new RegExp(
+      `(?<![\\p{L}\\p{N}])${expectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`,
+      'u',
+    ).test(elementText)
   const textFailure = (element: Element, declaredText: string) => {
     const elementText = collapseWhitespace(element.textContent),
       expectedText = collapseWhitespace(declaredText)
     if (elementText === expectedText) return undefined
-    // Name only the relation to the declared literal: the element holds it beside other text.
-    return expectedText && elementText.includes(expectedText)
+    // Name only the relation to the declared literal: the element holds it, as whole words, beside other text.
+    return expectedText && holdsAsWords(elementText, expectedText)
       ? { reason: 'text-mismatch', textDifference: 'surrounding-text' }
       : { reason: 'text-mismatch' }
   }

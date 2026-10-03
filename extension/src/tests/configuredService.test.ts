@@ -738,7 +738,8 @@ test('configured help tells an agent that a continuation whose next stop cannot 
 })
 
 // Value: protects=an agent that reads the help once knowing what a text condition compares, in both fields that speak about conditions; fails_when=either sentence drifts, or the old "exact literals" wording comes back and contradicts the new rule; why_new=the help named no rule for whitespace and child text; seam=none
-test('configured help tells an agent that a text condition compares the whole text with whitespace collapsed, and what to declare for a button with an icon', async (context) => {
+// Cycle 0044 (0041-F6): red while the help said the text rule without the joined child texts and the characters it does not normalize.
+test('configured help tells an agent that a text condition compares the whole textContent trimmed with whitespace collapsed and child texts joined without a space, and what to declare for a button with an icon', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -750,7 +751,7 @@ test('configured help tells an agent that a text condition compares the whole te
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.inspections.endsWith(
-      " DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element's whole text, child elements included, with whitespace collapsed and trimmed on both sides; an attribute condition compares the entire value exactly.",
+      " DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed on both sides; the texts of child elements are joined without a space, and CSS white-space, zero-width spaces and soft hyphens are not applied; an attribute condition compares the entire value exactly.",
     ),
     true,
   )
