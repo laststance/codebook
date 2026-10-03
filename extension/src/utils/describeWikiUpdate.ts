@@ -1,64 +1,246 @@
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
+/** What the learner reads for one update state: the lead words that carry the state, the rest of the sentence, anything shortened in it, and the output line. */
+export type WikiUpdateDescription = {
+  /** State words shown strong, for example "Updated" or "Update failed". */
+  lead: string
+  /** Remainder of the text; `lead + rest` is the whole sentence. */
+  rest: string
+  /** Full conflict paths or the full reason when `rest` shortened them; empty otherwise. */
+  detail: string[]
+  /** The output line, for example "Output: .codebook/wiki". */
+  output: string
+  /** Whether the page was loaded before this result and should offer a reload. */
+  offerReload: boolean
+}
+
+/** How {@link describeWikiUpdate} formats and bounds its text. */
+export type WikiUpdateWording = {
+  /** Turns an ISO timestamp into the learner's local hour and minute. */
+  formatTime: (isoTimestamp: string) => string
+  /** How many conflict paths the sentence names before "and N more". */
+  pathLimit: number
+  /** How many characters of a failure reason the sentence shows. */
+  reasonLimitChars: number
+  /** When the reading page was loaded (epoch ms); omitted by the editor, which never offers a reload. */
+  pageLoadedAtMs?: number
+}
+
 /**
- * Writes the sentence the browser Wiki shows under its freshness label for one update state.
+ * Writes what the browser Wiki and the editor notification say for one update state.
  *
- * Why: the page must say running, result, failure or kept-site in plain words. The function is embedded into the served page script with `toString()`, so it must stay free of imports and outer variables.
- * Trigger: the reader page calls it with each `api/update-status` answer.
+ * Why: page and editor must say the same thing, say whether the site was kept or replaced, and name the next step. The function is embedded into the served page script with `toString()`, so it must stay free of imports and outer variables.
+ * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param formatTime - Turns an ISO timestamp into the learner's local time; the page uses the browser's locale.
- * @returns The sentence, or an empty string for an idle state (nothing to show).
+ * @param wording - Time format, the bounds of the sentence and the page's load time.
+ * @returns
+ * - Idle: undefined (nothing to show)
+ * - A state this version does not know: "Update status unknown."
+ * - Otherwise: the lead words, the rest of the sentence, shortened detail and the output line
  *
  * @example
  * ```ts
- * describeWikiUpdate({ state: 'cancelled', finishedAt: '2026-10-03T12:00:00.000Z', outputDirectory: '.codebook/wiki' })
- * // => 'Update cancelled. The last usable site is kept. Output: .codebook/wiki'
+ * describeWikiUpdate(
+ *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200 },
+ * )
+ * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
  */
 export function describeWikiUpdate(
   status: WikiUpdateStatus,
-  formatTime: (isoTimestamp: string) => string = (isoTimestamp) =>
-    new Date(isoTimestamp).toLocaleTimeString(),
-): string {
-  if (status.state === 'idle') return ''
-  const place = ' Output: ' + status.outputDirectory
-  if (status.state === 'running')
-    return (
-      'Updating LLM Wiki… started ' +
-      formatTime(status.startedAt) +
-      ' in ' +
-      (status.host === 'cursor' ? 'Cursor' : 'VS Code') +
-      '. The current site stays readable.' +
-      place
+  wording: WikiUpdateWording,
+): WikiUpdateDescription | undefined {
+  if (status.state === 'idle') return undefined
+  const output = 'Output: ' + (status.outputLabel || status.outputDirectory)
+  const describe = (
+    lead: string,
+    rest: string,
+    detail: string[] = [],
+    offerReload = false,
+  ): WikiUpdateDescription => ({ lead, rest, detail, output, offerReload })
+  const minutes = (durationMs: number): string => {
+    const count = Math.round(durationMs / 60000)
+    return count + (count === 1 ? ' minute' : ' minutes')
+  }
+  if (status.state === 'running') {
+    const since = wording.formatTime(status.startedAt)
+    const bound = minutes(status.timeoutMs)
+    if (status.host === 'cursor')
+      return describe(
+        'Updating LLM Wiki…',
+        (status.candidateStaged
+          ? ' Cursor Agent is preparing a new site (started ' +
+            since +
+            ', up to ' +
+            bound +
+            ').'
+          : ' Cursor Agent started at ' +
+            since +
+            ' and may take up to ' +
+            bound +
+            '.') +
+          ' Cancel it from the notification in Cursor. This site stays readable.',
+      )
+    return describe(
+      'Updating LLM Wiki…',
+      (status.candidateStaged
+        ? ' The VS Code chat is preparing a new site (request sent ' +
+          since +
+          '). Approve the steps it asks for. Codebook watches for the publish for up to '
+        : ' The request went to the VS Code chat at ' +
+          since +
+          '. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to ') +
+        bound +
+        '. This site stays readable.',
     )
-  if (status.state === 'succeeded')
-    return (
-      'Updated to ' +
-      status.identity +
-      '. Reload this page to read the new pages.' +
-      place
+  }
+  const at = wording.formatTime(status.finishedAt)
+  if (status.state === 'succeeded') {
+    // The identity is "<revision or no-revision>+<digest of the sources>".
+    const separator = status.identity.lastIndexOf('+')
+    const revision =
+      separator < 0 ? status.identity : status.identity.slice(0, separator)
+    const index = separator < 0 ? '' : status.identity.slice(separator + 1)
+    return describe(
+      'Updated',
+      revision === 'no-revision'
+        ? ' at ' + at + ' (index ' + index + '; no Git revision recorded).'
+        : ' at ' +
+            at +
+            ' to revision ' +
+            revision +
+            (index ? ' (index ' + index + ').' : '.'),
+      [],
+      wording.pageLoadedAtMs !== undefined &&
+        Date.parse(status.finishedAt) > wording.pageLoadedAtMs,
     )
+  }
   if (status.state === 'already-current')
-    return 'Already current. Nothing to update.' + place
-  if (status.state === 'failed')
-    return (
-      'Update failed: ' +
-      status.reason +
-      ' The last usable site is kept.' +
-      place
+    return describe(
+      'Already current',
+      ' (checked ' +
+        at +
+        '): this Wiki matches the source, so no update started.',
     )
-  if (status.state === 'cancelled')
-    return 'Update cancelled. The last usable site is kept.' + place
-  if (status.state === 'timed-out')
-    return (
-      'Update not finished in time. The last usable site is kept; a later publish shows as current here.' +
-      place
+  const replaced = status.site === 'replaced'
+  if (status.state === 'failed') {
+    const trimmed = status.reason.trim()
+    const isShortened = trimmed.length > wording.reasonLimitChars
+    const shown = isShortened
+      ? trimmed.slice(0, wording.reasonLimitChars).trimEnd() + '…'
+      : trimmed
+    // A reason from a thrown error often has no full stop; it must not run into the next sentence.
+    const sentence = /[.!?…]$/.test(shown) ? shown : shown + '.'
+    return replaced
+      ? describe(
+          'Update needs another run',
+          ' (' + at + '): ' + sentence + ' This run replaced the site on disk.',
+          isShortened ? [trimmed] : [],
+        )
+      : describe(
+          'Update failed',
+          ' at ' + at + ': ' + sentence + ' The last usable site is kept.',
+          isShortened ? [trimmed] : [],
+        )
+  }
+  if (status.state === 'cancelled') {
+    if (status.host === 'cursor')
+      return describe(
+        'Update cancelled',
+        ' at ' +
+          at +
+          (replaced
+            ? '. Cursor Agent was stopped after it replaced the site on disk; check the freshness label above.'
+            : '. Cursor Agent was stopped. The last usable site is kept.'),
+      )
+    return describe(
+      'Stopped watching',
+      ' at ' +
+        at +
+        (replaced
+          ? '. A new site was published just before; check the freshness label above.'
+          : '. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself. Nothing has been replaced so far.'),
     )
-  return (
-    'Update stopped: your file would be overwritten (' +
-    status.paths.join(', ') +
-    '). Nothing was replaced.' +
-    place
-  )
+  }
+  if (status.state === 'timed-out') {
+    const bound = minutes(status.timeoutMs)
+    if (status.host === 'cursor')
+      return describe(
+        'Update timed out',
+        ': Cursor Agent did not finish within ' +
+          bound +
+          ' and was stopped at ' +
+          at +
+          (replaced
+            ? ' after it replaced the site on disk; check the freshness label above.'
+            : '. The last usable site is kept. Press Update LLM Wiki to try again.'),
+      )
+    return describe(
+      'No new site appeared',
+      ' within ' +
+        bound +
+        ', so Codebook stopped watching at ' +
+        at +
+        (replaced
+          ? '. The site on disk changed during the watch; check the freshness label above.'
+          : '. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.'),
+    )
+  }
+  if (status.state === 'conflict') {
+    const isShortened = status.paths.length > wording.pathLimit
+    const named =
+      status.paths.slice(0, wording.pathLimit).join(', ') +
+      (isShortened
+        ? ' and ' + (status.paths.length - wording.pathLimit) + ' more'
+        : '')
+    const detail = isShortened ? status.paths.slice() : []
+    const many = status.paths.length > 1
+    if (status.cause === 'edited-page')
+      return describe(
+        'Update not started',
+        ' (' +
+          at +
+          '): ' +
+          (many ? 'generated pages were' : 'a generated page was') +
+          ' edited by hand (' +
+          named +
+          '), and the publisher will not overwrite ' +
+          (many ? 'them' : 'it') +
+          '. Move your change aside or restore the ' +
+          (many ? 'pages' : 'page') +
+          ', then press Update LLM Wiki again.',
+        detail,
+      )
+    if (status.cause === 'unfinished-publish')
+      return describe(
+        'Update not started',
+        ' (' +
+          at +
+          '): an earlier publish did not finish (' +
+          named +
+          '). Ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+        detail,
+      )
+    return describe(
+      'Update stopped',
+      ' at ' +
+        at +
+        ': it would overwrite your own ' +
+        (many ? 'files' : 'file') +
+        ' in the Wiki folder (' +
+        named +
+        '). ' +
+        (replaced
+          ? 'The site on disk changed during the run; check the freshness label above.'
+          : 'Nothing was replaced.') +
+        ' Move or rename ' +
+        (many ? 'them' : 'the file') +
+        ', then press Update LLM Wiki again.',
+      detail,
+    )
+  }
+  // A newer extension may answer a state this page does not know.
+  return describe('Update status unknown', '.')
 }

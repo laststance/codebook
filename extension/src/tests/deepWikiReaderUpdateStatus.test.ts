@@ -6,6 +6,10 @@ import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
 import { startDeepWikiReader } from '../deepWikiReader'
+import type {
+  WikiUpdateDescription,
+  WikiUpdateWording,
+} from '../utils/describeWikiUpdate'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 
 /** Publishes a minimal Wiki and serves it with the given update state provider. */
@@ -52,9 +56,12 @@ test('the Wiki reader answers the current update state at api/update-status', as
   // Arrange
   const wiki = await serveWiki(() => ({
     state: 'failed',
+    host: 'cursor',
     finishedAt: '2026-10-03T12:10:00.000Z',
     reason: 'Cursor Agent exited with code 1.',
+    site: 'kept',
     outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
   }))
   try {
     // Act
@@ -64,9 +71,12 @@ test('the Wiki reader answers the current update state at api/update-status', as
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), {
       state: 'failed',
+      host: 'cursor',
       finishedAt: '2026-10-03T12:10:00.000Z',
       reason: 'Cursor Agent exited with code 1.',
+      site: 'kept',
       outputDirectory: '/repo/.codebook/wiki',
+      outputLabel: '.codebook/wiki',
     })
   } finally {
     await wiki.close()
@@ -112,7 +122,10 @@ test('the update state is served while a publish has left the manifest unreadabl
     state: 'running',
     host: 'vscode',
     startedAt: '2026-10-03T12:03:00.000Z',
+    timeoutMs: 900_000,
+    candidateStaged: false,
     outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
   }))
   await writeFile(wiki.manifestPath, '{ not json')
   try {
@@ -142,19 +155,28 @@ test('the reader page script carries working code that words every update state 
       start >= 0 && end > start,
       'the page script embeds the update wording',
     )
-    const describe: (status: WikiUpdateStatus) => string = runInNewContext(
+    const describe: (
+      status: WikiUpdateStatus,
+      wording: WikiUpdateWording,
+    ) => WikiUpdateDescription | undefined = runInNewContext(
       `(${script.slice(start + 'var describeUpdate = ('.length, end)})`,
     )
-    const text = describe({
-      state: 'cancelled',
-      finishedAt: '2026-10-03T12:10:00.000Z',
-      outputDirectory: '.codebook/wiki',
-    })
+    const described = describe(
+      {
+        state: 'cancelled',
+        host: 'cursor',
+        finishedAt: '2026-10-03T12:10:00.000Z',
+        site: 'kept',
+        outputDirectory: '/repo/.codebook/wiki',
+        outputLabel: '.codebook/wiki',
+      },
+      { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200 },
+    )
 
     // Assert
     assert.equal(
-      text,
-      'Update cancelled. The last usable site is kept. Output: .codebook/wiki',
+      described && described.lead + described.rest + ' ' + described.output,
+      'Update cancelled at 21:10. Cursor Agent was stopped. The last usable site is kept. Output: .codebook/wiki',
     )
     assert.match(script, /api\/update-status/)
   } finally {

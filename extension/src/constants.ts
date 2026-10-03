@@ -314,6 +314,10 @@ export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 /** How often the reader page asks for the update state while a run is active. */
 export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
+/** How many conflict paths an update sentence names before "and N more". */
+export const WIKI_UPDATE_SHOWN_PATH_LIMIT = 3
+/** How many characters of a failure reason an update sentence shows before the full text moves to its disclosure. */
+export const WIKI_UPDATE_REASON_LIMIT_CHARS = 200
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536
 export const WIKI_CURSOR_PROMPT_LIMIT_BYTES = 131_072
 export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192
