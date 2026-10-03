@@ -49,20 +49,78 @@ test('the Wiki reader reports idle when no editor update state is connected', as
   }
 })
 
-test('the Wiki reader refuses to start an update through api/update-status', async () => {
+test('the Wiki reader refuses to start an update through api/update-status and names the method that works', async () => {
   // Arrange
   const wiki = await serveMinimalWiki()
   try {
     // Act
     const response = await fetch(
       new URL('api/update-status', wiki.reader.url),
-      {
-        method: 'POST',
-      },
+      { method: 'POST' },
     )
 
     // Assert
     assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
+    assert.deepEqual(await response.json(), {
+      error: 'This Wiki route only answers GET.',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('the freshness route refuses a write and names the method that works', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    // Act
+    const response = await fetch(new URL('api/freshness', wiki.reader.url), {
+      method: 'PUT',
+    })
+
+    // Assert
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
+    assert.deepEqual(await response.json(), {
+      error: 'This Wiki route only answers GET.',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a published page refuses a write and names the method that works', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    // Act
+    const response = await fetch(wiki.reader.url, { method: 'DELETE' })
+
+    // Assert
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
+    assert.deepEqual(await response.json(), {
+      error: 'This Wiki route only answers GET.',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a HEAD request for the update state stays refused', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    // Act
+    const response = await fetch(
+      new URL('api/update-status', wiki.reader.url),
+      { method: 'HEAD' },
+    )
+
+    // Assert
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
   } finally {
     await wiki.close()
   }

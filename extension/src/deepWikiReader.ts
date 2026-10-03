@@ -215,7 +215,7 @@ export async function startDeepWikiReader(
     // The update state needs no manifest, so it answers while a publish is replacing the site.
     if (relativePath === 'api/update-status') {
       if (request.method !== 'GET') {
-        sendJson(response, 405, { error: 'Unsupported Wiki update request.' })
+        sendGetOnly(response)
         return
       }
       sendJson(response, 200, readUpdateStatus())
@@ -226,9 +226,7 @@ export async function startDeepWikiReader(
       await readDeepWikiManifest(outputDirectory, projectRoot)
     if (relativePath === 'api/freshness') {
       if (request.method !== 'GET') {
-        sendJson(response, 405, {
-          error: 'Unsupported Wiki freshness request.',
-        })
+        sendGetOnly(response)
         return
       }
       sendJson(
@@ -291,7 +289,7 @@ export async function startDeepWikiReader(
       return
     }
     if (request.method !== 'GET') {
-      sendJson(response, 405, { error: 'Unsupported Wiki request.' })
+      sendGetOnly(response)
       return
     }
     if (relativePath === 'codebook-qa.js') {
@@ -366,6 +364,12 @@ export async function startDeepWikiReader(
     if (server.listening) server.close()
     throw error
   }
+}
+
+/** Refuses any other method on a read-only Wiki route and names the one that works, so a caller is told what to send instead. @param response - The answer to the refused request. @example sendGetOnly(response) // 405, Allow: GET */
+function sendGetOnly(response: ServerResponse): void {
+  response.setHeader('Allow', 'GET')
+  sendJson(response, 405, { error: 'This Wiki route only answers GET.' })
 }
 
 /** Returns a no-store JSON result to the browser reader after a page or model request. @example sendJson(response, 404, { error: 'Missing' }) */
