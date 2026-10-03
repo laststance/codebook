@@ -17,6 +17,7 @@ import {
   MAX_SOURCE_DOCUMENTS,
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
+  NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
@@ -29,6 +30,7 @@ import {
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
   SHOW_NATIVE_VARIABLES_COMMANDS,
+  SHOW_NATIVE_VARIABLES_MANUAL_STEP,
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
@@ -4320,9 +4322,7 @@ export class StudyWorkspace {
     if (action === 'outline')
       await vscode.commands.executeCommand('codebook.learningOutline.focus')
     // One click replaces opening Run and Debug, expanding Variables and expanding its first scope by hand.
-    if (action === 'show-variables')
-      for (const command of SHOW_NATIVE_VARIABLES_COMMANDS)
-        await vscode.commands.executeCommand(command)
+    if (action === 'show-variables') await this.showNativeVariables()
     if (action === 'arrange') {
       try {
         // A Study click can precede Cursor's native focus notification after unmaximizing Application.
@@ -7163,6 +7163,35 @@ export class StudyWorkspace {
           'codebook.learningSummary',
         )
     })().catch((error: unknown) => this.report('layout', error))
+  }
+
+  /**
+   * Shows the recorded values in the host's own Variables view; called by {@link action} for the reader's Show Variables control.
+   *
+   * Hosts register different commands (Cursor 3.23.12 has no `workbench.debug.variablesView.focus`), and running a missing one
+   * leaves "command … not found" in the reader, so the host is asked which commands exist before any of them runs.
+   *
+   * @returns Resolves once the Variables commands the host registers ran, or its Run and Debug view opened, or the learner was told the manual step.
+   * @throws Whatever a command the host does register throws.
+   * @example await this.showNativeVariables()
+   */
+  private async showNativeVariables(): Promise<void> {
+    const hostCommands = new Set(await vscode.commands.getCommands(true))
+    const [focusVariablesCommand] = SHOW_NATIVE_VARIABLES_COMMANDS
+    // The list commands act on whichever list holds focus, so they run only after Variables took it.
+    if (hostCommands.has(focusVariablesCommand)) {
+      for (const command of SHOW_NATIVE_VARIABLES_COMMANDS)
+        if (hostCommands.has(command))
+          await vscode.commands.executeCommand(command)
+      return
+    }
+    // Run and Debug is the nearest place this host can open; the reader's hint names the step that remains.
+    if (hostCommands.has(NATIVE_RUN_AND_DEBUG_VIEW_COMMAND)) {
+      await vscode.commands.executeCommand(NATIVE_RUN_AND_DEBUG_VIEW_COMMAND)
+      return
+    }
+    // Nothing to run: one sentence instead of a failed command.
+    void vscode.window.showInformationMessage(SHOW_NATIVE_VARIABLES_MANUAL_STEP)
   }
 
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */
