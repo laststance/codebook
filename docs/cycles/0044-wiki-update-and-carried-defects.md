@@ -201,7 +201,7 @@ Limits of this level: the state lives in one editor window, so a second window o
 
 Remaining differences from region 3 of the approved PNG, by decision of the design review: the group is a neutral bordered panel instead of the tinted one, with no icon before the freshness label; the button sits under the label as in the PNG; "On this page", "Open in VS Code" and the output block predate this cycle and are unchanged.
 
-Full suite on the merged tree `3644cd5` (this branch with Groups 1 to 3 and both sides of Part 1): 2,236 of 2,236.
+Full suite on the merged tree `3644cd5` (this branch with Groups 1 to 3 and both sides of Part 1): 2,236 of 2,236 reported, ten of them from compiled files of test sources this cycle deleted (`continuationReceipts`, `isBindingLineAccepted`) that were still in `dist`; the count that closes the cycle is taken from a clean build.
 
 ### Part 2
 
