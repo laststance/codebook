@@ -1878,6 +1878,54 @@ test('opening a recording never tells the learner the captured source is not rea
   }
 })
 
+// Value: protects=the 5 s paint bound for a settle that begins while a frame is already painting (Restore layout or an evidence navigation during a slow paint); fails_when=the bound is armed only for paints that begin after the settle started, so the wait runs to the 23 s ceiling; why_new=Cycle 0044 (0031-U7b / 0031-S3 / 0032-T6a / 0033-PA3 / 0033-S7a / 0034-T5: no test reached that arm); seam=node:test setTimeout mock and the reader's settleOwnedPlayback
+test('a replay settle that starts while a frame is already painting fails 5 s after that paint began, not 5 s after the settle began', async (context) => {
+  // Arrange: a learner seek whose frame has been painting for 3 s.
+  const harness = await recordedReaderHarness(true)
+  let releasePaint = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const stuckPaint = harness.holdNextImage()
+    releasePaint = stuckPaint.release
+    enableFakeClock(context)
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await advanceClockUntilSettled(context, stuckPaint.started, 2_000)
+    await advanceClock(context, 3_000)
+
+    // Act
+    let outcome = 'still settling'
+    void harness.reader['settleOwnedPlayback']().then(
+      () => {
+        outcome = 'settled'
+      },
+      (error: unknown) => {
+        outcome =
+          error instanceof Error && 'code' in error
+            ? String(error.code)
+            : String(error)
+      },
+    )
+    await advanceClock(context, 1_750)
+    const at4750msOfPainting = outcome
+    await advanceClock(context, 750)
+    const at5500msOfPainting = outcome
+
+    // Assert
+    assert.equal(at4750msOfPainting, 'still settling')
+    assert.equal(at5500msOfPainting, 'PRESENTATION_UNAVAILABLE')
+  } finally {
+    resetFakeClock(context)
+    releasePaint()
+    await harness.close()
+  }
+})
+
 // Value: protects=the recording renderer handshake after abandoned reveals; fails_when=the pending reveal is cleared before it completes, so after two aborted reveals a later presentation gets the viewport without its handshake; why_new=Cycle 0044 (0034-C4); seam=the reused recording viewport's reveal, replaced to observe each handshake
 test('after two abandoned recording reveals the next presentation still waits for the renderer handshake', async () => {
   // Arrange: a reused recording viewport whose reveal is still owed, and a reveal that finishes only after its caller left.

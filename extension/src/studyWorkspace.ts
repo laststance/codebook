@@ -13,7 +13,6 @@ import {
   MAX_SOURCE_DOCUMENTS,
   NODE_TEST_PROFILE,
   PLAYBACK_SECOND_MS,
-  PRESENTATION_MODE_IDS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
@@ -727,31 +726,6 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         'A presentation change or reader close is pending. Read its state before another control.',
       )
-  }
-
-  /** Shares the command picker with UI/MCP mode control; cancellation has no state or native effect. @example await workspace.selectPresentation() */
-  async selectPresentation(): Promise<void> {
-    this.assertPresentationIdle()
-    const state = this.presentationState()
-    const selected = await vscode.window.showQuickPick(
-      PRESENTATION_MODE_IDS.map((mode) => ({
-        mode,
-        label: STUDY_PRESENTATIONS[mode].title,
-        description: STUDY_PRESENTATIONS[mode].description,
-        picked: mode === state.mode,
-      })),
-      {
-        title: 'Codebook: Select Presentation',
-        placeHolder: 'Keep the same learning item, run and recording',
-      },
-    )
-    if (selected)
-      await this.changePresentation({
-        presentationId: state.presentationId,
-        expectedRevision: state.presentationControlRevision,
-        mode: selected.mode,
-        action: 'select',
-      })
   }
 
   /** Reserves one current reader intent before asynchronous work; all three entry points share its native/storage receipts. @example await workspace.changePresentation({presentationId,expectedRevision:0,mode:'living-book',action:'select'}) */

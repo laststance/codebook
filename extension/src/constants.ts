@@ -175,6 +175,11 @@ export const PRESENTATION_MODE_IDS = [
   'living-book',
   'guided-walkthrough',
 ] as const
+/** The only layout a command or agent may still select; Living book and Guided walkthrough are retired and stay only in a reader whose saved preference still names one. */
+export const SELECTABLE_PRESENTATION_MODE = 'study-workspace'
+/** What an agent reads when it asks for a retired layout through `codebook_presentation`. */
+export const RETIRED_PRESENTATION_REFUSAL =
+  'The Living book and Guided walkthrough layouts are retired. Select study-workspace; focus, restore and save-preference still accept the mode the reader reports.'
 export const STUDY_PRESENTATIONS = {
   'study-workspace': {
     title: 'Study workspace',

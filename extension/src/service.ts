@@ -32,6 +32,8 @@ import {
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
+  RETIRED_PRESENTATION_REFUSAL,
+  SELECTABLE_PRESENTATION_MODE,
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
 } from './constants'
@@ -365,7 +367,7 @@ export class StudyService {
         ? {
             ...(await this.presentationState(this.instanceId)),
             instructions:
-              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. Select the same learner workspace in three modes. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
+              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. Study workspace is the only layout that can be selected; the retired Living book and Guided walkthrough layouts stay only where a saved preference still names one. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
           }
         : undefined,
       repository: {
@@ -524,6 +526,17 @@ export class StudyService {
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
+      )
+    // Living book and Guided walkthrough are retired: a reader whose saved preference still names one keeps it, but nothing selects one anew.
+    if (
+      input.action === 'select' &&
+      input.mode !== SELECTABLE_PRESENTATION_MODE &&
+      (await this.presentationController.readPresentationState()).mode !==
+        input.mode
+    )
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        RETIRED_PRESENTATION_REFUSAL,
       )
     await this.presentationController.changePresentation(input)
     return this.presentationState(input.instanceId)
