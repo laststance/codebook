@@ -213,6 +213,16 @@ export function describeWikiUpdate(
           ', then press Update LLM Wiki again.',
         detail,
       )
+    if (status.cause === 'edited-manifest')
+      return describe(
+        'Update not started',
+        ' (' +
+          at +
+          '): the Wiki’s manifest (' +
+          named +
+          ') was changed after it was published, and the publisher will not replace it. Keep a copy of your change, ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+        detail,
+      )
     if (status.cause === 'unfinished-publish')
       return describe(
         'Update not started',

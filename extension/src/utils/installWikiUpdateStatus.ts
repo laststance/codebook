@@ -1,6 +1,11 @@
 import type { describeWikiUpdate } from './describeWikiUpdate'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
+/** What the reader answers at `api/update-status`: the run state and when the site on disk was published (absent while no manifest is readable). */
+export type WikiUpdateStatusAnswer = WikiUpdateStatus & {
+  sitePublishedAt?: string
+}
+
 /** What the served page script hands to {@link installWikiUpdateStatus}: where its reader answers, the shared wording and the page's bounds. */
 export type WikiUpdatePageSettings = {
   /** Path prefix of the reader that served the page, for example "/w/<token>/". */
@@ -40,7 +45,7 @@ export type WikiUpdatePageSettings = {
  *   startWaitMs: 120_000,
  *   statusRetryLimit: 3,
  *   pathLimit: 3,
- *   reasonLimitChars: 200,
+ *   reasonLimitChars: 400,
  * })
  * ```
  */
@@ -138,8 +143,8 @@ export function installWikiUpdateStatus(
   let lastAnswerText = ''
   /** The last freshness the reader answered; undefined before the first answer and after a read that failed. */
   let freshness: string | undefined
-  /** Whether this page saw the site out of date, so a later "current" is a publish it has not loaded. */
-  let hasSeenStaleSite = false
+  /** When the site on disk was published, as the reader last answered it (epoch ms); undefined while no manifest is readable. */
+  let sitePublishedAtMs: number | undefined
   /** After a press of the link: the answer at that moment, and until when the page waits for a different one. */
   let isAwaitingStart = false
   let answerAtPress: string | undefined
@@ -161,7 +166,7 @@ export function installWikiUpdateStatus(
     return answer
   }
   /** The reader's answer is JSON from another process; a state name is all the page relies on before wording it. */
-  const isUpdateStatus = (answer: unknown): answer is WikiUpdateStatus =>
+  const isUpdateStatus = (answer: unknown): answer is WikiUpdateStatusAnswer =>
     typeof answer === 'object' &&
     answer !== null &&
     'state' in answer &&
@@ -181,7 +186,6 @@ export function installWikiUpdateStatus(
   /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. */
   const noteFreshness = (status: string | undefined, reason: string): void => {
     freshness = status
-    if (status !== undefined && status !== 'current') hasSeenStaleSite = true
     if (!freshnessLabel) return
     freshnessLabel.textContent =
       status === 'current'
@@ -289,16 +293,28 @@ export function installWikiUpdateStatus(
       freshness === 'changed'
     )
       return undefined
-    // The editor chat may publish after its run was given up; the site on disk then matches the source after all.
-    if (isEndedWithoutSuccess(state) && freshness === 'current')
-      return {
-        state: 'late-publish',
-        lead: 'A new site was published',
-        rest: ' after this run ended and matches the source.',
-        detail: [],
-        output: described.output,
-        offerReload: hasSeenStaleSite,
-      }
+    if (
+      isEndedWithoutSuccess(state) &&
+      'finishedAt' in lastAnswer &&
+      freshness === 'current'
+    ) {
+      // The editor chat may publish after its run was given up; the site on disk then matches the source after all.
+      if (
+        sitePublishedAtMs !== undefined &&
+        sitePublishedAtMs > Date.parse(lastAnswer.finishedAt)
+      )
+        return {
+          state: 'late-publish',
+          lead: 'A new site was published',
+          rest: ' after this run ended and matches the source.',
+          detail: [],
+          output: described.output,
+          // Only a page loaded before that publish still shows the older pages.
+          offerReload: sitePublishedAtMs > performance.timeOrigin,
+        }
+      // Nothing was published since, so the source itself went back to what the site describes: "needs another run" no longer holds.
+      if (state === 'failed' && lastAnswer.site === 'replaced') return undefined
+    }
     return { state, ...described }
   }
   /** Fills the disclosure with what the sentence shortened: every conflicting file, or the whole failure message. */
@@ -396,9 +412,15 @@ export function installWikiUpdateStatus(
       if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))
         throw new Error('The update answer has no state.')
-      // A finished run changes freshness, and a run that ended without success may be overtaken by a later publish.
-      if (noteAnswer(answer) || isEndedWithoutSuccess(answer.state))
-        isFreshnessDue = true
+      const { sitePublishedAt, ...status } = answer
+      const answeredPublishMs =
+        typeof sitePublishedAt === 'string'
+          ? Date.parse(sitePublishedAt)
+          : undefined
+      const didSiteChange = answeredPublishMs !== sitePublishedAtMs
+      sitePublishedAtMs = answeredPublishMs
+      // A finished run changes freshness, and so does a publish: the chat may publish after its run was given up. Hashing the sources at every idle look would cost more than it tells.
+      if (noteAnswer(status) || didSiteChange) isFreshnessDue = true
     } catch {
       if (lookNumber !== lookCount) return
       noteFailedRead()

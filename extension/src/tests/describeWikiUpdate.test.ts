@@ -454,6 +454,28 @@ test('a hand-edited generated page is named as the reason no update started, wit
   )
 })
 
+test('a manifest changed after its publish is named as the reason no update started, with the recovery that restores it', () => {
+  // Arrange
+  const status: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['codebook-wiki.json'],
+    cause: 'edited-manifest',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(status, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): the Wiki’s manifest (codebook-wiki.json) was changed after it was published, and the publisher will not replace it. Keep a copy of your change, ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+  )
+})
+
 test('an unfinished earlier publish is named as the reason no update started, with the recovery', () => {
   // Arrange
   const status: WikiUpdateStatus = {

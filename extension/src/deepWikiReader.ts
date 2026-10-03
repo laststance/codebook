@@ -9,6 +9,7 @@ import { join, relative, sep } from 'node:path'
 
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
+  WIKI_MANIFEST_FILE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
@@ -24,7 +25,11 @@ import type {
 import { describeWikiUpdate } from './utils/describeWikiUpdate'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { installShortcutHelp } from './utils/installShortcutHelp'
-import { installWikiUpdateStatus } from './utils/installWikiUpdateStatus'
+import {
+  installWikiUpdateStatus,
+  type WikiUpdateStatusAnswer,
+} from './utils/installWikiUpdateStatus'
+import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
@@ -94,7 +99,7 @@ export async function readDeepWikiManifest(
   excludedPaths: string[]
 }> {
   const manifest: unknown = JSON.parse(
-    await readFile(join(outputDirectory, 'codebook-wiki.json'), 'utf8'),
+    await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
   )
   if (
     typeof manifest !== 'object' ||
@@ -218,7 +223,11 @@ export async function startDeepWikiReader(
         sendGetOnly(response)
         return
       }
-      sendJson(response, 200, readUpdateStatus())
+      // The publish time lets the page tell a publish after the run ended from a source that went back by itself.
+      sendJson(response, 200, {
+        ...readUpdateStatus(),
+        sitePublishedAt: await readWikiPublishedAt(outputDirectory),
+      } satisfies WikiUpdateStatusAnswer)
       return
     }
     // An agent may publish a new owned directory while this reader stays open.

@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -40,6 +47,29 @@ test('a generated page the learner deleted blocks the start like an edited one',
 
     // Assert
     assert.deepEqual(block, { cause: 'edited-page', paths: ['index.html'] })
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a manifest changed after its publish blocks the start and is named, as the real publisher refuses it too', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  const manifestPath = join(wiki.outputDirectory, 'codebook-wiki.json')
+  await writeFile(manifestPath, `${await readFile(manifestPath, 'utf8')}\n`)
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, {
+      cause: 'edited-manifest',
+      paths: ['codebook-wiki.json'],
+    })
+    await assert.rejects(
+      wiki.prepare(),
+      /The published Wiki manifest changed after generation/,
+    )
   } finally {
     await wiki.cleanup()
   }

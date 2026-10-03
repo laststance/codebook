@@ -4,9 +4,9 @@ export type WikiUpdateHost = 'vscode' | 'cursor'
 /** Whether the published site was the same when a run ended (`kept`) or was replaced during it (`replaced`). */
 export type WikiUpdateSite = 'kept' | 'replaced'
 
-/** Why an update would overwrite or cannot replace something: a learner's own file, a generated page edited by hand, or an earlier publish that did not finish. */
+/** Why an update would overwrite or cannot replace something: a learner's own file, a generated page edited by hand, the manifest changed after its publish, or an earlier publish that did not finish. */
 export type WikiUpdateConflictCause =
-  'learner-file' | 'edited-page' | 'unfinished-publish'
+  'learner-file' | 'edited-page' | 'edited-manifest' | 'unfinished-publish'
 
 /** Where the Wiki lives: the absolute resolved folder, and the text the learner reads for it (project-relative when inside the project). */
 export type WikiUpdateOutput = { outputDirectory: string; outputLabel: string }

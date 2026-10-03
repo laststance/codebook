@@ -103,6 +103,15 @@ test('the packaged README names every state word the update wording can lead wit
       state: 'conflict',
       host: 'vscode',
       finishedAt,
+      paths: ['codebook-wiki.json'],
+      cause: 'edited-manifest',
+      site: 'kept',
+      ...output,
+    },
+    {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt,
       paths: ['wiki.publish-journal.json'],
       cause: 'unfinished-publish',
       site: 'kept',
@@ -166,6 +175,7 @@ test('the packaged README names the state words only the page itself can show', 
       site: 'kept',
       ...output,
     },
+    sitePublishedAt: '2026-10-03T11:59:00.000Z',
   })
 
   // Act

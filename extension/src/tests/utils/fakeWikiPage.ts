@@ -13,6 +13,8 @@ type PageNode = PageElement | string
 const CLOCK_STEP_MS = 1_000
 /** When a fake page is loaded unless the test says otherwise. */
 const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
+/** When the site a fake reader serves was published unless the test says otherwise. */
+const SITE_PUBLISHED_AT = '2026-10-03T11:30:00.000Z'
 
 /**
  * One element of the hand-written page the served Wiki script runs against in tests; it has only what that script uses.
@@ -201,6 +203,8 @@ export type FakeWikiPageLayout =
 /** The fake reader behind the page: what its routes answer next. A test changes the fields between steps. */
 export type FakeWikiReader = {
   updateStatus: WikiUpdateStatus
+  /** When the site on disk was published (ISO timestamp); undefined answers like a reader whose manifest is missing. */
+  sitePublishedAt: string | undefined
   freshness: WikiFreshness['status']
   /** When true every request fails the way a closed reader does. */
   isDown: boolean
@@ -279,7 +283,7 @@ function buildRail(layout: FakeWikiPageLayout): PageElement[] {
  *
  * @param script - The served `codebook-qa.js`.
  * @param layout - Which right rail the page starts with.
- * @param reader - What the fake reader answers at load; idle, current and reachable unless given.
+ * @param reader - What the fake reader answers at load; idle, current, reachable and a site published half an hour before the page was loaded unless given.
  * @param loadedAt - When the page was loaded (ISO timestamp); the page clock starts there.
  * @returns The page after its first reads finished.
  *
@@ -300,6 +304,7 @@ export async function openFakeWikiPage(
   const readerPrefix = '/w/fake-reader-token/'
   const pageReader: FakeWikiReader = {
     updateStatus: { state: 'idle' },
+    sitePublishedAt: SITE_PUBLISHED_AT,
     freshness: 'current',
     isDown: false,
     ...reader,
@@ -402,7 +407,10 @@ export async function openFakeWikiPage(
       if (route === 'api/update-status')
         return {
           ok: true,
-          json: async () => structuredClone(pageReader.updateStatus),
+          json: async () => ({
+            ...structuredClone(pageReader.updateStatus),
+            sitePublishedAt: pageReader.sitePublishedAt,
+          }),
         }
       if (route === 'api/freshness')
         return {

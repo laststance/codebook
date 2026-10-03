@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
 
-import { WIKI_MANIFEST_FILE, WIKI_PUBLISH_JOURNAL_SUFFIX } from '../constants'
+import {
+  WIKI_MANIFEST_FILE,
+  WIKI_PUBLICATION_RECEIPT_FILE,
+  WIKI_PUBLISH_JOURNAL_SUFFIX,
+} from '../constants'
 
 import type { WikiUpdateRefusal } from './wikiUpdateRun'
 
@@ -41,15 +45,38 @@ async function readOwnedFileHashes(
   }
 }
 
+/** Reads the manifest hash the publisher recorded beside the Wiki at its publish; undefined for a Wiki without a publication receipt. */
+async function readReceiptManifestHash(
+  outputDirectory: string,
+): Promise<string | undefined> {
+  try {
+    const receipt: unknown = JSON.parse(
+      await readFile(
+        join(outputDirectory, WIKI_PUBLICATION_RECEIPT_FILE),
+        'utf8',
+      ),
+    )
+    return typeof receipt === 'object' &&
+      receipt !== null &&
+      'manifestSha256' in receipt &&
+      typeof receipt.manifestSha256 === 'string'
+      ? receipt.manifestSha256
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Finds what makes the publisher refuse an update before it stages anything: an earlier publish that did not finish, or a generated page that was edited by hand.
+ * Finds what makes the publisher refuse an update before it stages anything: an earlier publish that did not finish, a manifest changed after its publish, or a generated page that was edited by hand.
  *
- * Why: in both cases the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out. Found before the start, the learner reads the reason at once and no agent is asked.
+ * Why: in each case the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out. Found before the start, the learner reads the reason at once and no agent is asked.
  * Trigger: the extension calls it when an update starts, after the already-current check and before the run begins; it sits next to {@link detectWikiPublishConflicts}, which covers the learner's own files.
  *
  * @param outputDirectory - Resolved Wiki output folder.
  * @returns
  * - `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name
+ * - The manifest's bytes differ from the hash in the publication receipt: cause `edited-manifest` with the manifest's file name
  * - Published files whose bytes differ from the manifest's `ownedFiles` hash, or that are gone: cause `edited-page` with their paths, sorted
  * - Otherwise: undefined
  *
@@ -66,10 +93,19 @@ export async function findWikiUpdateStartBlock(
   const journalPath = outputDirectory + WIKI_PUBLISH_JOURNAL_SUFFIX
   if (await stat(journalPath).catch(() => undefined))
     return { cause: 'unfinished-publish', paths: [basename(journalPath)] }
+  const manifestPath = join(outputDirectory, WIKI_MANIFEST_FILE)
+  const receiptManifestHash = await readReceiptManifestHash(outputDirectory)
+  const manifestBytes = await readFile(manifestPath).catch(() => undefined)
+  // The publisher compares the manifest with its receipt before it looks at any page.
+  if (
+    receiptManifestHash &&
+    manifestBytes &&
+    createHash('sha256').update(manifestBytes).digest('hex') !==
+      receiptManifestHash
+  )
+    return { cause: 'edited-manifest', paths: [WIKI_MANIFEST_FILE] }
   const editedPaths: string[] = []
-  for (const [path, sha256] of await readOwnedFileHashes(
-    join(outputDirectory, WIKI_MANIFEST_FILE),
-  )) {
+  for (const [path, sha256] of await readOwnedFileHashes(manifestPath)) {
     const bytes = await readFile(join(outputDirectory, path)).catch(
       () => undefined,
     )

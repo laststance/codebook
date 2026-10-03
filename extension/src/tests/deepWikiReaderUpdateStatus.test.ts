@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { rm, utimes, writeFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 import { serveMinimalWiki } from './utils/serveMinimalWiki'
@@ -15,6 +15,8 @@ test('the Wiki reader answers the current update state at api/update-status', as
     outputDirectory: '/repo/.codebook/wiki',
     outputLabel: '.codebook/wiki',
   }))
+  const publishedAt = new Date('2026-10-03T11:50:00.000Z')
+  await utimes(wiki.manifestPath, publishedAt, publishedAt)
   try {
     // Act
     const response = await fetch(new URL('api/update-status', wiki.reader.url))
@@ -29,6 +31,7 @@ test('the Wiki reader answers the current update state at api/update-status', as
       site: 'kept',
       outputDirectory: '/repo/.codebook/wiki',
       outputLabel: '.codebook/wiki',
+      sitePublishedAt: '2026-10-03T11:50:00.000Z',
     })
   } finally {
     await wiki.close()
@@ -38,11 +41,32 @@ test('the Wiki reader answers the current update state at api/update-status', as
 test('the Wiki reader reports idle when no editor update state is connected', async () => {
   // Arrange
   const wiki = await serveMinimalWiki()
+  const publishedAt = new Date('2026-10-03T11:50:00.000Z')
+  await utimes(wiki.manifestPath, publishedAt, publishedAt)
   try {
     // Act
     const response = await fetch(new URL('api/update-status', wiki.reader.url))
 
     // Assert
+    assert.deepEqual(await response.json(), {
+      state: 'idle',
+      sitePublishedAt: '2026-10-03T11:50:00.000Z',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('the update state names no publish time while the publisher has taken the manifest away', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  await rm(wiki.manifestPath)
+  try {
+    // Act
+    const response = await fetch(new URL('api/update-status', wiki.reader.url))
+
+    // Assert
+    assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), { state: 'idle' })
   } finally {
     await wiki.close()

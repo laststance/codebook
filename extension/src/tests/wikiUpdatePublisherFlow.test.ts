@@ -84,6 +84,37 @@ test('a generated page the learner edited by hand stops the update before any ch
   }
 })
 
+test('a manifest changed after its publish stops the update before any chat request instead of letting the watch time out', async () => {
+  // Arrange
+  const wiki = await openPublishedWikiWindow()
+  const manifestPath = join(wiki.outputDirectory, 'codebook-wiki.json')
+  const editedManifest = `${await readFile(manifestPath, 'utf8')}\n`
+  await writeFile(manifestPath, editedManifest)
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'conflict')
+    assert.deepEqual(
+      status.state === 'conflict'
+        ? { cause: status.cause, paths: status.paths, site: status.site }
+        : {},
+      {
+        cause: 'edited-manifest',
+        paths: ['codebook-wiki.json'],
+        site: 'kept',
+      },
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.equal(wiki.warnings.length, 1)
+    assert.equal(await readFile(manifestPath, 'utf8'), editedManifest)
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('an earlier publish that did not finish stops the update before any chat request and names its journal', async () => {
   // Arrange
   const wiki = await openPublishedWikiWindow()
