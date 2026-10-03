@@ -110,7 +110,12 @@ export function validateConfiguredStudyEvidence(
         Boolean(observation.debugger),
         stop.source,
         descriptor.anchors[stop.anchorIndex],
-      )
+      ) ||
+      // A moved position must still be a place of the cited text, as a declared one must: a column past its line's end names nothing.
+      observation.source.column >
+        (source.text.split(/\r\n|\r|\n/)[observation.source.line - 1]?.length ??
+          -1) +
+          1
     )
       throw new Error(
         'Configured observation source differs from its sealed definition.',

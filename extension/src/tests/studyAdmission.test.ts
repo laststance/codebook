@@ -216,6 +216,25 @@ test('a run on a full study library is refused before the application receives a
   )
 })
 
+// Value: protects=an agent telling the saved-study limit from the fixed slot ceiling and seeing how full the library is; fails_when=codebook_status shows limits.slots 256 beside capacity.limit with no count and no word on which one admits a study; why_new=Cycle 0037 N6c (the agent read 256 and 64 as one limit); seam=none
+test('codebook_status reports how many studies are saved beside the current limit and says that the 256 is only the highest limit', async (context) => {
+  // Arrange: the library holds one study under a limit of two.
+  const started = await startRunWithStorage(context, 2, 'study')
+
+  // Act
+  const recording = (await started.service.status()).recording
+
+  // Assert
+  assert.equal(recording?.capacity.savedStudies, 1)
+  assert.equal(recording?.capacity.limit, 2)
+  assert.equal(recording?.capacity.maximum, 256)
+  assert.equal(recording?.limits.slots, 256)
+  assert.equal(
+    recording?.capacity.fields,
+    'limit is the current Saved Study Limit setting: a new study is admitted while savedStudies (the studies saved now) is below it. maximum, like limits.slots, is the highest value that setting accepts, not the current limit.',
+  )
+})
+
 test('a run on a study library below its limit prepares and its click reaches the application', async (context) => {
   // Arrange: the library holds one study under a limit of two.
   const started = await startRunWithStorage(context, 2, 'study')
@@ -393,7 +412,7 @@ test('the events and manifest resources of a run refused on a full study library
 })
 
 // Value: protects=a library that cannot be read ends the run as a failure that is still saved as not demonstrated; fails_when=every error of the admission read is treated as a refusal and the failed run is dropped from history; why_new=the admission read was only tested with an answer or an invalid setting; seam=none
-test('a run whose study library cannot be read ends as a failed run and is still offered for a history checkpoint', async (context) => {
+test('a run whose study library cannot be read ends as a missing prerequisite whose message names the read error, and is still offered for a history checkpoint', async (context) => {
   // Arrange / Act: the library read rejects for a reason that is neither a full library nor an invalid limit.
   const started = await startRunWithStorage(
     context,
@@ -409,7 +428,11 @@ test('a run whose study library cannot be read ends as a failed run and is still
     started.service.state(started.record).materialSignature,
   )
   // Assert
-  assert.equal(started.record.error?.code, 'RUNTIME_FAILED')
+  assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
+  assert.equal(
+    started.record.error?.message,
+    'The study library could not be read, so no run was started: EACCES: permission denied, scandir. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.',
+  )
   assert.equal(
     started.record.error?.causeDetail,
     'Error: EACCES: permission denied, scandir',
@@ -618,6 +641,7 @@ test('a repeat of a refused start that is rejected while a presentation change i
     returnToCurrent: pending,
     assertPresentationIdle: pending,
     nodeHistoryLearningMaterialSaved: pending,
+    replayControlAccepted: pending,
   }
   // Act
   let rejection: unknown

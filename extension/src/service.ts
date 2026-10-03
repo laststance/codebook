@@ -94,6 +94,7 @@ import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { thrownMessage } from './utils/thrownMessage'
 
 export interface Explanation {
   id: string
@@ -195,6 +196,7 @@ export class StudyService {
     | 'returnToCurrent'
     | 'assertPresentationIdle'
     | 'nodeHistoryLearningMaterialSaved'
+    | 'replayControlAccepted'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
@@ -362,7 +364,15 @@ export class StudyService {
             playbackUri: `codebook://${this.instanceId}/playback`,
             playbackAvailable: Boolean(this.playbackController),
             limits: this.recordings.limits,
-            capacity: this.recordings.capacityStatus(),
+            capacity: {
+              ...this.recordings.capacityStatus(),
+              // Absent when the library cannot be read; a start then names that error.
+              savedStudies: await this.recordings
+                .savedStudyCount()
+                .catch(() => undefined),
+              fields:
+                'limit is the current Saved Study Limit setting: a new study is admitted while savedStudies (the studies saved now) is below it. maximum, like limits.slots, is the highest value that setting accepts, not the current limit.',
+            },
             instructions:
               'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.',
           }
@@ -487,17 +497,25 @@ export class StudyService {
         'The playback workspace is unavailable.',
       )
     try {
+      const state = this.playbackController.command(input)
+      // An accepted seek, play or pause answers a refusal the Learning replay panel still shows; an open is answered when its load is ready.
+      if (input.action !== 'open')
+        this.presentationController?.replayControlAccepted()
       return {
-        ...this.playbackController.command(input),
+        ...state,
         uri: `codebook://${this.instanceId}/playback`,
       }
     } catch (error) {
+      // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
+      const readerClosed = !this.playbackController.state().readerOpen
       throw new StudyError(
         String(error).includes('Stale playback revision')
           ? 'STALE_PLAYBACK'
           : 'PLAYBACK_UNAVAILABLE',
         String(error),
-        `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
+        readerClosed
+          ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
+          : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
       )
     }
   }
@@ -2109,7 +2127,7 @@ export class StudyService {
    * Asks the study library whether it can keep this run's study, before a runtime exists or any input can be sent; called first by {@link StudyService.prepare} for a configured run.
    * Passing clears the record's `awaiting-admission` exclusion; a refusal replaces it with `refused-at-admission`, so the run is never written later.
    * @param record - The configured run that was just reserved.
-   * @throws A `PREREQUISITE_MISSING` {@link StudyError} when the limit setting is invalid or the library is full; the read's own error when the library cannot be read.
+   * @throws A `PREREQUISITE_MISSING` {@link StudyError} when the limit setting is invalid, the library is full, or the library cannot be read (its message names the read's error, which is also the cause).
    * @example
    * await this.admitStudy(record) // on a full library: record.historyExcluded === 'refused-at-admission'
    */
@@ -2117,7 +2135,16 @@ export class StudyService {
     const recordings = this.recordings
     if (!recordings) return
     // A failure of the read itself reaches prepare()'s catch, which decides the exclusion.
-    const refusal = await this.studyRefusal(recordings, record)
+    const refusal = await this.studyRefusal(recordings, record).catch(
+      (error: unknown) => {
+        // The agent reads the code and message, not the cause, so the unreadable library is named there.
+        throw new StudyError(
+          'PREREQUISITE_MISSING',
+          `The study library could not be read, so no run was started: ${thrownMessage(error)}. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.`,
+          String(error),
+        )
+      },
+    )
     record.historyExcluded = refusal ? 'refused-at-admission' : undefined
     if (refusal) throw new StudyError('PREREQUISITE_MISSING', refusal)
   }

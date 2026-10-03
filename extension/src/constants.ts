@@ -268,13 +268,14 @@ export const STUDY_PRESENTATIONS = {
 export const EDITOR_LAYOUT_ROUNDING_FRACTION = 0.005
 export const MAX_UI_TEXT_CHARS = 8_192
 export const STUDY_SOURCE_SCHEME = 'codebook-source'
-/** View types of Codebook's Application and Study panes as the tab model reports them: the registered name and the form the editor's main thread prefixes. */
+/** Registered view types of the editor panes Codebook creates: Application, Study and Repository Wiki. */
 export const CODEBOOK_PANE_VIEW_TYPES: readonly string[] = [
   'codebook.scopedBrowser',
-  'mainThreadWebview-codebook.scopedBrowser',
   'codebook.studyContext',
-  'mainThreadWebview-codebook.studyContext',
+  'codebook.repositoryWiki',
 ]
+/** Prefix the editor's main thread puts before a webview's registered view type when the tab model reports it. */
+export const MAIN_THREAD_WEBVIEW_PREFIX = 'mainThreadWebview-'
 export const REPOSITORY_SOURCE_SCHEME = 'codebook-repository-source'
 export const REPOSITORY_READER_DEBOUNCE_MS = 150
 export const REPOSITORY_VISITED_CITATIONS_LIMIT = 512
@@ -319,7 +320,8 @@ export const PNG_SIGNATURE_HEX = '89504e470d0a1a0a0000000d49484452'
 export const PLAYBACK_TICK_INTERVAL_MS = 50
 export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'
 export const PLAYBACK_PREFERENCE_LIMIT_BYTES = 65_536
-export const PLAYBACK_SECOND_MS = 1_000
+/** Converts milliseconds to the seconds that playback labels, seek steps and run failure texts name. */
+export const MILLISECONDS_PER_SECOND = 1_000
 export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
@@ -500,8 +502,6 @@ export const REPOSITORY_ATTRIBUTE_LIMIT_CHARS = 64
 export const REPOSITORY_LITERAL_LIMIT_CHARS = 1_024
 export const REPOSITORY_INSPECTION_LIMIT = 10
 export const REPOSITORY_INSPECTION_TIMEOUT_MS = 1_000
-/** Converts the active-progress budget to the whole seconds a run failure names. */
-export const MILLISECONDS_PER_SECOND = 1_000
 export const REPOSITORY_INSPECTION_PATH_LIMIT_CHARS = 128
 export const REPOSITORY_INSPECTION_SEGMENT_LIMIT = 4
 export const REPOSITORY_STORAGE_ENTRY_LIMIT = 16
@@ -664,7 +664,7 @@ export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
 export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
 /** What one owned replay settle allows for work that has no bound of its own before painting: reading the recording and the recording renderer's handshake. */
 export const PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS = 2_000
-/** Ceiling on one owned replay settle, covering the slowest healthy sequence: a pending historical-session startup the retirement waits for, the retirement and the next startup (one capture timeout each), the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}), the recording load and renderer handshake ({@link PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS}) and the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}). A stall before painting still ends here; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
+/** Ceiling on one owned replay settle, covering the slowest healthy sequence: a pending historical-session startup the retirement waits for, the retirement and the next startup (one capture timeout each), the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}), the recording load and renderer handshake ({@link PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS}) and the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}). A stall before painting still ends here. Only a recording renderer's (re-)handshake that needs more than that allowance can outlast the ceiling: it waits up to {@link ACTIVE_TIMEOUT_MS} (20 s) when the renderer is new or must be revealed again. The settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
 export const PRESENTATION_SETTLE_CEILING_MS =
   PRESENTATION_READY_TIMEOUT_MS +
   3 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS +

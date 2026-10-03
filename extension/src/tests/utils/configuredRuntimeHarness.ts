@@ -117,6 +117,7 @@ export async function configuredRuntimeHarness(
     removedAck = true,
     bound = false,
     rejectBinding = false,
+    executedScriptSource: string | undefined,
     ready = true,
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
     afterFailure: BeforeFailure | undefined,
@@ -386,7 +387,7 @@ export async function configuredRuntimeHarness(
         return {}
       }
       if (method === 'Debugger.getScriptSource')
-        return { scriptSource: javascript }
+        return { scriptSource: executedScriptSource ?? javascript }
       if (method === 'Debugger.evaluateOnCallFrame') {
         try {
           return {
@@ -698,6 +699,10 @@ export async function configuredRuntimeHarness(
     },
     rejectBreakpointBinding(): void {
       rejectBinding = true
+    },
+    /** Makes the page report other executed bytes for the selected module than the sealed bundle holds, as a rebuild between sealing and arming does. */
+    replaceExecutedModule(scriptSource: string): void {
+      executedScriptSource = scriptSource
     },
     /** Reports the first stop's verified binding, and its pause, at this position instead of the requested one. */
     bindFirstStopAt(line: number, column: number): void {

@@ -114,6 +114,8 @@ export interface StudyRuntime {
   fail(reason: string): void
   source(item: string, snapshotId?: string): RuntimeSource | undefined
   reveal(snapshot: RuntimeSnapshot): Promise<void>
+  /** Restarts a held pause's hold deadline while the learner reads a replay; runtimes without a pause hold omit it. */
+  renewPauseHold?(): void
 }
 export interface StudyEnvironment {
   readonly workspace: string

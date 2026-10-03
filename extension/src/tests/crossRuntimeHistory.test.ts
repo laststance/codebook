@@ -406,6 +406,25 @@ test('a saved stop the debugger bound at another column of its declared line reo
   assert.equal(decoded.finalOutcome, 'demonstrated')
 })
 
+// Value: protects=a saved moved position being a real place of the cited text; fails_when=the saved debugger frame alone confirms a column that lies past the end of its source line; why_new=Cycle 0036 C05a; seam=none
+test('a saved stop whose moved column lies past the end of its source line is rejected although its native top frame names that column', () => {
+  // Arrange: the cited line holds far fewer than 500 characters; the saved observation and its top frame both claim column 500.
+  const study = createCrossRuntimeStudy(),
+    server = study.observations[1]!
+  server.source = { ...server.source, column: 500 }
+  server.debugger!.frames[0]!.column = 500
+
+  // Act
+  const decoding = (): unknown =>
+    decodeConfiguredStudy(study, study.workspaceKey)
+
+  // Assert
+  assert.throws(decoding, {
+    message:
+      'Configured observation source differs from its sealed definition.',
+  })
+})
+
 test('a saved stop whose column moved is rejected when its native top frame names another column or it sits on another line', () => {
   // Arrange
   const besideFrame = createCrossRuntimeStudy()

@@ -54,6 +54,7 @@ async function nodeRunHarness({
   neverReachStop,
   budgetMs,
   acknowledgements,
+  bindingReportedLater,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -76,6 +77,8 @@ async function nodeRunHarness({
     line?: number
     column?: number
   }>
+  /** What the adapter answers when it is asked where an owned breakpoint is bound, after a pending registration reply. */
+  bindingReportedLater?: { verified: boolean; line: number; column: number }
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -140,7 +143,11 @@ async function nodeRunHarness({
     name: '',
     workspaceFolder: undefined,
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
-    getDebugProtocolBreakpoint: async () => undefined,
+    // The adapter knows only breakpoints the editor still holds; a retired one is answered as gone.
+    getDebugProtocolBreakpoint: async (breakpoint: unknown) =>
+      editorBreakpoints.some((kept) => kept === breakpoint)
+        ? bindingReportedLater
+        : undefined,
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
@@ -1091,7 +1098,7 @@ for (const acknowledged of ['verified', 'pending'] as const)
       // Act / Assert
       await assert.rejects(
         harness.run.prepare(),
-        /Selected adapter did not acknowledge the exact breakpoint registration/,
+        /Selected adapter did not acknowledge the declared breakpoint registration/,
       )
       assert.equal(
         harness.calls.filter((call) => call === 'continue').length,
@@ -1121,6 +1128,39 @@ test('a Node test stop whose pending registration names no column yet is accepte
   }
 })
 
+// Value: protects=a second Node test stop that the adapter first answers as pending and then binds at another column; fails_when=the pending reply is taken as accepted and the other column is found only at the pause, one resume later; why_new=Cycle 0037 D6; seam=the fake session answers getDebugProtocolBreakpoint
+test('a second Node test stop answered as pending and then bound at another column is refused before the test continues, naming both positions', async () => {
+  // Arrange: the first stop is acknowledged at its declared 1:14; the next one is answered pending without a position and is bound at 1:1.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    acknowledgements: [
+      { verified: true, line: 1, column: 14 },
+      { verified: false },
+    ],
+    bindingReportedLater: { verified: true, line: 1, column: 1 },
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const refusal = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'Error: Declared breakpoint 1:14 is bound at 1:1; this stop is captured at its declared position, so declare 1:1 or another statement.',
+    )
+    // Only the continuation from the entry pause to the first stop was sent.
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
 test('a second Node test stop acknowledged at another column is refused before the test continues past the first stop', async () => {
   // Arrange: the first stop is acknowledged at its declared 1:14; the next one, armed while the test is paused, is answered at 1:1.
   const harness = await nodeRunHarness({
@@ -1135,7 +1175,7 @@ test('a second Node test stop acknowledged at another column is refused before t
     // Act / Assert
     await assert.rejects(
       harness.run.advance(),
-      /Selected adapter did not acknowledge the exact breakpoint registration/,
+      /Selected adapter did not acknowledge the declared breakpoint registration/,
     )
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)

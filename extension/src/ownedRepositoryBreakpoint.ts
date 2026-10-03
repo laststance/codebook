@@ -48,6 +48,9 @@ export const verifiedPlaceSchema = z.object({
   line: z.number().int(),
   column: z.number().int(),
 })
+/** Refusal of a registration whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the declared line. */
+export const OWNED_BREAKPOINT_REMOVED =
+  'Owned breakpoint was removed before registration'
 /** Where an adapter verified a breakpoint: one-based line and column. */
 type VerifiedPlace = { line: number; column: number }
 /** The breakpoint of a DAP `breakpoint` event: the adapter's later news about a breakpoint it acknowledged, for example a pending one verified when its module loads. */
@@ -297,25 +300,26 @@ export class OwnedRepositoryBreakpoint {
           resolve(binding.source.path) !== resolve(this.path)) ||
         !this.acknowledgesPosition(binding)
       ) {
-        registration.failure = `Selected adapter did not acknowledge the exact breakpoint registration: ${JSON.stringify(
-          {
-            responseSuccess: response.success,
-            responseCount: parsed.success
-              ? parsed.data.breakpoints.length
-              : null,
-            expectedCount: registration.count,
-            expectedLine: this.line,
-            expectedColumn: this.column,
-            selectedId: binding?.id ?? null,
-            selectedVerified: binding?.verified ?? null,
-            selectedReason: binding?.reason ?? null,
-            selectedLine: binding?.line ?? null,
-            selectedColumn: binding?.column ?? null,
-            selectedSourceMatches: binding?.source?.path
-              ? resolve(binding.source.path) === resolve(this.path)
-              : null,
-          },
-        )}`
+        // The readable positions come first; the JSON keeps every field of the reply for diagnosis.
+        registration.failure = `Selected adapter did not acknowledge the declared breakpoint registration (declared ${this.line}:${this.column}, ${
+          binding
+            ? `answered ${binding.line ?? 'no line'}:${binding.column ?? 'no column'} ${binding.verified ? 'verified' : 'unverified'}`
+            : 'no answer for this breakpoint'
+        }): ${JSON.stringify({
+          responseSuccess: response.success,
+          responseCount: parsed.success ? parsed.data.breakpoints.length : null,
+          expectedCount: registration.count,
+          expectedLine: this.line,
+          expectedColumn: this.column,
+          selectedId: binding?.id ?? null,
+          selectedVerified: binding?.verified ?? null,
+          selectedReason: binding?.reason ?? null,
+          selectedLine: binding?.line ?? null,
+          selectedColumn: binding?.column ?? null,
+          selectedSourceMatches: binding?.source?.path
+            ? resolve(binding.source.path) === resolve(this.path)
+            : null,
+        })}`
       } else {
         const { verifiedAt, ...moved } = this.verifiedPlaces(binding)
         registration.verifiedAt = verifiedAt
@@ -369,7 +373,7 @@ export class OwnedRepositoryBreakpoint {
         (breakpoint) => breakpoint.id === this.breakpoint.id,
       )
     )
-      throw new Error('Owned breakpoint was removed before registration')
+      throw new Error(OWNED_BREAKPOINT_REMOVED)
     const registration = this.registrations.get(session.id)
     if (registration?.failure) throw new Error(registration.failure)
     return registration?.receipt && { ...registration.receipt }
@@ -386,6 +390,27 @@ export class OwnedRepositoryBreakpoint {
   movedTo(session: vscode.DebugSession): VerifiedPlace | undefined {
     const registration = this.registrations.get(session.id)
     return registration?.failure ? undefined : registration?.receipt?.movedTo
+  }
+
+  /**
+   * Asks the adapter where it has this breakpoint now and refuses a verified binding away from the declared position, for an owner whose first reply was pending and named no position; {@link OwnedNodeTestRun} calls it before it resumes the test.
+   * A binding the adapter does not report, or one that is still unverified, decides nothing: the pause check remains.
+   * @param session - The debug session whose adapter holds the breakpoint.
+   * @throws When the adapter reports the breakpoint verified at another line or column than declared; the text names both positions.
+   * @example
+   * await owned.assertBoundAsDeclared(session) // throws 'Declared breakpoint 20:5 is bound at 20:12; …'
+   */
+  async assertBoundAsDeclared(session: vscode.DebugSession): Promise<void> {
+    const place = verifiedPlaceSchema.safeParse(
+      await session.getDebugProtocolBreakpoint(this.breakpoint),
+    )
+    if (
+      place.success &&
+      (place.data.line !== this.line || place.data.column !== this.column)
+    )
+      throw new Error(
+        `Declared breakpoint ${this.line}:${this.column} is bound at ${place.data.line}:${place.data.column}; this stop is captured at its declared position, so declare ${place.data.line}:${place.data.column} or another statement.`,
+      )
   }
 
   /**

@@ -356,6 +356,17 @@ export class LearningLibrary {
     return this.admits(await this.entries(), studyId)
   }
 
+  /**
+   * Counts the studies this library keeps now, for the saved-study count {@link StudyService.status} reports beside the limit.
+   * @returns The number of saved studies.
+   * @throws When the library directory cannot be read.
+   * @example
+   * await library.savedStudyCount() // => 1
+   */
+  async savedStudyCount(): Promise<number> {
+    return (await this.entries()).length
+  }
+
   /** Holds the one admission rule for {@link admitsStudy} and {@link saveStudy}: a study already kept is always admitted, a new one only below the limit. @example this.admits(existing, study.id) */
   private admits(existing: { id: string }[], studyId: string): boolean {
     return (

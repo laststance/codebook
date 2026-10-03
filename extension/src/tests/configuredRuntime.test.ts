@@ -89,6 +89,62 @@ test('VS Code startup cannot hit Codebook’s click breakpoint before the learne
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
 })
 
+// Value: protects=a browser stop committing where the debugger has its breakpoint at the pause; fails_when=the binding read at arming is kept, so a breakpoint the debugger moved afterwards fails the run with a frame mismatch; why_new=Cycle 0036 C04b; seam=bindFirstStopAt after arming
+test('a browser stop whose binding the debugger moved to another column after arming commits at the column read again at its pause', async (context) => {
+  // Arrange: the stop is armed at 1:1; afterwards the adapter reports the breakpoint, and pauses, at 1:7. A pause away from the armed column is taken as the stop's only when the wait for a pause at that column has ended (0042-SR14), so the test ends that wait itself instead of spending its 3 s.
+  const { run, bindFirstStopAt, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA,MAAM',
+    })
+  await run.prepare()
+  bindFirstStopAt(1, 7)
+  const sourceBoundWait = holdSourceBoundWait()
+
+  // Act
+  run.action('moved-after-arming', 'repository-click')
+  await waitUntil(
+    () => run.view().events.some((event) => event.type === 'dap.stopped'),
+    'stop announced',
+  )
+  sourceBoundWait.release()
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the re-read column')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+
+  // Assert
+  assert.equal(stop.source.line, 1)
+  assert.equal(stop.source.column, 7)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+})
+
+// Value: protects=a run whose sealed source map the position scanner rejects; fails_when=the scanner's error escapes as an unexplained crash after input, or the run is prepared on a map it cannot read; why_new=Cycle 0036 C07d (no test fed the scanner a rejected map); seam=none
+test('a sealed source map with a malformed segment is refused at preparation, before any input', async (context) => {
+  // Arrange: 'AA' is a segment of two fields, which no source map allows.
+  const { run, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: 'AA' },
+  )
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(refusal, 'Invalid source map segment')
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
 test('an unbound configured stop reports sealed map positions as unverified hints without clicking the application', async (context) => {
   // Arrange: the debugger never verifies a binding even though the frozen source map has a position on the declared line.
   const { run, rejectBreakpointBinding, mouse } =
@@ -741,6 +797,49 @@ test('a held configured pause expires at five minutes while retaining its origin
   assert.match(run.view().failures.join('\n'), /pause hold deadline/)
 })
 
+// Value: protects=a live pause the learner keeps while reading a replay longer than five minutes; fails_when=reading cannot renew the hold and the pause is released at 300 s; why_new=Cycle 0035 O3; seam=none
+test('a held configured pause that is renewed while a replay is read is still held at five minutes and expires five minutes after the renewal', async (context) => {
+  // Arrange
+  const { run, advance } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => run.view().snapshots[0], 'held pause')
+  advance(200000)
+
+  // Act
+  run.renewPauseHold()
+  advance(100000)
+  const statusAtFiveMinutes = run.view().status
+  advance(199999)
+  const statusBeforeRenewedExpiry = run.view().status
+  advance(1)
+  await run.stop()
+
+  // Assert
+  assert.equal(statusAtFiveMinutes, 'paused-browser')
+  assert.equal(statusBeforeRenewedExpiry, 'paused-browser')
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+  assert.match(run.view().failures.join('\n'), /pause hold deadline/)
+})
+
+// Value: protects=the run's bounded evidence journal while a replay plays beside a paused live run; fails_when=each renewal of the pause hold (one per presented replay frame) writes a journal event and long reading overflows the journal, failing the live run; why_new=Cycle 0035 O3 renews on every presented moment; seam=none
+test('renewing a held pause for every replay frame adds no events to the run journal', async (context) => {
+  // Arrange
+  const { run } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => run.view().snapshots[0], 'held pause')
+  const eventsBeforeRenewals = run.view().events.length
+
+  // Act
+  for (let frame = 0; frame < 200; frame++) run.renewPauseHold()
+  const eventsAfterRenewals = run.view().events.length
+  await run.stop()
+
+  // Assert
+  assert.equal(eventsAfterRenewals, eventsBeforeRenewals)
+})
+
 test('a late action cannot reset the original ten-minute run deadline', async (context) => {
   // Arrange
   const { run, advance } = await configuredRuntimeHarness(context)
@@ -923,7 +1022,7 @@ test('an unbound second position leaves the application paused and never sends C
   // Act / Assert
   await assert.rejects(
     run.continue('browser', first.pause),
-    /a verified binding of declared stop src\/theme\.ts:1 on its declared line or a later line its binding rule accepts \(requested column 7\)/,
+    /a verified binding of declared stop src\/theme\.ts:1 \(stop 2 of 2\) on its declared line or a later line its binding rule accepts \(requested column 7\)/,
   )
   await run.stop()
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
@@ -932,7 +1031,120 @@ test('an unbound second position leaves the application paused and never sends C
   assert.equal(mouse.length, 2)
   assert.match(
     run.view().failures[0] ?? '',
-    /^Next declared stop was not armed and no resume was sent: Error: Timed out waiting for a verified binding of declared stop src\/theme\.ts:1/,
+    /^Next declared stop was not armed and no resume was sent: Timed out waiting for a verified binding of declared stop src\/theme\.ts:1 \(stop 2 of 2\)/,
+  )
+})
+
+// Value: protects=an agent knowing which declared stop's module changed and in which phase; fails_when=the failure says "Pre-input executed module differs from sealed bundle" with no stop, also for a stop armed inside a continuation; why_new=Cycle 0036 OCR2; seam=replaceExecutedModule changes the bytes the page reports
+test('a first stop whose executed module differs from the sealed bundle is refused before input naming the stop', async (context) => {
+  // Arrange
+  const { run, replaceExecutedModule, mouse } =
+    await configuredRuntimeHarness(context)
+  replaceExecutedModule('rebuilt()')
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Executed module of declared stop src/theme.ts:1 differs from its sealed bundle (checked before input)',
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Value: protects=the phase named for a later stop's changed module; fails_when=a stop armed inside a continuation is still called "Pre-input", or names no stop; why_new=Cycle 0036 OCR2; seam=replaceExecutedModule changes the bytes the page reports
+test('a later stop whose executed module differs from the sealed bundle ends the run naming the stop and that it was being armed inside the continuation', async (context) => {
+  // Arrange
+  const { run, replaceExecutedModule, commands } =
+    await configuredRuntimeHarness(context, undefined, [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'enabled', mode: 'value', required: true }],
+      },
+    ])
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  replaceExecutedModule('rebuilt()')
+
+  // Act
+  const refusal = await run.continue('browser', first.pause).then(
+    () => 'continued',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Executed module of declared stop src/theme.ts:1 (stop 2 of 2) differs from its sealed bundle (checked while arming it inside the preceding continuation)',
+  )
+  assert.equal(
+    run.view().failures[0],
+    'Next declared stop was not armed and no resume was sent: Executed module of declared stop src/theme.ts:1 (stop 2 of 2) differs from its sealed bundle (checked while arming it inside the preceding continuation)',
+  )
+  assert.equal(commands.filter((command) => command === 'continue').length, 0)
+})
+
+// Value: protects=an agent knowing which declared line its action never ran; fails_when=the deadline of an unmoved first stop says only "Repository input reached no verified pause"; why_new=Cycle 0036 P03 (0043 named the stop only when its binding had moved); seam=none
+test('an accepted action whose first stop is never hit ends the run naming that declared stop and that its line must run after the input', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, advance, mouse } =
+    await configuredRuntimeHarness(context)
+  await run.prepare()
+  suppressInputPause()
+  run.action('one', 'repository-click')
+  await waitUntil(() => mouse.length === 2, 'pending input')
+
+  // Act
+  advance(20000)
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository input reached no verified pause: declared stop src/theme.ts:1 was not hit within 20 s of the accepted action; its line must execute after the input',
+  )
+})
+
+// Value: protects=bounded mapping hints that still show the citation's edges and the lines next to the attempted one; fails_when=a long citation lists every mapped line, or the sample loses its first lines, its last lines or the neighbourhood of the declared line; why_new=Cycle 0036 C07f (the sampling had no test); seam=none
+test('an unbound stop in a 120-line citation lists the first 20 mapped lines, the 40 nearest its declared line 60 and the last 20', async (context) => {
+  // Arrange: every one of the 120 cited lines has a mapped position and the debugger verifies no binding.
+  const { run, rejectBreakpointBinding } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: `AAAA${';AACA'.repeat(119)}`,
+      fixture: {
+        source: 'const nextTheme = "dark";\n'.repeat(120),
+        citationEndLine: 120,
+        declaredLine: 60,
+      },
+    },
+  )
+  rejectBreakpointBinding()
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Timed out waiting for a verified binding of declared stop src/theme.ts:60 on its declared line or a later line its binding rule accepts (requested column 1); choose an executable statement reached by the requested action. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:1, 5:1, 6:1, 7:1, 8:1, 9:1, 10:1, 11:1, 12:1, 13:1, 14:1, 15:1, 16:1, 17:1, 18:1, 19:1, 20:1, 40:1, 41:1, 42:1, 43:1, 44:1, 45:1, 46:1, 47:1, 48:1, 49:1, 50:1, 51:1, 52:1, 53:1, 54:1, 55:1, 56:1, 57:1, 58:1, 59:1, 60:1, 61:1, 62:1, 63:1, 64:1, 65:1, 66:1, 67:1, 68:1, 69:1, 70:1, 71:1, 72:1, 73:1, 74:1, 75:1, 76:1, 77:1, 78:1, 79:1, 101:1, 102:1, 103:1, 104:1, 105:1, 106:1, 107:1, 108:1, 109:1, 110:1, 111:1, 112:1, 113:1, 114:1, 115:1, 116:1, 117:1, 118:1, 119:1, 120:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
   )
 })
 
@@ -945,10 +1157,8 @@ test('a browser stop the debugger binds at another column of its declared line i
     { mappings: 'AAAA,MAAM' },
   )
   bindFirstStopAt(1, 7)
-  const startedMs = performance.now()
-  // Act
+  // Act: preparation resolves only for an accepted binding; a binding wait that expired would reject it.
   await run.prepare()
-  const armedWithinMs = performance.now() - startedMs
   run.action('moved-column', 'repository-click')
   const stop = await waitUntil(() => {
     const view = run.view()
@@ -966,7 +1176,6 @@ test('a browser stop the debugger binds at another column of its declared line i
     JSON.stringify(bound?.detail),
     '{"verified":true,"line":1,"column":7,"requested":{"line":1,"column":1}}',
   )
-  assert.ok(armedWithinMs < 5_000, `armed after ${armedWithinMs} ms`)
   assert.equal(stop.source.line, 1)
   assert.equal(stop.source.column, 7)
   assert.equal(run.view().finalOutcome, 'demonstrated')
@@ -978,19 +1187,17 @@ test('a browser stop the debugger binds on another line fails at once and names 
   const { run, bindFirstStopAt, mouse } =
     await configuredRuntimeHarness(context)
   bindFirstStopAt(2, 1)
-  const startedMs = performance.now()
   // Act
   await assert.rejects(run.prepare(), (error: unknown) => {
+    // This text is the at-once refusal; a spent 20 s binding wait says "Timed out waiting for a verified binding" instead.
     assert.equal(
       String(error),
       'Error: Declared stop src/theme.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
     )
     return true
   })
-  const failedWithinMs = performance.now() - startedMs
   await run.stop()
-  // Assert: the 20 s binding wait was not spent, and nothing was clicked.
-  assert.ok(failedWithinMs < 1_000, `failed after ${failedWithinMs} ms`)
+  // Assert: nothing was clicked.
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
@@ -1084,7 +1291,7 @@ test('a later stop whose line never runs after the preceding continuation ends t
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) was not hit within 20 s; its line must execute after the preceding continuation',
   )
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
@@ -1318,7 +1525,7 @@ test('a continuation that reaches no next stop while the browser stays paused wi
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.',
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.',
   )
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
@@ -1361,7 +1568,7 @@ test('a pause in a script with a 9,000-character URL is journaled and named in t
   const urlPrefix = longUrl.slice(0, 512)
   assert.equal(
     run.view().failures[0],
-    `Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at ${urlPrefix} 1:1 without a debugger stop.`,
+    `Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at ${urlPrefix} 1:1 without a debugger stop.`,
   )
   const observed = run
     .view()
@@ -1612,7 +1819,7 @@ test('a later stop the debugger moved to the next line that is not reached ends 
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
   )
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
@@ -1908,7 +2115,7 @@ test('a pause on the first stop’s line before the input is sent is not capture
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Error: Declared stop src/theme.ts:1 paused at src/theme.ts:1 before its turn: its line ran before the input was sent, so that pause is no observation of this stop; declare a line that runs only after it',
+    'Error: Declared stop src/theme.ts:1 paused at src/theme.ts:1 before its turn: its line ran before the input was sent, so that pause is no observation of this stop; declare a line that runs only after the input',
   )
   assert.equal(run.view().snapshots.length, 0)
 })

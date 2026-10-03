@@ -563,6 +563,10 @@ export class RepositoryReader {
     this.disposables.forEach((value) => value.dispose())
     this.changes.dispose()
   }
+  /** Tells the Study workspace whether this reader owns its Repository Wiki panel, so the live pane is never taken for one an earlier extension host left behind. @example reader.panelOpen() // false until an article is opened */
+  panelOpen(): boolean {
+    return Boolean(this.panel)
+  }
   /** Exposes sanitized model/render receipts for native evidence without claiming pixel verification. @example reader.inspect().rendered */
   inspect() {
     return {

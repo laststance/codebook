@@ -469,7 +469,11 @@ export class ReplayDebugAdapter {
     try {
       this.inspected()
     } catch (error) {
-      this.failed(error)
+      try {
+        this.failed(error)
+      } catch {
+        // The error channel failed as well; neither error may enter the DAP stream.
+      }
     }
   }
 

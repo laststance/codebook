@@ -1014,6 +1014,7 @@ test('a recording reloaded while its position save is still held by storage pres
     player.saved.push(bundle.projection.positionMs)
   }
   player.seek(200)
+  // Bounded: an unbounded settle also waits for the held save, which lands only after releaseSave().
   await player.controller.settle(new AbortController().signal, 1_000)
 
   // Act: the historical session ended, so opening the same recording reloads it.
@@ -1028,6 +1029,59 @@ test('a recording reloaded while its position save is still held by storage pres
   assert.equal(presentedWhileSaveHeld, 200)
   assert.equal(player.displayed(), 200)
   assert.equal(player.saved.at(-1), 200)
+  await player.controller.dispose()
+})
+
+// Value: protects=each recording's confirmed moment when the learner visits another recording before the first one's save lands; fails_when=position memory keeps only the last recording, so A reopens at its older stored 100 ms and saves it last; why_new=Cycle 0035 R05 (Codex adversarial P2); seam=none
+test('recording A reopened after visiting recording B while A position save is held presents and saves the moment confirmed in A', async () => {
+  // Arrange: A's storage holds 100 ms; the save of A's confirmed 200 ms waits behind the storage lock.
+  const player = playbackHarness(),
+    recordingB = playbackFixture(),
+    recordingBId = recordingB.index.header.studyId
+  let releaseSave: () => void = () => undefined
+  const storedPositionMsByStudy = new Map<string, number>()
+  player.dependencies.load = async (studyId) => ({
+    ...(studyId === recordingBId ? recordingB : player.data),
+    // The workspace restores whatever position storage holds when the load reads it.
+    preferredPositionMs: storedPositionMsByStudy.get(studyId),
+  })
+  player.dependencies.save = async (bundle): Promise<void> => {
+    storedPositionMsByStudy.set(bundle.studyId, bundle.projection.positionMs)
+    player.saved.push(bundle.projection.positionMs)
+  }
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  await player.controller.saved()
+  const storageHeld = new Promise<void>((resolve) => {
+    releaseSave = resolve
+  })
+  player.dependencies.save = async (bundle): Promise<void> => {
+    if (bundle.studyId === player.studyId) await storageHeld
+    storedPositionMsByStudy.set(bundle.studyId, bundle.projection.positionMs)
+    player.saved.push(bundle.projection.positionMs)
+  }
+  player.seek(200)
+  // Bounded: an unbounded settle also waits for the held save, which lands only after releaseSave().
+  await player.controller.settle(new AbortController().signal, 1_000)
+  player.controller.command({
+    studyId: recordingBId,
+    action: 'open',
+    expectedRevision: player.controller.state().revision,
+  })
+  await player.controller.settle(new AbortController().signal, 1_000)
+
+  // Act
+  player.open()
+  await player.controller.settle(new AbortController().signal, 1_000)
+  const presentedWhileSaveHeld = player.controller.state().presentedMs
+  releaseSave()
+  await player.controller.saved()
+
+  // Assert
+  assert.equal(presentedWhileSaveHeld, 200)
+  assert.equal(storedPositionMsByStudy.get(player.studyId), 200)
   await player.controller.dispose()
 })
 
@@ -1179,6 +1233,38 @@ test('a seek or play on a loaded recording whose reader closed is told the reade
       'The replay reader is closed; open the recording before another control.',
   })
   assert.equal(player.controller.state().presentedMs, 0)
+  await player.controller.dispose()
+})
+
+// Value: protects=an agent learning that only open recovers a reader that closed during its first load; fails_when=the cancelled first load is still answered "Recording is not ready", so the agent polls a load that will never arrive; why_new=Cycle 0036 C03b; seam=none
+test('a seek or play after the reader closed during its first load is told the reader is closed', async () => {
+  // Arrange: the reader closes while storage still holds the first load, which hides the playback.
+  let releaseLoad = (): void => {}
+  const readerOpen = false
+  const player = playbackHarness({ readerOpen: () => readerOpen })
+  const loadRecording = player.dependencies.load
+  const loadHeld = new Promise<void>((resolve) => {
+    releaseLoad = resolve
+  })
+  player.dependencies.load = async (studyId, signal) => {
+    await loadHeld
+    return loadRecording(studyId, signal)
+  }
+  player.open()
+  player.controller.hide()
+
+  // Act / Assert
+  assert.throws(() => player.seek(100), {
+    message:
+      'The replay reader is closed; open the recording before another control.',
+  })
+  assert.throws(() => player.play(), {
+    message:
+      'The replay reader is closed; open the recording before another control.',
+  })
+  releaseLoad()
+  await player.controller.settle()
+  assert.equal(player.controller.state().readiness, 'idle')
   await player.controller.dispose()
 })
 

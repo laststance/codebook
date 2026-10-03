@@ -111,9 +111,11 @@ test('a presentation selection refused for a learner preview names that tab, its
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   try {
     await harness.reader.open()
+    // An unedited text preview is pinned and the selection goes on (0036-N02); one with unsaved edits cannot be pinned for the learner and still refuses.
     const learnerPreview = harness.addTextPreview(
       join(harness.directory, 'learner-notes.ts'),
       1,
+      true,
     )
     const state = harness.reader.presentationState()
 
@@ -125,7 +127,11 @@ test('a presentation selection refused for a learner preview names that tab, its
         mode: 'living-book',
         action: 'select',
       }),
-      /not confirmed/,
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'A destination group contains a foreign preview: "learner-notes.ts" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+      },
     )
 
     // Assert

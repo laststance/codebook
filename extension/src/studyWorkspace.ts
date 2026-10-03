@@ -12,10 +12,11 @@ import {
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
   CONTROL_RETIRING_MESSAGE_TYPES,
+  MAIN_THREAD_WEBVIEW_PREFIX,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
   NODE_TEST_PROFILE,
-  PLAYBACK_SECOND_MS,
+  MILLISECONDS_PER_SECOND,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
@@ -317,8 +318,19 @@ const NO_STUDY_SELECTION: RetainedStudySelection = {
   follow: true,
   tab: 'overview',
 }
-/** How far one selection's leftover captured-source prelude has gone: not run yet; run with a tab the editor kept; run; or run and it closed the tab that had focus. */
-type LeftoverSourcePrelude = 'pending' | 'kept' | 'done' | 'closed-focused-tab'
+/** What one close of the tabs an earlier host session left behind did, read from the editor's tab model after the editor answered. */
+interface LeftoverTabClose {
+  /** `true` when at least one of the requested tabs is gone. */
+  closedAny: boolean
+  /** Set when the tab that had focus was closed: the tab the editor activated in its place, `undefined` when its group is empty. */
+  closedFocus?: { activatedTab: vscode.Tab | undefined }
+  /** Documents of the captured-source tabs that closed; the active text editor may report one of them for a moment longer. */
+  closedSourceUris: string[]
+  /** `true` when a leftover captured-source tab is still in the window. */
+  capturedSourceKept: boolean
+  /** `true` when a dead Codebook pane is still in the window. */
+  deadPaneKept: boolean
+}
 
 /** Owns the retained learner reader while {@link StudyService} owns execution; activation constructs it before MCP-first runs. @example await workspace.open() */
 export class StudyWorkspace {
@@ -418,6 +430,8 @@ export class StudyWorkspace {
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
   private answeredRunRefusalId?: string
   private readonly errors = new Map<string, string>()
+  /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. */
+  private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
   private readonly documents = new Map<string, string>()
   private readonly runtimeSourcePaths = new Set<string>()
   private app?: vscode.WebviewPanel
@@ -575,10 +589,14 @@ export class StudyWorkspace {
       connect(): Promise<void>
       returnToRepository?(selection: RepositorySelection): Promise<void>
       openArticle?(selection: RepositorySelection): Promise<void>
+      /** Tells whether the Wiki reader of this host owns its Repository Wiki panel; a Wiki tab seen while it does not is an earlier host's. */
+      repositoryWikiOpen?(): boolean
     },
   ) {
     this.readPresentationPreference()
     this.installReaders()
+    // Activation constructs the reader before this host creates any pane, so every Codebook pane in the window now is an earlier host's.
+    this.rememberInheritedPanes()
   }
 
   /** Keeps live explanation in native chat when {@link open} arranges app/source; replay retains its summary. @example this.studyLayout() */
@@ -742,6 +760,18 @@ export class StudyWorkspace {
     return state
   }
 
+  /**
+   * Retires a refused replay control shown in the Learning replay panel once a later seek, play or pause was accepted.
+   *
+   * Called by the panel's own playback message and by {@link StudyService.playback} for an agent's control, so the line
+   * does not outlive the refusal whichever route moved the replay.
+   *
+   * @example workspace.replayControlAccepted()
+   */
+  replayControlAccepted(): void {
+    if (this.errors.delete('replay-control')) this.publish()
+  }
+
   /** Rejects competing input/navigation before effects while preserving Stop/Close/read access. @example workspace.assertPresentationIdle() */
   assertPresentationIdle(): void {
     if (this.presentationTransition || this.returningCurrent || this.closing)
@@ -760,99 +790,221 @@ export class StudyWorkspace {
   private ownsCapturedSourceTab(tab: vscode.Tab): boolean {
     return (
       this.library !== undefined &&
-      tab.input instanceof vscode.TabInputText &&
-      tab.input.uri.scheme === STUDY_SOURCE_SCHEME &&
+      this.isCapturedSourceInput(tab.input) &&
       tab.input.uri.authority === this.library.workspaceKey
     )
   }
 
+  /** Tells whether a tab input is a captured source document of any workspace's reader: the part of {@link ownsCapturedSourceTab} that needs no library key, which {@link admitPresentation} asks before the library exists. @example this.isCapturedSourceInput(vscode.window.tabGroups.activeTabGroup.activeTab?.input) */
+  private isCapturedSourceInput(input: unknown): input is vscode.TabInputText {
+    return (
+      input instanceof vscode.TabInputText &&
+      input.uri.scheme === STUDY_SOURCE_SCHEME
+    )
+  }
+
   /**
-   * Lists the Codebook panes an earlier extension host left in this window; called by {@link closeLeftoverTabs}, {@link closeDeadPanes} and {@link admitPresentation}.
-   * A view type cannot tell a live pane from a dead one, so the answer is every pane tab only while this host has created neither pane, and nothing once it owns one.
-   * @returns The dead pane tabs; empty when this host owns an Application or Study panel.
+   * Remembers every Codebook pane tab that is in the window while this host owns no pane of its kind: such a tab belongs to an earlier extension host. Called by the constructor, by {@link deadPaneTabs} and before this host creates a pane.
+   * A view type cannot tell a live pane from a dead one, so a tab is known as dead only from the moment it was seen without an owner, and stays known after this host creates its own pane.
    * @example
    * ```ts
-   * const deadPanes = this.deadPaneTabs() // [] while this.app or this.contextPanel exists
+   * this.rememberInheritedPanes() // before vscode.window.createWebviewPanel('codebook.scopedBrowser', ...)
    * ```
    */
-  private deadPaneTabs(): vscode.Tab[] {
-    if (this.app || this.contextPanel) return []
-    return vscode.window.tabGroups.all
-      .flatMap((group) => group.tabs)
-      .filter(
-        (tab) =>
-          tab.input instanceof vscode.TabInputWebview &&
-          isCodebookPaneViewType(tab.input.viewType),
+  private rememberInheritedPanes(): void {
+    const ownsWorkspacePane = Boolean(this.app || this.contextPanel),
+      // An embedder that does not tell is taken to own its Repository Wiki pane, so a live one is never closed.
+      ownsWikiPane = this.controls.repositoryWikiOpen?.() ?? true
+    for (const tab of vscode.window.tabGroups.all.flatMap(
+      (group) => group.tabs,
+    )) {
+      if (
+        !(tab.input instanceof vscode.TabInputWebview) ||
+        !isCodebookPaneViewType(tab.input.viewType)
       )
-  }
-
-  /**
-   * Closes the dead panes of an earlier extension host before a cold entry creates this host's own; called by {@link open} for every entry that is not a selection (a selection closes them in {@link selectAfterClosingLeftoverSources}).
-   * A close the editor refuses changes nothing: the entry continues as it did before this step existed.
-   * @example
-   * ```ts
-   * if (firstOpen) await this.closeDeadPanes()
-   * ```
-   */
-  private async closeDeadPanes(): Promise<void> {
-    const deadPanes = this.deadPaneTabs()
-    if (!deadPanes.length) return
-    await vscode.window.tabGroups.close(deadPanes, true).then(
-      () => undefined,
-      () => undefined,
-    )
-  }
-
-  /**
-   * Closes, in one request, every captured-source tab of this workspace and every dead Codebook pane that an earlier host session left behind; called by {@link selectAfterClosingLeftoverSources} once the library key is known.
-   * @returns
-   * - `leftoverSources`: `'kept'` when the editor refused the request, `'closed-focused-tab'` when the tab that had focus was one of the closed ones, `'done'` otherwise, including when there was nothing to close
-   * - `deadPaneKept`: `true` when a dead pane is still in the window after the request
-   * @example
-   * ```ts
-   * const { leftoverSources, deadPaneKept } = await this.closeLeftoverTabs() // { leftoverSources: 'closed-focused-tab', deadPaneKept: false }
-   * ```
-   */
-  private async closeLeftoverTabs(): Promise<{
-    leftoverSources: Exclude<LeftoverSourcePrelude, 'pending'>
-    deadPaneKept: boolean
-  }> {
-    const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
-      leftover = [
-        ...vscode.window.tabGroups.all
-          .flatMap((group) => group.tabs)
-          .filter((tab) => this.ownsCapturedSourceTab(tab)),
-        ...this.deadPaneTabs(),
-      ]
-    if (!leftover.length)
-      return { leftoverSources: 'done', deadPaneKept: false }
-    const closed = await vscode.window.tabGroups.close(leftover, true).then(
-      (accepted) => accepted,
-      () => false,
-    )
-    // The editor answers once for the whole request; the tab model tells whether a dead pane stayed.
-    const deadPaneKept = this.deadPaneTabs().length > 0
-    if (!closed) return { leftoverSources: 'kept', deadPaneKept }
-    return {
-      leftoverSources: leftover.some((tab) => tab === focusedTab)
-        ? 'closed-focused-tab'
-        : 'done',
-      deadPaneKept,
+        continue
+      const ownsKind = isCodebookPaneViewType(
+        tab.input.viewType,
+        'codebook.repositoryWiki',
+      )
+        ? ownsWikiPane
+        : ownsWorkspacePane
+      if (!ownsKind) this.inheritedPaneTabs.add(tab)
     }
   }
 
   /**
-   * Closes the captured-source tabs and dead Codebook panes an earlier host session left behind, then admits the selection once on what remains; called by {@link admitPresentation} for a closed reader.
-   * The pending transition refuses other presentation controls while the tabs close. When a captured-source tab stays, the ordinary admission reports that the active editor cannot be restored, with this reason as its cause.
-   * @param input - The `select` request that met the leftover tab.
-   * @returns The state of the admitted selection.
-   * @throws The admission's own errors; `PRESENTATION_UNAVAILABLE` when the leftover tab is still active, or when a dead pane could not be closed (no panel is created then).
+   * Lists the Codebook panes an earlier extension host left in this window; called by {@link leftoverTabs} and {@link admitPresentation}.
+   * @returns The dead pane tabs still in the window: Application, Study and Repository Wiki tabs that {@link rememberInheritedPanes} saw without a panel of this host. A pane this host created is never among them.
    * @example
    * ```ts
-   * const state = await this.selectAfterClosingLeftoverSources(input) // state.layoutConfirmed === true
+   * const deadPanes = this.deadPaneTabs() // [] in a window no earlier host left a pane in
    * ```
    */
-  private async selectAfterClosingLeftoverSources(
+  private deadPaneTabs(): vscode.Tab[] {
+    this.rememberInheritedPanes()
+    return vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter((tab) => this.inheritedPaneTabs.has(tab))
+  }
+
+  /**
+   * Lists the tabs an earlier host session left behind; called by {@link closeLeftoverTabs} and {@link selectAfterClosingLeftoverTabs}.
+   * @returns Every dead Codebook pane and, while the reader is closed, every captured-source tab of this workspace that no text editor shows. An open reader's captured source and a captured source in a live text editor belong to this host and are not listed.
+   * @example
+   * ```ts
+   * const leftover = this.leftoverTabs() // [capturedSourceTab, deadApplicationTab]
+   * ```
+   */
+  private leftoverTabs(): vscode.Tab[] {
+    const deadPanes = this.deadPaneTabs()
+    if (this.opened) return deadPanes
+    const shownUris = new Set(
+      vscode.window.visibleTextEditors.map((editor) =>
+        editor.document.uri.toString(),
+      ),
+    )
+    return [
+      ...vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .filter(
+          (tab) =>
+            tab.input instanceof vscode.TabInputText &&
+            this.ownsCapturedSourceTab(tab) &&
+            !shownUris.has(tab.input.uri.toString()),
+        ),
+      ...deadPanes,
+    ]
+  }
+
+  /**
+   * Closes, in one request, the tabs {@link leftoverTabs} lists; called by {@link selectAfterClosingLeftoverTabs} once the library key is known, and by {@link open} at the start of every cold entry.
+   * The editor closes group by group and answers once for the whole request, so what closed is read from the tab model: a tab the editor keeps holds back the requested tabs of its own group only. A request the editor refuses or rejects changes nothing here; the caller decides what a kept tab means.
+   * @returns What closed and what stayed, see {@link LeftoverTabClose}.
+   * @example
+   * ```ts
+   * const closed = await this.closeLeftoverTabs() // { closedAny: true, closedFocus: { activatedTab: undefined }, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false }
+   * ```
+   */
+  private async closeLeftoverTabs(): Promise<LeftoverTabClose> {
+    const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab,
+      leftover = this.leftoverTabs()
+    if (leftover.length)
+      await vscode.window.tabGroups.close(leftover, true).then(
+        () => undefined,
+        () => undefined,
+      )
+    const remaining = new Set(
+        vscode.window.tabGroups.all.flatMap((group) => group.tabs),
+      ),
+      closed = leftover.filter((tab) => !remaining.has(tab)),
+      kept = leftover.filter((tab) => remaining.has(tab))
+    return {
+      closedAny: closed.length > 0,
+      closedFocus:
+        focusedTab && closed.includes(focusedTab)
+          ? { activatedTab: vscode.window.tabGroups.activeTabGroup.activeTab }
+          : undefined,
+      closedSourceUris: closed.flatMap((tab) =>
+        tab.input instanceof vscode.TabInputText
+          ? [tab.input.uri.toString()]
+          : [],
+      ),
+      capturedSourceKept: kept.some(
+        (tab) => tab.input instanceof vscode.TabInputText,
+      ),
+      deadPaneKept: kept.some(
+        (tab) => tab.input instanceof vscode.TabInputWebview,
+      ),
+    }
+  }
+
+  /**
+   * Waits until the editor's tab model and its active text editor agree after leftover tabs closed, because the editor reports the two separately; called by {@link selectAfterClosingLeftoverTabs} before the selection is admitted on what remains.
+   * A wait that expires or is cancelled ends quietly and leaves the decision to the admission.
+   * @param closedSourceUris - Documents of the captured-source tabs that closed; the active text editor may still report one.
+   * @param signal - The pending selection's cancellation; a reader close ends the wait.
+   * @example
+   * ```ts
+   * await this.waitForEditorAfterClose(closed.closedSourceUris, transition.cancellation.signal)
+   * ```
+   */
+  private async waitForEditorAfterClose(
+    closedSourceUris: string[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    await waitUntil(
+      () => {
+        const activeInput =
+            vscode.window.tabGroups.activeTabGroup.activeTab?.input,
+          shownUri = vscode.window.activeTextEditor?.document.uri.toString()
+        // A text tab needs its own text editor; any other tab needs the text editor of a tab that just closed to be gone.
+        return activeInput instanceof vscode.TabInputText
+          ? shownUri === activeInput.uri.toString()
+          : shownUri === undefined || !closedSourceUris.includes(shownUri)
+      },
+      'the active text editor after closing leftover tabs',
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    ).catch(() => undefined)
+  }
+
+  /**
+   * Refuses a mode other than the Study workspace while a live explanation or a replay owns the layout; called by {@link admitPresentation} and, before any leftover tab closes, by {@link assertSelectionOutlastsClose}.
+   * @param input - The requested change.
+   * @throws `PRESENTATION_UNAVAILABLE` for another mode or a preference save during live or replay; nothing otherwise.
+   * @example
+   * ```ts
+   * this.assertCompositionAllows(input) // throws for mode 'living-book' during a live explanation
+   * ```
+   */
+  private assertCompositionAllows(input: PresentationIntent): void {
+    if (
+      (this.liveComposition || this.summaryComposition) &&
+      (input.mode !== 'study-workspace' || input.action === 'save-preference')
+    )
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'Live and replay use one app/source layout with the chat or learning summary in the sidebar.',
+      )
+  }
+
+  /**
+   * Gives, before any leftover tab closes, the refusals {@link admitPresentation} would give a closed reader's selection after the close; called by {@link selectAfterClosingLeftoverTabs}, so a selection refused for its mode, its runtime state or its focus changes nothing in the window.
+   * An open reader is not rehearsed: only dead panes close for it, and its admission has paths that keep no focus.
+   * @param input - The `select` request.
+   * @throws `PRESENTATION_UNAVAILABLE` as the admission would.
+   * @example
+   * ```ts
+   * this.assertSelectionOutlastsClose(input) // throws while the editor's Settings page has focus
+   * ```
+   */
+  private assertSelectionOutlastsClose(input: PresentationIntent): void {
+    if (this.opened) return
+    this.assertCompositionAllows(input)
+    this.assertPresentationAdmission()
+    const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab
+    // Live and replay keep the focused pane by their own rule, and a focused tab that is about to close has no focus to keep; every other closed-reader selection must be able to give the focus back.
+    if (
+      !this.liveComposition &&
+      !this.summaryComposition &&
+      !(focusedTab && this.leftoverTabs().includes(focusedTab))
+    )
+      this.capturePresentationFocus(undefined)
+  }
+
+  /**
+   * Closes the captured-source tabs and dead Codebook panes an earlier host session left behind, then admits the selection once on what remains; called by {@link admitPresentation}.
+   * The pending transition refuses other presentation controls while the tabs close, and a reader close ends the wait. When a captured-source tab stays, the ordinary admission reports that the active editor cannot be restored, with this reason as its cause.
+   * @param input - The `select` request that met a leftover tab.
+   * @returns The state of the admitted selection.
+   * @throws The admission's own errors, given before any tab closes where {@link assertSelectionOutlastsClose} can decide them; `PRESENTATION_UNAVAILABLE` when the leftover tab is still active, or when a dead pane could not be closed (no panel is created then; the dead and leftover tabs of other groups may already have closed).
+   * @example
+   * ```ts
+   * const state = await this.selectAfterClosingLeftoverTabs(input) // state.layoutConfirmed === true
+   * ```
+   */
+  private async selectAfterClosingLeftoverTabs(
     input: PresentationIntent,
   ): Promise<PresentationState> {
     const lifetime = this.lifetime,
@@ -860,49 +1012,38 @@ export class StudyWorkspace {
         id: this.presentationId,
         cancellation: new AbortController(),
       }
-    let leftoverSources: Exclude<LeftoverSourcePrelude, 'pending'> = 'kept',
-      deadPaneKept = false
+    let closed: LeftoverTabClose
     this.presentationTransition = transition
     try {
       // The library key exists only after initialization, so ownership is decided here and not by the caller's synchronous check.
       await this.initialize()
       this.assertLifetime(lifetime)
-      ;({ leftoverSources, deadPaneKept } = await this.closeLeftoverTabs())
-      // The editor reports its tabs and its active text editor separately; wait until they agree. A wait that expires leaves the decision to the admission below.
-      if (leftoverSources !== 'kept' && !deadPaneKept)
-        await waitUntil(
-          () => {
-            const activeInput =
-              vscode.window.tabGroups.activeTabGroup.activeTab?.input
-            return (
-              !(activeInput instanceof vscode.TabInputText) ||
-              vscode.window.activeTextEditor?.document.uri.toString() ===
-                activeInput.uri.toString()
-            )
-          },
-          'the active text editor after closing leftover captured source tabs',
-          PRESENTATION_READY_TIMEOUT_MS,
+      this.assertSelectionOutlastsClose(input)
+      closed = await this.closeLeftoverTabs()
+      if (closed.closedAny && !closed.deadPaneKept)
+        await this.waitForEditorAfterClose(
+          closed.closedSourceUris,
           transition.cancellation.signal,
-        ).catch(() => undefined)
+        )
     } finally {
       if (this.presentationTransition === transition)
         this.presentationTransition = undefined
     }
     this.assertLifetime(lifetime)
     // A dead pane that stays would pass for this reader's own Application or Study tab, so the selection ends here, before any panel exists.
-    if (deadPaneKept)
+    if (closed.deadPaneKept)
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
-        'A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.',
+        'A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.',
         'A leftover Codebook pane could not be closed.',
       )
     // The transition is released in this same turn, so no other control is admitted between it and this second, final admission.
     try {
-      return this.admitPresentation(input, leftoverSources)
+      return this.admitPresentation(input, closed)
     } catch (error) {
       // Only the synchronous refusal gains the reason; later failures of the admitted change keep their own cause.
       if (
-        leftoverSources === 'kept' &&
+        closed.capturedSourceKept &&
         error instanceof StudyError &&
         error.code === 'PRESENTATION_UNAVAILABLE'
       )
@@ -916,9 +1057,9 @@ export class StudyWorkspace {
   }
 
   /**
-   * Admits one presentation change for {@link changePresentation}; every refusal is thrown before any native effect.
+   * Admits one presentation change for {@link changePresentation}. Every refusal it decides by itself is thrown before any native effect; only a selection that meets tabs of an earlier host session first closes those tabs through {@link selectAfterClosingLeftoverTabs}, which gives the refusals it can foresee before the close.
    * @param input - The requested change with the reader lifetime and control revision it was made for.
-   * @param leftoverSources - `'pending'` on the first entry; on the single re-entry after {@link selectAfterClosingLeftoverSources} what {@link closeLeftoverTabs} reported. Only `'closed-focused-tab'` changes the admission: no focus is left to keep.
+   * @param leftoverTabs - `'pending'` on the first entry; on the single re-entry after {@link selectAfterClosingLeftoverTabs} what {@link closeLeftoverTabs} reported. Only its `closedFocus` changes the admission: the tab the editor activated in place of the closed focused tab is accepted as the place to return to.
    * @returns The state after the admitted change.
    * @throws When the request is stale, competes with a pending change, comes from a background window, or cannot keep the learner's focus.
    * @example
@@ -928,7 +1069,7 @@ export class StudyWorkspace {
    */
   private admitPresentation(
     input: PresentationIntent,
-    leftoverSources: LeftoverSourcePrelude,
+    leftoverTabs: 'pending' | LeftoverTabClose,
   ): Promise<PresentationState> {
     if (input.presentationId !== this.presentationId)
       throw new StudyError(
@@ -948,26 +1089,19 @@ export class StudyWorkspace {
         'Focus this Codebook work window before changing its presentation.',
       )
     const activeInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input
-    // A captured-source tab the host restored from an earlier session has no text editor whose focus could be kept, and a pane an earlier extension host left behind would pass for this reader's own; a closed reader closes both before its selection is admitted.
+    // A pane an earlier extension host left behind would pass for this reader's own, and a focused captured-source tab that no text editor shows has no focus that could be kept; a selection closes such tabs before it is admitted. Which captured-source tabs are leftovers is decided by {@link leftoverTabs} once the library key is known.
     if (
-      leftoverSources === 'pending' &&
+      leftoverTabs === 'pending' &&
       input.action === 'select' &&
-      !this.opened &&
-      ((activeInput instanceof vscode.TabInputText &&
-        activeInput.uri.scheme === STUDY_SOURCE_SCHEME) ||
-        this.deadPaneTabs().length > 0)
+      (this.deadPaneTabs().length > 0 ||
+        (this.isCapturedSourceInput(activeInput) &&
+          vscode.window.activeTextEditor?.document.uri.toString() !==
+            activeInput.uri.toString()))
     )
-      return this.selectAfterClosingLeftoverSources(input)
+      return this.selectAfterClosingLeftoverTabs(input)
     if (input.action === 'focus') return this.focusCurrentPresentation(input)
     if (this.liveComposition || this.summaryComposition) {
-      if (
-        input.mode !== 'study-workspace' ||
-        input.action === 'save-preference'
-      )
-        throw new StudyError(
-          'PRESENTATION_UNAVAILABLE',
-          'Live and replay use one app/source layout with the chat or learning summary in the sidebar.',
-        )
+      this.assertCompositionAllows(input)
       const transition = {
         id: this.presentationId,
         cancellation: new AbortController(),
@@ -1085,7 +1219,9 @@ export class StudyWorkspace {
       input.action === 'save-preference'
         ? undefined
         : this.capturePresentationFocus(
-            leftoverSources === 'closed-focused-tab',
+            leftoverTabs === 'pending'
+              ? undefined
+              : leftoverTabs.closedFocus?.activatedTab,
           )
     const transition = {
       id: this.presentationId,
@@ -1258,7 +1394,7 @@ export class StudyWorkspace {
     input: PresentationIntent,
   ): Promise<PresentationState> {
     const runtimeIdentity = this.assertPresentationAdmission()
-    const focusedPane = this.trackFocusedStudyPane()
+    const focusedPane = this.trackFocusedStudyPane(true)
     const transition = {
       id: this.presentationId,
       cancellation: new AbortController(),
@@ -1572,17 +1708,21 @@ export class StudyWorkspace {
 
   /**
    * Retains the logical reading region for one admitted handoff; foreign editors still require an exact source receipt. Called by {@link admitPresentation} before a selection or restore changes any pane.
-   * @param focusedTabClosed - `true` when the tab that had focus was a leftover captured source this selection just closed: the tab the editor activated in its place was never the learner's reading position, so only the group focus is kept.
-   * @returns The function that gives focus back once the presentation is placed.
+   * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; `undefined` when no focused tab closed or its group is now empty. That tab was never the learner's reading position, so only the group focus is kept. A non-text page that is not that tab is refused like any foreign editor.
+   * @returns The function that gives focus back once the presentation is placed. Its third argument is `true` only after a confirmed placement: a learner's document that shares the captured source's group then stays open behind that source instead of covering it.
    * @throws `PRESENTATION_UNAVAILABLE` when the focused editor is a foreign non-text editor whose focus cannot be given back.
    * @example
    * ```ts
-   * const restore = this.capturePresentationFocus(false)
+   * const restore = this.capturePresentationFocus(undefined)
    * ```
    */
   private capturePresentationFocus(
-    focusedTabClosed: boolean,
-  ): (signal?: AbortSignal, assertSourceFocus?: () => void) => Promise<void> {
+    activatedByClose: vscode.Tab | undefined,
+  ): (
+    signal?: AbortSignal,
+    assertSourceFocus?: () => void,
+    placedSourceStays?: boolean,
+  ) => Promise<void> {
     const assertOwnedFocus = (assertSourceFocus?: () => void): void => {
       if (this.app?.active || this.contextPanel?.active) return
       // Placement may finish on its stationary source; only its exact focus/selection receipt permits restoration.
@@ -1622,7 +1762,11 @@ export class StudyWorkspace {
         selections = editor.selections,
         restoreReadingPosition = retainEditorReadingPosition(editor),
         preview = group.activeTab?.isPreview ?? false
-      return async (signal, assertSourceFocus): Promise<void> => {
+      return async (
+        signal,
+        assertSourceFocus,
+        placedSourceStays,
+      ): Promise<void> => {
         assertOwnedFocus(assertSourceFocus)
         // Edits can retain the same tab/group while invalidating its captured selections and reading position.
         if (document.version !== documentVersion)
@@ -1648,6 +1792,15 @@ export class StudyWorkspace {
           throw new Error(
             'The previously focused source group changed; focus was not guessed.',
           )
+        // The learner's document stays open behind a captured source that was placed in its own group.
+        if (
+          this.staysBehindPlacedSource(
+            document,
+            currentGroup,
+            placedSourceStays,
+          )
+        )
+          return
         const restored = await vscode.window.showTextDocument(document, {
           viewColumn: currentGroup.viewColumn,
           preserveFocus: false,
@@ -1661,8 +1814,9 @@ export class StudyWorkspace {
         await restoreReadingPosition(restored, signal)
       }
     }
-    // An empty group has no document to restore, and neither has a group whose focused leftover tab was just closed; retain its group focus after an explicit first entry.
-    if (!vscode.window.tabGroups.activeTabGroup.activeTab || focusedTabClosed)
+    // An empty group has no document to restore, and neither has the page the editor activated when the focused leftover tab was just closed; retain its group focus after an explicit first entry.
+    const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab
+    if (!activeTab || activeTab === activatedByClose)
       return async (): Promise<void> => {
         await vscode.commands.executeCommand(
           'workbench.action.focusActiveEditorGroup',
@@ -1671,6 +1825,31 @@ export class StudyWorkspace {
     throw new StudyError(
       'PRESENTATION_UNAVAILABLE',
       'Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely.',
+    )
+  }
+
+  /**
+   * Tells the focus restoration of {@link capturePresentationFocus} that a confirmed placement put the captured source into the group of the learner's focused document; fronting that document again would cover the source and leave the layout unconfirmed.
+   * @param document - The learner's document that had focus when the presentation change was admitted.
+   * @param group - The group that holds that document now.
+   * @param placedSourceStays - `true` only when the placement was confirmed; a failed change gives the document its focus back.
+   * @returns
+   * - `true` when the document shares the placed source's group: it stays open behind the source, in the group that has the focus.
+   * - `false` when the change failed, the document is the captured source itself, or it sits in another group.
+   * @example
+   * ```ts
+   * if (this.staysBehindPlacedSource(document, currentGroup, true)) return
+   * ```
+   */
+  private staysBehindPlacedSource(
+    document: vscode.TextDocument,
+    group: vscode.TabGroup,
+    placedSourceStays = false,
+  ): boolean {
+    return (
+      placedSourceStays &&
+      group === this.studyPanePositions().sourceGroup &&
+      document.uri.toString() !== String(this.sourceUri)
     )
   }
 
@@ -1900,7 +2079,7 @@ export class StudyWorkspace {
           assertRetainedPlacement()
         }
         restoreFocusAttempted = true
-        await restoreFocus?.(signal, assertSourceFocus)
+        await restoreFocus?.(signal, assertSourceFocus, true)
         assertCurrent()
         assertRetainedPlacement = this.retainPresentationPlacement()
         const receipt = this.layoutReceipt,
@@ -2107,7 +2286,7 @@ export class StudyWorkspace {
     if (!kind) throw new Error('Presentation panel ownership was lost.')
     const matches = (tab: vscode.Tab) =>
       tab.input instanceof vscode.TabInputWebview &&
-      [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType)
+      isCodebookPaneViewType(tab.input.viewType, kind)
     const hasTargetTabFocus = () => {
       const group = vscode.window.tabGroups.activeTabGroup
       return (
@@ -2261,7 +2440,7 @@ export class StudyWorkspace {
             return (
               group.viewColumn === panel.viewColumn &&
               input instanceof vscode.TabInputWebview &&
-              [kind, `mainThreadWebview-${kind}`].includes(input.viewType) &&
+              isCodebookPaneViewType(input.viewType, kind) &&
               panel.visible
             )
           },
@@ -2281,7 +2460,7 @@ export class StudyWorkspace {
           'PRESENTATION_UNAVAILABLE',
           'The selected study changed while reading a pane. Inspect its current state.',
         )
-      const focusedPane = this.trackFocusedStudyPane()
+      const focusedPane = this.trackFocusedStudyPane(true)
       try {
         // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
         assertReadFocus()
@@ -2319,8 +2498,8 @@ export class StudyWorkspace {
     }
   }
 
-  /** Watches Read and Restore from the selected pane so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
-  private trackFocusedStudyPane(requireOwned = true): {
+  /** Watches Read and Restore from the focused tab so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane; Read and the three-pane Restore do. The live and replay Restore starts from whichever tab has focus (an agent restores while the learner's file or the debugger's stop is focused), so no pane has to be clicked first. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
+  private trackFocusedStudyPane(requireOwned = false): {
     assertCurrent(): void
     beforeScopeFocus(acquire?: RepositoryFocusTarget): void
     dispose(): void
@@ -2334,17 +2513,11 @@ export class StudyWorkspace {
       input instanceof vscode.TabInputWebview ? input.viewType : undefined
     const appKind =
       webviewKind !== undefined &&
-      [
-        'codebook.scopedBrowser',
-        'mainThreadWebview-codebook.scopedBrowser',
-      ].includes(webviewKind) &&
+      isCodebookPaneViewType(webviewKind, 'codebook.scopedBrowser') &&
       expectedColumn === panes.appColumn
     const contextKind =
       webviewKind !== undefined &&
-      [
-        'codebook.studyContext',
-        'mainThreadWebview-codebook.studyContext',
-      ].includes(webviewKind) &&
+      isCodebookPaneViewType(webviewKind, 'codebook.studyContext') &&
       expectedColumn === panes.contextColumn
     const sourceKind =
       input instanceof vscode.TabInputText &&
@@ -2611,7 +2784,7 @@ export class StudyWorkspace {
     ] as const
     const matches = (tab: vscode.Tab, kind: string) =>
       tab.input instanceof vscode.TabInputWebview &&
-      [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType)
+      isCodebookPaneViewType(tab.input.viewType, kind)
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
       column: group.viewColumn,
@@ -2695,7 +2868,10 @@ export class StudyWorkspace {
           throw new Error('The current presentation tab is not unique.')
         // Only this owned same-column creation may temporarily duplicate an otherwise unique pinned role.
         if (role.previousColumn === role.column)
-          for (const kind of [role.kind, `mainThreadWebview-${role.kind}`]) {
+          for (const kind of [
+            role.kind,
+            `${MAIN_THREAD_WEBVIEW_PREFIX}${role.kind}`,
+          ]) {
             editorScope?.overlappingPanes.set(`webview:${kind}`, {
               column: role.column,
               tabCount: expectedPinnedTabCounts.get(role.region)!,
@@ -2790,18 +2966,6 @@ export class StudyWorkspace {
   }
 
   /**
-   * Lists the workspace files the selected study cites, so {@link placePresentation} keeps a clean debugger preview of one instead of refusing it as foreign.
-   * @returns Absolute paths of the cited files; empty before the workspace is initialized or without a cited study.
-   * @example this.citedWorkspacePaths().has('/repo/app/ui/login-form.tsx') // => true while login-form.tsx is cited
-   */
-  private citedWorkspacePaths(): Set<string> {
-    const workspace = this.repositorySources?.workspace,
-      sources = this.selectedStudy(true)?.descriptor?.sources
-    if (!workspace || !sources) return new Set()
-    return new Set(sources.map((source) => join(workspace, source.path)))
-  }
-
-  /**
    * Names an editor tab the way its tab strip shows it, for the shared foreign-preview obstacle text of {@link placePresentation} and {@link readMainEditorGrid}.
    * @param tab - A tab of any editor group.
    * @returns A text tab's file name, otherwise the tab's label.
@@ -2849,14 +3013,24 @@ export class StudyWorkspace {
       )
       const selections = source?.selections,
         restoreReadingPosition = retainEditorReadingPosition(source)
-      // Prepared immutable sources may be kept; workspace files and dirty drafts remain learner-owned.
+      // Unedited text previews are kept by pinning them in place; an edited or non-text preview stays learner-owned and refuses the move.
       const ownedKinds = ['codebook.scopedBrowser', 'codebook.studyContext']
       const isOwnedPreview = (tab: vscode.Tab) =>
         tab.input instanceof vscode.TabInputWebview &&
-        ownedKinds.some(
-          (kind) =>
-            tab.input instanceof vscode.TabInputWebview &&
-            [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
+        isCodebookPaneViewType(tab.input.viewType, ...ownedKinds)
+      const isKeptPreview = (tab: vscode.Tab) =>
+        tab.input instanceof vscode.TabInputText && !tab.isDirty
+      // A moved pane replaces the preview tab of its destination group, so the refusal names that tab, its group and how to clear it: the shared obstacle text, or, for a preview the next attempt pins by itself, only that it was left alone.
+      const refusePreview = (
+        tab: vscode.Tab,
+        group: vscode.TabGroup,
+        openedWhileArranging = false,
+      ): StudyError =>
+        new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          openedWhileArranging && isKeptPreview(tab)
+            ? `The preview tab "${this.editorTabName(tab)}" was opened while the Codebook panes were being arranged and was left as it is. Change the presentation again.`
+            : foreignPreviewObstacle(this.editorTabName(tab), group.viewColumn),
         )
       const assertPreviewOwnership = (): void => {
         const foreignPreview = vscode.window.tabGroups.all
@@ -2865,15 +3039,9 @@ export class StudyWorkspace {
         if (!foreignPreview) return
         // A preview opened during a passive await belongs to the learner, including its current focus.
         this.presentationMovedFocus = false
-        throw new Error(
-          foreignPreviewObstacle(
-            this.editorTabName(foreignPreview.tab),
-            foreignPreview.group.viewColumn,
-          ),
-        )
+        throw refusePreview(foreignPreview.tab, foreignPreview.group, true)
       }
-      // A debugger stop opens a cited workspace file as a clean preview; it is kept like a prepared source instead of refusing the first selection.
-      const citedWorkspacePaths = this.citedWorkspacePaths()
+      // A debugger stop opens a cited workspace file as a clean preview and a learner's single click opens any file as one; both are kept by pinning instead of refusing the selection.
       const preparedPreviews: {
         uri: vscode.Uri
         group: vscode.TabGroup
@@ -2882,21 +3050,12 @@ export class StudyWorkspace {
       for (const group of vscode.window.tabGroups.all) {
         for (const tab of group.tabs.filter((tab) => tab.isPreview)) {
           if (isOwnedPreview(tab)) continue
-          if (
-            tab.input instanceof vscode.TabInputText &&
-            tab.input.uri.scheme === 'file' &&
-            (this.runtimeSourcePaths.has(tab.input.uri.fsPath) ||
-              citedWorkspacePaths.has(tab.input.uri.fsPath)) &&
-            !tab.isDirty
-          )
+          if (tab.input instanceof vscode.TabInputText && isKeptPreview(tab))
             preparedPreviews.push({ uri: tab.input.uri, group, tab })
-          else
-            throw new Error(
-              foreignPreviewObstacle(this.editorTabName(tab), group.viewColumn),
-            )
+          else throw refusePreview(tab, group)
         }
       }
-      // Reject known foreign previews before even borrowing focus to identify the native editor part.
+      // Reject previews that cannot be kept before even borrowing focus to identify the native editor part.
       const grid = await this.readMainEditorGrid(signal, () => {
         assertCurrent()
         assertEvidence()
@@ -2924,12 +3083,15 @@ export class StudyWorkspace {
             'An editor group was added during placement; it was preserved.',
           )
       }
-      // Native debugger stops open prepared repository files as previews even while the captured reader is active.
+      // Native debugger stops open prepared repository files as previews even while the captured reader is active, and a learner's single click opens a workspace file as one; both stay, pinned.
       for (const prepared of preparedPreviews) {
         const assertPreparedPlacement = this.retainPresentationPlacement()
-        const sourceDocument = await vscode.workspace.openTextDocument(
-          prepared.uri,
-        )
+        const sourceDocument = await Promise.resolve(
+          vscode.workspace.openTextDocument(prepared.uri),
+        ).catch(() => {
+          // A text tab whose document the editor cannot open again cannot be pinned through the API.
+          throw refusePreview(prepared.tab, prepared.group)
+        })
         assertPlacement()
         assertPreparedPlacement()
         if (
@@ -3072,10 +3234,7 @@ export class StudyWorkspace {
               ownedContext.viewColumn === descriptor.contextColumn &&
               vscode.window.tabGroups.all.length === STUDY_EDITOR_GROUP_COUNT &&
               input instanceof vscode.TabInputWebview &&
-              [
-                'codebook.studyContext',
-                'mainThreadWebview-codebook.studyContext',
-              ].includes(input.viewType)
+              isCodebookPaneViewType(input.viewType, 'codebook.studyContext')
             )
           },
           'owned explanation destination',
@@ -3522,21 +3681,31 @@ export class StudyWorkspace {
         await this.open()
       }
       if (!this.opened) return false
+      const displaysObservation = (): boolean =>
+        this.message().model.observation?.id === snapshot.id &&
+        this.message().model.matching
+      const joinedRefresh = this.refreshing
       await this.refresh()
-      if (
-        this.message().model.observation?.id !== snapshot.id ||
-        !this.message().model.matching
-      )
+      // A refresh that was already reading the run may have started before this observation was committed; read once more before calling the reader busy.
+      if (joinedRefresh && !displaysObservation()) await this.refresh()
+      if (!displaysObservation())
         throw new StudyError(
           'BUSY',
           'Learner is reading another observation. Read the captured source resource or return the reader to the current pause.',
         )
       await this.renderSelection(true, true)
-      if (
-        !this.sourceReady() ||
-        this.message().model.observation?.id !== snapshot.id ||
-        !this.message().model.matching
-      )
+      // A newer render of the same observation supersedes this one before it displays anything; wait, within the placement bound, for the render that replaced it.
+      await awaitResponse(
+        (async (): Promise<void> => {
+          let settled: Promise<void> | undefined
+          while (this.loading && settled !== this.rendering)
+            await (settled = this.rendering)
+        })(),
+        'the captured source display',
+        undefined,
+        PRESENTATION_READY_TIMEOUT_MS,
+      ).catch(() => undefined)
+      if (!this.sourceReady() || !displaysObservation())
         throw new StudyError(
           'EVIDENCE_UNAVAILABLE',
           'Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
@@ -3627,9 +3796,9 @@ export class StudyWorkspace {
       await this.initialize()
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
-      // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them before it creates any.
+      // Panes an earlier extension host left behind would pass for this reader's own in the view-type checks below, so a cold entry closes them, with the captured-source tabs of that session, before it creates any. A tab the editor keeps does not stop the entry; the next selection names a kept pane.
       if (firstOpen) {
-        await this.closeDeadPanes()
+        await this.closeLeftoverTabs()
         this.assertLifetime(lifetime)
         signal?.throwIfAborted()
       }
@@ -3656,10 +3825,10 @@ export class StudyWorkspace {
                 group.tabs.every(
                   (tab) =>
                     tab.input instanceof vscode.TabInputWebview &&
-                    [
+                    isCodebookPaneViewType(
+                      tab.input.viewType,
                       'codebook.studyContext',
-                      'mainThreadWebview-codebook.studyContext',
-                    ].includes(tab.input.viewType),
+                    ),
                 ),
             )
           : undefined
@@ -3841,10 +4010,7 @@ export class StudyWorkspace {
               this.contextPanel !== panel ||
               !panel.visible ||
               !(input instanceof vscode.TabInputWebview) ||
-              ![
-                'codebook.studyContext',
-                'mainThreadWebview-codebook.studyContext',
-              ].includes(input.viewType)
+              !isCodebookPaneViewType(input.viewType, 'codebook.studyContext')
             )
               return false
             if (
@@ -3920,7 +4086,7 @@ export class StudyWorkspace {
             this.assertLifetime(lifetime)
             throw new StudyError(
               'PRESENTATION_UNAVAILABLE',
-              `Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for ${RECORDING_WINDOW_FOCUS_WAIT_MS / PLAYBACK_SECOND_MS} s. Click in this editor window, then choose Open replay again.`,
+              `Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for ${RECORDING_WINDOW_FOCUS_WAIT_MS / MILLISECONDS_PER_SECOND} s. Click in this editor window, then choose Open replay again.`,
             )
           })
         this.assertLifetime(lifetime)
@@ -4575,7 +4741,7 @@ export class StudyWorkspace {
         // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
         presentable: () =>
           this.replayReaderOpen && this.replayDebugger?.available !== false,
-        invalidate: () => {
+        invalidate: (keepPixels) => {
           this.replayDebugger?.invalidate()
           if (this.highlight)
             for (const editor of vscode.window.visibleTextEditors) {
@@ -4591,7 +4757,8 @@ export class StudyWorkspace {
           this.lastRendered = undefined
           this.sourceRevision = undefined
           this.lastSelectionKey = undefined
-          this.replayViewport?.clearRecorded()
+          // A reload of the displayed recording keeps its frame until the reloaded moment paints.
+          if (!keepPixels) this.replayViewport?.clearRecorded()
         },
         changed: () => {
           const state = this.playback?.state()
@@ -5301,23 +5468,31 @@ export class StudyWorkspace {
   /**
    * Shows the loading page on a live run's viewport while a recording loads, releasing the recording renderer that page replaces.
    *
-   * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays.
+   * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays;
+   * a renderer that still holds the panel is kept, so a reload needs no new renderer handshake.
    *
    * @example this.showRecordingLoadingOnLiveViewport()
    */
   private showRecordingLoadingOnLiveViewport(): void {
     if (!this.viewport) return
+    // A recording renderer still holding the shared panel is kept: a new renderer's handshake would sit on the 2.0 s recovery path. The playback controller clears its frame, except for a reload of the recording on screen.
+    if (this.replayViewport && !this.replayNeedsReveal) return
     // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
     this.dropReplayViewport()
-    this.viewport.showHistory(
-      capturedAppHtml({ ...this.message(), loading: true }),
-    )
+    try {
+      this.viewport.showHistory(
+        capturedAppHtml({ ...this.message(), loading: true }),
+      )
+    } catch {
+      // A lease whose panel the editor already closed has no document to write; the recording loads into a new panel.
+    }
   }
 
   /**
    * Releases the recording renderer whenever another writer takes over the shared Application panel's document or the recording is left.
    *
-   * {@link loadPlayback}, {@link presentation}'s new live lease, a failed load, {@link leavePlayback} and {@link close} call it;
+   * {@link loadPlayback}, {@link presentation}'s new live lease, a failed load, {@link leavePlayback}, {@link close}, the Application panel's
+   * dispose handler and a renderer that never became ready in {@link ensureReplayViewport} call it;
    * {@link ensureReplayViewport} then constructs a new renderer for the next presentation, which performs its own first reveal.
    *
    * @example this.dropReplayViewport()
@@ -5362,10 +5537,7 @@ export class StudyWorkspace {
       if (this.replayViewport === viewport) {
         // An abandoned request leaves the viewport to the newer one that may already be painting through it; the next presentation finishes its handshake.
         if (signal.aborted) this.replayNeedsReveal = true
-        else {
-          viewport.close()
-          this.replayViewport = undefined
-        }
+        else this.dropReplayViewport()
       }
       throw error
     }
@@ -5377,6 +5549,9 @@ export class StudyWorkspace {
     signal: AbortSignal,
   ): Promise<void> {
     signal.throwIfAborted()
+    // Reading a replay keeps an attached live run's held pause, which would otherwise expire while the learner studies.
+    for (const record of this.service?.records.values() ?? [])
+      record.runtime?.renewPauseHold?.()
     // Retire the previous native Variables tree before publishing another recorded source or frame.
     await this.replayDebugger?.retire(bundle.projection.debugger, signal)
     signal.throwIfAborted()
@@ -5412,7 +5587,7 @@ export class StudyWorkspace {
       inspection = await this.replayDebugger.present(
         bundle.projection.debugger,
         bundle.projection.debugger
-          ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / PLAYBACK_SECOND_MS).toFixed(2)} s`
+          ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / MILLISECONDS_PER_SECOND).toFixed(2)} s`
           : 'Not recorded at this moment',
         signal,
         this.sourceUri && bundle.projection.observation
@@ -5434,7 +5609,7 @@ export class StudyWorkspace {
     try {
       if (bundle.image) {
         const image = bundle.image.toString('base64'),
-          label = `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`
+          label = `Recorded · ${(bundle.projection.positionMs / MILLISECONDS_PER_SECOND).toFixed(2)} s`
         // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
         this.replayDelivery = { receipts: [], omitted: 0 }
         try {
@@ -6361,11 +6536,12 @@ export class StudyWorkspace {
                   : [new vscode.Range(position, position)],
               )
           }
-        // Replace transient source-derived revisions while preserving deliberately opened observed-source tabs.
+        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab.
         if (
           previousUri &&
           previousUri.toString() !== uri.toString() &&
-          previousUri.path.startsWith('/source-derived/')
+          (previousUri.path.startsWith('/source-derived/') ||
+            basename(previousUri.path) === basename(uri.path))
         ) {
           const obsolete = vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
@@ -6472,10 +6648,7 @@ export class StudyWorkspace {
     if (this.app) return this.app
     const owned = (tab: vscode.Tab) =>
       tab.input instanceof vscode.TabInputWebview &&
-      [
-        'codebook.scopedBrowser',
-        'mainThreadWebview-codebook.scopedBrowser',
-      ].includes(tab.input.viewType)
+      isCodebookPaneViewType(tab.input.viewType, 'codebook.scopedBrowser')
     const contents = (group: vscode.TabGroup) =>
       JSON.stringify(
         group.tabs
@@ -6543,6 +6716,8 @@ export class StudyWorkspace {
       }),
     ]
     let panel: vscode.WebviewPanel
+    // An earlier host's panes are remembered before this host's own pane makes their view type ambiguous.
+    this.rememberInheritedPanes()
     try {
       panel = vscode.window.createWebviewPanel(
         'codebook.scopedBrowser',
@@ -6682,7 +6857,8 @@ export class StudyWorkspace {
         new Error('The current application pane was closed.'),
       )
       this.app = undefined
-      this.replayViewport = undefined
+      // A renderer created for the next pane performs its own first reveal, so a reveal owed to this pane is dropped with it.
+      this.dropReplayViewport()
       if (this.recordingActive) this.playback?.hide()
     })
     let visible = panel.visible
@@ -6750,6 +6926,7 @@ export class StudyWorkspace {
       this.contextPanel.title = title
       return
     }
+    this.rememberInheritedPanes()
     const panel = vscode.window.createWebviewPanel(
       'codebook.studyContext',
       title,
@@ -7245,7 +7422,7 @@ export class StudyWorkspace {
         ({ panel, kind }) =>
           panel?.active &&
           panel.viewColumn === column &&
-          [kind, `mainThreadWebview-${kind}`].includes(input.viewType),
+          isCodebookPaneViewType(input.viewType, kind),
       )
     return (
       column >= vscode.ViewColumn.One &&
@@ -7369,8 +7546,10 @@ export class StudyWorkspace {
       const identifiableFirst =
         firstInput instanceof vscode.TabInputText ||
         (firstInput instanceof vscode.TabInputWebview &&
-          ['codebook.scopedBrowser', 'codebook.studyContext'].some((kind) =>
-            [kind, `mainThreadWebview-${kind}`].includes(firstInput.viewType),
+          isCodebookPaneViewType(
+            firstInput.viewType,
+            'codebook.scopedBrowser',
+            'codebook.studyContext',
           ))
       const primaryEditor =
         firstInput instanceof vscode.TabInputText
@@ -7528,7 +7707,7 @@ export class StudyWorkspace {
             return (
               group.viewColumn === panel.viewColumn &&
               input instanceof vscode.TabInputWebview &&
-              [kind, `mainThreadWebview-${kind}`].includes(input.viewType)
+              isCodebookPaneViewType(input.viewType, kind)
             )
           },
         })
@@ -8023,12 +8202,10 @@ export class StudyWorkspace {
           (tab) =>
             this.ownsCapturedSourceTab(tab) ||
             (tab.input instanceof vscode.TabInputWebview &&
-              ['codebook.scopedBrowser', 'codebook.studyContext'].some(
-                (kind) =>
-                  tab.input instanceof vscode.TabInputWebview &&
-                  [kind, `mainThreadWebview-${kind}`].includes(
-                    tab.input.viewType,
-                  ),
+              isCodebookPaneViewType(
+                tab.input.viewType,
+                'codebook.scopedBrowser',
+                'codebook.studyContext',
               )),
         ),
       )
@@ -8466,17 +8643,7 @@ export class StudyWorkspace {
       tab.input instanceof vscode.TabInputText
         ? `text:${tab.input.uri.toString()}`
         : tab.input instanceof vscode.TabInputWebview &&
-            [
-              'codebook.scopedBrowser',
-              'codebook.studyContext',
-              'codebook.repositoryWiki',
-            ].some(
-              (kind) =>
-                tab.input instanceof vscode.TabInputWebview &&
-                [kind, `mainThreadWebview-${kind}`].includes(
-                  tab.input.viewType,
-                ),
-            )
+            isCodebookPaneViewType(tab.input.viewType)
           ? `webview:${tab.input.viewType}`
           : undefined
     // A known source/pane anchors an unchanged foreign tab only when its native input survives.
@@ -8893,7 +9060,7 @@ export class StudyWorkspace {
         this.playback!.command({ ...identity, action: message.action })
       }
       // The control was accepted, so an earlier refusal no longer describes the replay.
-      if (this.errors.delete('replay-control')) this.publish()
+      this.replayControlAccepted()
     }
     if (message.type === 'understanding')
       await this.understand(message.understood)
