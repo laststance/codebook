@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -762,7 +762,7 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.match(
     contract.sourceBinding,
-    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position, and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\. A moved binding can lie in a branch the action skips; the stop then fails at the 20 second deadline, whose text names the bound place\. Any other binding on another line fails at once; declare the bound place instead, in a citation that covers it\./,
+    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position, and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\. A moved binding can lie in a branch the action skips; the stop then fails at the 20 second deadline, whose text names the bound place\./,
   )
   assert.match(
     contract.sequence[2] ?? '',
@@ -774,6 +774,100 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.doesNotMatch(help.text, /exact position/)
   assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
+// Cycle 0044 (0042-SR19): red while the help said "Any other binding on another line fails at once" and "an unexpected pause or manual resume invalidates this operation", although a server binding fails about 3 s after its pause and a pause the debugger resumes by itself is retired.
+test('configured help tells an agent when a binding on another line fails for each participant and that a pause the debugger resumes by itself is retired', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ sourceBinding: z.string(), sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.sourceBinding.includes(
+      "Any other verified binding on another line is refused: a browser stop's while it is armed, before any input; a server stop's binding is checked when it pauses, so that failure comes about 3 seconds after the pause, and when its bound line does not run the stop fails at the 20 second deadline instead. Declare the bound place instead, in a citation that covers it.",
+    ),
+    true,
+  )
+  assert.doesNotMatch(help.text, /fails at once/)
+  assert.equal(
+    contract.sequence[3]?.endsWith(
+      "Earlier observations remain immutable. A manual or competing resume of a captured pause, or a second stop the debugger announces, invalidates this operation. A pause the debugger makes for itself away from the next declared stop's line and resumes by itself is retired: the journal records it as cdp.adapter-pause-retired with its place and pausedForMs, and the run goes on.",
+    ),
+    true,
+  )
+  assert.doesNotMatch(help.text, /an unexpected pause or manual resume/)
+})
+
+// Cycle 0044 (0042-DOC1): red while the deadline place forms and the pause journal fields were documented only in source and CHANGELOG.
+test('configured help tells an agent that a run waits for the debugger’s own pauses, how a deadline names a paused place, and which journal entries record pauses', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.sequence[4]?.includes(
+      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20 second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records every pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts) and every resume as cdp.resumed or cdp.adapter-pause-retired with pausedForMs.',
+    ),
+    true,
+  )
+})
+
+// Cycle 0044 (0041-DOC1): red while only the CHANGELOG said that an after condition already true before input is refused, and the README left the per-phase fix to the help.
+test('configured help and the extension README tell an agent that an after condition already true before the click is refused, and how to fix a condition of each phase', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ initialState: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.initialState.includes(
+      "A condition timeout identifies the failing one-based predicate and its phase without exposing page values: correct a before condition against the fresh page before input, an after condition against the page the action leaves. Codebook also reads action.after just before the click; when the after conditions already hold there, the run ends with 'Configured after conditions were already true before application input' and sends no input, because such a result cannot prove the action caused it; declare an after condition only the action makes true.",
+    ),
+    true,
+  )
+  assert.equal(
+    readme.includes(
+      'A condition timeout names its phase: correct a before condition against the fresh page before input, an after condition against the page the action leaves. Codebook also reads the after conditions just before the click; when they already hold there, the run ends with "Configured after conditions were already true before application input" and sends no input, so declare an after condition only the action makes true.',
+    ),
+    true,
+  )
+})
+
+// Cycle 0044 (0042-DOC2): red while the README labelled its setup section and current preview as 0.2.12 although the manifest is newer.
+test('the extension README names no release other than the manifest version as its current preview', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  const manifest = z
+    .object({ version: z.string() })
+    .parse(
+      JSON.parse(await readFile(join(__dirname, '../../package.json'), 'utf8')),
+    )
+  // Act
+  const namedCurrentVersions = [
+    ...readme.matchAll(
+      /existing (\d+\.\d+\.\d+) preview|identified\*\* (\d+\.\d+\.\d+) preview|current [^.]*?\*\*extension (\d+\.\d+\.\d+)/g,
+    ),
+  ].map((match) => match[1] ?? match[2] ?? match[3])
+  // Assert
+  assert.deepEqual(
+    namedCurrentVersions.filter((version) => version !== manifest.version),
+    [],
+  )
 })
 
 test('configured help tells an agent that a continuation whose next stop cannot be armed answers "Continue was not confirmed." and where the run’s reason is read', async (context) => {

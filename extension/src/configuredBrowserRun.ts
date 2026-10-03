@@ -1519,7 +1519,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       column: frame.column,
     })
   }
-  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. @example this.onCdpResumed('server') */
+  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
     const participant = this.participants[name],
@@ -1947,7 +1947,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.snapshotReady = false
       this.continuation = undefined
       this.status = 'acting'
-      // A later stop is armed only inside the preceding continuation, so a line that ran before its turn never pauses; say which stop and why.
+      // A later stop is armed only inside the preceding continuation, so its line pauses as that stop only after it; a pause on that line before its turn is held as unannounced and never adopted ({@link pauseHeldForStop}). Say which stop and why.
       const nextStop = this.stops[this.stopIndex]!
       this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
         this.unreachedNextStopReason(nextStop),
