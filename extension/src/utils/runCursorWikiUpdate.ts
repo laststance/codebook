@@ -7,6 +7,7 @@ import {
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
 } from '../constants'
 
 import { terminateCursorAgentProcess } from './requestCursorWikiText'
@@ -42,7 +43,7 @@ export function parseCursorWikiUpdateResult(output: string): string {
   return envelope.result
 }
 
-/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param cancellationToken - User cancellation from the editor progress UI. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', token) */
+/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param cancellationToken - User cancellation from the editor progress UI. @param timeoutMs - Bound after which the agent is stopped. @returns The agent's reply. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel, a failed start, a non-zero exit or an unusable reply. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', token) */
 export async function runCursorWikiUpdate(
   projectRoot: string,
   prompt: string,
@@ -50,6 +51,7 @@ export async function runCursorWikiUpdate(
     vscode.CancellationToken,
     'isCancellationRequested' | 'onCancellationRequested'
   >,
+  timeoutMs: number = WIKI_CURSOR_UPDATE_TIMEOUT_MS,
 ): Promise<string> {
   if (Buffer.byteLength(prompt, 'utf8') > WIKI_CURSOR_PROMPT_LIMIT_BYTES)
     throw new Error('The Wiki update request is too large.')
@@ -96,15 +98,12 @@ export async function runCursorWikiUpdate(
         child.kill('SIGKILL')
       }, WIKI_CURSOR_TERMINATION_GRACE_MS)
     }
-    const timeout = setTimeout(
-      () =>
-        stop(
-          new Error(
-            'Cursor Agent timed out updating the Wiki. Inspect the last published Wiki and retry.',
-          ),
-        ),
-      WIKI_CURSOR_UPDATE_TIMEOUT_MS,
-    )
+    const timeout = setTimeout(() => {
+      const timedOut = new Error('Cursor Agent timed out updating the Wiki.')
+      // The caller tells the bound apart from a failure by this name and records `timed-out`.
+      timedOut.name = WIKI_UPDATE_TIMED_OUT_ERROR_NAME
+      stop(timedOut)
+    }, timeoutMs)
     const cancellation = cancellationToken?.onCancellationRequested(() =>
       stop(
         new Error(

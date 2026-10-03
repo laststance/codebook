@@ -1,7 +1,6 @@
-/** How a watch for a published Wiki ended. */
-export type WikiPublishWait =
-  | { outcome: 'published'; identity: string }
-  | { outcome: 'not-current'; identity: string }
+/** How a watch for a published Wiki ended; `published` carries the new publish token and what the caller read from the new manifest. */
+export type WikiPublishWait<Published> =
+  | { outcome: 'published'; token: string; published: Published }
   | { outcome: 'blocked'; paths: string[] }
   | { outcome: 'cancelled' }
   | { outcome: 'timed-out' }
@@ -28,12 +27,12 @@ function sleepUntilAborted(
 /**
  * Watches the owned manifest until the editor agent publishes a new site, the learner cancels or the bound passes.
  *
- * Why: VS Code's chat API reports no result, so the extension can only see the publish itself. The publisher replaces the site atomically, so a changed manifest identity means a complete site.
- * Trigger: the extension starts it right after opening the chat for a VS Code Wiki update; the reader shows its outcome.
+ * Why: VS Code's chat API reports no result, so the extension can only see the publish itself. The publisher replaces the site atomically and writes a new manifest file each time, so a changed publish token with a readable manifest means a complete new site.
+ * Trigger: the extension starts it right after opening the chat for a VS Code Wiki update; {@link classifyWikiUpdateEnd} turns its outcome into the result the reader shows.
  *
- * @param options.startIdentity - Manifest identity before the update; undefined when the manifest was unreadable.
- * @param options.readIdentity - Reads the published identity; undefined while the manifest is missing, mid-replacement or invalid.
- * @param options.isCurrent - Whether the published site's sources match the project now.
+ * @param options.startToken - Publish token ({@link readWikiPublishToken}) before the update; undefined when the manifest was unreadable.
+ * @param options.readToken - Reads the publish token now; undefined while the manifest is missing or mid-replacement.
+ * @param options.readPublished - Reads what the caller needs from the newly published manifest; undefined while it is invalid, which keeps the watch going.
  * @param options.findBlockingFiles - Names learner-owned files that make the publisher refuse the candidate; optional.
  * @param options.signal - Aborts the watch (learner cancel, extension shutdown).
  * @param options.timeoutMs - Bound on the whole watch.
@@ -41,44 +40,44 @@ function sleepUntilAborted(
  * @param options.now - Clock in milliseconds; tests pass a manual one.
  * @param options.sleep - Delay function; tests pass one that advances the manual clock.
  * @returns
- * - `published`: the identity changed and the site is current
- * - `not-current`: the identity changed but the site still differs from the project
+ * - `published`: the publish token changed and the new manifest is readable
  * - `blocked`: the publisher would refuse the candidate because of those learner-owned files
  * - `cancelled`: the signal aborted first
  * - `timed-out`: nothing was published within `timeoutMs`
  *
  * @example
  * ```ts
- * await waitForWikiPublish({ startIdentity: 'a+1', readIdentity, isCurrent, signal, timeoutMs: 900_000, pollMs: 2_000 })
- * // => { outcome: 'published', identity: 'b+2' }
+ * await waitForWikiPublish({ startToken: 'a@1', readToken, readPublished, signal, timeoutMs: 900_000, pollMs: 2_000 })
+ * // => { outcome: 'published', token: 'b@2', published: { identity: 'a1b2c3d4e5f6+0f9e8d7c', freshness } }
  * ```
  */
-export async function waitForWikiPublish(options: {
-  startIdentity: string | undefined
-  readIdentity: () => Promise<string | undefined>
-  isCurrent: () => Promise<boolean>
+export async function waitForWikiPublish<Published>(options: {
+  startToken: string | undefined
+  readToken: () => Promise<string | undefined>
+  readPublished: () => Promise<Published | undefined>
   findBlockingFiles?: () => Promise<string[]>
   signal: AbortSignal
   timeoutMs: number
   pollMs: number
   now?: () => number
   sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>
-}): Promise<WikiPublishWait> {
+}): Promise<WikiPublishWait<Published>> {
   const now = options.now ?? Date.now
   const sleep = options.sleep ?? sleepUntilAborted
   const deadline = now() + options.timeoutMs
   for (;;) {
     if (options.signal.aborted) return { outcome: 'cancelled' }
-    const identity = await options.readIdentity()
-    // A manifest that is missing or invalid is the publisher mid-replacement; keep watching.
-    if (identity !== undefined && identity !== options.startIdentity)
-      return {
-        outcome: (await options.isCurrent()) ? 'published' : 'not-current',
-        identity,
-      }
-    // A refused candidate never publishes, so waiting out the bound would hide the reason.
-    const blocking = (await options.findBlockingFiles?.()) ?? []
-    if (blocking.length) return { outcome: 'blocked', paths: blocking }
+    const token = await options.readToken()
+    if (token !== undefined && token !== options.startToken) {
+      // A manifest that is invalid right after its token changed is still being written; keep watching.
+      const published = await options.readPublished()
+      if (published !== undefined)
+        return { outcome: 'published', token, published }
+    } else {
+      // A refused candidate never publishes, so waiting out the bound would hide the reason.
+      const blocking = (await options.findBlockingFiles?.()) ?? []
+      if (blocking.length) return { outcome: 'blocked', paths: blocking }
+    }
     if (now() >= deadline) return { outcome: 'timed-out' }
     await sleep(options.pollMs, options.signal)
   }

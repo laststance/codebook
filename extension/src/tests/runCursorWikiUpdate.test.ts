@@ -72,3 +72,42 @@ test('Cursor Wiki update refuses a failed Agent response', () => {
   assert.throws(() => parseCursorWikiUpdateResult(failed), /did not complete/)
   assert.throws(() => parseCursorWikiUpdateResult('not json'), /unreadable/)
 })
+
+test('a Cursor agent that runs past its bound is stopped and the failure is named as a timeout', async () => {
+  // Arrange
+  const privateHome = await mkdtemp(
+    join(tmpdir(), 'codebook-cursor-update-bound-'),
+  )
+  const projectRoot = join(privateHome, 'project')
+  const binaryDirectory = join(privateHome, '.local', 'bin')
+  await mkdir(projectRoot)
+  await mkdir(binaryDirectory, { recursive: true })
+  // This agent never answers; only the bound ends it.
+  await writeFile(
+    join(binaryDirectory, 'cursor-agent'),
+    `#!${process.execPath}
+setInterval(() => {}, 1000);
+`,
+    { mode: 0o755 },
+  )
+  const previousHome = process.env.HOME
+  process.env.HOME = privateHome
+  try {
+    // Act
+    const failure: unknown = await runCursorWikiUpdate(
+      projectRoot,
+      '/codebook Update LLM Wiki for this opened repository.',
+      undefined,
+      50,
+    ).catch((error: unknown) => error)
+
+    // Assert
+    assert.ok(failure instanceof Error)
+    assert.equal(failure.name, 'WikiUpdateTimedOut')
+    assert.equal(failure.message, 'Cursor Agent timed out updating the Wiki.')
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome
+    await rm(privateHome, { recursive: true, force: true })
+  }
+})

@@ -308,6 +308,16 @@ export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000
+/** File name of the manifest the Wiki publisher writes into an output or candidate folder. */
+export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
+/** File name of the Wiki publisher's receipt in an output or candidate folder. */
+export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
+/** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */
+export const WIKI_PUBLISH_JOURNAL_SUFFIX = '.publish-journal.json'
+/** `name` of the error a Cursor Wiki update rejects with at its bound, so the caller records `timed-out` instead of `failed`. */
+export const WIKI_UPDATE_TIMED_OUT_ERROR_NAME = 'WikiUpdateTimedOut'
+/** Milliseconds in one minute, for naming a bound in minutes in the update request. */
+export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */

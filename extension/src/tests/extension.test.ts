@@ -850,6 +850,18 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string, prompt: string) => {
           agentRuns.push({ root, prompt })
+          // The agent publishes: the manifest file changes, and it now matches the source.
+          await writeFile(
+            join(outputDirectory, 'codebook-wiki.json'),
+            JSON.stringify({
+              schemaVersion: 1,
+              repositoryRoot: projectRoot,
+              pages: [],
+              assets: [],
+              includedSources: [],
+              excludedPaths: ['scratch'],
+            }),
+          )
           publishedWikiIsCurrent = true
           return 'Updated'
         },
@@ -1428,6 +1440,18 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string) => {
           agentRuns.push(root)
+          // The agent publishes a new site, but the source no longer matches it.
+          await writeFile(
+            join(outputDirectory, 'codebook-wiki.json'),
+            JSON.stringify({
+              schemaVersion: 1,
+              repositoryRoot: projectRoot,
+              pages: [],
+              assets: [],
+              includedSources: [],
+              excludedPaths: ['scratch'],
+            }),
+          )
           return 'Updated'
         },
       },
@@ -1460,7 +1484,7 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
     assert.equal(messages.length, 1)
     assert.match(
       messages[0]!,
-      /could not start the Wiki update: Error: Cursor Agent finished, but the published Wiki is not verified current/,
+      /could not start the Wiki update: Error: Cursor Agent published a new Wiki, but 1 source file changed while it worked \(first: source\.ts\)\. Press Update LLM Wiki again\./,
     )
   } finally {
     await boundary.deactivate()

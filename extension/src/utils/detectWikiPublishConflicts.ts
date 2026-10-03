@@ -1,8 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
-const MANIFEST_FILE = 'codebook-wiki.json'
-const RECEIPT_FILE = 'codebook-publication.json'
+import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
 /** Lists regular files below a directory as `/`-separated relative paths; links and special files are skipped like the publisher does. */
 async function listRegularFiles(
@@ -69,7 +68,9 @@ export async function detectWikiPublishConflicts(
   outputDirectory: string,
   notBeforeMs: number,
 ): Promise<string[]> {
-  const published = await readOwnedPaths(join(outputDirectory, MANIFEST_FILE))
+  const published = await readOwnedPaths(
+    join(outputDirectory, WIKI_MANIFEST_FILE),
+  )
   if (!published) return []
   // Candidate folders are siblings named `<output>.stage-<id>`; the publisher refuses any other stage layout.
   const parent = dirname(outputDirectory)
@@ -79,13 +80,15 @@ export async function detectWikiPublishConflicts(
     if (!name.startsWith(stagePrefix)) continue
     const stageDirectory = join(parent, name)
     if ((await stat(stageDirectory)).mtimeMs < notBeforeMs) continue
-    const owned = await readOwnedPaths(join(stageDirectory, MANIFEST_FILE))
+    const owned = await readOwnedPaths(join(stageDirectory, WIKI_MANIFEST_FILE))
     if (owned) candidates.push(owned)
   }
   if (!candidates.length) return []
   const manual = (await listRegularFiles(outputDirectory)).filter(
     (path) =>
-      path !== MANIFEST_FILE && path !== RECEIPT_FILE && !published.has(path),
+      path !== WIKI_MANIFEST_FILE &&
+      path !== WIKI_PUBLICATION_RECEIPT_FILE &&
+      !published.has(path),
   )
   const colliding = new Set<string>()
   for (const path of manual)

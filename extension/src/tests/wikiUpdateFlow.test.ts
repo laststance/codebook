@@ -9,27 +9,30 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { readDeepWikiManifest } from '../deepWikiReader'
-import type * as ExtensionModule from '../extension'
+import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 
-import { loadModule } from './utils/loadModule'
+import {
+  openWikiUpdateWindow,
+  type CancellableProgress,
+} from './utils/wikiUpdateWindow'
 
-type CancellableProgress = {
-  cancel(): void
+const CURRENT: WikiFreshness = {
+  status: 'current',
+  changedPaths: [],
+  addedPaths: [],
 }
 
-/** Opens a window with a published Wiki and records what the learner sees of an update. */
-async function openWikiWindow(options: {
-  outputSetting?: string
-  cursor?: boolean
-  chatFails?: boolean
-  cursorAgent?: (root: string) => Promise<string>
-  cancellable?: CancellableProgress[]
-}) {
+/** Opens a window on a project with a hand-written published Wiki and records what the learner sees of an update. */
+async function openWikiWindow(
+  options: Omit<
+    Parameters<typeof openWikiUpdateWindow>[0],
+    'projectRoot' | 'outputSetting'
+  > & { outputSetting?: string } = {},
+) {
   const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-'))
   const projectRoot = await realpath(projectDirectory)
   const outputSetting = options.outputSetting ?? '.codebook/wiki'
@@ -37,7 +40,11 @@ async function openWikiWindow(options: {
   await mkdir(outputDirectory, { recursive: true })
   await writeFile(join(outputDirectory, 'index.html'), '<title>Wiki</title>')
   const manifestPath = join(outputDirectory, 'codebook-wiki.json')
-  const publish = (sourceHash: string): Promise<void> =>
+  /** Writes the published manifest the way an agent's publish would change it. */
+  const publish = (
+    sourceHash: string,
+    excludedPaths: string[] = [],
+  ): Promise<void> =>
     writeFile(
       manifestPath,
       JSON.stringify({
@@ -46,157 +53,24 @@ async function openWikiWindow(options: {
         generated: { revision: 'a1b2c3d4e5f6a7b8' },
         pages: [],
         assets: [],
+        excludedPaths,
         includedSources: [{ path: 'src/a.ts', sha256: sourceHash }],
       }),
     )
   await publish('a'.repeat(64))
-  let handleUri:
-    ((uri: { path: string; query: string }) => Promise<void>) | undefined
-  let readUpdateStatus: (() => WikiUpdateStatus) | undefined
-  let wikiIsCurrent = false
-  const chatRequests: string[] = []
-  const notices: string[] = []
-  const errors: string[] = []
-  const commands = new Map<string, () => Promise<void>>()
-  const boundary = await loadModule<typeof ExtensionModule>(
-    resolve(__dirname, '../extension.js'),
-    {
-      vscode: {
-        ProgressLocation: { Notification: 15 },
-        commands: {
-          registerCommand(name: string, action: () => Promise<void>) {
-            commands.set(name, action)
-            return { dispose(): void {} }
-          },
-          executeCommand: async (name: string) => {
-            if (options.chatFails) throw new Error('Chat is unavailable')
-            chatRequests.push(name)
-          },
-        },
-        workspace: {
-          getConfiguration: () => ({ get: () => outputSetting }),
-          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
-        },
-        env: {
-          ...(options.cursor ? { appName: 'Cursor' } : {}),
-          openExternal: async () => true,
-        },
-        Uri: { parse: (value: string) => ({ value }) },
-        window: {
-          registerUriHandler: (handler: {
-            handleUri(uri: { path: string; query: string }): Promise<void>
-          }) => {
-            handleUri = handler.handleUri
-            return { dispose(): void {} }
-          },
-          showInformationMessage: (message: string) => {
-            notices.push(message)
-            return Promise.resolve(undefined)
-          },
-          showWarningMessage: (
-            _message: string,
-            _options: unknown,
-            ...choices: string[]
-          ) => Promise.resolve(choices[0]),
-          showErrorMessage: (message: string) => {
-            errors.push(message)
-            return Promise.resolve(undefined)
-          },
-          ...(options.cancellable
-            ? {
-                withProgress: async (
-                  _options: unknown,
-                  task: (progress: unknown, token: unknown) => Promise<unknown>,
-                ) => {
-                  const listeners: Array<() => void> = []
-                  const token = {
-                    isCancellationRequested: false,
-                    onCancellationRequested: (listener: () => void) => {
-                      listeners.push(listener)
-                      return { dispose(): void {} }
-                    },
-                  }
-                  options.cancellable?.push({
-                    cancel() {
-                      token.isCancellationRequested = true
-                      for (const listener of listeners) listener()
-                    },
-                  })
-                  return task({}, token)
-                },
-              }
-            : {}),
-        },
-      },
-      './environment': { requireWorkspace: () => projectRoot },
-      './deepWikiReader': {
-        readDeepWikiManifest,
-        startDeepWikiReader: async (
-          _output: string,
-          _root: string,
-          _answer: unknown,
-          _scheme: string,
-          statusProvider: () => WikiUpdateStatus,
-        ) => {
-          readUpdateStatus = statusProvider
-          return {
-            url: 'http://127.0.0.1:9/index.html',
-            close: async (): Promise<void> => {},
-          }
-        },
-      },
-      './repositoryReader': {
-        RepositoryReader: class {
-          async dispose(): Promise<void> {}
-        },
-      },
-      './studyWorkspace': {
-        StudyWorkspace: class {
-          async dispose(): Promise<void> {}
-        },
-      },
-      './utils/runCursorWikiUpdate': {
-        runCursorWikiUpdate: async (root: string) =>
-          options.cursorAgent ? options.cursorAgent(root) : 'Updated',
-      },
-      './utils/inspectDeepWikiFreshness': {
-        inspectDeepWikiFreshness: async () => ({
-          status: wikiIsCurrent ? 'current' : 'changed',
-          changedPaths: [],
-          addedPaths: [],
-        }),
-      },
-    },
-  )
-  boundary.activate({
-    extensionPath: resolve(__dirname, '../..'),
-    globalStorageUri: { fsPath: projectRoot },
-    subscriptions: [],
-    workspaceState: { get: () => undefined, update: async () => {} },
+  const window = await openWikiUpdateWindow({
+    ...options,
+    projectRoot,
+    outputSetting,
   })
-  // The reader serves the update state, so the browser tab must be open first.
-  await commands.get('codebook.openDeepWiki')!()
-  assert.ok(handleUri && readUpdateStatus)
-  const clickUpdate = (): Promise<void> =>
-    handleUri!({
-      path: '/update',
-      query: new URLSearchParams({ root: projectRoot }).toString(),
-    })
   return {
+    ...window,
     projectRoot,
     outputDirectory,
     manifestPath,
-    chatRequests,
-    notices,
-    errors,
-    clickUpdate,
-    status: () => readUpdateStatus!(),
     publish,
-    setWikiCurrent(value: boolean): void {
-      wikiIsCurrent = value
-    },
     async close(): Promise<void> {
-      await boundary.deactivate()
+      await window.close()
       await rm(projectDirectory, { recursive: true, force: true })
     },
   }
@@ -215,12 +89,12 @@ async function waitForEnd(
 
 test('a VS Code Wiki update shows running, then the new identity once the editor agent publishes', async () => {
   // Arrange
-  const wiki = await openWikiWindow({})
+  const wiki = await openWikiWindow()
   try {
     // Act
     await wiki.clickUpdate()
     const whileWaiting = wiki.status()
-    wiki.setWikiCurrent(true)
+    wiki.setFreshness(CURRENT)
     await wiki.publish('b'.repeat(64))
     const ended = await waitForEnd(wiki.status)
 
@@ -231,7 +105,10 @@ test('a VS Code Wiki update shows running, then the new identity once the editor
       ended.state === 'succeeded' ? ended.identity : '',
       /^a1b2c3d4e5f6\+[0-9a-f]{8}$/,
     )
-    assert.deepEqual(wiki.chatRequests, ['workbench.action.chat.open'])
+    assert.deepEqual(
+      wiki.chatRequests.map((request) => request.name),
+      ['workbench.action.chat.open'],
+    )
   } finally {
     await wiki.close()
   }
@@ -264,8 +141,8 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
 
 test('a Wiki that already matches the source says so and opens no chat request', async () => {
   // Arrange
-  const wiki = await openWikiWindow({})
-  wiki.setWikiCurrent(true)
+  const wiki = await openWikiWindow()
+  wiki.setFreshness(CURRENT)
   try {
     // Act
     await wiki.clickUpdate()
@@ -303,7 +180,7 @@ test('a chat that cannot open ends the update as failed with its reason instead 
 
 test('a learner file the update candidate would overwrite ends the run as a conflict naming that file', async () => {
   // Arrange
-  const wiki = await openWikiWindow({})
+  const wiki = await openWikiWindow()
   await mkdir(join(wiki.outputDirectory, 'pages'), { recursive: true })
   await writeFile(join(wiki.outputDirectory, 'pages', 'overview.html'), 'mine')
   const stage = `${wiki.outputDirectory}.stage-1`
@@ -419,7 +296,7 @@ test('a Cursor Wiki update that publishes ends as succeeded with the new identit
     },
   })
   publishNew = async (): Promise<void> => {
-    wiki.setWikiCurrent(true)
+    wiki.setFreshness(CURRENT)
     await wiki.publish('c'.repeat(64))
   }
   try {
@@ -433,6 +310,161 @@ test('a Cursor Wiki update that publishes ends as succeeded with the new identit
       status.state === 'succeeded' ? status.identity : '',
       /^a1b2c3d4e5f6\+[0-9a-f]{8}$/,
     )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a VS Code update that publishes the same sources and revision again still ends as succeeded', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    await wiki.clickUpdate()
+
+    // Act: the agent resolves the stale state by excluding a new file; sources and revision stay as they were.
+    wiki.setFreshness(CURRENT)
+    await wiki.publish('a'.repeat(64), ['scratch'])
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.equal(ended.state, 'succeeded')
+    assert.equal(
+      ended.state === 'succeeded' ? ended.identity : '',
+      'a1b2c3d4e5f6+296fae53',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a publish that no longer matches the source says the site was replaced and how many files changed', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    await wiki.clickUpdate()
+
+    // Act
+    wiki.setFreshness({
+      status: 'changed',
+      changedPaths: ['src/a.ts', 'src/b.ts'],
+      addedPaths: [],
+    })
+    await wiki.publish('b'.repeat(64))
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.equal(ended.state, 'failed')
+    assert.equal(ended.state === 'failed' ? ended.site : '', 'replaced')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The editor agent published a new Wiki, but 2 source files changed while it worked (first: src/a.ts). Press Update LLM Wiki again.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a publish Codebook cannot check against the source passes the reason on and says a retry will not help', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    await wiki.clickUpdate()
+
+    // Act
+    wiki.setFreshness({
+      status: 'unknown',
+      changedPaths: [],
+      addedPaths: [],
+      reason:
+        'Added source files could not be checked against the generated revision.',
+    })
+    await wiki.publish('b'.repeat(64))
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.equal(ended.state, 'failed')
+    assert.equal(ended.state === 'failed' ? ended.site : '', 'replaced')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The editor agent published a new Wiki, but Codebook cannot check it against the source: Added source files could not be checked against the generated revision. Updating again will not change this; ask the editor chat to republish with the full commit hash in generated.revision.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a Cursor update that runs past its bound ends as timed out, the state VS Code reports for the same event', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      const timedOut = new Error('Cursor Agent timed out updating the Wiki.')
+      timedOut.name = 'WikiUpdateTimedOut'
+      throw timedOut
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate().catch(() => {})
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'timed-out')
+    assert.equal(status.state === 'timed-out' ? status.site : '', 'kept')
+    assert.equal(status.state === 'timed-out' ? status.timeoutMs : 0, 900_000)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a Cursor agent that publishes and then fails is shown as a failure that replaced the site, not one that kept it', async () => {
+  // Arrange
+  let publishNew: (() => Promise<void>) | undefined
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      await publishNew?.()
+      throw new Error('Cursor Agent stopped with exit code 1 before finishing.')
+    },
+  })
+  publishNew = (): Promise<void> => wiki.publish('c'.repeat(64))
+  try {
+    // Act
+    await wiki.clickUpdate().catch(() => {})
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(status.state === 'failed' ? status.site : '', 'replaced')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Cursor Agent stopped with exit code 1 before finishing.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a Cursor agent that ends its turn without publishing is a failure that kept the site', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => 'I could not update the Wiki.',
+  })
+  const manifestBefore = await readFile(wiki.manifestPath)
+  try {
+    // Act
+    await wiki.clickUpdate().catch(() => {})
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(status.state === 'failed' ? status.site : '', 'kept')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in the editor chat to see its own message.',
+    )
+    assert.deepEqual(await readFile(wiki.manifestPath), manifestBefore)
   } finally {
     await wiki.close()
   }
