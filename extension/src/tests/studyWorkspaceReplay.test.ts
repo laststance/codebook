@@ -15,6 +15,13 @@ import {
   recordedReaderHarness,
   configuredWorkspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClock,
+  advanceClockUntil,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 // Value: protects=a moment committed without native values names where to load them, and the hint leaves once they load; fails_when=the Study message never flags the moment, or keeps the hint after Run and Debug loads values until another seek; why_new=the soft inspection gate commits such moments; seam=TestReplayDebugger models the native load notification
 test('a replay moment whose recorded values Run and Debug has not loaded tells the learner where to load them until they load', async () => {
   // Arrange: Variables stays hidden, so native Run and Debug does not load the recorded values within the grace.
@@ -632,7 +639,7 @@ for (const initial of [
   { mainGroups: 1, separatePart: true, globalGroups: 2 },
   { mainGroups: 2, separatePart: true, globalGroups: 3 },
 ])
-  test(`failed initial pane reservation with ${initial.mainGroups} main panes and ${initial.separatePart ? 'a separate part' : 'one part'} cannot create Context before an explicit retry`, async () => {
+  test(`failed initial pane reservation with ${initial.mainGroups} main panes and ${initial.separatePart ? 'a separate part' : 'one part'} cannot create Context before an explicit retry`, async (context) => {
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({
@@ -646,12 +653,18 @@ for (const initial of [
     const original = harness.editorLayout()
     harness.failNextCommand('vscode.setEditorLayout')
     try {
-      // Act
-      await assert.rejects(
+      // Act: the layout waits pass on a faked clock.
+      enableFakeClock(context)
+      const refused = assert.rejects(
         harness.reader.open(),
         /could not reserve separate Codebook panes/,
       )
-      await harness.reader['refresh']()
+      await advanceClockUntilSettled(context, refused, 10_000)
+      await refused
+      const refreshing = harness.reader['refresh']()
+      await advanceClockUntilSettled(context, refreshing, 10_000)
+      await refreshing
+      resetFakeClock(context)
 
       // Assert
       assert.equal(
@@ -681,6 +694,17 @@ for (const initial of [
           .view!.errors.some((error) =>
             error.includes(
               'The editor did not retain the requested Codebook layout',
+            ),
+          ),
+        true,
+      )
+      // The line names why the layout was not confirmed (Cycle 0044, 0033-L1), here a grid that never settled.
+      assert.equal(
+        harness.reader
+          .inspect()
+          .view!.errors.some((error) =>
+            error.includes(
+              'arrange the Codebook panes manually. Cause: Error: Timed out waiting for settled reader grid',
             ),
           ),
         true,
@@ -1835,6 +1859,256 @@ test('a native values notification the reader failed to handle is shown, and the
   }
 })
 
+// Value: protects=the first Recording open from flashing a recovery instruction while the reader itself is still placing the captured source; fails_when=presentationState reports "not ready in its native pane" during the reader's own pending presentation; why_new=Cycle 0044 (0034-H1); seam=none
+test('opening a recording never tells the learner the captured source is not ready while its own first frame is still presenting', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.open()
+    const publishedBefore = harness.postedMessages().length
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const reasons = harness
+      .postedMessages()
+      .slice(publishedBefore)
+      .map((message) => message.presentation?.reason ?? '')
+    assert.equal(
+      reasons.some((reason) => reason.includes('not ready in its native pane')),
+      false,
+    )
+    assert.equal(
+      reasons.includes('The recorded source is opening in its native pane.'),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the 5 s paint bound for a settle that begins while a frame is already painting (Restore layout or an evidence navigation during a slow paint); fails_when=the bound is armed only for paints that begin after the settle started, so the wait runs to the 23 s ceiling; why_new=Cycle 0044 (0031-U7b / 0031-S3 / 0032-T6a / 0033-PA3 / 0033-S7a / 0034-T5: no test reached that arm); seam=node:test setTimeout mock and the reader's settleOwnedPlayback
+test('a replay settle that starts while a frame is already painting fails 5 s after that paint began, not 5 s after the settle began', async (context) => {
+  // Arrange: a learner seek whose frame has been painting for 3 s.
+  const harness = await recordedReaderHarness(true)
+  let releasePaint = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const stuckPaint = harness.holdNextImage()
+    releasePaint = stuckPaint.release
+    enableFakeClock(context)
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await advanceClockUntilSettled(context, stuckPaint.started, 2_000)
+    await advanceClock(context, 3_000)
+
+    // Act
+    let outcome = 'still settling'
+    void harness.reader['settleOwnedPlayback']().then(
+      () => {
+        outcome = 'settled'
+      },
+      (error: unknown) => {
+        outcome =
+          error instanceof Error && 'code' in error
+            ? String(error.code)
+            : String(error)
+      },
+    )
+    await advanceClock(context, 1_750)
+    const at4750msOfPainting = outcome
+    await advanceClock(context, 750)
+    const at5500msOfPainting = outcome
+
+    // Assert
+    assert.equal(at4750msOfPainting, 'still settling')
+    assert.equal(at5500msOfPainting, 'PRESENTATION_UNAVAILABLE')
+  } finally {
+    resetFakeClock(context)
+    releasePaint()
+    await harness.close()
+  }
+})
+
+// Value: protects=a newer navigation's own bounds when the frame it superseded is still waiting to paint (queued behind a native placement hold, which ignores cancellation); fails_when=the superseded frame's paint phase keeps counting, so a settle fails 5 s after that old paint began although the newer frame has not started painting; why_new=Cycle 0044 (0033-P1, Codex claim never probed); seam=the replay viewport's first present, replaced by one that never answers, and node:test setTimeout mock
+test('a superseded frame that is still waiting to paint does not count against the newer frame, which settles once its own debugger wait and paint finish', async (context) => {
+  // Arrange: frame A has been waiting to paint for 3 s behind a hold that ignores cancellation.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDebugger = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const viewport = harness.reader['replayViewport']
+    assert.ok(viewport)
+    const present = viewport.present.bind(viewport)
+    let paintsRequested = 0
+    viewport.present = (image, label) => {
+      paintsRequested++
+      // Only frame A's paint never answers; later frames paint normally.
+      return paintsRequested === 1
+        ? new Promise(() => {})
+        : present(image, label)
+    }
+    enableFakeClock(context)
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await advanceClockUntil(context, () => paintsRequested === 1, 2_000)
+    await advanceClock(context, 3_000)
+    const slowDebugger = harness.holdHistoricalDebugPresentation()
+    releaseDebugger = slowDebugger.release
+
+    // Act: the learner seeks again; frame B's native debugger takes 2.5 s, so A's paint would be 5.5 s old.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 500,
+    })
+    await advanceClockUntilSettled(context, slowDebugger.started, 2_000)
+    let outcome = 'still settling'
+    const settling = harness.reader['settleOwnedPlayback']().then(
+      () => {
+        outcome = 'settled'
+      },
+      (error: unknown) => {
+        outcome =
+          error instanceof Error && 'code' in error
+            ? String(error.code)
+            : String(error)
+      },
+    )
+    await advanceClock(context, 2_500)
+    const whileNewerFrameWaitsForDebugger = outcome
+    slowDebugger.release()
+    await advanceClockUntilSettled(context, settling, 2_000)
+
+    // Assert
+    assert.equal(whileNewerFrameWaitsForDebugger, 'still settling')
+    assert.equal(outcome, 'settled')
+    assert.equal(harness.controller.state().presentedMs, 500)
+  } finally {
+    resetFakeClock(context)
+    releaseDebugger()
+    await harness.close()
+  }
+})
+
+// Value: protects=the decided replay behaviour of "Open article" (learning-replay.md: a replay may link to repository documentation, and stays independent of it); fails_when=the link is withdrawn during replay, or opening the article leaves, reloads or moves the replay; why_new=Cycle 0044 (0033-L2: the behaviour was never decided); seam=the reader's openArticle control, recorded by the harness
+test('Open article stays offered during replay and opens the article without leaving or moving the replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const replayBefore = harness.controller.state()
+    const offered = harness.reader.inspect().view!.repositoryArticleAvailable
+
+    // Act
+    await harness.reader.action('open-article')
+
+    // Assert
+    assert.equal(offered, true)
+    assert.equal(harness.articleOpens.length, 1)
+    assert.deepEqual(harness.controller.state(), replayBefore)
+    assert.equal(harness.reader.inspect().view!.recording?.presentedMs, 100)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the recording renderer handshake after abandoned reveals; fails_when=the pending reveal is cleared before it completes, so after two aborted reveals a later presentation gets the viewport without its handshake; why_new=Cycle 0044 (0034-C4); seam=the reused recording viewport's reveal, replaced to observe each handshake
+test('after two abandoned recording reveals the next presentation still waits for the renderer handshake', async () => {
+  // Arrange: a reused recording viewport whose reveal is still owed, and a reveal that finishes only after its caller left.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const viewport = harness.reader['replayViewport']
+    assert.ok(viewport)
+    const handshakes: string[] = []
+    viewport.reveal = async (signal?: AbortSignal): Promise<void> => {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      signal?.throwIfAborted()
+      handshakes.push('completed')
+    }
+    harness.reader['replayNeedsReveal'] = true
+    const abandon = async (): Promise<string> => {
+      const request = new AbortController()
+      const revealing = harness.reader['ensureReplayViewport'](request.signal)
+      request.abort(new Error('Superseded presentation'))
+      return revealing.then(
+        () => 'handed over',
+        (error: unknown) => String(error),
+      )
+    }
+
+    // Act
+    const first = await abandon()
+    const second = await abandon()
+    await harness.reader['ensureReplayViewport'](new AbortController().signal)
+
+    // Assert
+    assert.equal(first, 'Error: Superseded presentation')
+    assert.equal(second, 'Error: Superseded presentation')
+    assert.deepEqual(handshakes, ['completed'])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the reader still telling the learner that the historical debugger failed to stop; fails_when=the disposal failure shares the notification key, so the next values-loaded notification silently clears it; why_new=Cycle 0044 (0034-PL2); seam=ReplayDebugger.dispose replaced on the live owner
+test('a historical debugger that failed to stop stays reported after native values load', async () => {
+  // Arrange: an opened recording whose historical debugger then fails to stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const owner = harness.reader['replayDebugger']
+    assert.ok(owner)
+    owner.dispose = async (): Promise<void> => {
+      throw new Error('The historical debugger did not stop.')
+    }
+    await harness.reader['retireReplayDebugger'](owner)
+    const afterFailure = harness.reader.inspect().view!.errors
+
+    // Act
+    harness.reader['replayDebuggerChanged']('values-loaded')
+
+    // Assert
+    const afterValuesLoaded = harness.reader.inspect().view!.errors
+    assert.equal(
+      afterFailure.includes('Error: The historical debugger did not stop.'),
+      true,
+    )
+    assert.equal(
+      afterValuesLoaded.includes(
+        'Error: The historical debugger did not stop.',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a stale "native values did not update" error leaving the reader once the debugger notifies again, even with no Run and Debug hint showing; fails_when=the reader is published only when a hint or a Node stop changes, so the cleared error stays on screen; why_new=Cycle 0034 T3 (the failureCleared publish had no test without a hint); seam=none
 test('a handled native values notification clears an earlier notification failure while no Run and Debug hint is showing', async () => {
   // Arrange: native values are loaded, so no hint is showing, and one notification failed to be handled.
@@ -1892,15 +2166,16 @@ test(
       await neverPainted.started
 
       // Act
+      let stillClosing: ReturnType<typeof setTimeout> | undefined
       const outcome = await Promise.race([
         harness.reader.close().then(
           () => 'closed',
           (error: unknown) => String(error),
         ),
-        new Promise<string>((resolve) =>
-          setTimeout(() => resolve('still closing'), 7_000),
-        ),
-      ])
+        new Promise<string>((resolve) => {
+          stillClosing = setTimeout(() => resolve('still closing'), 7_000)
+        }),
+      ]).finally(() => clearTimeout(stillClosing))
 
       // Assert
       assert.equal(outcome, 'closed')
@@ -1931,15 +2206,16 @@ test(
       await stuckDebugger.started
 
       // Act
+      let stillClosing: ReturnType<typeof setTimeout> | undefined
       const outcome = await Promise.race([
         harness.reader.close().then(
           () => 'closed',
           (error: unknown) => String(error),
         ),
-        new Promise<string>((resolve) =>
-          setTimeout(() => resolve('still closing'), 7_000),
-        ),
-      ])
+        new Promise<string>((resolve) => {
+          stillClosing = setTimeout(() => resolve('still closing'), 7_000)
+        }),
+      ]).finally(() => clearTimeout(stillClosing))
 
       // Assert
       assert.equal(outcome, 'closed')
@@ -1992,13 +2268,16 @@ test(
       await saveStarted
 
       // Act
+      enableFakeClock(context)
       const closing = harness.reader.close().then(() => {
         order.push('closed')
       })
-      await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+      await advanceClock(context, 2_000)
       const whileStorageHeld = [...order]
       releaseSave()
+      await advanceClockUntilSettled(context, closing, 2_000)
       await closing
+      resetFakeClock(context)
 
       // Assert: the seek's save and the one close() queues when it hides the frame both finish before the reader is closed.
       assert.deepEqual(whileStorageHeld, [])
@@ -2091,15 +2370,98 @@ test('another explicit open while the editor is still stopping the replaced hist
     await harness.reader.openRecording(harness.studyId)
     await new Promise<void>((resolve) => setTimeout(resolve, 200))
     const whileStopping = harness.controller.state()
+    const releasedAtMs = performance.now()
     disposal.release()
     await harness.controller.settle()
+    const committedAfterMs = performance.now() - releasedAtMs
 
     // Assert
     const view = harness.postedMessages().slice(-1)[0]!
     assert.equal(whileStopping.readiness, 'loading')
     assert.equal(view.recording?.readiness, 'ready')
+    assert.equal(
+      committedAfterMs < 250,
+      true,
+      `committed ${committedAfterMs} ms after the release`,
+    )
     assert.equal(harness.historicalDebuggers.length, 2)
     assert.equal(harness.historicalDebuggers[1]!.available, true)
+    assert.equal(
+      view.errors.some((error) => error.includes('registered once')),
+      false,
+    )
+  } finally {
+    releaseDisposal()
+    await harness.close()
+  }
+})
+
+// Value: protects=a different recording opened while the editor is still stopping the replaced historical debugger; fails_when=the newer open registers a second descriptor factory during that disposal, or does not commit promptly once the stop is released; why_new=Cycle 0044 (0034-PA1: the O1 tests reopened only the same recording and never timed the 250 ms); seam=TestReplayDebugger models the one-factory rule and a held disposal
+test('a different recording opened while the editor is still stopping the replaced historical debugger commits within 250 ms of the stop being released', async () => {
+  // Arrange: two saved recordings; the first is open and its historical debugger ended.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDisposal = (): void => {}
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const otherRecord = [...harness.service.records.values()].at(-1)!
+    await otherRecord.preparation
+    assert.ok(otherRecord.recording)
+    otherRecord.recording.frame({
+      bytes: harness.png,
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(1_100)
+    await harness.reader.action('click')
+    harness.clock(1_200)
+    await harness.reader.action('stop')
+    const otherStudyId = otherRecord.recording.header.studyId
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.endHistoricalDebugSession()
+    // A seek on the stopped debugger fails, so the next explicit open reloads the recording.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    await harness.reader.openRecording(harness.studyId)
+    await disposal.started
+
+    // Act: the learner pauses the stuck open and opens the other recording.
+    harness.controller.command({
+      action: 'pause',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.reader.openRecording(otherStudyId)
+    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    const whileStopping = harness.controller.state()
+    const releasedAtMs = performance.now()
+    disposal.release()
+    await harness.controller.settle()
+    const committedAfterMs = performance.now() - releasedAtMs
+
+    // Assert
+    const view = harness.postedMessages().slice(-1)[0]!
+    assert.equal(otherStudyId === harness.studyId, false)
+    assert.equal(whileStopping.readiness, 'loading')
+    assert.equal(view.recording?.readiness, 'ready')
+    assert.equal(view.model.selection.studyId, otherStudyId)
+    assert.equal(
+      committedAfterMs < 250,
+      true,
+      `committed ${committedAfterMs} ms after the release`,
+    )
     assert.equal(
       view.errors.some((error) => error.includes('registered once')),
       false,
@@ -2283,7 +2645,7 @@ test('a recording opened again while its first recorded-application reveal is st
 test(
   'a recording opened again after an abandoned first reader entry that never returns reports busy after the presentation bound',
   { timeout: 30_000 },
-  async () => {
+  async (context) => {
     // Arrange
     const harness = await recordedReaderHarness(true, true)
     let releaseEntry = (): void => {}
@@ -2299,26 +2661,27 @@ test(
         expectedRevision: harness.controller.state().revision,
       })
 
-      // Act
-      const reopenedAt = performance.now()
+      // Act: the 5 s presentation bound passes on a faked clock.
+      enableFakeClock(context)
       await harness.reader.openRecording(harness.studyId)
-      await waitUntil(
+      await advanceClock(context, 4_750)
+      const readinessBeforeBound = harness.controller.state().readiness
+      const gaveUpAfterMs = await advanceClockUntil(
+        context,
         () => harness.controller.state().readiness === 'failed',
-        'the successor gives up on the abandoned entry',
-        10_000,
+        2_000,
       )
-      const waitedMs = performance.now() - reopenedAt
+      resetFakeClock(context)
 
       // Assert
+      assert.equal(readinessBeforeBound, 'loading')
+      assert.notEqual(gaveUpAfterMs, undefined)
       assert.match(
         harness.controller.state().reason ?? '',
         /Study workspace is opening/,
       )
-      assert.ok(
-        waitedMs >= 4_750 && waitedMs <= 6_000,
-        `waited ${Math.round(waitedMs)} ms`,
-      )
     } finally {
+      resetFakeClock(context)
       releaseEntry()
       await harness.close()
     }

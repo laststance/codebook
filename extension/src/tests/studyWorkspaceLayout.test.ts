@@ -15,6 +15,12 @@ import {
   recordedReaderHarness,
   articleRecordingLayoutHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClock,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 for (const recording of [false, true])
   test(`Wiki ${recording ? 'recording' : 'observation'} reentry restores Study after an empty chat wrapper refresh following actual Return`, async () => {
     // Arrange
@@ -3227,11 +3233,12 @@ for (const [pane, kind] of [
     }
   })
 
-/** Settles a navigation to a short label so a regression that waits forever fails the test instead of hanging it. @example await settleWithin(opening, 6_500) */
+/** Settles a navigation to a short label so a regression that waits forever fails the test instead of hanging it; its timer never outlives the navigation. @example await settleWithin(opening, 6_500) */
 async function settleWithin(
   operation: Promise<unknown>,
   limitMs: number,
 ): Promise<string> {
+  let limit: ReturnType<typeof setTimeout> | undefined
   return Promise.race([
     operation.then(
       () => 'completed',
@@ -3240,20 +3247,21 @@ async function settleWithin(
           ? String(error.code)
           : String(error),
     ),
-    new Promise<string>((resolve) =>
-      setTimeout(() => resolve('still waiting'), limitMs),
-    ),
-  ])
+    new Promise<string>((resolve) => {
+      limit = setTimeout(() => resolve('still waiting'), limitMs)
+    }),
+  ]).finally(() => clearTimeout(limit))
 }
 
-// Value: protects=repository evidence navigation while the recorded application cannot paint (for example a hidden replay panel); fails_when=the navigation waits for the frame forever, so the reader stays busy and the next recording never presents; why_new=Cycle 0032 B1/D2/D5 at the repository evidence site; seam=none
-test('repository evidence whose recorded frame never paints fails within its bound and the next recording open presents its frame', async () => {
+// Value: protects=repository evidence navigation while the recorded application cannot paint (for example a hidden replay panel); fails_when=the navigation waits for the frame forever, so the reader stays busy and the next recording never presents; why_new=Cycle 0032 B1/D2/D5 at the repository evidence site; seam=node:test setTimeout mock (the 5 s bound passes without real waiting)
+test('repository evidence whose recorded frame never paints fails within its bound and the next recording open presents its frame', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true)
   let release = (): void => {}
   try {
     const neverPainted = harness.holdNextImage()
     release = neverPainted.release
+    enableFakeClock(context)
 
     // Act
     const navigation = settleWithin(
@@ -3263,24 +3271,26 @@ test('repository evidence whose recorded frame never paints fails within its bou
         undefined,
         harness.origin,
       ),
-      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+      PRESENTATION_SETTLE_CEILING_MS,
     )
-    await neverPainted.started
-    const paintStartedAt = performance.now()
+    await advanceClockUntilSettled(context, neverPainted.started, 2_000)
+    let outcomeBeforeBound = 'still painting'
+    void navigation.then((label) => {
+      outcomeBeforeBound = label
+    })
+    await advanceClock(context, PRESENTATION_READY_TIMEOUT_MS - 100)
+    const beforeBound = outcomeBeforeBound
+    // The navigation must have failed 6,000 ms after its paint began (the bound Cycle 0034 T2 decided); the helper fails the test otherwise.
+    await advanceClockUntilSettled(context, navigation, 1_100)
     const outcome = await navigation
-    const elapsedMs = performance.now() - paintStartedAt
+    resetFakeClock(context)
     // A navigation that still waits leaves playback busy; stop here instead of hanging the recovery open.
     assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
-    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4). The upper limit leaves room for the storage
-    // write that hiding the expired frame waits for before the navigation reports its failure.
-    assert.ok(
-      elapsedMs >= PRESENTATION_READY_TIMEOUT_MS - 50 &&
-        elapsedMs <= PRESENTATION_READY_TIMEOUT_MS + 1_000,
-      `bounded evidence navigation took ${Math.round(elapsedMs)} ms after its paint started`,
-    )
+    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4): still painting 100 ms before it, failed by 6,000 ms.
+    assert.equal(beforeBound, 'still painting')
     assert.equal(harness.controller.state().readiness, 'ready')
     assert.equal(harness.controller.bundle()?.studyId, harness.studyId)
     assert.equal(
@@ -3288,19 +3298,21 @@ test('repository evidence whose recorded frame never paints fails within its bou
       harness.controller.state().requestedMs,
     )
   } finally {
+    resetFakeClock(context)
     release()
     await harness.close()
   }
 })
 
-// Value: protects=a learner seek made while an evidence navigation waits on a frame that never paints; fails_when=the navigation's expired bound hides playback although the learner's seek now owns it, so the seek never presents; why_new=Cycle 0032 D4 (outside voice); seam=none
-test('an evidence navigation that gives up never cancels a newer learner seek', async () => {
+// Value: protects=a learner seek made while an evidence navigation waits on a frame that never paints; fails_when=the navigation's expired bound hides playback although the learner's seek now owns it, so the seek never presents; why_new=Cycle 0032 D4 (outside voice); seam=node:test setTimeout mock
+test('an evidence navigation that gives up never cancels a newer learner seek', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true)
   const releases: Array<() => void> = []
   try {
     const stuckPaint = harness.holdNextImage()
     releases.push(stuckPaint.release)
+    enableFakeClock(context)
     const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -3308,9 +3320,9 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
         undefined,
         harness.origin,
       ),
-      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+      PRESENTATION_SETTLE_CEILING_MS,
     )
-    await stuckPaint.started
+    await advanceClockUntilSettled(context, stuckPaint.started, 2_000)
     const seekPaint = harness.holdNextImage()
     releases.push(seekPaint.release)
 
@@ -3321,8 +3333,14 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
       expectedRevision: harness.controller.state().revision,
       positionMs: 150,
     })
-    await seekPaint.started
+    await advanceClockUntilSettled(context, seekPaint.started, 2_000)
+    await advanceClockUntilSettled(
+      context,
+      navigation,
+      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+    )
     const navigationOutcome = await navigation
+    resetFakeClock(context)
     seekPaint.release()
     await harness.controller.settle()
 
@@ -3331,13 +3349,14 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
     assert.equal(harness.controller.state().presentedMs, 150)
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
+    resetFakeClock(context)
     for (const release of releases) release()
     await harness.close()
   }
 })
 
-// Value: protects=a healthy cold presentation whose native debugger needs 4 s before a 2 s paint; fails_when=the 5 s bound again covers the native debugger wait instead of painting only; why_new=Cycle 0033 B2 (Red Team/Claude adversarial in Cycle 0032); seam=none
-test('a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents', async () => {
+// Value: protects=a healthy cold presentation whose native debugger needs 4 s before a 2 s paint; fails_when=the 5 s bound again covers the native debugger wait instead of painting only; why_new=Cycle 0033 B2 (Red Team/Claude adversarial in Cycle 0032); seam=node:test setTimeout mock
+test('a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true, true)
   const releases: Array<() => void> = []
@@ -3347,6 +3366,7 @@ test('a cold evidence navigation whose native debugger takes 4 s and whose frame
     releases.push(slowDebugger.release)
     const slowPaint = harness.holdNextImage()
     releases.push(slowPaint.release)
+    enableFakeClock(context)
 
     // Act
     const navigation = settleWithin(
@@ -3358,13 +3378,15 @@ test('a cold evidence navigation whose native debugger takes 4 s and whose frame
       ),
       PRESENTATION_SETTLE_CEILING_MS + 1_500,
     )
-    await slowDebugger.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 4_000))
+    await advanceClockUntilSettled(context, slowDebugger.started, 2_000)
+    await advanceClock(context, 4_000)
     slowDebugger.release()
-    await slowPaint.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+    await advanceClockUntilSettled(context, slowPaint.started, 2_000)
+    await advanceClock(context, 2_000)
     slowPaint.release()
+    await advanceClockUntilSettled(context, navigation, 2_000)
     const outcome = await navigation
+    resetFakeClock(context)
 
     // Assert
     assert.equal(outcome, 'completed')
@@ -3374,56 +3396,111 @@ test('a cold evidence navigation whose native debugger takes 4 s and whose frame
       harness.binding.elapsedMs,
     )
   } finally {
+    resetFakeClock(context)
     for (const release of releases) release()
     await harness.close()
   }
 })
 
-// Value: protects=an evidence navigation whose presentation never reaches painting still ending; fails_when=the settle has no ceiling once the paint bound covers painting only; why_new=Cycle 0033 B2 ceiling; seam=none
-test('an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents', async () => {
+// Value: protects=the slowest healthy replay sequence still presenting; fails_when=the settle ceiling leaves out the pending startup a retirement waits for or the inspection grace, so a healthy 15.7 s native debugger wait reports PRESENTATION_UNAVAILABLE and hides the frame; why_new=Cycle 0044 (0033-F2e3 / 0034-PL5); seam=node:test setTimeout mock
+test('an evidence navigation whose native debugger needs a pending startup, a retirement, the next startup and the inspection grace (15.7 s) before a 4.9 s paint still presents', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true, true)
-  const stuckDebugger = harness.holdHistoricalDebugPresentation()
+  const releases: Array<() => void> = []
   try {
-    const startedAt = performance.now()
+    // The opening gap frame has no image; hold the recorded stop so its debugger wait and its paint share one settle.
+    const slowDebugger = harness.holdHistoricalDebugPresentation(true)
+    releases.push(slowDebugger.release)
+    const slowPaint = harness.holdNextImage()
+    releases.push(slowPaint.release)
+    enableFakeClock(context)
 
-    // Act
-    const outcome = await settleWithin(
+    // Act: each native step stays just inside its own bound (3 × 4.9 s, then the 1 s grace).
+    const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
         true,
         undefined,
         harness.origin,
       ),
-      PRESENTATION_SETTLE_CEILING_MS + 1_500,
+      30_000,
     )
-    const elapsedMs = performance.now() - startedAt
+    await advanceClockUntilSettled(context, slowDebugger.started, 2_000)
+    await advanceClock(context, 15_700)
+    slowDebugger.release()
+    await advanceClockUntilSettled(context, slowPaint.started, 2_000)
+    await advanceClock(context, 4_900)
+    slowPaint.release()
+    await advanceClockUntilSettled(context, navigation, 2_000)
+    const outcome = await navigation
+    resetFakeClock(context)
+
+    // Assert
+    assert.equal(outcome, 'completed')
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(
+      harness.controller.state().presentedMs,
+      harness.binding.elapsedMs,
+    )
+  } finally {
+    resetFakeClock(context)
+    for (const release of releases) release()
+    await harness.close()
+  }
+})
+
+// Value: protects=an evidence navigation whose presentation never reaches painting still ending; fails_when=the settle has no ceiling once the paint bound covers painting only; why_new=Cycle 0033 B2 ceiling; seam=node:test setTimeout mock
+test('an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents', async (context) => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  const stuckDebugger = harness.holdHistoricalDebugPresentation()
+  try {
+    enableFakeClock(context)
+
+    // Act
+    const navigation = settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_SETTLE_CEILING_MS + 5_000,
+    )
+    let outcomeBeforeCeiling = 'still waiting for the debugger'
+    void navigation.then((label) => {
+      outcomeBeforeCeiling = label
+    })
+    await advanceClock(context, PRESENTATION_SETTLE_CEILING_MS - 250)
+    const beforeCeiling = outcomeBeforeCeiling
+    await advanceClockUntilSettled(context, navigation, 4_000)
+    const outcome = await navigation
+    resetFakeClock(context)
     stuckDebugger.reject(new Error('Playback presentation superseded'))
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
     // Assert
     assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
-    assert.ok(
-      elapsedMs >= PRESENTATION_SETTLE_CEILING_MS - 250 &&
-        elapsedMs <= PRESENTATION_SETTLE_CEILING_MS + 1_000,
-      `stuck evidence navigation took ${Math.round(elapsedMs)} ms`,
-    )
+    assert.equal(PRESENTATION_SETTLE_CEILING_MS, 23_000)
+    assert.equal(beforeCeiling, 'still waiting for the debugger')
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
+    resetFakeClock(context)
     stuckDebugger.release()
     await harness.close()
   }
 })
 
-// Value: protects=a navigation whose first frame is superseded by a learner seek giving the newer frame its own full paint bound; fails_when=the paint bound is armed once per settle instead of per paint phase; why_new=Cycle 0033 A3 (eng review); seam=none
-test('a newer frame painted during an evidence navigation gets its own paint bound', async () => {
+// Value: protects=a navigation whose first frame is superseded by a learner seek giving the newer frame its own full paint bound; fails_when=the paint bound is armed once per settle instead of per paint phase; why_new=Cycle 0033 A3 (eng review); seam=node:test setTimeout mock
+test('a newer frame painted during an evidence navigation gets its own paint bound', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true)
   const releases: Array<() => void> = []
   try {
     const firstPaint = harness.holdNextImage()
     releases.push(firstPaint.release)
+    enableFakeClock(context)
     const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -3433,8 +3510,8 @@ test('a newer frame painted during an evidence navigation gets its own paint bou
       ),
       PRESENTATION_SETTLE_CEILING_MS + 1_500,
     )
-    await firstPaint.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    await advanceClockUntilSettled(context, firstPaint.started, 2_000)
+    await advanceClock(context, 3_000)
     const seekPaint = harness.holdNextImage()
     releases.push(seekPaint.release)
 
@@ -3445,10 +3522,12 @@ test('a newer frame painted during an evidence navigation gets its own paint bou
       expectedRevision: harness.controller.state().revision,
       positionMs: 150,
     })
-    await seekPaint.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    await advanceClockUntilSettled(context, seekPaint.started, 2_000)
+    await advanceClock(context, 3_000)
     seekPaint.release()
+    await advanceClockUntilSettled(context, navigation, 2_000)
     const outcome = await navigation
+    resetFakeClock(context)
     await harness.controller.settle()
 
     // Assert: 6 s after the first paint began, the newer frame had painted for only 3 s, so no bound expired.
@@ -3456,6 +3535,7 @@ test('a newer frame painted during an evidence navigation gets its own paint bou
     assert.equal(harness.controller.state().presentedMs, 150)
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
+    resetFakeClock(context)
     for (const release of releases) release()
     await harness.close()
   }

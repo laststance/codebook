@@ -384,6 +384,38 @@ test('an Open Study cancelled while it waits for an abandoned first entry leaves
   }
 })
 
+// Value: protects=Open Study refusing to run beside a presentation change that began while it waited for an abandoned first entry; fails_when=open() checks idleness only before that wait; why_new=Cycle 0044 (0034-C5); seam=returningCurrent set as a presentation change would set it
+test('an Open Study waiting for an abandoned first entry is refused when a presentation change starts during the wait', async () => {
+  // Arrange: the first entry was abandoned inside a native layout call that ignores cancellation, and a second entry waits for it.
+  const harness = await workspaceHarness(false)
+  const entry = harness.holdNextCommand('vscode.getEditorLayout'),
+    abandonedEntry = new AbortController()
+  const first = harness.reader
+    .open(abandonedEntry.signal)
+    .catch((error: unknown) => error)
+  let second: Promise<unknown> | undefined
+  try {
+    await entry.started
+    abandonedEntry.abort(new Error('First entry abandoned'))
+    second = harness.reader.open().catch((error: unknown) => error)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Act: a presentation change starts while the second entry waits, then the abandoned entry finishes.
+    harness.reader['returningCurrent'] = true
+    entry.release()
+    const outcome = await second
+
+    // Assert
+    assert.ok(outcome instanceof Error && 'code' in outcome)
+    assert.equal(outcome.code, 'PRESENTATION_UNAVAILABLE')
+  } finally {
+    harness.reader['returningCurrent'] = false
+    entry.release()
+    await Promise.allSettled([first, second])
+    await harness.close()
+  }
+})
+
 test('a failed cold initialization allows the next explicit Open Study to retry', async () => {
   // Arrange
   const harness = await workspaceHarness(false),

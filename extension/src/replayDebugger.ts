@@ -40,6 +40,10 @@ export class ReplayDebugger {
   private starting?: Promise<void>
   private retiring?: Promise<void>
   private retiringSessionId?: string
+  /** The session {@link stopSessionStartedAfterExpiry} already asked the editor to stop, so expiry and a late startup stop it only once. */
+  private expiredSessionStopped?: vscode.DebugSession
+  /** The startup outlived its bound while no one ended the session, so {@link adoptLateStartup} may still take the session over once the editor finishes starting it. */
+  private startupExpired = false
   private closed = false
   private detached = false
   private revision = 0
@@ -105,7 +109,12 @@ export class ReplayDebugger {
                     this.wakeInspection()
                 },
                 () => {
-                  this.detached = true
+                  // Codebook's own stop-change retirement disconnects before termination; only another stop makes history unavailable.
+                  if (this.retiringSessionId !== session.id) {
+                    this.detached = true
+                    // A session the learner stopped is never adopted back after a slow startup.
+                    this.startupExpired = false
+                  }
                   this.wakeInspection()
                 },
                 () => {
@@ -137,6 +146,7 @@ export class ReplayDebugger {
         this.adapter = undefined
         this.session = undefined
         this.detached = true
+        this.startupExpired = false
         this.selected = undefined
         // A wait on the ended adapter fails now instead of at its deadline.
         this.wakeInspection()
@@ -238,15 +248,19 @@ export class ReplayDebugger {
    * On expiry the owner gives up its session through {@link giveUp}, so every waiter and later presentation fails with the
    * closed-debugger error instead of waiting for an editor that never answers.
    *
-   * @param operation - The shared operation; it keeps running, and its late outcome is ignored.
+   * @param operation - The shared operation; it keeps running, and its late outcome is ignored except for a startup that {@link adoptLateStartup} takes over.
+   * @param isStartup - Whether the operation launches the owned session, which a healthy but slow editor may still finish.
    * @returns The operation's outcome, or a rejection with the closed-debugger error on expiry.
-   * @example this.starting = this.bounded(this.launchSession())
+   * @example this.starting = this.bounded(this.launchSession(), true)
    */
-  private bounded(operation: Promise<void>): Promise<void> {
+  private bounded(operation: Promise<void>, isStartup = false): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const expiry = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        if (isStartup) this.startupExpired = true
         this.giveUp()
+        // A session still alive after its retirement expired would keep showing history: ask again, as the first stop may be lost. A slow startup is left for adoptLateStartup.
+        if (!isStartup) this.stopSessionStartedAfterExpiry()
         reject(new Error(HISTORICAL_DEBUGGER_CLOSED))
       }, REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
     })
@@ -380,14 +394,15 @@ export class ReplayDebugger {
   private async awaitSession(signal: AbortSignal): Promise<void> {
     await untilAborted(this.retiring, signal)
     if (!this.starting) {
-      const starting: Promise<void> = this.bounded(this.launchSession()).catch(
-        (error: unknown) => {
-          // A refused startup must not poison later presentations, even after every waiter left: the next one retries it.
-          if (this.starting === starting && !this.session)
-            this.starting = undefined
-          throw error
-        },
-      )
+      const starting: Promise<void> = this.bounded(
+        this.launchSession(),
+        true,
+      ).catch((error: unknown) => {
+        // A refused startup must not poison later presentations, even after every waiter left: the next one retries it.
+        if (this.starting === starting && !this.session)
+          this.starting = undefined
+        throw error
+      })
       this.starting = starting
     }
     await untilAborted(this.starting, signal)
@@ -418,6 +433,8 @@ export class ReplayDebugger {
         suppressDebugStatusbar: true,
       },
     )
+    // A healthy startup that outlived its bound becomes this owner's session again, so the next presentation recovers without an explicit reopen.
+    if (this.adoptLateStartup(started)) return
     this.stopSessionStartedAfterExpiry()
     if (!started || !this.session || !this.adapter)
       throw new Error('The editor did not start its historical debug session.')
@@ -426,15 +443,48 @@ export class ReplayDebugger {
   }
 
   /**
-   * Stops a session that only appeared after this owner gave up on its startup (see {@link expire}), on behalf of {@link launchSession}.
+   * Takes over a session whose startup outlived {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} but then completed, on behalf of {@link launchSession}.
+   *
+   * The expired startup already failed its waiters and made this owner unavailable; a healthy but slow editor would otherwise
+   * leave replay failing until the learner reopens the recording. A session the learner stopped meanwhile is never adopted.
+   *
+   * @param started - The editor's answer to the launch.
+   * @returns `true` when this owner is available again with the late session, `false` when nothing was adopted.
+   * @example if (this.adoptLateStartup(started)) return
+   */
+  private adoptLateStartup(started: boolean): boolean {
+    if (!this.startupExpired) return false
+    this.startupExpired = false
+    if (
+      !started ||
+      this.closed ||
+      !this.session ||
+      !this.adapter ||
+      this.adapter.disposed
+    )
+      return false
+    this.detached = false
+    this.starting = Promise.resolve()
+    return true
+  }
+
+  /**
+   * Stops a session that is still alive after this owner gave up on it (see {@link expire}), on behalf of {@link launchSession} and an expired retirement in {@link bounded}; each session is asked once.
    *
    * A closed owner is left to {@link dispose}, which stops the session itself once the startup settles.
    *
    * @example this.stopSessionStartedAfterExpiry()
    */
   private stopSessionStartedAfterExpiry(): void {
-    if (this.detached && !this.closed && this.session)
+    if (
+      this.detached &&
+      !this.closed &&
+      this.session &&
+      this.session !== this.expiredSessionStopped
+    ) {
+      this.expiredSessionStopped = this.session
       void this.stopOwnedSession(this.session)
+    }
   }
 
   /**
@@ -601,7 +651,16 @@ export class ReplayDebugger {
     try {
       await this.retiring?.catch(() => {})
       await this.starting?.catch(() => {})
-      if (this.session) await this.stopOwnedSession(this.session)
+      const session = this.session
+      if (session) {
+        await this.stopOwnedSession(session)
+        // A stop the editor never acknowledged is asked once more without holding closure, so a lost first request cannot leave the session alive.
+        if (this.session === session)
+          void this.editor.debug.stopDebugging(session).then(
+            () => {},
+            () => {},
+          )
+      }
     } finally {
       this.adapter?.dispose()
       for (const disposable of this.disposables) disposable.dispose()

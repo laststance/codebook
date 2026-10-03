@@ -25,8 +25,14 @@ export async function loadModule<Module>(
       queueMicrotask,
       setInterval,
       clearInterval,
-      setTimeout,
-      clearTimeout,
+      // Resolved at call time, so a test that fakes timers after loading the module also fakes them inside it.
+      setTimeout: (
+        handler: (...values: unknown[]) => void,
+        delayMs?: number,
+        ...values: unknown[]
+      ) => globalThis.setTimeout(handler, delayMs, ...values),
+      clearTimeout: (timer?: Parameters<typeof clearTimeout>[0]) =>
+        globalThis.clearTimeout(timer),
       AbortController,
       AbortSignal,
       ...globals,

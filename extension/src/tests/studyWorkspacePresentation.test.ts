@@ -1357,6 +1357,12 @@ test('real MCP presentation discovery and control preserve identities across res
   let client: Client | undefined
   try {
     harness = await workspaceHarness()
+    // An earlier version saved a layout that is retired now; the reader still opens in it.
+    harness.presentationPreferences.set('codebook.presentation.v1', {
+      version: 1,
+      mode: 'living-book',
+    })
+    await harness.reader.close()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     await harness.reader.open()
     endpoint = await startServer(harness.service)
@@ -1392,7 +1398,7 @@ test('real MCP presentation discovery and control preserve identities across res
       instanceId: selected.instanceId,
       presentationId: selected.presentation.presentationId,
       expectedRevision: selected.presentation.presentationControlRevision,
-      mode: 'living-book',
+      mode: 'study-workspace',
     }
     const before = [...harness.commands]
     const wrong = await client.callTool({
@@ -1412,6 +1418,31 @@ test('real MCP presentation discovery and control preserve identities across res
       enum: ['study-workspace', 'living-book', 'guided-walkthrough'],
     })
     assert.equal(tool.inputSchema.required?.includes('action'), false)
+    // The retired layouts can no longer be selected (Cycle 0044, 0031-U7): the refusal names them and has no native effect.
+    const retiredLayout = await client.callTool({
+      name: tool.name,
+      arguments: { ...input, mode: 'guided-walkthrough' },
+    })
+    assert.match(
+      JSON.stringify(retiredLayout.structuredContent),
+      /PRESENTATION_UNAVAILABLE/,
+    )
+    assert.match(
+      JSON.stringify(retiredLayout.structuredContent),
+      /The Living book and Guided walkthrough layouts are retired\. Select study-workspace/,
+    )
+    // The refusal may read the native layout to learn the reader's mode, but never changes it.
+    assert.equal(
+      harness.commands.filter((command) => command === 'vscode.setEditorLayout')
+        .length,
+      before.filter((command) => command === 'vscode.setEditorLayout').length,
+    )
+    assert.equal(
+      harness.commands.filter((command) => command === 'runCommands').length,
+      before.filter((command) => command === 'runCommands').length,
+    )
+    assert.equal(harness.reader.presentationState().mode, 'living-book')
+    assert.match(tool.description ?? '', /layouts are retired/)
     const applied = await client.callTool({ name: tool.name, arguments: input })
     assert.equal(applied.isError, undefined)
     const resource = await client.readResource({
@@ -1430,7 +1461,7 @@ test('real MCP presentation discovery and control preserve identities across res
       .parse(JSON.parse(contents.text))
     assert.equal(receipt.presentationId, selected.presentation.presentationId)
     assert.equal(receipt.presentationControlRevision, 1)
-    assert.equal(receipt.mode, 'living-book')
+    assert.equal(receipt.mode, 'study-workspace')
     assert.equal(receipt.preference.status, 'saved')
     const commands = [...harness.commands]
     const stale = await client.callTool({ name: tool.name, arguments: input })
@@ -1566,7 +1597,7 @@ test('editor AI can return a saved recording to its current run without repeatin
   }
 })
 
-test('an unknown presentation preference survives opening and a cancelled picker until an explicit replacement', async () => {
+test('an unknown presentation preference survives opening until an explicit replacement', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   const stored = { version: 91, mode: 'future-mode', foreign: 'retained' }
@@ -1577,7 +1608,6 @@ test('an unknown presentation preference survives opening and a cancelled picker
   try {
     // Act
     await harness.reader.open()
-    await harness.reader.selectPresentation()
     // Assert
     let state = harness.reader.presentationState()
     assert.equal(state.mode, 'study-workspace')

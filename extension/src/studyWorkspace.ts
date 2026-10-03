@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import {
   AGENT_STORAGE_DIRECTORY,
+  CHOICE_RETIRED_ERROR_KINDS,
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
@@ -15,23 +16,27 @@ import {
   MAX_SOURCE_DOCUMENTS,
   NODE_TEST_PROFILE,
   PLAYBACK_SECOND_MS,
-  PRESENTATION_MODE_IDS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
+  READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
+  SHOW_NATIVE_VARIABLES_COMMANDS,
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_SOURCE_SCHEME,
+  SUMMARY_PLACEMENT_ACTION,
+  SUMMARY_PLACEMENT_OFFER,
+  SUMMARY_PLACEMENT_OFFER_KEY,
   UNRETRYABLE_READER_ERROR_KINDS,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
@@ -144,6 +149,7 @@ import {
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
+import { settledWithin } from './utils/settledWithin'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
@@ -173,6 +179,7 @@ const actionSchema = z.enum([
   'arrange',
   'retry',
   'reload-recording',
+  'show-variables',
 ])
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
@@ -348,6 +355,8 @@ export class StudyWorkspace {
   private recordingActive = false
   private replayViewport?: BrowserViewport
   private replayNeedsReveal = false
+  /** Why the latest {@link rememberLayout} read failed, so the layout line the learner reads names the cause; `undefined` when it settled. */
+  private layoutReceiptFailure?: string
   private replayDelivery: ViewportDeliveryLog = { receipts: [], omitted: 0 }
   /** The replay paint phase in progress, from {@link beginReplayPaint} until its {@link endReplayPaint}. */
   private replayPaint?: { token: object; startedAt: number }
@@ -611,8 +620,11 @@ export class StudyWorkspace {
     let reason = this.presentationReason
     if (!reason && this.opened && !this.closing && !layoutConfirmed) {
       if (!currentSourceReady)
+        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover.
         reason =
-          'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
+          this.playback?.state().readiness === 'loading'
+            ? 'The recorded source is opening in its native pane.'
+            : 'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
       else if (!matchingColumns)
         reason =
           'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
@@ -737,31 +749,6 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         'A presentation change or reader close is pending. Read its state before another control.',
       )
-  }
-
-  /** Shares the command picker with UI/MCP mode control; cancellation has no state or native effect. @example await workspace.selectPresentation() */
-  async selectPresentation(): Promise<void> {
-    this.assertPresentationIdle()
-    const state = this.presentationState()
-    const selected = await vscode.window.showQuickPick(
-      PRESENTATION_MODE_IDS.map((mode) => ({
-        mode,
-        label: STUDY_PRESENTATIONS[mode].title,
-        description: STUDY_PRESENTATIONS[mode].description,
-        picked: mode === state.mode,
-      })),
-      {
-        title: 'Codebook: Select Presentation',
-        placeHolder: 'Keep the same learning item, run and recording',
-      },
-    )
-    if (selected)
-      await this.changePresentation({
-        presentationId: state.presentationId,
-        expectedRevision: state.presentationControlRevision,
-        mode: selected.mode,
-        action: 'select',
-      })
   }
 
   /** Reserves one current reader intent before asynchronous work; all three entry points share its native/storage receipts. @example await workspace.changePresentation({presentationId,expectedRevision:0,mode:'living-book',action:'select'}) */
@@ -3623,6 +3610,8 @@ export class StudyWorkspace {
       }
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
+      // A presentation change may have started during the wait.
+      if (origin !== 'presentation') this.assertPresentationIdle()
     }
     const request = ++this.readerOpenNumber,
       historyRequest = this.historyRequest
@@ -4154,6 +4143,10 @@ export class StudyWorkspace {
     }
     if (action === 'outline')
       await vscode.commands.executeCommand('codebook.learningOutline.focus')
+    // One click replaces opening Run and Debug, expanding Variables and expanding its first scope by hand.
+    if (action === 'show-variables')
+      for (const command of SHOW_NATIVE_VARIABLES_COMMANDS)
+        await vscode.commands.executeCommand(command)
     if (action === 'arrange') {
       try {
         // A Study click can precede Cursor's native focus notification after unmaximizing Application.
@@ -4440,7 +4433,11 @@ export class StudyWorkspace {
       await this.playback
         ?.settle(undefined, PRESENTATION_READY_TIMEOUT_MS)
         .catch(() => {})
-      await this.playback?.saved()
+      // A storage write that never returns must not keep the reader closing: each wait below is bounded, and the write itself keeps running.
+      await settledWithin(
+        this.playback?.saved(),
+        READER_CLOSE_STORAGE_TIMEOUT_MS,
+      )
       this.dropReplayViewport()
       this.nodeHistoryPlaybackController?.dispose()
       this.nodeHistoryPlaybackController = undefined
@@ -4450,8 +4447,14 @@ export class StudyWorkspace {
       await this.replayDebuggerRetirement
       await this.rendering
       await this.outlineRendering
-      await Promise.allSettled(this.archiveWrites.values())
-      await this.library?.flush()
+      await settledWithin(
+        Promise.allSettled(this.archiveWrites.values()),
+        READER_CLOSE_STORAGE_TIMEOUT_MS,
+      )
+      await settledWithin(
+        this.library?.flush(),
+        READER_CLOSE_STORAGE_TIMEOUT_MS,
+      )
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .filter((tab) => this.ownsCapturedSourceTab(tab))
@@ -5255,8 +5258,11 @@ export class StudyWorkspace {
       await earlier
       try {
         await owner.dispose()
+        // A later owner stopped cleanly, so an earlier failed disposal no longer describes the debugger.
+        if (this.errors.delete('replay-debugger-disposal')) this.publish()
       } catch (error) {
-        this.report('replay-debugger', error)
+        // Its own key: a later values-loaded or session-ended notification clears only notification failures.
+        this.report('replay-debugger-disposal', error)
       }
     })().finally(() => {
       if (this.replayDebuggerRetirement === retirement)
@@ -5328,9 +5334,11 @@ export class StudyWorkspace {
   ): Promise<BrowserViewport> {
     if (this.replayViewport) {
       if (this.replayNeedsReveal) {
-        this.replayNeedsReveal = false
-        await this.replayViewport.reveal(signal)
+        const reused = this.replayViewport
+        await reused.reveal(signal)
         signal.throwIfAborted()
+        // Only a completed handshake retires the owed reveal; an abandoned one leaves it to the next request.
+        if (this.replayViewport === reused) this.replayNeedsReveal = false
       }
       return this.replayViewport
     }
@@ -5420,6 +5428,9 @@ export class StudyWorkspace {
       inspection === 'uninspected' ? bundle.projection.debugger : undefined
     // From here the moment is painting; settleOwnedPlayback bounds only this phase by PRESENTATION_READY_TIMEOUT_MS.
     const paint = this.beginReplayPaint()
+    // A superseded frame may still wait behind a native placement hold that ignores cancellation; its paint phase must not count against the newer frame's settle.
+    const endSupersededPaint = (): void => this.endReplayPaint(paint)
+    signal.addEventListener('abort', endSupersededPaint, { once: true })
     try {
       if (bundle.image) {
         const image = bundle.image.toString('base64'),
@@ -5481,6 +5492,7 @@ export class StudyWorkspace {
       )
       signal.throwIfAborted()
     } finally {
+      signal.removeEventListener('abort', endSupersededPaint)
       this.endReplayPaint(paint)
     }
   }
@@ -5954,6 +5966,16 @@ export class StudyWorkspace {
       },
       nodeHistoryLearningDecision: this.selectedNodeHistoryLearningDecision,
       nodeHistoryLearningMaterial: this.selectedNodeHistoryLearningMaterial,
+      // The reader cannot hash captured text, so every shown stop whose source fails verification is named here and gets no Inspect.
+      nodeHistoryUnverifiedStops: this.selectedNodeHistory?.entries
+        .slice(
+          this.selectedNodeHistoryPage * NODE_HISTORY_READER_PAGE_SIZE,
+          (this.selectedNodeHistoryPage + 1) * NODE_HISTORY_READER_PAGE_SIZE,
+        )
+        .filter(
+          (entry) => entry.type === 'stop' && !nodeStopSourceMatches(entry),
+        )
+        .map((entry) => entry.sequence),
       nodeHistoryPlayback: this.nodeHistoryPlaybackController?.state(),
       nodeHistoryPosition: selectedNodeHistoryEvent && {
         sequence: selectedNodeHistoryEvent.sequence,
@@ -6839,9 +6861,41 @@ export class StudyWorkspace {
       this.lastActiveRegion = 'context'
       this.lastPublished = undefined
       this.publish()
+      this.offerSummaryPlacement()
     } finally {
       focusSubscription.dispose()
     }
+  }
+
+  /**
+   * Offers Cursor's learner the editor's own Move View step once per workspace, after {@link showLearningSummary} showed the summary.
+   *
+   * Cursor rejects the `secondarySidebar` container this extension contributes, so the summary lands in the primary side bar
+   * there, and its own chat containers refuse added views: no command of this extension can place the summary on the right.
+   * VS Code registers the container, so nothing is offered there.
+   *
+   * @example this.offerSummaryPlacement()
+   */
+  private offerSummaryPlacement(): void {
+    if (!vscode.env?.appName?.toLowerCase().includes('cursor')) return
+    if (this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_OFFER_KEY))
+      return
+    void (async (): Promise<void> => {
+      await this.context.workspaceState.update(
+        SUMMARY_PLACEMENT_OFFER_KEY,
+        true,
+      )
+      const choice = await vscode.window.showInformationMessage(
+        SUMMARY_PLACEMENT_OFFER,
+        SUMMARY_PLACEMENT_ACTION,
+      )
+      // The editor's Move View list opens for the summary itself; the learner picks its destination there.
+      if (choice === SUMMARY_PLACEMENT_ACTION)
+        await vscode.commands.executeCommand(
+          'workbench.action.moveFocusedView',
+          'codebook.learningSummary',
+        )
+    })().catch((error: unknown) => this.report('layout', error))
   }
 
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */
@@ -8174,10 +8228,11 @@ export class StudyWorkspace {
         )
       ) {
         this.layoutReceipt = undefined
+        // The receipt read's own failure (a changed group, a grid that never settled) is the cause; keep it readable instead of replacing it.
         this.report(
           'layout',
           new Error(
-            'The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.',
+            `The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.${this.layoutReceiptFailure ? ` Cause: ${this.layoutReceiptFailure}` : ''}`,
           ),
         )
         return
@@ -8194,6 +8249,7 @@ export class StudyWorkspace {
     retainedGroups: readonly vscode.TabGroup[],
   ): Promise<StudyWorkspace['layoutReceipt']> {
     this.assertLifetime(lifetime)
+    this.layoutReceiptFailure = undefined
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
       column: group.viewColumn,
@@ -8240,6 +8296,7 @@ export class StudyWorkspace {
       PRESENTATION_READY_TIMEOUT_MS,
     ).catch((error) => {
       this.assertLifetime(lifetime)
+      this.layoutReceiptFailure = String(error)
       this.report('layout', error)
       return undefined
     })
@@ -8519,16 +8576,22 @@ export class StudyWorkspace {
   /**
    * Names the status line for a failed panel message, for the three panel listeners that call {@link receive}.
    * A replay control's failure gets its own line, which the next accepted replay control or loaded recording retires; `control` is retired only by a live-run action and would keep a replay refusal forever.
+   * A Node test history message likewise gets its own line, which the next Node history message accepted outside browser replay retires.
    * @param value - The raw message the panel sent.
-   * @returns `'replay-control'` for a valid playback message, `'control'` for everything else.
+   * @returns `'replay-control'` for a valid playback message, `'node-history-control'` for a valid Node test history message, `'control'` for everything else.
    * @example
    * this.panelFailureKind({ type: 'playback', action: 'seek', revision: 4, expectedRevision: 2, positionMs: 0 }) // => 'replay-control'
    * this.panelFailureKind({ type: 'tab', revision: 4, tab: 'live' })                                              // => 'control'
+   * this.panelFailureKind({ type: 'node-history', revision: 4, studyId: 'node-study' })                            // => 'node-history-control'
    */
-  private panelFailureKind(value: unknown): 'replay-control' | 'control' {
+  private panelFailureKind(
+    value: unknown,
+  ): 'replay-control' | 'node-history-control' | 'control' {
     const parsed = messageSchema.safeParse(value)
-    return parsed.success && parsed.data.type === 'playback'
-      ? 'replay-control'
+    if (!parsed.success) return 'control'
+    if (parsed.data.type === 'playback') return 'replay-control'
+    return parsed.data.type.startsWith('node-history')
+      ? 'node-history-control'
       : 'control'
   }
 
@@ -8601,7 +8664,11 @@ export class StudyWorkspace {
       !CONTROL_RETIRING_MESSAGE_TYPES.has(parsed.data.type)
     )
       return
-    if (this.errors.delete('control')) this.publish()
+    // A Node test history's refusal has its own line (it is not a live-run control) and is as stale after the next handled choice.
+    let isRetired = false
+    for (const kind of CHOICE_RETIRED_ERROR_KINDS)
+      isRetired = this.errors.delete(kind) || isRetired
+    if (isRetired) this.publish()
   }
 
   /**
@@ -8837,6 +8904,13 @@ export class StudyWorkspace {
     // Choosing another entry retires the last removal's outcome line.
     if (message.type === 'node-history' || message.type === 'history')
       this.dismissStudyRemoval()
+    // A Node history message accepted outside browser replay answers an earlier refusal of one, which no live-run action retires.
+    if (
+      message.type.startsWith('node-history') &&
+      !this.recordingActive &&
+      this.errors.delete('node-history-control')
+    )
+      this.publish()
     if (message.type === 'node-history') {
       if (this.recordingActive)
         throw new Error(
@@ -10059,7 +10133,7 @@ export class StudyWorkspace {
 
   /** Keeps storage, control and renderer failures distinct in the learner-facing status. @example this.report('archive', error) */
   private report(kind: string, error: unknown): void {
-    if (kind === 'control') this.controlRefusals++
+    if (CHOICE_RETIRED_ERROR_KINDS.has(kind)) this.controlRefusals++
     this.errors.set(kind, String(error))
     if (kind === 'presentation') this.clearReadyReplayWarning()
     this.publish()

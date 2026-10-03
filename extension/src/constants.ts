@@ -85,8 +85,14 @@ export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<string> = new Set([
   'layout',
   'control',
   'replay-control',
+  'node-history-control',
   'reading',
   'presentation',
+])
+// The lines of a refused pane choice that the learner's next handled choice retires: the general one and the Node test history's own, which a Node history message accepted outside browser replay retires as well.
+export const CHOICE_RETIRED_ERROR_KINDS: ReadonlySet<string> = new Set([
+  'control',
+  'node-history-control',
 ])
 // The pane messages by which the learner chooses what the reader shows; one that is handled without an error retires the line of an earlier refused control.
 export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
@@ -126,6 +132,15 @@ export const HORIZONTAL_EDITOR_ORIENTATION = 0
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
+/** Workspace-state key recording that Cursor's learner was offered the Move View step for the Learning summary, so the offer appears once. */
+export const SUMMARY_PLACEMENT_OFFER_KEY = 'codebook.summaryPlacementOffer.v1'
+/** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
+export const SUMMARY_PLACEMENT_OFFER =
+  'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
+/** The button of {@link SUMMARY_PLACEMENT_OFFER}; it opens the editor's own Move View list for the focused Learning summary. */
+export const SUMMARY_PLACEMENT_ACTION = 'Move Learning Summary…'
+/** How long closing the reader waits for each pending storage write (saved replay position, archive writes, library queue); a write still pending then keeps running. */
+export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
@@ -186,12 +201,24 @@ export const PRESENTATION_FOCUS_ACTIONS = [
   'arrange',
   'enlarge-app',
   'enlarge-context',
+  'show-variables',
+] as const
+/** Native commands the reader's Show Variables control runs in order: open Run and Debug with Variables expanded and focused, then expand its first scope, which holds the recorded values. */
+export const SHOW_NATIVE_VARIABLES_COMMANDS = [
+  'workbench.debug.variablesView.focus',
+  'list.focusFirst',
+  'list.expand',
 ] as const
 export const PRESENTATION_MODE_IDS = [
   'study-workspace',
   'living-book',
   'guided-walkthrough',
 ] as const
+/** The only layout a command or agent may still select; Living book and Guided walkthrough are retired and stay only in a reader whose saved preference still names one. */
+export const SELECTABLE_PRESENTATION_MODE = 'study-workspace'
+/** What an agent reads when it asks for a retired layout through `codebook_presentation`. */
+export const RETIRED_PRESENTATION_REFUSAL =
+  'The Living book and Guided walkthrough layouts are retired. Select study-workspace; focus, restore and save-preference still accept the mode the reader reports.'
 export const STUDY_PRESENTATIONS = {
   'study-workspace': {
     title: 'Study workspace',
@@ -633,9 +660,16 @@ export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
-/** Ceiling on one owned replay settle: the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}) plus one capture timeout each for retiring and starting the historical session; a stall before painting still ends here. A pending startup that the retirement waits for first and the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}) come on top, so the slowest healthy sequence can outlast this ceiling; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
+/** Frames native Call Stack loads for a stop before the learner asks for more (VS Code: the top frame, then 19 more); it focuses the top frame when none of them has source. */
+export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
+/** What one owned replay settle allows for work that has no bound of its own before painting: reading the recording and the recording renderer's handshake. */
+export const PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS = 2_000
+/** Ceiling on one owned replay settle, covering the slowest healthy sequence: a pending historical-session startup the retirement waits for, the retirement and the next startup (one capture timeout each), the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}), the recording load and renderer handshake ({@link PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS}) and the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}). A stall before painting still ends here; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
 export const PRESENTATION_SETTLE_CEILING_MS =
-  PRESENTATION_READY_TIMEOUT_MS + 2 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS
+  PRESENTATION_READY_TIMEOUT_MS +
+  3 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS +
+  REPLAY_DEBUG_INSPECTION_GRACE_MS +
+  PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64

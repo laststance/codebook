@@ -1074,9 +1074,6 @@ export function activate(
     vscode.commands.registerCommand('codebook.openStudyWorkspace', () =>
       workspace().open(),
     ),
-    vscode.commands.registerCommand('codebook.selectPresentation', () =>
-      workspace().selectPresentation(),
-    ),
     vscode.commands.registerCommand('codebook.closeStudyWorkspace', () =>
       reader?.close(),
     ),

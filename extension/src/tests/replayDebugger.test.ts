@@ -520,6 +520,48 @@ test('replacing a recorded stop keeps history available when the editor disconne
   assert.deepEqual(stopped, ['historical-owned', 'historical-owned-2'])
 })
 
+// Value: protects=a seek during Codebook's own stop change; fails_when=the old adapter's disconnect marks history unavailable before its termination, so the seek is refused as closed and the reader reloads; why_new=Cycle 0044 (0034-C1 / 0034-PL3); seam=none
+test('a seek between the old adapter disconnect and its termination during a stop change still presents the next stop', async () => {
+  // Arrange
+  let releaseTermination = (): void => {}
+  const fixture = harness(
+    undefined,
+    new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    }),
+    0,
+    true,
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  fixture.owner.invalidate()
+  const retiring = fixture.owner.retire(undefined, new AbortController().signal)
+  await fixture.stopRequested
+  try {
+    // Act
+    const availableBetween = fixture.owner.available
+    const seeking = fixture.owner.present(
+      inspectedSnapshot,
+      'Second recorded stop',
+      new AbortController().signal,
+    )
+    releaseTermination()
+    await retiring
+    const outcome = await seeking
+
+    // Assert
+    assert.equal(availableBetween, true)
+    assert.equal(outcome, 'inspected')
+    assert.equal(fixture.owner.available, true)
+  } finally {
+    releaseTermination()
+    await fixture.owner.dispose()
+  }
+})
+
 test('replay remains loading until the native debugger retrieves the current recorded Local values', async () => {
   // Arrange
   const fixture = harness(undefined, undefined, 0, false, true)
@@ -649,6 +691,42 @@ for (const endSession of ['terminate', 'disconnect'] satisfies Array<
     } finally {
       await fixture.owner.dispose()
       await rejected.catch(() => {})
+    }
+  })
+
+  test(`native ${endSession} during a pending inspection wait fails the replay moment at once instead of at the inspection grace`, async (context) => {
+    // Arrange
+    context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+    const fixture = harness(undefined, undefined, 0, false, true)
+    let outcome = 'pending'
+    const showing = fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      )
+      .then(
+        (inspection) => {
+          outcome = inspection
+        },
+        (error: unknown) => {
+          outcome = error instanceof Error ? error.message : String(error)
+        },
+      )
+    try {
+      await fixture.started
+      await flushNative()
+
+      // Act: no timer advances, so only the ownership change can end the wait.
+      fixture[endSession]()
+      await flushNative()
+
+      // Assert
+      assert.match(outcome, /Reopen the learning replay/)
+    } finally {
+      context.mock.timers.reset()
+      await fixture.owner.dispose()
+      await showing
     }
   })
 }
@@ -1577,8 +1655,8 @@ test('a startup the editor never answers makes the historical debugger unavailab
   }
 })
 
-// Value: protects=no unowned "Codebook · Recorded learning" session after a startup outlived its bound; fails_when=a late session of an expired owner keeps running; why_new=Cycle 0033 A2; seam=none
-test('a session the editor starts after the startup bound expired is stopped once its startup completes', async (context) => {
+// Value: protects=replay after a healthy but slow historical-debugger startup; fails_when=the late session is stopped and replay fails until the learner reopens the recording; why_new=Cycle 0044 (0033-F2e2 / 0034-OOS1); seam=none
+test('a healthy startup slower than the capture timeout is adopted when it completes, so the next stop presents without reopening the replay', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
   let releaseStart = (): void => {}
@@ -1598,10 +1676,18 @@ test('a session the editor starts after the startup bound expired is stopped onc
     // Act
     releaseStart()
     await flushNative()
+    const next = await fixture.owner.present(
+      inspectedSnapshot,
+      'Next recorded pause',
+      new AbortController().signal,
+    )
 
     // Assert
     assert.match(outcome, /Historical debugger closed/)
-    assert.deepEqual(fixture.stopped, ['historical-owned'])
+    assert.equal(fixture.owner.available, true)
+    assert.equal(next, 'inspected')
+    assert.deepEqual(fixture.stopped, [])
+    assert.equal(fixture.startCalls(), 1)
   } finally {
     context.mock.timers.reset()
     await fixture.owner.dispose()
@@ -1705,6 +1791,47 @@ test('a retirement the editor never finishes makes later presentations fail with
 })
 
 // Value: protects=an expired retirement staying unavailable when the editor finally reports termination; fails_when=the termination handler re-attaches the owner because the retiring session id survived expiry; why_new=Cycle 0033 O3 (Codex outside voice); seam=none
+// Value: protects=no recorded session left alive after a retirement outlived its bound; fails_when=the expired owner never asks the editor again and the session stays until an explicit reopen; why_new=Cycle 0044 (0033-F2d / 0034-OOS2); seam=none
+test('a retirement that outlives the capture timeout asks the editor once more to stop the session still showing history', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseTermination = (): void => {}
+  const fixture = harness(
+    undefined,
+    new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    }),
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  fixture.owner.invalidate()
+  const retiring = fixture.owner
+    .retire(undefined, new AbortController().signal)
+    .catch((error: unknown) => String(error))
+  try {
+    await fixture.stopRequested
+    await flushNative()
+    const stopsBeforeExpiry = [...fixture.stopped]
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    await retiring
+    await flushNative()
+
+    // Assert
+    assert.deepEqual(stopsBeforeExpiry, ['historical-owned'])
+    assert.deepEqual(fixture.stopped, ['historical-owned', 'historical-owned'])
+    assert.equal(fixture.owner.available, false)
+  } finally {
+    context.mock.timers.reset()
+    releaseTermination()
+    await fixture.owner.dispose()
+  }
+})
+
 test('a termination that arrives after the retirement bound expired leaves the historical debugger unavailable', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
@@ -1749,7 +1876,7 @@ test('a termination that arrives after the retirement bound expired leaves the h
 })
 
 // Value: protects=closing the reader and replacing an unavailable debugger when the editor never acknowledges the stop; fails_when=dispose() awaits stopDebugging without a bound; why_new=Cycle 0033 A1; seam=none
-test('closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop', async (context) => {
+test('closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop, and asks the editor to stop once more', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
   const fixture = harness(undefined, new Promise<void>(() => {}))
@@ -1775,7 +1902,7 @@ test('closing the historical debugger completes after the capture timeout when t
   // Assert
   assert.equal(beforeDeadline, false)
   assert.equal(closed, true)
-  assert.deepEqual(fixture.stopped, ['historical-owned'])
+  assert.deepEqual(fixture.stopped, ['historical-owned', 'historical-owned'])
 })
 
 // Value: protects=the 1 s grace when the wall clock jumps backward before a later presentation waits on the same stop; fails_when=the grace delay is computed from Date without a nominal cap; why_new=Cycle 0033 M1 (e); seam=node:test Date mock

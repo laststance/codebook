@@ -2288,6 +2288,114 @@ test('a Node test history chosen during Recording is refused with its sentence a
   }
 })
 
+// Value: protects=a stale refusal line after the learner did what it asked; fails_when=the Node refusal is reported under `control`, which only a live-run action retires, so it stays after a later successful Node open; why_new=Cycle 0044 (0031-U5); seam=the summary webview, stubbed at the vscode boundary
+test('the browser-replay refusal of a Node test history disappears once that history opens after the learner left Recording', async () => {
+  // Arrange: a Node history was refused during Recording, then the learner left Recording.
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    sendFromPane(harness, {
+      type: 'node-history',
+      studyId: nodeHistory.studyId,
+      openRequest: 4,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the refused open request',
+      1_000,
+    )
+    const refusal =
+      'Error: Close browser replay before opening a separate Node test history.'
+    const refusedErrors = [...harness.reader.inspect().view!.errors]
+    await readerSeams(harness).receive(
+      {
+        type: 'tab',
+        revision: harness.reader.inspect().view!.revision,
+        tab: 'overview',
+      },
+      'context',
+    )
+
+    // Act: sent past the pane route, whose own retirement of a refused choice would hide a missing Node history one.
+    await sendChoice(harness, 'node-history', nodeHistory.studyId)
+    await waitUntil(
+      () => harness.reader.inspect().view!.nodeHistory !== undefined,
+      'the opened Node test history',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(refusedErrors.includes(refusal), true)
+    assert.equal(harness.reader.inspect().view!.errors.includes(refusal), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Node test history refusal behaves like every other refused pane control: no Retry storage for it, and it does not stay through the learner's later choices; fails_when=the refusal's own line (`node-history-control`) is counted as a storage failure, or only a later Node history open retires it (0039-N8-c, 0040-N9-1 with 0031-U5); why_new=the merge of the two Cycle 0044 fixes gave this refusal a line of its own; seam=the summary webview, stubbed at the vscode boundary
+test('the browser-replay refusal of a Node test history offers no Retry storage and is gone once the learner’s next pane choice is handled', async () => {
+  // Arrange: a Node history was refused during Recording.
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    sendFromPane(harness, {
+      type: 'node-history',
+      studyId: nodeHistory.studyId,
+      openRequest: 4,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the refused open request',
+      1_000,
+    )
+    const refusal =
+      'Error: Close browser replay before opening a separate Node test history.'
+    const refused = structuredClone(harness.reader.inspect().view!)
+
+    // Act: the learner chooses a tab in the pane.
+    harness.receive({
+      type: 'tab',
+      revision: harness.reader.inspect().view!.revision,
+      tab: 'overview',
+    })
+    await waitUntil(
+      () => !harness.reader.inspect().view!.errors.includes(refusal),
+      'the retired refusal',
+      1_000,
+    )
+
+    // Assert: the Recording's own layout notice is the other line, itself not retryable; leaving Recording by the tab retires it too.
+    assert.deepEqual(refused.errors, [
+      'Error: The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.',
+      refusal,
+    ])
+    assert.equal(refused.unretryableErrorCount, 2)
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.errors), [])
+    assert.equal(view.unretryableErrorCount, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a saved study chosen during Recording keeps its pane waiting while that recording loads, and releases it when the load failed; fails_when=the reply is posted as soon as the open was accepted, so the delete button names the study shown before while another recording is on its way, or it is never posted after a failed load; why_new=a recording open outlives the message that started it; seam=the reader's replay-debugger preparation, held and then failed by the test
 test('a saved study chosen during Recording is answered only once its recording load has ended', async () => {
   // Arrange: a saved recorded run whose recording is open; the next recording load is held before it can fail.

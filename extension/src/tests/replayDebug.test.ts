@@ -1198,6 +1198,50 @@ test('a stop whose top frame has no source is inspected when Variables loads the
   assert.equal(reports, 1)
 })
 
+// Value: protects=no false Run and Debug hint when a stop's first frame with source lies beyond native Call Stack's first page; fails_when=inspection waits for a frame Call Stack never loads while Variables shows the top frame; why_new=Cycle 0044 (0032-F5f / 0033-M1f); seam=none
+test('a stop whose first frame with source lies past the first Call Stack page is inspected when Variables loads the top frame', () => {
+  // Arrange: 24 library frames sit above the first frame with source (index 24).
+  let reports = 0
+  const { adapter, request } = harness(() => {
+    reports++
+  })
+  const snapshot = recorded()
+  for (let libraryFrame = 0; libraryFrame < 24; libraryFrame++) {
+    snapshot.variables.push({ name: 'queued', value: '1', children: [] })
+    snapshot.frames.unshift({
+      name: `processTicksAndRejections${libraryFrame}`,
+      line: 95,
+      column: 5,
+      scopes: [
+        { name: 'Internal', variables: [snapshot.variables.length - 1] },
+      ],
+    })
+  }
+  adapter.select(snapshot, 'Recorded')
+  request('configurationDone')
+  // Native Call Stack loads the top frame, then 19 more: the first page has no frame with source.
+  const top = request('stackTrace', { threadId: 1, startFrame: 0, levels: 1 })
+    .body.stackFrames[0]
+  const rest = request('stackTrace', {
+    threadId: 1,
+    startFrame: 1,
+    levels: 19,
+  }).body
+  const scope = request('scopes', { frameId: top.id }).body.scopes[0]
+
+  // Act
+  request('variables', { variablesReference: scope.variablesReference })
+
+  // Assert
+  assert.equal(rest.totalFrames, 25)
+  assert.equal(
+    rest.stackFrames.some((frame: DebugProtocol.StackFrame) => frame.source),
+    false,
+  )
+  assert.equal(adapter.inspectionReady, true)
+  assert.equal(reports, 1)
+})
+
 // Value: protects=no false hint for a library-top stop when only its sourceless top frame is expanded; fails_when=top-frame values count although native Variables shows the caller with source; why_new=Cycle 0032 H5 counterpart; seam=none
 test('loading only the sourceless top frame of a stop does not count as inspecting it', () => {
   // Arrange

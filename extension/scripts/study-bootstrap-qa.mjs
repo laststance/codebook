@@ -699,13 +699,34 @@ async function check(page, options) {
       await page.screenshot({
         path: `${options.output}/replay-native-values-hint.png`,
       })
+      // Act: the learner presses the control that comes with the hint (Cycle 0044, 0031-U1).
+      const showVariables = page.getByRole('button', {
+        name: 'Show Variables',
+        exact: true,
+      })
+      const showVariablesOffered = await showVariables.isVisible()
+      await showVariables.click()
+      const showVariablesRequests = await page.evaluate(
+        () =>
+          window.sent.filter(
+            (message) =>
+              message.type === 'action' && message.action === 'show-variables',
+          ).length,
+      )
       await publish({
         ...replay,
         recording: { ...replay.recording, nativeValuesUninspected: false },
       })
       cases.push({
+        name: 'the Run and Debug hint offers Show Variables, which asks the editor once to open and expand native Variables',
+        actual: { showVariablesOffered, showVariablesRequests },
+        passed: showVariablesOffered && showVariablesRequests === 1,
+      })
+      cases.push({
         name: 'the Run and Debug hint leaves once native values load',
-        passed: await page.locator('#playback-hint').isHidden(),
+        passed:
+          (await page.locator('#playback-hint').isHidden()) &&
+          (await showVariables.isHidden()),
       })
       await publish({
         ...replay,
@@ -902,6 +923,118 @@ async function check(page, options) {
           sourceMatches.labels.join('|') === 'Inspect in native debugger' &&
           sourceMatches.enabled.join('|') === 'true',
       })
+      // Arrange: a second, unselected stop whose captured text failed the extension's hash check (Cycle 0044, 0033-F3a).
+      const secondStop = {
+        ...nodeReader.nodeHistory.entries[0],
+        sequence: 3,
+        index: 1,
+        elapsedMs: 1500,
+      }
+      const twoStops = {
+        ...nodeReader,
+        nodeHistoryEventCount: 2,
+        nodeHistory: {
+          ...nodeReader.nodeHistory,
+          entries: [nodeReader.nodeHistory.entries[0], secondStop],
+        },
+      }
+      // Act
+      await publish({
+        ...twoStops,
+        nodeHistoryUnverifiedStops: [3],
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      const unselectedMismatch = {
+        inspectSequences: await nodeInspect.evaluateAll((buttons) =>
+          buttons.map((button) => button.dataset.nodeHistorySequence),
+        ),
+        explanation: await page
+          .locator('#node-history-events .node-history-event p.muted')
+          .allTextContents(),
+      }
+      cases.push({
+        name: 'an unselected Node stop whose captured source does not match offers no Inspect in native debugger',
+        actual: unselectedMismatch,
+        passed:
+          unselectedMismatch.inspectSequences.join('|') === '2' &&
+          unselectedMismatch.explanation.join('|') ===
+            'Matching captured source is unavailable for native debugging.',
+      })
+      // Arrange: keyboard focus on the selected stop's Inspect (Cycle 0044, 0033-OCR4).
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      await nodeInspect.focus()
+      const stopRequestsBefore = await page.evaluate(
+        () =>
+          window.sent.filter((message) => message.type === 'node-history-stop')
+            .length,
+      )
+      // Act: the learner presses Inspect, and the host answers that the native session now shows the stop.
+      await page.keyboard.press('Enter')
+      await publish({ ...nodeReader, nodeHistoryPosition: nodeStop })
+      const afterInspect = await page.evaluate(() => ({
+        focusedSequence: document.activeElement?.dataset?.nodeHistorySequence,
+        focusedIsInspect:
+          document.activeElement?.dataset?.inspectNodeHistoryStop === 'true',
+        label: document.activeElement?.textContent,
+      }))
+      await page.keyboard.press('Enter')
+      const stopRequestsAfter = await page.evaluate(
+        () =>
+          window.sent.filter((message) => message.type === 'node-history-stop')
+            .length,
+      )
+      cases.push({
+        name: 'pressing Inspect by keyboard keeps focus on that Node stop and a second press sends nothing',
+        actual: { afterInspect, stopRequestsBefore, stopRequestsAfter },
+        passed:
+          afterInspect.focusedSequence === '2' &&
+          afterInspect.focusedIsInspect === true &&
+          afterInspect.label === 'Debugger stop selected' &&
+          stopRequestsAfter === stopRequestsBefore + 1,
+      })
+      // Arrange: a Node playhead scrub that ends without a change event (Cycle 0044, 0031-U6).
+      const nodeTimeline = {
+        ...nodeReader,
+        nodeHistoryPosition: nodeStop,
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence: 2,
+          positionMs: 130560,
+          startMs: 0,
+          endMs: 400000,
+          loading: false,
+        },
+      }
+      await publish(nodeTimeline)
+      await page.locator('#node-history-playhead').evaluate((playhead) => {
+        playhead.value = '150000'
+        playhead.dispatchEvent(new Event('input', { bubbles: true }))
+        playhead.dispatchEvent(new Event('blur'))
+      })
+      // Act: a later step moves the selected test time.
+      await publish({
+        ...nodeTimeline,
+        nodeHistoryPlayback: {
+          ...nodeTimeline.nodeHistoryPlayback,
+          positionMs: 198630,
+        },
+      })
+      const nodePlayheadAfterStep = await page
+        .locator('#node-history-playhead')
+        .evaluate((playhead) => ({
+          value: playhead.value,
+          valueText: playhead.getAttribute('aria-valuetext'),
+        }))
+      cases.push({
+        name: 'a Node step after an abandoned scrub moves the playhead value and its spoken test time',
+        actual: nodePlayheadAfterStep,
+        passed:
+          nodePlayheadAfterStep.value === '198630' &&
+          nodePlayheadAfterStep.valueText === '198.63 s of recorded test time',
+      })
       await publish({
         ...replay,
         recording: {
@@ -1060,6 +1193,19 @@ async function check(page, options) {
           pageOverflow:
             document.documentElement.scrollWidth >
             document.documentElement.clientWidth,
+          // Names what widens the page when the case fails; the diagram's own content scrolls inside it and is not counted.
+          overflowing: [...document.querySelectorAll('body *')]
+            .filter(
+              (candidate) =>
+                !element.contains(candidate) &&
+                candidate.getBoundingClientRect().right >
+                  document.documentElement.clientWidth + 1,
+            )
+            .map(
+              (candidate) =>
+                `${candidate.tagName.toLowerCase()}${candidate.id ? `#${candidate.id}` : ''}${typeof candidate.className === 'string' && candidate.className ? `.${candidate.className}` : ''}`,
+            )
+            .slice(0, 12),
         }))
       cases.push({
         name: 'wide saved sequence remains reachable by keyboard inside its own scroll area',
@@ -1073,6 +1219,60 @@ async function check(page, options) {
       await page.screenshot({
         path: `${options.output}/wide-sequence-scrolled.png`,
       })
+      // Arrange: the Learning summary as a narrow side bar at default zoom, with a long saved title (Cycle 0044, 0031-U3).
+      await page.setViewportSize({ width: 300, height: 720 })
+      const denseLearning = JSON.parse(JSON.stringify(learning))
+      denseLearning.recording.learningSummary.content.title =
+        'How submitting the invoice form reaches the server action and updates the saved invoice'
+      // Act
+      await publish(denseLearning)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const summaryDensity = await page.evaluate(() => {
+        const title = document.getElementById('learning-title'),
+          diagram = document.querySelector(
+            '#learning-sequence .sequence-diagram',
+          )
+        const range = document.createRange()
+        range.selectNodeContents(title)
+        return {
+          // Distinct line boxes of the rendered title, including any the reader clips.
+          titleLines: new Set(
+            [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+          ).size,
+          titleHeight: Math.round(title.getBoundingClientRect().height),
+          titleLineHeight: Math.round(
+            Number.parseFloat(getComputedStyle(title).lineHeight),
+          ),
+          fullTitle: title.getAttribute('title'),
+          sequenceTop: Math.round(diagram.getBoundingClientRect().top),
+          // The fixed transport covers the bottom of the pane; the sequence must begin above it.
+          transportTop: Math.round(
+            document
+              .getElementById('recording-transport')
+              .getBoundingClientRect().top,
+          ),
+          viewportHeight: window.innerHeight,
+          pageOverflow:
+            document.documentElement.scrollWidth >
+            document.documentElement.clientWidth,
+        }
+      })
+      await page.screenshot({
+        path: `${options.output}/narrow-learning-summary.png`,
+      })
+      cases.push({
+        name: 'a narrow Learning summary keeps a long title to two lines and its sequence in view',
+        actual: summaryDensity,
+        passed:
+          summaryDensity.titleHeight <=
+            summaryDensity.titleLineHeight * 2 + 1 &&
+          summaryDensity.fullTitle ===
+            'How submitting the invoice form reaches the server action and updates the saved invoice' &&
+          summaryDensity.sequenceTop < summaryDensity.viewportHeight &&
+          summaryDensity.sequenceTop < summaryDensity.transportTop &&
+          !summaryDensity.pageOverflow,
+      })
+      await page.setViewportSize({ width: 600, height: 800 })
       await publish(learning)
 
       const beforeLearningWrites = (await inspect()).writes
