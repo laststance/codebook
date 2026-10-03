@@ -10,14 +10,17 @@ import { join, relative, sep } from 'node:path'
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_QUESTION_LIMIT_CHARS,
+  WIKI_UPDATE_STATUS_POLL_MS,
 } from './constants'
 import type {
   WikiAnswer,
   WikiIncludedSource,
 } from './utils/answerDeepWikiQuestion'
+import { describeWikiUpdate } from './utils/describeWikiUpdate'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { installShortcutHelp } from './utils/installShortcutHelp'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
+import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
 export type DeepWikiReader = { url: string; close(): Promise<void> }
 type WikiQuestionResult = WikiAnswer | { handoff: string }
@@ -57,8 +60,37 @@ const qaClient = `(function () {
       if (result.reason) freshness.title = result.reason;
     } catch { freshness.textContent = 'Wiki freshness unknown'; freshness.setAttribute('data-status', 'unknown'); }
   }
+  var updateLink = document.querySelector('.wiki-update');
+  var updateStatus = document.createElement('p');
+  updateStatus.setAttribute('data-codebook-update-status', ''); updateStatus.setAttribute('role', 'status'); updateStatus.setAttribute('aria-live', 'polite'); updateStatus.hidden = true;
+  if (freshness && freshness.parentNode) freshness.parentNode.insertBefore(updateStatus, freshness.nextSibling);
+  var lastUpdateState = '';
+  var updatePoll = 0;
+  var describeUpdate = (${describeWikiUpdate.toString()});
+  async function refreshUpdateStatus() {
+    window.clearTimeout(updatePoll);
+    try {
+      var response = await fetch(prefix + 'api/update-status');
+      if (!response.ok) throw new Error('Update state unavailable');
+      var result = await response.json();
+      var text = describeUpdate(result);
+      updateStatus.textContent = text; updateStatus.hidden = !text;
+      updateStatus.setAttribute('data-state', result.state);
+      if (updateLink) { if (result.state === 'running') updateLink.setAttribute('aria-disabled', 'true'); else updateLink.removeAttribute('aria-disabled'); }
+      // A finished run changes what the freshness label should say.
+      if (lastUpdateState === 'running' && result.state !== 'running') void refreshFreshness();
+      lastUpdateState = result.state;
+      if (result.state === 'running') updatePoll = window.setTimeout(function () { void refreshUpdateStatus(); }, ${WIKI_UPDATE_STATUS_POLL_MS});
+    } catch { updateStatus.hidden = true; }
+  }
+  if (updateLink) updateLink.addEventListener('click', function (event) {
+    if (updateLink.getAttribute('aria-disabled') === 'true') { event.preventDefault(); return; }
+    // The editor asks for confirmation first; look for the run it starts.
+    window.clearTimeout(updatePoll); updatePoll = window.setTimeout(function () { void refreshUpdateStatus(); }, ${WIKI_UPDATE_STATUS_POLL_MS});
+  });
   void refreshFreshness();
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) void refreshFreshness(); });
+  void refreshUpdateStatus();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { void refreshFreshness(); void refreshUpdateStatus(); } });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
@@ -179,12 +211,13 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - Current Wiki update run state served at `api/update-status`. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
   answerQuestion: AnswerQuestion,
   editorScheme: 'vscode' | 'cursor' = 'vscode',
+  readUpdateStatus: () => WikiUpdateStatus = () => ({ state: 'idle' }),
 ): Promise<DeepWikiReader> {
   await readDeepWikiManifest(outputDirectory, projectRoot)
   const canonicalOutput = await realpath(outputDirectory)
@@ -215,6 +248,15 @@ export async function startDeepWikiReader(
     }
     const relativePath =
       decodeURIComponent(url.pathname.slice(prefix.length)) || 'index.html'
+    // The update state needs no manifest, so it answers while a publish is replacing the site.
+    if (relativePath === 'api/update-status') {
+      if (request.method !== 'GET') {
+        sendJson(response, 405, { error: 'Unsupported Wiki update request.' })
+        return
+      }
+      sendJson(response, 200, readUpdateStatus())
+      return
+    }
     // An agent may publish a new owned directory while this reader stays open.
     const { files, sources, revision, excludedPaths } =
       await readDeepWikiManifest(outputDirectory, projectRoot)

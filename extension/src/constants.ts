@@ -308,6 +308,12 @@ export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000
+/** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
+export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
+/** How often the extension looks for a newly published manifest while a Wiki update is watched. */
+export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
+/** How often the reader page asks for the update state while a run is active. */
+export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536
 export const WIKI_CURSOR_PROMPT_LIMIT_BYTES = 131_072
 export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192

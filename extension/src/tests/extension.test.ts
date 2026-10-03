@@ -552,7 +552,7 @@ test('browser source citations activate only the matching checkout and report ch
   }
 })
 
-test('browser Update LLM Wiki starts the shared skill only for its opened repository', async () => {
+test('browser Update LLM Wiki starts the shared skill only for its opened repository and refuses a second start while the first run is watched', async () => {
   // Arrange
   const projectDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-update-'),
@@ -573,7 +573,8 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
   const commands = new Map<string, () => Promise<void>>(),
     submissions: unknown[] = [],
     errors: string[] = [],
-    confirmations: string[] = []
+    confirmations: string[] = [],
+    notices: string[] = []
   const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
@@ -609,6 +610,10 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
           },
           showErrorMessage: (message: string) => {
             errors.push(message)
+            return Promise.resolve(undefined)
+          },
+          showInformationMessage: (message: string) => {
+            notices.push(message)
             return Promise.resolve(undefined)
           },
         },
@@ -669,8 +674,12 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     )
     assert.match(JSON.stringify(submissions[0]), /Update LLM Wiki/)
     assert.match(JSON.stringify(submissions[0]), /isPartialQuery":false/)
+    // A second start from the command while the first run is still watched is refused, not sent as a second chat request.
     await commands.get('codebook.updateDeepWiki')!()
-    assert.equal(submissions.length, 2)
+    assert.equal(submissions.length, 1)
+    assert.deepEqual(notices, [
+      'Codebook is already updating this project’s LLM Wiki.',
+    ])
   } finally {
     await boundary.deactivate()
     await rm(projectDirectory, { recursive: true, force: true })
@@ -785,6 +794,8 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
   )
   let handleUri:
     ((uri: { path: string; query: string }) => Promise<void>) | undefined
+  // The Wiki is stale until the agent publishes; a current Wiki would end the click as "already current".
+  let publishedWikiIsCurrent = false
   const agentRuns: Array<{ root: string; prompt: string }> = [],
     chatCommands: string[] = [],
     messages: string[] = []
@@ -839,12 +850,13 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string, prompt: string) => {
           agentRuns.push({ root, prompt })
+          publishedWikiIsCurrent = true
           return 'Updated'
         },
       },
       './utils/inspectDeepWikiFreshness': {
         inspectDeepWikiFreshness: async () => ({
-          status: 'current',
+          status: publishedWikiIsCurrent ? 'current' : 'changed',
           changedPaths: [],
           addedPaths: [],
         }),
