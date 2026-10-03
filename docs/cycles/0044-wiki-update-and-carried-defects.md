@@ -102,32 +102,46 @@ One extension-owned run state, `WikiUpdateRun` (`extension/src/utils/wikiUpdateR
 
 Tests: 44 in eight new files (`wikiUpdateRun` 7, `wikiManifestIdentity` 3, `waitForWikiPublish` 7, `describeWikiUpdate` 4, `describeUpdateFailure` 3, `detectWikiPublishConflicts` 6, `deepWikiReaderUpdateStatus` 5, `wikiUpdateFlow` 9), and two changed tests in `extension.test.ts` (a second VS Code start is refused; the Cursor update starts from a stale site).
 
-| Criterion (Issue #83, Part 1)             | Test                                                                                                              |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Criterion (Issue #83, Part 1)              | Test                                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | 1 exactly one result, shown without reload | `wikiUpdateFlow`: VS Code running then succeeded; chat failure; `waitForWikiPublish`: timed-out with a manual clock |
-| 2 Cursor reports the same states          | `wikiUpdateFlow`: Cursor success, failure, cancel                                                                 |
-| 3 no second run                           | `wikiUpdateRun`: `begin` refuses; `extension.test`: second start refused with its notice                          |
-| 4 new identity and `current`              | `wikiUpdateFlow`: succeeded carries the new identity; `describeWikiUpdate`: "Updated to …"                         |
-| 5 byte-identical after cancel or failure  | `wikiUpdateFlow`: cancel with a directory hash before and after                                                   |
-| 6 configured output                       | `wikiUpdateFlow`: relocation                                                                                      |
-| 7 survives a reader reload                | `deepWikiReaderUpdateStatus`: the route answers the running state to a new request                                |
-| 8 manual-file conflict                    | `detectWikiPublishConflicts` (6), `wikiUpdateFlow`: conflict names the path                                       |
+| 2 Cursor reports the same states           | `wikiUpdateFlow`: Cursor success, failure, cancel                                                                   |
+| 3 no second run                            | `wikiUpdateRun`: `begin` refuses; `extension.test`: second start refused with its notice                            |
+| 4 new identity and `current`               | `wikiUpdateFlow`: succeeded carries the new identity; `describeWikiUpdate`: "Updated to …"                          |
+| 5 byte-identical after cancel or failure   | `wikiUpdateFlow`: cancel with a directory hash before and after                                                     |
+| 6 configured output                        | `wikiUpdateFlow`: relocation                                                                                        |
+| 7 survives a reader reload                 | `deepWikiReaderUpdateStatus`: the route answers the running state to a new request                                  |
+| 8 manual-file conflict                     | `detectWikiPublishConflicts` (6), `wikiUpdateFlow`: conflict names the path                                         |
 
 Disabled-fix controls (the compiled file is patched, the named test is run, the file is restored and its hash compared; all nine failed as expected and every restore matched):
 
-| Control | Disabled                                             | Test that fails                                   |
-| ------- | ---------------------------------------------------- | ------------------------------------------------- |
-| C1      | the running check in `updateDeepWiki`                | `extension.test`: second start refused            |
-| C2      | the already-aborted return of the watch's sleep      | `waitForWikiPublish`: cancel returns at once      |
-| C3      | the cancellation mapping of the Cursor branch        | `wikiUpdateFlow`: Cursor cancel                   |
-| C4      | the already-current return                           | `wikiUpdateFlow`: already-current starts nothing  |
-| C5      | the conflict probe of the watch                      | `wikiUpdateFlow`: conflict                        |
-| C6      | the `api/update-status` route                        | `deepWikiReaderUpdateStatus`                      |
-| C7      | `begin`'s refusal                                    | `wikiUpdateRun`                                   |
-| C8      | `#finish`'s running check                            | `wikiUpdateRun`: a late result is ignored         |
-| C9      | the native-error test of `describeUpdateFailure`     | `describeUpdateFailure`: no `Error:` prefix       |
+| Control | Disabled                                         | Test that fails                                  |
+| ------- | ------------------------------------------------ | ------------------------------------------------ |
+| C1      | the running check in `updateDeepWiki`            | `extension.test`: second start refused           |
+| C2      | the already-aborted return of the watch's sleep  | `waitForWikiPublish`: cancel returns at once     |
+| C3      | the cancellation mapping of the Cursor branch    | `wikiUpdateFlow`: Cursor cancel                  |
+| C4      | the already-current return                       | `wikiUpdateFlow`: already-current starts nothing |
+| C5      | the conflict probe of the watch                  | `wikiUpdateFlow`: conflict                       |
+| C6      | the `api/update-status` route                    | `deepWikiReaderUpdateStatus`                     |
+| C7      | `begin`'s refusal                                | `wikiUpdateRun`                                  |
+| C8      | `#finish`'s running check                        | `wikiUpdateRun`: a late result is ignored        |
+| C9      | the native-error test of `describeUpdateFailure` | `describeUpdateFailure`: no `Error:` prefix      |
 
 Limits of this level: the page wording is tested through the served script run in a vm, not in a browser DOM; the conflict probe reads the publisher's sibling `<output>.stage-<id>` folders; criterion 9 (both hosts, natively) is run on the final candidate and recorded below.
+
+### Plan reviews of Part 1, 2026-10-03
+
+Run after the mechanism was written, so each reviewed the plan and its implementation at `908e3f4`; each was read-only and non-interactive (the owner cannot answer: every decision point took the recommended option). None had a Codex outside voice (skipped for run time on a shared CPU; that coverage is missing, not clean). None read the 440 carried rows; none removes, merges or defers one.
+
+| Review                | Amendments  | Critical | What the critical ones are                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | ----------- | -------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/plan-eng-review`    | ER1 to ER19 |        7 | The page reads the state once, 2 s after the click (ER1); a publish with unchanged sources and revision is never seen (ER2, confirmed with the real publisher); "the last usable site is kept" after the site was replaced (ER3); permanent claims after cancel, timeout or conflict while the VS Code chat keeps working (ER4); a hand-edited generated page makes the publisher refuse at `--prepare`, so the run times out instead of naming a conflict (ER5, confirmed); a publish landing inside the conflict probe (ER6, read from code); a reader that goes away leaves a dead button (ER7) |
+| `/plan-devex-review`  | DX1 to DX19 |        6 | DX1 (= ER1), DX2 (= ER3), "Update cancelled" while the chat still works (DX3), the editor says "could not start" for a Cursor run that ran and says nothing for four VS Code endings (DX4), DX5 (= ER7), DX6 (= ER2)                                                                                                                                                                                                                                                                                                                                                                               |
+| `/plan-design-review` | DR1 to DR16 |        4 | DR1 (= ER1), the held-back button looks enabled and says nothing (DR2), DR3 (= ER7), a result never ages and contradicts the freshness label (DR4). Scores: 4/10 as built, 8/10 with the amendments (capped until a screen reader and both hosts are observed)                                                                                                                                                                                                                                                                                                                                     |
+
+All 54 amendments are applied in this cycle. Where the reviews disagree the decision is: a publish is detected by the manifest's bytes and inode, the displayed identity stays (ER2 over DX6's stamp); a conflict names three paths and counts the rest (DR7 over DX10's five); the page polls slowly when idle and on window focus (DR1 and ER4 over DX1's focus-only); a reader that stops answering is retried three times before the page says so, and the page keeps looking (ER7, DR3 over DX5's stop after five); a candidate is found by the publisher's own receipt and baseline, and is blamed for a conflict only when written after the run began (ER9, keeping the abandoned-candidate case); the start guard against another window's run applies only to a candidate written after this window's last run ended (ER10, so a retry after an own failure is not refused); the reload is a button and an update that removed the page being read lands on the index (DR9, ER14); the shared skill text is not changed, the watch contract goes into the update prompt (DX17). The state contract after the amendments: every ended state names its host, a state that is not a success says whether the site on disk was kept or replaced, a conflict says what kind (a learner's file, a hand-edited page, an unfinished earlier publish), and the page and the editor notification read the same sentence.
+
+Both review findings DX19 and ER17 are about this record: the criterion table above credited page behaviour (criteria 1, 3, 4 and 7) to tests of the extension state, and called two file reads a directory hash. Until the amendments' page tests and real-publisher fixture are merged, criteria 1, 3, 4 and 7 are proven for the state only and criterion 5 for two files of a fixture nothing writes to.
 
 ### Part 2
 
