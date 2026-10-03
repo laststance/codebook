@@ -61,6 +61,58 @@ test('VS Code startup cannot hit Codebook’s click breakpoint before the learne
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
 })
 
+// Value: protects=a browser stop committing where the debugger has its breakpoint at the pause; fails_when=the binding read at arming is kept, so a breakpoint the debugger moved afterwards fails the run with a frame mismatch; why_new=Cycle 0036 C04b; seam=bindFirstStopAt after arming
+test('a browser stop whose binding the debugger moved to another column after arming commits at the column read again at its pause', async (context) => {
+  // Arrange: the stop is armed at 1:1; afterwards the adapter reports the breakpoint, and pauses, at 1:7.
+  const { run, bindFirstStopAt } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: 'AAAA,MAAM' },
+  )
+  await run.prepare()
+  bindFirstStopAt(1, 7)
+
+  // Act
+  run.action('moved-after-arming', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the re-read column')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+
+  // Assert
+  assert.equal(stop.source.line, 1)
+  assert.equal(stop.source.column, 7)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+})
+
+// Value: protects=a run whose sealed source map the position scanner rejects; fails_when=the scanner's error escapes as an unexplained crash after input, or the run is prepared on a map it cannot read; why_new=Cycle 0036 C07d (no test fed the scanner a rejected map); seam=none
+test('a sealed source map with a malformed segment is refused at preparation, before any input', async (context) => {
+  // Arrange: 'AA' is a segment of two fields, which no source map allows.
+  const { run, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: 'AA' },
+  )
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(refusal, 'Invalid source map segment')
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
 test('an unbound configured stop reports sealed map positions as unverified hints without clicking the application', async (context) => {
   // Arrange: the debugger never verifies a binding even though the frozen source map has a position on the declared line.
   const { run, rejectBreakpointBinding, mouse } =

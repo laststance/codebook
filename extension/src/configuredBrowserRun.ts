@@ -491,6 +491,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.evidence.record('inputs.prepared', { count: inputs.length })
     // Only the next expected stop is armed: a later stop's line may run before its turn and must not pause then. {@link continue} arms each later stop.
     await this.armStop(this.stops[0]!)
+    // A later browser stop is armed only in its turn, but a module that is already loaded can be compared with its sealed bundle now, before any application effect.
+    for (const laterStop of this.stops.slice(1))
+      if (laterStop.participant === 'browser' && laterStop.script)
+        await this.assertExecutedModuleSealed(laterStop, 'before input')
     await this.browser.reveal(this.abort.signal)
     this.alive()
     await this.capture('before')
@@ -498,6 +502,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.progressTimer)
     this.status = 'ready'
     await this.persist()
+  }
+
+  /**
+   * Compares the module the page executes for a browser stop with the stop's sealed bundle, for {@link armStop} and for the check of later stops before input in {@link prepareOwned}.
+   * @param stop - A browser stop whose module is loaded (`stop.script` is set).
+   * @param phase - When the check runs, for the failure text.
+   * @throws When the executed bytes differ from the sealed ones; the text names the declared stop and the phase.
+   * @example
+   * ```ts
+   * await this.assertExecutedModuleSealed(stop, 'before input')
+   * ```
+   */
+  private async assertExecutedModuleSealed(
+    stop: PreparedStop,
+    phase: string,
+  ): Promise<void> {
+    const executed = await this.participants[stop.participant].cdp!.request(
+      'Debugger.getScriptSource',
+      { scriptId: stop.script!.scriptId },
+    )
+    this.alive()
+    if (sha256(executed.scriptSource) !== stop.verifier.hashes.javascript)
+      throw new Error(
+        `Executed module of declared stop ${this.declaredAt(stop)} differs from its sealed bundle (checked ${phase})`,
+      )
   }
 
   /**
@@ -527,15 +556,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
-      const executed = await participant.cdp.request(
-        'Debugger.getScriptSource',
-        { scriptId: stop.script!.scriptId },
-      )
-      this.alive()
-      if (sha256(executed.scriptSource) !== stop.verifier.hashes.javascript)
-        throw new Error(
-          `Executed module of declared stop ${this.declaredAt(stop)} differs from its sealed bundle (checked ${phase})`,
-        )
+      await this.assertExecutedModuleSealed(stop, phase)
     }
     stop.breakpoint ??= new OwnedRepositoryBreakpoint(
       stop.bundle.sourcePath,
@@ -626,12 +647,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     } catch (error) {
       if (this.abort.signal.aborted) throw error
-      const reason = thrownMessage(error),
-        message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
-      // A removed breakpoint says nothing about the line, so no other position is suggested.
-      if (reason === OWNED_BREAKPOINT_REMOVED) throw new Error(message)
-      throw this.bindingFailure(stop, message)
+      throw this.registrationFailure(stop, error)
     }
+  }
+
+  /**
+   * Words a refused or lost registration for {@link registeredStop} and for the synchronous receipt check before input in {@link dispatchInput}, so each place the run reads the receipt names the declared stop.
+   * @param stop - The declared server stop whose registration failed.
+   * @param error - What the tracker threw.
+   * @returns The error to throw; a removed breakpoint gets no mapping hints, because another line would not help.
+   * @example
+   * ```ts
+   * throw this.registrationFailure(stop, error) // 'Declared stop app/lib/actions.ts:36 was not registered: …'
+   * ```
+   */
+  private registrationFailure(stop: PreparedStop, error: unknown): Error {
+    const reason = thrownMessage(error),
+      message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
+    return reason === OWNED_BREAKPOINT_REMOVED
+      ? new Error(message)
+      : this.bindingFailure(stop, message)
   }
 
   /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change; stops that share one line (a line that runs twice) are told apart by their place in the declared order. @example this.declaredAt(stop) // 'app/lib/actions.ts:36', or 'app/lib/actions.ts:36 (stop 2 of 3)' when another stop names that line */
@@ -1240,7 +1275,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     for (const stop of this.stops.filter(
       (candidate) => candidate.participant === 'server' && candidate.breakpoint,
     )) {
-      if (!stop.breakpoint!.registration(this.participants.server.selected!))
+      let receipt: ReturnType<OwnedRepositoryBreakpoint['registration']>
+      try {
+        receipt = stop.breakpoint!.registration(
+          this.participants.server.selected!,
+        )
+      } catch (error) {
+        throw this.registrationFailure(stop, error)
+      }
+      if (!receipt)
         throw new Error('Server breakpoint registration changed before input')
     }
     this.operation!.inputDispatched = true
@@ -1648,8 +1691,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } catch (error) {
       // An announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
       const held = this.adoptPauseHeldInModule(stop)
-      if (!held) throw error
-      return held
+      if (held) return held
+      // A pause on the stop's own line that was held before its turn explains the missing pause: the line ran early.
+      const early = this.participants[stop.participant].unannouncedPause
+      if (
+        !this.abort.signal.aborted &&
+        early &&
+        early.expectedStop !== stop &&
+        isPauseAtStop(early.event, stop)
+      )
+        throw new Error(
+          `Declared stop ${this.declaredAt(stop)} paused before its turn: its line ran while the stop was being armed, before the preceding continuation was requested, so that pause is not an observation after the continuation. Declare a line that runs only after the preceding stop continues`,
+        )
+      throw error
     }
   }
 
@@ -1762,6 +1816,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           `Declared stop ${this.declaredAt(stop)} bound at ${parsed.data.line}:${parsed.data.column}, not on its declared line`,
         )
       stop.bound = { line: parsed.data.line, column: parsed.data.column }
+    } else {
+      // A browser stop's binding was read when it was armed; the debugger may have moved it since, so its current place is read again at the pause.
+      const rebound = bindingSchema.safeParse(
+        await awaitResponse(
+          participant.selected!.getDebugProtocolBreakpoint(
+            stop.breakpoint!.breakpoint,
+          ),
+          'paused browser binding',
+          this.abort.signal,
+        ),
+      )
+      current()
+      if (rebound.success) {
+        if (!stop.acceptsBoundLine(rebound.data.line))
+          throw this.bindingFailure(
+            stop,
+            `Declared stop ${this.declaredAt(stop)} bound at ${rebound.data.line}:${rebound.data.column}, not on its declared line`,
+          )
+        stop.bound = { line: rebound.data.line, column: rebound.data.column }
+      }
     }
     const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(
       participant.selected!.customRequest('stackTrace', {

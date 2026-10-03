@@ -758,6 +758,102 @@ test('server registration revoked during the final DOM check prevents the mouse 
     false,
   )
   assert.equal(harness.run.view().snapshots.length, 0)
+  // The synchronous receipt check before the input names the declared stop, like the two awaited checks.
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Declared stop src/mode.ts:1 (stop 1 of 3) was not registered: Selected adapter did not acknowledge the declared breakpoint registration (declared 1:1, answered no line:no column unverified): {"responseSuccess":false,"responseCount":1,"expectedCount":1,"expectedLine":1,"expectedColumn":1,"selectedId":12,"selectedVerified":false,"selectedReason":null,"selectedLine":null,"selectedColumn":null,"selectedSourceMatches":null}. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+})
+
+// Value: protects=a run stopped while a later stop is still being armed inside a continuation; fails_when=the cancelled arming goes on to resume the paused server, or ends as a binding failure with mapping hints instead of the cancellation; why_new=Cycle 0036 C07d (only an adapter failure during arming was tested); seam=holdBindingLookup keeps the adapter's binding answer back
+test('a run stopped while its next stop is still being armed ends without resuming the paused server and without a binding failure', async (context) => {
+  // Arrange: the server stop is captured and its continuation waits for the browser stop's binding answer.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  const lookup = harness.holdBindingLookup()
+  const continuation = harness.run.continue('server', server.pause).then(
+    () => 'continued',
+    (error: unknown) => String(error),
+  )
+  await lookup.started
+
+  // Act
+  const stopping = harness.run.stop()
+  lookup.release()
+  await stopping
+  const outcome = await continuation
+
+  // Assert
+  assert.notEqual(outcome, 'continued')
+  assert.equal(outcome.includes('Frozen source map positions'), false)
+  assert.equal(outcome.includes('Timed out waiting'), false)
+  assert.equal(harness.run.view().failures.length, 0)
+  assert.equal(
+    harness.commands.filter((command) => command.method === 'continue').length,
+    0,
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+  assert.equal(harness.run.view().resourcesReleased, true)
+})
+
+// Value: protects=the registration failure naming the declared stop at the third place the run reads the receipt, the pause; fails_when=a registration lost after the input fails with a text that names no stop, or is not noticed and the stop is captured; why_new=Cycle 0036 C07b (X13 was asserted at arming only); seam=the editor's breakpoint list
+test('a server stop whose breakpoint is removed after the continuation that armed it fails at its pause naming the stop and that it was not registered', async (context) => {
+  // Arrange: the first stop is captured and continued; the second stop's announcement is held.
+  const harness = await nativeParticipantsHarness(context, ['server', 'server'])
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  harness.breakpoints.splice(0, harness.breakpoints.length)
+
+  // Act
+  nextStop.paused()
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'lost registration found at the pause',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Declared stop src/mode.ts:1 (stop 2 of 2) was not registered: Owned breakpoint was removed before registration',
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
+
+// Value: protects=a run failing before any application effect when a later stop's loaded module no longer matches its sealed bundle; fails_when=a later stop of the other participant is compared only inside the continuation before it, after the input and the earlier pause; why_new=Cycle 0036 C04a; seam=changeExecutedSource changes the bytes the page reports
+test('a later browser stop whose already loaded module differs from its sealed bundle is refused at preparation, before any input', async (context) => {
+  // Arrange: the first stop is a server stop; the browser stop comes second and its module is loaded.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  harness.changeExecutedSource()
+
+  // Act
+  const refusal = await harness.run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => String(error),
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Error: Executed module of declared stop src/theme.ts:1 differs from its sealed bundle (checked before input)',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
 })
 
 // Value: protects=an agent not being told to pick another line when the learner removed Codebook's breakpoint; fails_when=every registration failure gets the mapping hints appended, also one whose cause is not a binding; why_new=Cycle 0036 C02d; seam=the editor's breakpoint list
@@ -1989,7 +2085,7 @@ for (const moment of [
     // Assert
     assert.equal(
       harness.run.view().failures[0],
-      'Error: Timed out waiting for source-bound CDP stop',
+      'Error: Declared stop src/theme.ts:1 paused before its turn: its line ran while the stop was being armed, before the preceding continuation was requested, so that pause is not an observation after the continuation. Declare a line that runs only after the preceding stop continues',
     )
     assert.equal(harness.run.view().snapshots.length, 1)
     assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
