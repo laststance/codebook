@@ -2832,18 +2832,24 @@ export class StudyWorkspace {
             tab.input instanceof vscode.TabInputWebview &&
             [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
         )
+      // Names the tab and both remedies, so the learner or agent can act on the first refusal instead of guessing which editor is meant.
+      const foreignPreviewObstacle = (
+        tab: vscode.Tab,
+        group: vscode.TabGroup,
+      ): Error =>
+        new Error(
+          `A destination group contains a foreign preview: "${tab.label}" in editor group ${group.viewColumn}. Keep that editor (double-click its tab or run View: Keep Editor) or close it, then switch again; Codebook does not move or close an editor it did not open.`,
+        )
       const assertPreviewOwnership = (): void => {
-        if (
-          !vscode.window.tabGroups.all.some((group) =>
-            group.tabs.some((tab) => tab.isPreview && !isOwnedPreview(tab)),
+        for (const group of vscode.window.tabGroups.all) {
+          const foreign = group.tabs.find(
+            (tab) => tab.isPreview && !isOwnedPreview(tab),
           )
-        )
-          return
-        // A preview opened during a passive await belongs to the learner, including its current focus.
-        this.presentationMovedFocus = false
-        throw new Error(
-          'A destination group contains a foreign preview. Keep or move that editor explicitly before switching.',
-        )
+          if (!foreign) continue
+          // A preview opened during a passive await belongs to the learner, including its current focus.
+          this.presentationMovedFocus = false
+          throw foreignPreviewObstacle(foreign, group)
+        }
       }
       const preparedPreviews: {
         uri: vscode.Uri
@@ -2860,10 +2866,7 @@ export class StudyWorkspace {
             !tab.isDirty
           )
             preparedPreviews.push({ uri: tab.input.uri, group, tab })
-          else
-            throw new Error(
-              'A destination group contains a foreign preview. Keep or move that editor explicitly before switching.',
-            )
+          else throw foreignPreviewObstacle(tab, group)
         }
       }
       // Reject known foreign previews before even borrowing focus to identify the native editor part.

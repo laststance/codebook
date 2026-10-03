@@ -1638,9 +1638,10 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
       true,
     )
     assert.equal(harness.presentationPreferences.size, 0)
-    assert.match(
-      harness.reader.presentationState().reason ?? '',
-      /foreign preview/,
+    // Cycle 0044 (0041-N10-5 / 0042-R2): the refusal names the tab and the remedy; red while it said only "a foreign preview".
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Error: A destination group contains a foreign preview: "notes.txt" in editor group 1. Keep that editor (double-click its tab or run View: Keep Editor) or close it, then switch again; Codebook does not move or close an editor it did not open.',
     )
   } finally {
     await harness.close()

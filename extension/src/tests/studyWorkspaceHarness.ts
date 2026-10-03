@@ -2540,6 +2540,7 @@ export async function workspaceHarness(
     addForeignDraft(column = groups[0]!.viewColumn) {
       const tab = {
         input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))),
+        label: 'notes.txt',
         isDirty: true,
       }
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
