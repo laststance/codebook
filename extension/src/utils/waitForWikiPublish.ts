@@ -33,6 +33,7 @@ function sleepUntilAborted(
  * @param options.startToken - Publish token ({@link readWikiPublishToken}) before the update; undefined when the manifest was unreadable.
  * @param options.readToken - Reads the publish token now; undefined while the manifest is missing or mid-replacement.
  * @param options.readPublished - Reads what the caller needs from the newly published manifest; undefined while it is invalid, which keeps the watch going.
+ * @param options.readStamp - Reads a cheap stamp of what a look reads ({@link readWikiWatchStamp}); a look is skipped while the stamp is the same as at the last complete look. Omitted: every look reads everything.
  * @param options.findBlockingFiles - Names learner-owned files that make the publisher refuse the candidate; optional. Its answer counts only when the publish token is still the same after it; a rejection is "no finding this look".
  * @param options.signal - Aborts the watch (learner cancel, extension shutdown).
  * @param options.timeoutMs - Bound on the whole watch.
@@ -55,6 +56,7 @@ export async function waitForWikiPublish<Published>(options: {
   startToken: string | undefined
   readToken: () => Promise<string | undefined>
   readPublished: () => Promise<Published | undefined>
+  readStamp?: () => Promise<string>
   findBlockingFiles?: () => Promise<string[]>
   signal: AbortSignal
   timeoutMs: number
@@ -65,27 +67,37 @@ export async function waitForWikiPublish<Published>(options: {
   const now = options.now ?? Date.now
   const sleep = options.sleep ?? sleepUntilAborted
   const deadline = now() + options.timeoutMs
+  // The stamp of the last complete look; undefined forces the next look.
+  let lookedAtStamp: string | undefined
   for (;;) {
     if (options.signal.aborted) return { outcome: 'cancelled' }
-    const token = await options.readToken()
-    if (token !== undefined && token !== options.startToken) {
-      // A manifest that is invalid right after its token changed is still being written; keep watching.
-      const published = await options.readPublished()
-      if (published !== undefined)
-        return { outcome: 'published', token, published }
-    } else {
-      // A refused candidate never publishes, so waiting out the bound would hide the reason.
-      let blocking: string[] = []
-      try {
-        blocking = (await options.findBlockingFiles?.()) ?? []
-      } catch {
-        // A look that failed (a folder vanished under it) found nothing this time; it never ends the run.
-      }
-      if (blocking.length) {
-        // A publish that landed while the probe ran makes its new pages look like learner files in the way.
-        if ((await options.readToken()) === token)
-          return { outcome: 'blocked', paths: blocking }
-        continue
+    const stamp = await options.readStamp?.()
+    // Reading the manifest and walking the folder is repeated only when something was written since the last look.
+    if (stamp === undefined || stamp !== lookedAtStamp) {
+      lookedAtStamp = stamp
+      const token = await options.readToken()
+      if (token !== undefined && token !== options.startToken) {
+        const published = await options.readPublished()
+        if (published !== undefined)
+          return { outcome: 'published', token, published }
+        // A manifest that is invalid right after its token changed is still being written; look again next time.
+        lookedAtStamp = undefined
+      } else {
+        // A refused candidate never publishes, so waiting out the bound would hide the reason.
+        let blocking: string[] = []
+        try {
+          blocking = (await options.findBlockingFiles?.()) ?? []
+        } catch {
+          // A look that failed (a folder vanished under it) found nothing this time; it never ends the run.
+          lookedAtStamp = undefined
+        }
+        if (blocking.length) {
+          // A publish that landed while the probe ran makes its new pages look like learner files in the way.
+          if ((await options.readToken()) === token)
+            return { outcome: 'blocked', paths: blocking }
+          lookedAtStamp = undefined
+          continue
+        }
       }
     }
     if (now() >= deadline) return { outcome: 'timed-out' }

@@ -58,6 +58,7 @@ import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from './utils/listWikiCandidates'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
+import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
 import {
   captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
@@ -704,6 +705,7 @@ export function activate(
       try {
         const result = await waitForWikiPublish({
           startToken: run.tokenAtStart,
+          readStamp: () => readWikiWatchStamp(run.outputDirectory),
           readToken: () => readWikiPublishToken(run.outputDirectory),
           readPublished: () =>
             inspectPublishedWiki(run.projectRoot, run.outputDirectory),
@@ -751,8 +753,15 @@ export function activate(
     let agentError: unknown
     let didAgentFail = false
     // The CLI reports nothing until it exits, so the staged candidate is looked for beside it.
+    let lookedAtStamp: string | undefined
     const stagedLook = setInterval(() => {
-      void probeWikiCandidates(run).catch(() => [])
+      void (async () => {
+        const stamp = await readWikiWatchStamp(run.outputDirectory)
+        // Candidates are parsed again only when something was written since the last look.
+        if (stamp === lookedAtStamp) return
+        lookedAtStamp = stamp
+        await probeWikiCandidates(run)
+      })().catch(() => undefined)
     }, WIKI_UPDATE_WATCH_POLL_MS)
     stagedLook.unref()
     try {

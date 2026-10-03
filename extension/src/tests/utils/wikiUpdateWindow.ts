@@ -4,6 +4,7 @@ import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
 import type { WikiFreshness } from '../../utils/inspectDeepWikiFreshness'
+import { listWikiCandidates } from '../../utils/listWikiCandidates'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
@@ -31,8 +32,8 @@ type UriHandler = (uri: { path: string; query: string }) => Promise<void>
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
- * @param options.terminationGraceMs - Replaces the grace a closing window gives the Cursor agent, so a test need not wait five seconds.
- * @returns What the window showed (chat requests, notifications by severity, confirmations, progress titles), the two update entries, the state snapshot and `close`.
+ * @param options.constants - Replaces the grace a closing window gives the Cursor agent, or the Cursor run's two-second look interval, so a test need not wait for them.
+ * @returns What the window showed (chat requests, notifications by severity, confirmations, progress titles), how often its looks listed the candidates, the two update entries, the state snapshot and `close`.
  *
  * @example
  * ```ts
@@ -59,7 +60,12 @@ export async function openWikiUpdateWindow(options: {
     sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
   }
   openReader?: boolean
-  terminationGraceMs?: number
+  constants?: Partial<
+    Record<
+      'WIKI_CURSOR_TERMINATION_GRACE_MS' | 'WIKI_UPDATE_WATCH_POLL_MS',
+      number
+    >
+  >
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   notices: string[]
@@ -67,6 +73,7 @@ export async function openWikiUpdateWindow(options: {
   errors: string[]
   confirmations: string[]
   progressTitles: string[]
+  looks: { candidateListings: number }
   clickUpdate(): Promise<void>
   runUpdateCommand(): Promise<void>
   status(): WikiUpdateStatus
@@ -89,6 +96,7 @@ export async function openWikiUpdateWindow(options: {
   const errors: string[] = []
   const confirmations: string[] = []
   const progressTitles: string[] = []
+  const looks = { candidateListings: 0 }
   const commands = new Map<string, () => Promise<void>>()
   const withProgress = async (
     progressOptions: { title: string },
@@ -176,14 +184,16 @@ export async function openWikiUpdateWindow(options: {
         },
       },
       './environment': { requireWorkspace: () => projectRoot },
-      ...(options.terminationGraceMs === undefined
-        ? {}
-        : {
-            './constants': {
-              ...constants,
-              WIKI_CURSOR_TERMINATION_GRACE_MS: options.terminationGraceMs,
-            },
-          }),
+      ...(options.constants
+        ? { './constants': { ...constants, ...options.constants } }
+        : {}),
+      // The real listing runs; the window only counts how often a look parsed the candidates.
+      './utils/listWikiCandidates': {
+        listWikiCandidates: (outputDirectory: string) => {
+          looks.candidateListings += 1
+          return listWikiCandidates(outputDirectory)
+        },
+      },
       './deepWikiReader': {
         readDeepWikiManifest,
         startDeepWikiReader: async (
@@ -252,6 +262,7 @@ export async function openWikiUpdateWindow(options: {
     errors,
     confirmations,
     progressTitles,
+    looks,
     async clickUpdate(): Promise<void> {
       if (!handleUri) throw new Error('The window registered no URI handler.')
       await handleUri({

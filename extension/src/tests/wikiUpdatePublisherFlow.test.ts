@@ -325,3 +325,48 @@ test('a running Cursor update says the agent is preparing a new site once the re
     await wiki.close()
   }
 })
+
+test('a watched VS Code run parses the candidates once while nothing is written, not at every look', async () => {
+  // Arrange
+  const wiki = await openPublishedWikiWindow()
+  try {
+    await wiki.clickUpdate()
+
+    // Act: the watch looks every 20 ms in this window; nothing writes to the Wiki or beside it.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 400))
+
+    // Assert: one listing by the start guard before the run, one by the watch's first look.
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.looks.candidateListings, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a running Cursor update parses the candidates once while nothing is written, not at every look', async () => {
+  // Arrange
+  const listingsWhileRunning: number[] = []
+  let idle: (() => Promise<void>) | undefined
+  const wiki = await openPublishedWikiWindow({
+    cursor: true,
+    constants: { WIKI_UPDATE_WATCH_POLL_MS: 20 },
+    cursorAgent: async () => {
+      await idle?.()
+      return 'I stopped before publishing.'
+    },
+  })
+  idle = async (): Promise<void> => {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 400))
+    listingsWhileRunning.push(wiki.looks.candidateListings)
+  }
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert: one listing by the start guard, one by the first look beside the agent; the look at the run's end adds a third.
+    assert.deepEqual(listingsWhileRunning, [2])
+    assert.equal(wiki.looks.candidateListings, 3)
+  } finally {
+    await wiki.close()
+  }
+})

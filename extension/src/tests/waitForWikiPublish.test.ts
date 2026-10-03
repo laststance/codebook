@@ -274,3 +274,93 @@ test('a conflict probe that fails because a folder vanished does not end the wat
   assert.equal(probes, 2)
   assert.equal(clock.now(), 4_000)
 })
+
+test('ten looks at a Wiki folder nobody wrote to read the manifest once and walk the folder once', async () => {
+  // Arrange
+  const clock = manualClock()
+  const counts = { stamps: 0, manifestReads: 0, folderWalks: 0 }
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readStamp: async () => {
+      counts.stamps += 1
+      return 'wiki=18:1790000000000:20481'
+    },
+    readToken: async () => {
+      counts.manifestReads += 1
+      return 'old@1'
+    },
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    findBlockingFiles: async () => {
+      counts.folderWalks += 1
+      return []
+    },
+    signal: new AbortController().signal,
+    timeoutMs: 18_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, { outcome: 'timed-out' })
+  assert.deepEqual(counts, { stamps: 10, manifestReads: 1, folderWalks: 1 })
+})
+
+test('the watch looks again as soon as something was written, and sees the publish at that look', async () => {
+  // Arrange
+  const clock = manualClock()
+  const stamps = [
+    'wiki=18:1790000000000:20481',
+    'wiki=18:1790000000000:20481',
+    'wiki=27:1790000004000:20990',
+  ]
+  const tokens = ['old@1', 'new@2']
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readStamp: async () => stamps.shift() ?? 'wiki=27:1790000004000:20990',
+    readToken: async () => tokens.shift(),
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    signal: new AbortController().signal,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(clock.now(), 4_000)
+  assert.deepEqual(tokens, [])
+})
+
+test('a new manifest that is not readable yet is looked at again although nothing more was written', async () => {
+  // Arrange
+  const clock = manualClock()
+  const manifests = [undefined, 'a1b2c3d4e5f6+0f9e8d7c']
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readStamp: async () => 'wiki=27:1790000004000:20990',
+    readToken: async () => 'new@2',
+    readPublished: async () => manifests.shift(),
+    signal: new AbortController().signal,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(clock.now(), 2_000)
+})

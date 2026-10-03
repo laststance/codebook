@@ -642,7 +642,7 @@ test(
     // Arrange
     const wiki = await openWikiWindow({
       cursor: true,
-      terminationGraceMs: 100,
+      constants: { WIKI_CURSOR_TERMINATION_GRACE_MS: 100 },
       cursorAgent: () => new Promise(() => {}),
     })
     void wiki.clickUpdate()
