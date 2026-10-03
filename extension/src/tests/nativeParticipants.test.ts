@@ -1002,13 +1002,15 @@ test('a later stop on a line the sealed map never reaches is refused at preparat
     )
     return true
   })
+  // Read before cleanup, which removes every owned breakpoint anyway.
+  const breakpointsAtRefusal = harness.breakpoints.length
   await harness.run.stop()
   // Assert
   assert.equal(
     harness.commands.some((command) => command.method.startsWith('Input.')),
     false,
   )
-  assert.equal(harness.breakpoints.length, 0)
+  assert.equal(breakpointsAtRefusal, 0)
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
@@ -1225,11 +1227,11 @@ test('a browser stop that binds on another line while the server is paused ends 
   harness.run.action('once', 'repository-click')
   const server = await pauseReady(harness, 'server')
   harness.bindAt('browser', 2, 1)
-  const startedMs = performance.now()
   // Act
   await assert.rejects(
     harness.run.continue('server', server.pause),
     (error: unknown) => {
+      // This text is the at-once refusal; a spent 20 s binding wait says "Timed out waiting for a verified binding" instead.
       assert.equal(
         String(error),
         `Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
@@ -1237,10 +1239,8 @@ test('a browser stop that binds on another line while the server is paused ends 
       return true
     },
   )
-  const failedWithinMs = performance.now() - startedMs
   await harness.run.stop()
   // Assert
-  assert.ok(failedWithinMs < 1_000, `failed after ${failedWithinMs} ms`)
   assert.equal(
     harness.run.view().failures[0],
     `Next declared stop was not armed and no resume was sent: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,

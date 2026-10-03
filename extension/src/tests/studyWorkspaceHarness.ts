@@ -2920,6 +2920,8 @@ export async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
 export async function recordedReaderHarness(
   capturedApplication = false,
   recordedDebugger = false,
+  /** Column of the declared line at which the debugger bound and captured the stop; another column than the declared 1 gives a moved-column study. Used with `recordedDebugger`. */
+  boundColumn = 1,
 ) {
   const harness = await workspaceHarness(true, true),
     service = harness.service
@@ -2970,6 +2972,8 @@ export async function recordedReaderHarness(
     runtime.action = (key, value) => {
       const operation = action(key, value),
         stop = runtime.snapshots[0]!
+      // The run commits a stop where the debugger bound it, and its saved top frame names the same position.
+      stop.source = { ...stop.source, column: boundColumn }
       // Captured values reference the stop's own recorded source, as the configured browser run records them.
       stop.debugger = {
         version: 1,
@@ -2977,7 +2981,7 @@ export async function recordedReaderHarness(
           {
             name: 'applyTheme',
             line: 1,
-            column: 1,
+            column: boundColumn,
             source: {
               name: runtime.definition.configuration.source.path,
               text: stop.source.text,

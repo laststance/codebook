@@ -2648,6 +2648,36 @@ test('opening a recording while a live run is attached presents its saved frame'
   }
 })
 
+// Value: protects=reopening, through Recording, a study whose stop the debugger bound at another column than declared; fails_when=the reader's own validation or presentation still requires the declared column, so the recording fails to open or shows the declared position; why_new=Cycle 0036 C07e (the moved-column rule was tested through the study decoder only); seam=recordedReaderHarness commits the stop at column 7
+test('a study whose stop the debugger bound at column 7 of its declared line opens through Recording and presents that stop at the bound column', async () => {
+  // Arrange: the stop was declared at 1:1 and committed, with its native top frame, at 1:7.
+  const harness = await recordedReaderHarness(true, true, 7)
+  try {
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.controller.state(),
+      observation = harness.controller.bundle()?.projection.observation
+    assert.equal(state.reason, undefined)
+    assert.equal(state.readiness, 'ready')
+    assert.equal(state.presentedMs, 100)
+    assert.equal(observation?.source.line, 1)
+    assert.equal(observation?.source.column, 7)
+    assert.equal(observation?.debugger?.frames[0]?.column, 7)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the 2.0 s recovery of Recording pressed again with a live run attached; fails_when=every load drops the recording renderer and waits for a new renderer handshake; why_new=Cycle 0035 R02 (P1 "Latency"); seam=none
 test('pressing Recording again while a live run is attached presents the saved frame through the same recording renderer', async () => {
   // Arrange
