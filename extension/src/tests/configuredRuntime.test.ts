@@ -1628,3 +1628,42 @@ test('a browser stop the debugger binds two lines below is refused when the seal
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
+
+// Value: protects=a live run going on when the debugger moves a browser stop across a line that holds no code (a blank line) to the line after it; fails_when=the run's rule refuses a binding two lines below although the sealed map has no position on the line between, or commits the stop at the declared line; why_new=every run-level acceptance binds on the very next line, which never asks the sealed map, and the two-lines-below runs are refusals only; seam=none
+test('a browser stop the debugger binds two lines below, across a line the sealed map has no position on, is armed, pauses there and commits at the bound line', async (context) => {
+  // Arrange: lines 1 and 3 are mapped, the blank line 2 is not, and the adapter verifies the stop declared at 1:1 at 3:1.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: 'AAAA;;AAEA',
+      fixture: { source: THREE_LINE_SOURCE, citationEndLine: 3 },
+    },
+  )
+  bindFirstStopAt(3, 1)
+  // Act
+  await run.prepare()
+  run.action('moved-two-lines', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed two lines below its declared line')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  const bound = run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.bound')
+  assert.equal(
+    JSON.stringify(bound?.detail),
+    '{"verified":true,"line":3,"column":1,"requested":{"line":1,"column":1}}',
+  )
+  assert.equal(stop.source.line, 3)
+  assert.equal(stop.source.column, 1)
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})

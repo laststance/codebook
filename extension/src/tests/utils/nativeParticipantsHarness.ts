@@ -45,6 +45,8 @@ export async function nativeParticipantsHarness(
         }
       >
     >
+    /** Opts the run into a clock that only `advance` moves, so a test can let a 20 s deadline expire without waiting for it; by default the run keeps real timers. */
+    manualClock?: boolean
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -137,6 +139,10 @@ export async function nativeParticipantsHarness(
     sourceBoundWaitExpired = false
   // A held wait for an accepted stop's own pause never times out until the test releases it.
   let sourceBoundWait: { released: boolean } | undefined
+  // The run's timers under a manual clock: each fires only when the test advances the clock to its time.
+  const manualTimers = new Map<number, { at: number; callback: () => void }>()
+  let manualClockMs = 0,
+    manualTimerId = 0
   // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
   const pausedAt: Record<
     Participant,
@@ -681,6 +687,18 @@ export async function nativeParticipantsHarness(
         },
       },
     },
+    options.manualClock
+      ? {
+          setTimeout: (callback: () => void, delay: number) => {
+            const id = ++manualTimerId
+            manualTimers.set(id, { at: manualClockMs + delay, callback })
+            return id
+          },
+          clearTimeout: (id: number): void => {
+            manualTimers.delete(id)
+          },
+        }
+      : {},
   )
   run = owned = new module.ConfiguredBrowserRun({
     directory: join(repository.directory, '.runtime'),
@@ -854,6 +872,15 @@ export async function nativeParticipantsHarness(
     /** Reports the paused binding under another adapter id than the acknowledged registration. */
     rebindPauseId(): void {
       reboundPauseId = true
+    },
+    /** Moves a manual clock forward and fires every run timer that is due by then; it does nothing for a run on real timers. @example harness.advance(20_000) */
+    advance(milliseconds: number): void {
+      manualClockMs += milliseconds
+      for (const [id, timer] of [...manualTimers])
+        if (timer.at <= manualClockMs) {
+          manualTimers.delete(id)
+          timer.callback()
+        }
     },
     emitBrowserAdapterPause(): void {
       listeners.browser.get('Debugger.paused')?.({

@@ -2341,3 +2341,37 @@ test('a server stop the debugger binds and pauses two lines below fails when the
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
+
+// Value: protects=the deadline telling an agent which line has to run when a later server stop the adapter acknowledged on the next line lies in a branch the action skips; fails_when=the deadline reads a moved place only from the binding the run records at a pause, which an unreached server stop never has, so the text names the declared line alone; why_new=the deadline tests reach a browser stop only, and the owner's moved place is read only in the owner's own test (Cycle 0043, ER7, O1); seam=the harness clock
+test('a later server stop in a loaded module that the adapter acknowledged on the next line and that is not reached ends the run naming the bound place and that this line must run', async (context) => {
+  // Arrange: the second stop is registered after the module loaded, the adapter verifies it at 2:1 and that line never runs.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { ...movedToNextLine('server'), manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsAt(2, 1)
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+  // Act: the active-progress budget passes without the second stop pausing.
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'moved server stop not hit',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.equal(
+    harness.commands.filter((command) => command.method === 'continue').length,
+    1,
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
