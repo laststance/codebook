@@ -406,7 +406,8 @@ export class BrowserViewport {
     if (!this.panel.visible)
       this.panel.reveal(
         this.lease ? undefined : vscode.ViewColumn.One,
-        Boolean(this.lease),
+        // A leased pane leaves the keyboard focus where it is, except over the file the debugger focused at a pause: hiding that editor would leave the focus nowhere.
+        Boolean(this.lease) && !this.coversEditorFocusedByPause(),
       )
     this.requestReadiness()
     await waitUntil(
@@ -414,6 +415,34 @@ export class BrowserViewport {
       'owned viewport ready',
       ACTIVE_TIMEOUT_MS,
       signal,
+    )
+  }
+
+  /**
+   * Says whether revealing the leased pane would hide the text editor that the editor's debugger focused at a pause; called by {@link revealNow}.
+   *
+   * At a breakpoint the editor opens the paused file in the active group and gives it the keyboard focus (`debug.focusEditorOnBreak`,
+   * on by default). When that group is the Application pane's, the pane is covered, and revealing it again while preserving focus
+   * hides the focused editor without focusing anything: the keyboard focus falls to the document body until the learner clicks
+   * (native run of 2026-10-04, after every committed capture). The pane then takes the focus the editor it replaces had.
+   *
+   * Without a paused thread in Run and Debug the focus is preserved: the extension API cannot tell an editor that holds the
+   * keyboard focus from one that is merely the active editor while the learner types in the chat.
+   *
+   * @returns `true` only while a debug session is paused, the window is focused, and the pane's group is the active group showing a text editor that is the active text editor, with `debug.focusEditorOnBreak` not turned off.
+   * @example this.panel.reveal(undefined, Boolean(this.lease) && !this.coversEditorFocusedByPause())
+   */
+  private coversEditorFocusedByPause(): boolean {
+    if (vscode.debug.activeStackItem === undefined) return false
+    const group = vscode.window.tabGroups.activeTabGroup
+    return (
+      vscode.window.state.focused &&
+      group.viewColumn === this.panel.viewColumn &&
+      group.activeTab?.input instanceof vscode.TabInputText &&
+      vscode.window.activeTextEditor?.viewColumn === group.viewColumn &&
+      vscode.workspace
+        .getConfiguration('debug')
+        .get<boolean>('focusEditorOnBreak') !== false
     )
   }
 

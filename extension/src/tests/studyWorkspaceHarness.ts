@@ -1903,6 +1903,10 @@ export async function workspaceHarness(
           },
         },
       },
+      debug: {
+        // No test of this harness pauses a native debug session; the Application pane then always preserves the keyboard focus when it is revealed.
+        activeStackItem: undefined,
+      },
       workspace: {
         getConfiguration: (section: string) => ({
           get: (key: string) =>
