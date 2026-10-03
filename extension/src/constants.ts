@@ -80,6 +80,21 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+// The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
+export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<string> = new Set([
+  'layout',
+  'control',
+  'replay-control',
+  'reading',
+  'presentation',
+])
+// The pane messages by which the learner chooses what the reader shows; one that is handled without an error retires the line of an earlier refused control.
+export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'history',
+  'node-history',
+  'tab',
+  'select',
+])
 // How many replies to pane open requests the reader keeps while a Recording load is in flight; beyond it the oldest is posted at once.
 export const MAX_DEFERRED_OPEN_REPLIES = 32
 // The one sentence for a saved study whose archive is gone or on its way to the Trash: read by the library, the reader and the removal refusals.

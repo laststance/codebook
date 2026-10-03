@@ -1,5 +1,7 @@
 import type { StudyCatalogEntry } from '../studySchemas'
 
+import { savedStudyLabel } from './savedStudyLabel'
+
 /**
  * Names one saved study for the removal confirmation with the same four parts its Saved studies option shows, so the learner can match the dialog to the list; called by {@link StudyWorkspace} before it asks for confirmation.
  * The date is formatted by the extension host and can differ in format from the option's; the last eight characters of the id are the anchor.
@@ -19,5 +21,5 @@ export function savedStudyIdentityLine(
     entry.profile === 'repository-browser'
       ? 'Repository browser study'
       : 'Unknown scenario'
-  return `${label}${entry.format === 'legacy-v1' ? ' (legacy)' : ''} · ${new Date(entry.savedAt).toLocaleString()} · ${entry.outcome} · ${entry.id.slice(-8)}`
+  return savedStudyLabel(entry, label)
 }

@@ -408,7 +408,8 @@ export async function workspaceHarness(
   const postedMessages: StudyViewMessage[] = []
   // What a webview receives besides Study messages: the reader's replies to a pane's open requests, with the webview that got each.
   const openRequestReplies: {
-    webview: 'context' | 'summary' | 'moments'
+    /** The pane that was answered: `context` for the Study pane's panel, `summary` and `moments` for the two views, and the panel's own view type for any other panel, so a reply to a wrong panel is told apart. */
+    webview: string
     openRequest: number
   }[] = []
   let heldPresentationMessage:
@@ -543,6 +544,8 @@ export async function workspaceHarness(
       ? nativeReaderColumn(options.viewColumn)
       : options?.viewColumn
     const value = {
+      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones.
+      viewType: kind,
       blockInnerFocus: false,
       webview: {
         html: '',
@@ -561,7 +564,7 @@ export async function workspaceHarness(
         ) => {
           if (message.type === 'open-request-settled') {
             openRequestReplies.push({
-              webview: 'context',
+              webview: kind === 'codebook.studyContext' ? 'context' : kind,
               openRequest: message.openRequest,
             })
             return true

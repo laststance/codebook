@@ -10,6 +10,7 @@ import {
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
+  CONTROL_RETIRING_MESSAGE_TYPES,
   MAX_DEFERRED_OPEN_REPLIES,
   MAX_SOURCE_DOCUMENTS,
   NODE_TEST_PROFILE,
@@ -30,6 +31,7 @@ import {
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_SOURCE_SCHEME,
+  UNRETRYABLE_READER_ERROR_KINDS,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
 import { StudyError } from './errors'
@@ -5966,6 +5968,9 @@ export class StudyWorkspace {
           entry.reason ? [entry.reason] : [],
         ),
       ],
+      unretryableErrorCount: [...this.errors.keys()].filter((kind) =>
+        UNRETRYABLE_READER_ERROR_KINDS.has(kind),
+      ).length,
       nextAction,
       liveProfile:
         live?.profile === NODE_TEST_PROFILE ? undefined : live?.profile,
@@ -8466,6 +8471,7 @@ export class StudyWorkspace {
     let isRejected = false
     try {
       await this.receive(value, origin, owner)
+      this.retireControlRefusal(value)
     } catch (error) {
       isRejected = true
       throw error
@@ -8478,6 +8484,17 @@ export class StudyWorkspace {
           opensRecording && !isRejected,
         )
     }
+  }
+
+  /** Retires the line of an earlier refused pane control once a later choice of an entry, a tab or an item was handled without an error, so a refusal does not stay through later runs; called by {@link receivePaneMessage}. @example this.retireControlRefusal({ type: 'history', revision: 4, studyId }) */
+  private retireControlRefusal(value: unknown): void {
+    const parsed = messageSchema.safeParse(value)
+    if (
+      !parsed.success ||
+      !CONTROL_RETIRING_MESSAGE_TYPES.has(parsed.data.type)
+    )
+      return
+    if (this.errors.delete('control')) this.publish()
   }
 
   /**
@@ -8520,6 +8537,8 @@ export class StudyWorkspace {
       type: 'open-request-settled',
       openRequest,
     }
+    // The pane puts its list back on the shown study when it reads the reply, so the Study message that names that study goes first.
+    this.publish()
     void webview.postMessage(reply)
   }
 
@@ -9056,12 +9075,18 @@ export class StudyWorkspace {
 
   /**
    * Ends the loading state of a choice made while the Study workspace is closed and publishes the chosen study to the panes that are still up; called by {@link showChosenStudy} once the study is selected.
-   * An open reader has rendered and published the study already. A closed one renders nothing, so without this the bottom panel would keep the earlier study and stay loading until the reader is opened.
+   * An open reader has rendered and published the study already, and one that is still opening does so when its entry ends. A closed one renders nothing, so without this the bottom panel would keep the earlier study and stay loading until the reader is opened.
    * @param request - The history request number of the choice; a newer choice or a closing reader publishes its own state.
    * @example this.publishChoiceOfClosedReader(request)
    */
   private publishChoiceOfClosedReader(request: number): void {
-    if (this.opened || !this.isLatestHistoryRequest(request)) return
+    // A reader that is opening renders and publishes the study itself; ending the loading state here would show it before that render.
+    if (
+      this.opened ||
+      this.sourceEntry ||
+      !this.isLatestHistoryRequest(request)
+    )
+      return
     this.loading = false
     this.publish()
   }
