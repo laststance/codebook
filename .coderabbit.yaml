@@ -141,7 +141,7 @@ knowledge_base:
       - 'DEVELOPMENT.md'
       - 'DESIGN.md'
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
-      - files: 'docs/cycles/0043-next-line-binding.md'
+      - files: 'docs/cycles/0044-wiki-update-and-carried-defects.md'
         applyTo: '**/*'
       - files: 'docs/designs/codebook.md'
         applyTo: 'extension/src/**'
