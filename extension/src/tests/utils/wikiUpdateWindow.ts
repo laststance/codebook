@@ -17,6 +17,9 @@ export type CancellableProgress = {
 
 type UriHandler = (uri: { path: string; query: string }) => Promise<void>
 
+/** An awaited step of an update's start that a test can keep open: the freshness inspection among the start checks, or VS Code's chat command. */
+export type HeldUpdateStep = 'freshness-inspection' | 'chat-open'
+
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
  *
@@ -33,7 +36,7 @@ type UriHandler = (uri: { path: string; query: string }) => Promise<void>
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
  * @param options.constants - Replaces the grace a closing window gives the Cursor agent, or the Cursor run's two-second look interval, so a test need not wait for them.
- * @returns What the window showed (chat requests, notifications by severity, confirmations, progress titles), how often its looks listed the candidates, the two update entries, the state snapshot and `close`.
+ * @returns What the window showed (chat requests, notifications by severity, confirmations, progress titles), how often its looks listed the candidates, the two update entries, the state snapshot, `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
  *
  * @example
  * ```ts
@@ -78,6 +81,7 @@ export async function openWikiUpdateWindow(options: {
   runUpdateCommand(): Promise<void>
   status(): WikiUpdateStatus
   setFreshness(freshness: WikiFreshness): void
+  hold(step: HeldUpdateStep): { started: Promise<void>; release(): void }
   close(): Promise<void>
 }> {
   const { projectRoot } = options
@@ -98,6 +102,17 @@ export async function openWikiUpdateWindow(options: {
   const progressTitles: string[] = []
   const looks = { candidateListings: 0 }
   const commands = new Map<string, () => Promise<void>>()
+  const holds = new Map<
+    HeldUpdateStep,
+    { reached(): void; released: Promise<void> }
+  >()
+  /** Waits at a step a test holds open; a step nobody holds passes at once. */
+  const passHold = async (step: HeldUpdateStep): Promise<void> => {
+    const hold = holds.get(step)
+    if (!hold) return
+    hold.reached()
+    await hold.released
+  }
   const withProgress = async (
     progressOptions: { title: string },
     task: (progress: unknown, token: unknown) => Promise<unknown>,
@@ -131,6 +146,7 @@ export async function openWikiUpdateWindow(options: {
           },
           executeCommand: async (name: string, argument?: unknown) => {
             if (options.chatFails) throw new Error('Chat is unavailable')
+            await passHold('chat-open')
             chatRequests.push({
               name,
               query:
@@ -231,7 +247,10 @@ export async function openWikiUpdateWindow(options: {
             : 'Updated',
       },
       './utils/inspectDeepWikiFreshness': {
-        inspectDeepWikiFreshness: async () => freshness,
+        inspectDeepWikiFreshness: async () => {
+          await passHold('freshness-inspection')
+          return freshness
+        },
       },
       // The real watch runs; only its two-second wait between looks is shortened, or replaced by the test's clock.
       './utils/waitForWikiPublish': {
@@ -282,6 +301,24 @@ export async function openWikiUpdateWindow(options: {
     },
     setFreshness(next: WikiFreshness): void {
       freshness = next
+    },
+    hold(step: HeldUpdateStep): { started: Promise<void>; release(): void } {
+      let reached = (): void => {}
+      let release = (): void => {}
+      const started = new Promise<void>((resolveStarted) => {
+        reached = resolveStarted
+      })
+      const released = new Promise<void>((resolveReleased) => {
+        release = resolveReleased
+      })
+      holds.set(step, { reached, released })
+      return {
+        started,
+        release(): void {
+          holds.delete(step)
+          release()
+        },
+      }
     },
     close: (): Promise<void> => boundary.deactivate(),
   }

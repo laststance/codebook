@@ -126,7 +126,7 @@ export function activate(
     { controller: AbortController; settled: Promise<void> } | undefined
   // When this window's last run ended; a candidate written before it is this window's own leftover.
   let lastWikiRunEndedAtMs: number | undefined
-  // A window that is closing has nobody to notify of the run its shutdown stops.
+  // A window that is closing has nobody to notify of the run its shutdown stops, and starts no run.
   let isExtensionStopping = false
   /** What one Wiki update run carries from its start to its end. */
   type WikiRun = {
@@ -854,6 +854,8 @@ export function activate(
         showWikiUpdateNotice()
         return
       }
+      // The checks above take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
+      if (isExtensionStopping) return
       const run: WikiRun = {
         projectRoot,
         outputDirectory,
@@ -890,6 +892,11 @@ export function activate(
           await finishWikiUpdate(run, {
             failure: `The editor chat could not be opened (${describeUpdateFailure(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
           })
+          return
+        }
+        // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
+        if (isExtensionStopping) {
+          await finishWikiUpdate(run, { cancelled: true })
           return
         }
         // The chat API reports no result, so the extension watches for the publish itself; the watch outlives this call.
