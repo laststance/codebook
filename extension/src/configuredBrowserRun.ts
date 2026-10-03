@@ -32,7 +32,10 @@ import {
 import { StudyError } from './errors'
 import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
 import type { BundleSource } from './repositoryBundle'
-import { configuredDomFailureSchema } from './repositoryConfigSchemas'
+import {
+  configuredDomFailureSchema,
+  type ConfiguredDomFailure,
+} from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
 import type {
   ConfiguredRuntimeSnapshot,
@@ -207,6 +210,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent
   }
   private transientBrowserPause?: { timer: ReturnType<typeof setTimeout> }
+  /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
+  private lastAfterFailure?: ConfiguredDomFailure
   private progressTimer?: ReturnType<typeof setTimeout>
   private runTimer?: ReturnType<typeof setTimeout>
   private cleaning = false
@@ -1961,10 +1966,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     this.status = 'resuming'
-    this.progressDeadline(
-      ACTIVE_TIMEOUT_MS,
-      'Repository after condition or input acknowledgement timed out',
-    )
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
     this.track(this.observeAfter(continuation))
   }
   /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, and waits until no participant is still paused at a pause the adapter made for itself. @example await this.observeAfter(continuation) */
@@ -2042,6 +2044,46 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw new Error('Declared DOM conditions could not be evaluated')
     return domResultSchema.parse(response.result.value)
   }
+  /**
+   * Words the failure of the deadline armed when the last continuation began, read when it expires (see {@link beginAfter}).
+   * That deadline and the after wait share one bound and the deadline was armed first, so it ends the wait; the text then says what the after wait would have said.
+   * @returns The after conditions' timeout text with its hint while they did not hold, otherwise the plain text.
+   * @example
+   * ```ts
+   * this.afterDeadlineReason() // 'Timed out waiting for configured after conditions: condition 1 (text) text-mismatch. A text condition …'
+   * ```
+   */
+  private afterDeadlineReason(): string {
+    const failure = this.lastAfterFailure
+    return failure
+      ? this.conditionTimeoutText('after', failure)
+      : 'Repository after condition or input acknowledgement timed out'
+  }
+  /**
+   * Composes the text of DOM conditions that did not hold within their bound, called by {@link waitForDom} and {@link afterDeadlineReason}.
+   * @param phase - Whether the conditions guard the input or prove the result.
+   * @param failure - What the page answered last.
+   * @returns The timeout text naming the condition (or click target), the reason and the hint.
+   * @example
+   * ```ts
+   * this.conditionTimeoutText('after', { conditionIndex: 0, reason: 'not-visible' }) // 'Timed out waiting for configured after conditions: condition 1 (visible) not-visible.'
+   * ```
+   */
+  private conditionTimeoutText(
+    phase: 'before' | 'after',
+    failure: ConfiguredDomFailure,
+  ): string {
+    const { conditionIndex, reason } = failure
+    const failedCondition =
+      conditionIndex === undefined
+        ? undefined
+        : this.definition.configuration.action[phase][conditionIndex]
+    const condition =
+      conditionIndex === undefined
+        ? 'click target'
+        : `condition ${conditionIndex + 1} (${failedCondition?.kind ?? 'unknown'})`
+    return `Timed out waiting for configured ${phase} conditions: ${condition} ${reason}.${configuredConditionHint(phase, failedCondition, failure)}`
+  }
   /** Polls conditions without repeating application input; setup and after verification call it. @example await this.waitForDom('after') */
   private async waitForDom(phase: 'before' | 'after'): Promise<void> {
     let lastResult: z.infer<typeof domResultSchema> | undefined
@@ -2050,6 +2092,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       await waitUntil(
         async () => {
           lastResult = await this.readDom(phase)
+          if (phase === 'after')
+            this.lastAfterFailure = lastResult.ready
+              ? undefined
+              : lastResult.failure
           if (lastResult.failure?.reason === 'invalid-selector') {
             const location =
               lastResult.failure.conditionIndex === undefined
@@ -2074,18 +2120,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         !lastResult?.failure
       )
         throw error
-      const { conditionIndex, reason } = lastResult.failure
-      const condition =
-        conditionIndex === undefined
-          ? 'click target'
-          : `condition ${conditionIndex + 1} (${this.definition.configuration.action[phase][conditionIndex]?.kind ?? 'unknown'})`
-      const failedCondition =
-        conditionIndex === undefined
-          ? undefined
-          : this.definition.configuration.action[phase][conditionIndex]
-      throw new Error(
-        `${timeoutMessage}: ${condition} ${reason}.${configuredConditionHint(phase, failedCondition, lastResult.failure)}`,
-      )
+      throw new Error(this.conditionTimeoutText(phase, lastResult.failure))
     }
   }
   /** Revalidates all cited disk identities and open buffers at effect/pause/continue boundaries without owning raw tabs. @example await this.verifySources() */

@@ -115,6 +115,8 @@ export async function configuredRuntimeHarness(
     rejectBinding = false,
     ready = true,
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
+    afterFailure: BeforeFailure | undefined,
+    afterReadCount = 0,
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -320,6 +322,16 @@ export async function configuredRuntimeHarness(
       parameters?: { expression?: string; type?: string },
       timeout?: number,
     ) {
+      // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression &&
+        run.view().operation?.inputDispatched
+      ) {
+        afterReadCount++
+        if (afterFailure)
+          return { result: { value: { ready: false, failure: afterFailure } } }
+      }
       if (method === 'Runtime.evaluate')
         return {
           result: {
@@ -777,6 +789,14 @@ export async function configuredRuntimeHarness(
     failBeforeWith(failure: BeforeFailure): void {
       ready = false
       beforeFailure = failure
+    },
+    /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
+    failAfterWith(failure: BeforeFailure): void {
+      afterFailure = failure
+    },
+    /** How many times the run read the after conditions after the input. */
+    afterReads(): number {
+      return afterReadCount
     },
     suppressRetirementAck(): void {
       removedAck = false

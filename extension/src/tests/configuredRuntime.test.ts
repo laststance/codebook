@@ -160,6 +160,37 @@ test('a before text condition on other text ends the run with the comparison rul
 })
 
 // Value: protects=a relation the run does not know failing the read at once instead of being dropped and polled for twenty seconds; fails_when=the result schema strips or accepts an unknown textDifference; why_new=the field is new and the base schema dropped unknown keys; seam=none
+// Cycle 0044 (0041-F1): red while the run's own 20 s deadline, armed before the after wait with the same bound, ended the run with "Repository after condition or input acknowledgement timed out" and the hint was lost.
+test('an after text condition that never holds ends the run with the after timeout text and its hint, not the plain deadline text', async (context) => {
+  // Arrange
+  const { run, advance, failAfterWith, afterReads } =
+    await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured pause',
+  )
+  failAfterWith({
+    conditionIndex: 0,
+    reason: 'text-mismatch',
+    textDifference: 'surrounding-text',
+  })
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => afterReads() > 0, 'after condition read')
+  // Act
+  advance(20_000)
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    [...run.view().failures],
+    [
+      "Timed out waiting for configured after conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the element holds the expected text beside other text; keep the text check and choose a selector whose element holds only that text.",
+    ],
+  )
+  assert.equal(run.view().operation?.afterVerified, false)
+})
+
 test('a text relation the run does not know fails the read at once instead of timing out', async (context) => {
   // Arrange
   const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(
@@ -476,38 +507,41 @@ for (const order of [
     assert.equal(commands.filter((command) => command === 'continue').length, 1)
   })
 
-for (const invalid of ['foreign-thread', 'duplicate-continued'] as const)
-  test(`a ${invalid} receipt after authorized Continue revokes completion without another input`, async (context) => {
-    // Arrange
-    const { run, holdContinuation, commands, mouse } =
-        await configuredRuntimeHarness(context),
-      receipts = holdContinuation()
-    await run.prepare()
-    run.action('one', 'repository-click')
-    const snapshot = await waitUntil(
-      () => run.view().snapshots[0],
-      'captured pause',
-    )
-    const continuation = run
-      .continue('browser', snapshot.pause)
-      .catch(() => undefined)
-    await receipts.started
-    // Act: retain one missing receipt while the invalid notification races the authorized continuation.
-    receipts.response()
-    receipts.input()
-    if (invalid === 'duplicate-continued') receipts.dap()
-    receipts.dap(invalid === 'foreign-thread' ? 99 : 1)
-    receipts.cdp()
-    await continuation
-    await run.stop()
-    // Assert
-    assert.equal(run.view().finalOutcome, 'not-demonstrated')
-    assert.equal(run.view().operation?.afterVerified, false)
-    assert.equal(run.view().snapshots[0], snapshot)
-    assert.equal(run.view().resourcesReleased, true)
-    assert.equal(mouse.length, 2)
-    assert.equal(commands.filter((command) => command === 'continue').length, 1)
-  })
+// Cycle 0044 (0042-SR4): the duplicate-continued row is gone; since ER2 a second continued after a complete continuation is the adapter's idle one and must not revoke (nativeParticipants "a continued and a pause the debugger makes for itself after the last continuation do not end the run, and it completes"). The foreign-thread row now asserts the revocation itself, which run.stop() alone also produced.
+test('a continued for another thread after authorized Continue revokes completion as an unowned continuation without another input', async (context) => {
+  // Arrange
+  const { run, holdContinuation, commands, mouse } =
+      await configuredRuntimeHarness(context),
+    receipts = holdContinuation()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured pause',
+  )
+  const continuation = run
+    .continue('browser', snapshot.pause)
+    .catch(() => undefined)
+  await receipts.started
+  // Act: the foreign notification races the authorized continuation while its own continued is still missing.
+  receipts.response()
+  receipts.input()
+  receipts.dap(99)
+  receipts.cdp()
+  await continuation
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Unowned continuation invalidated live pause',
+  )
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+  assert.equal(run.view().operation?.afterVerified, false)
+  assert.equal(run.view().snapshots[0], snapshot)
+  assert.equal(run.view().resourcesReleased, true)
+  assert.equal(mouse.length, 2)
+  assert.equal(commands.filter((command) => command === 'continue').length, 1)
+})
 
 test('a second selected stop racing the after renderer cannot replace the first observation or certify completion', async (context) => {
   // Arrange
