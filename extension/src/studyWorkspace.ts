@@ -1268,7 +1268,7 @@ export class StudyWorkspace {
     input: PresentationIntent,
   ): Promise<PresentationState> {
     const runtimeIdentity = this.assertPresentationAdmission()
-    const focusedPane = this.trackFocusedStudyPane()
+    const focusedPane = this.trackFocusedStudyPane(true)
     const transition = {
       id: this.presentationId,
       cancellation: new AbortController(),
@@ -2333,7 +2333,7 @@ export class StudyWorkspace {
           'PRESENTATION_UNAVAILABLE',
           'The selected study changed while reading a pane. Inspect its current state.',
         )
-      const focusedPane = this.trackFocusedStudyPane()
+      const focusedPane = this.trackFocusedStudyPane(true)
       try {
         // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
         assertReadFocus()
@@ -2371,8 +2371,8 @@ export class StudyWorkspace {
     }
   }
 
-  /** Watches Read and Restore from the selected pane so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
-  private trackFocusedStudyPane(requireOwned = true): {
+  /** Watches Read and Restore from the focused tab so later learner navigation wins over host commands; Restore announces its temporary main-part focus before measuring layout. @param requireOwned - Require the starting tab to be a Codebook pane; Read and the three-pane Restore do. The live and replay Restore starts from whichever tab has focus (an agent restores while the learner's file or the debugger's stop is focused), so no pane has to be clicked first. @example const focus = this.trackFocusedStudyPane(); focus.assertCurrent(); focus.dispose() */
+  private trackFocusedStudyPane(requireOwned = false): {
     assertCurrent(): void
     beforeScopeFocus(acquire?: RepositoryFocusTarget): void
     dispose(): void
