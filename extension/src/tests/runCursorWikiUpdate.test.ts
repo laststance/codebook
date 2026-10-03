@@ -194,13 +194,18 @@ setInterval(() => {}, 1000);
         // Should the abort be ignored, this bound stops the agent, so a failing test leaves no process behind.
         3_000,
       ).catch((error: unknown) => error)
-      let agentPid = 0
-      while (!agentPid)
-        agentPid = Number(
-          await readFile(join(projectRoot, 'agent.pid'), 'utf8').catch(
-            () => '',
-          ),
-        )
+      /** Waits until the started agent has written its process id. */
+      const readAgentPid = async (): Promise<number> => {
+        for (;;) {
+          const written = await readFile(
+            join(projectRoot, 'agent.pid'),
+            'utf8',
+          ).catch(() => '')
+          if (written) return Number(written)
+          await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+        }
+      }
+      const agentPid = await readAgentPid()
 
       // Act
       controller.abort()
