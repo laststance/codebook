@@ -928,12 +928,14 @@ test('a delete request for another saved study while one is being moved to the T
 
 // Value: protects=a removal that fails before anything moved changes nothing: the run stays saved and keeps being saved; fails_when=the run is excluded from history although its study still exists; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('a removal the Trash refuses at its first move deletes nothing, and a later explanation of that run is still saved', async () => {
-  // Arrange: a recorded, stopped and saved run; the Trash refuses every move.
+  // Arrange: a recorded, stopped and saved run; the Trash refuses the first move, its recording, and would take every later one, so a removal that went on would leave its moves in harness.trashMoves.
   const harness = await recordedReaderHarness()
   try {
     const library = await harness.reader.learningStorage()
     harness.answerWarningDialogs(async ([confirm]) => confirm)
-    harness.rejectTrashMoves(() => true)
+    harness.rejectTrashMoves((path) =>
+      path.endsWith(join('recordings.v2', harness.studyId)),
+    )
     // Act
     await requestRemoval(harness, harness.studyId)
     const afterRefusedMove = harness.reader.inspect().view!
@@ -1447,7 +1449,10 @@ test('a checkpoint that waited behind a write during a removal that moved nothin
     await explain('waiting-checkpoint', 'The second later explanation.')
     await readerSeams(harness).refresh()
     harness.answerWarningDialogs(async ([confirm]) => confirm)
-    harness.rejectTrashMoves(() => true)
+    // The Trash refuses only the first move, the recording: the stub records no refused move, so a removal that went on is seen by the later moves it would record.
+    harness.rejectTrashMoves((path) =>
+      path.endsWith(join('recordings.v2', harness.studyId)),
+    )
     // Act: the learner confirms while the first save is in flight; the Trash then refuses the first move.
     const removal = requestRemoval(harness, harness.studyId)
     await waitUntil(
@@ -1711,7 +1716,8 @@ test('a removal the Trash refuses at the first file of a study the ledger names 
     const ledgerPath = join(directory, 'progress.repository.v4.json')
     const ledgerBefore = await readFile(ledgerPath, 'utf8')
     harness.answerWarningDialogs(async ([confirm]) => confirm)
-    harness.rejectTrashMoves(() => true)
+    // The Trash refuses only the first file, the catalog sidecar, and would take the archive: a removal that went on would leave that move in harness.trashMoves.
+    harness.rejectTrashMoves((path) => path.endsWith('.study.meta.v3.json'))
     // Act
     await requestRemoval(harness, harness.studyId)
     const afterRefusedMove = harness.reader.inspect().view!
@@ -3346,7 +3352,8 @@ test('a removal that moved no file and cannot write the ledger back says that no
       await rm(ledgerPath, { recursive: true })
       await mkdir(join(ledgerPath, 'blocked'), { recursive: true })
     })
-    harness.rejectTrashMoves(() => true)
+    // The Trash refuses only the first file, the catalog sidecar, and would take the archive: a removal that went on would leave that move in harness.trashMoves.
+    harness.rejectTrashMoves((path) => path.endsWith('.study.meta.v3.json'))
     // Act
     await requestRemoval(harness, harness.studyId)
     // Assert
