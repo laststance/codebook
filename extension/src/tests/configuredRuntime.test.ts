@@ -1478,15 +1478,11 @@ test('a pause at the line the debugger moved a browser stop to is captured as th
   await run.prepare()
   // Act
   run.action('moved-line', 'repository-click')
-  const stop = await waitUntil(
-    () => {
-      const view = run.view()
-      if (view.failures.length) throw new Error(view.failures.join('; '))
-      return view.participants.browser.snapshot
-    },
-    'stop captured while the wait for its own pause is held open',
-    2_000,
-  )
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop captured while the wait for its own pause is held open')
   await run.stop()
   // Assert
   assert.equal(stop.source.line, 2)

@@ -18,6 +18,8 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 
 import { createConfiguredStudy } from './createConfiguredStudy'
+import { createManualClock } from './createManualClock'
+import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 
@@ -104,10 +106,8 @@ export async function configuredRuntimeHarness(
     mouse: { type?: string; timeout?: number }[] = [],
     commands: string[] = [],
     listeners = new Map<string, (event: unknown) => void>()
-  const timers = new Map<number, { at: number; callback: () => void }>()
-  let clock = 0,
-    timerId = 0,
-    requestSequence = 0
+  const clock = createManualClock()
+  let requestSequence = 0
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -132,8 +132,8 @@ export async function configuredRuntimeHarness(
     emitNextPause = true
   // Where the adapter reports every later stop's verified binding when it differs from the requested position.
   let laterStopBinding: { line: number; column: number } | undefined
-  // A held wait for an accepted stop's own pause never times out until the test releases it.
-  let sourceBoundWait: { released: boolean } | undefined
+  // A held wait for an accepted stop's own pause does not end after 3 s of real time.
+  const sourceBoundWait = createSourceBoundWaitHold()
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
@@ -249,12 +249,10 @@ export async function configuredRuntimeHarness(
       )
       if (owned && bindingLookupFailure) throw new Error(bindingLookupFailure)
       // The first stop and every later one can each be reported at another position than requested; the learner's own breakpoint never is.
-      const reported =
-        owned?.id === 'owned-breakpoint'
-          ? firstStopBinding
-          : owned?.id.startsWith('owned-breakpoint-')
-            ? laterStopBinding
-            : undefined
+      let reported: { line: number; column: number } | undefined
+      if (owned?.id === 'owned-breakpoint') reported = firstStopBinding
+      else if (owned?.id.startsWith('owned-breakpoint-'))
+        reported = laterStopBinding
       return bound && !rejectBinding && owned
         ? {
             id: 1,
@@ -298,6 +296,29 @@ export async function configuredRuntimeHarness(
   }
   let screenshot =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII='
+  /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold only once the input was sent. */
+  const pageEvaluation = (expression: string | undefined): unknown => {
+    if (expression === 'location.href') return 'about:blank'
+    if (expression === 'location.origin') return 'http://127.0.0.1:4321'
+    if (
+      expression === afterExpression &&
+      !run.view().operation?.inputDispatched
+    )
+      return {
+        ready: false,
+        failure: { conditionIndex: 0, reason: 'not-visible' },
+      }
+    return ready
+      ? { ready: true, x: 12, y: 18 }
+      : { ready: false, failure: beforeFailure }
+  }
+  /** Gives the required inspection's path its value at the pause: a theme name, or what a test asked for instead. */
+  const requiredInspectionValue = (): unknown => {
+    if (requiredValueUnavailable)
+      return 'x'.repeat(REPOSITORY_LITERAL_LIMIT_CHARS + 1)
+    if (requiredValueObject) return { email: 'learner@example.com' }
+    return requiredValueUndefined ? undefined : 'dark'
+  }
   const proxy = {
     closed: false,
     get onClose() {
@@ -325,24 +346,7 @@ export async function configuredRuntimeHarness(
       timeout?: number,
     ) {
       if (method === 'Runtime.evaluate')
-        return {
-          result: {
-            value:
-              parameters?.expression === 'location.href'
-                ? 'about:blank'
-                : parameters?.expression === 'location.origin'
-                  ? 'http://127.0.0.1:4321'
-                  : parameters?.expression === afterExpression &&
-                      !run.view().operation?.inputDispatched
-                    ? {
-                        ready: false,
-                        failure: { conditionIndex: 0, reason: 'not-visible' },
-                      }
-                    : ready
-                      ? { ready: true, x: 12, y: 18 }
-                      : { ready: false, failure: beforeFailure },
-          },
-        }
+        return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         bound = !rejectBinding
         // VS Code can surface a bound source stop during hydration when Codebook arms its breakpoint too early.
@@ -378,13 +382,7 @@ export async function configuredRuntimeHarness(
           return {
             result: {
               value: runInNewContext(parameters?.expression ?? '', {
-                nextTheme: requiredValueUnavailable
-                  ? 'x'.repeat(REPOSITORY_LITERAL_LIMIT_CHARS + 1)
-                  : requiredValueObject
-                    ? { email: 'learner@example.com' }
-                    : requiredValueUndefined
-                      ? undefined
-                      : 'dark',
+                nextTheme: requiredInspectionValue(),
                 setTheme() {},
                 enabled: false,
                 selection: null,
@@ -614,34 +612,13 @@ export async function configuredRuntimeHarness(
             signal?.throwIfAborted()
             return waitUntil(read, description, 0, signal)
           }
-          // A held wait for the accepted stop's own pause looks until the pause is there or the test releases it, then ends as its 3 s bound would.
-          const heldWait = sourceBoundWait
-          if (heldWait && description === 'source-bound CDP stop') {
-            for (;;) {
-              signal?.throwIfAborted()
-              const value = await read()
-              if (value) return value
-              if (heldWait.released)
-                return waitUntil(read, description, 0, signal)
-              await new Promise<void>((resolve) => {
-                setImmediate(resolve)
-              })
-            }
-          }
+          if (sourceBoundWait.holds(description))
+            return sourceBoundWait.wait(read, description, signal)
           return waitUntil(read, description, timeoutMs, signal)
         },
       },
     },
-    {
-      setTimeout: (callback: () => void, delay: number) => {
-        const id = ++timerId
-        timers.set(id, { at: clock + delay, callback })
-        return id
-      },
-      clearTimeout: (id: number) => {
-        timers.delete(id)
-      },
-    },
+    { setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout },
   )
   run = owned = new runtimeModule.ConfiguredBrowserRun({
     directory: join(repository.directory, '.runtime'),
@@ -722,16 +699,8 @@ export async function configuredRuntimeHarness(
     bindLaterStopsAt(line: number, column: number): void {
       laterStopBinding = { line, column }
     },
-    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example const wait = harness.holdSourceBoundWait(); wait.release() */
-    holdSourceBoundWait() {
-      const held = { released: false }
-      sourceBoundWait = held
-      return {
-        release: (): void => {
-          held.released = true
-        },
-      }
-    },
+    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example harness.holdSourceBoundWait() */
+    holdSourceBoundWait: sourceBoundWait.hold,
     /** Lets a continuation run on without the next declared stop ever pausing. */
     suppressNextPause(): void {
       emitNextPause = false
@@ -816,13 +785,7 @@ export async function configuredRuntimeHarness(
         },
       }
     },
-    advance(milliseconds: number): void {
-      clock += milliseconds
-      for (const [id, timer] of [...timers])
-        if (timer.at <= clock) {
-          timers.delete(id)
-          timer.callback()
-        }
-    },
+    /** Moves the run's manual clock forward and fires its due timers in the order they fall due. @example harness.advance(20_000) */
+    advance: clock.advance,
   }
 }

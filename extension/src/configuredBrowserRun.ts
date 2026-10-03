@@ -1979,6 +1979,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           line: callFrame.location.lineNumber,
           column: callFrame.location.columnNumber ?? 0,
         },
+        // The stop's rule accepted this bound line: no line between it and the declared one has a mapped position.
+        binding: {
+          declaredLine: position.line,
+          boundLine: frame.line,
+          mappedLinesBetween: 0,
+        },
       },
       ...facts,
     }

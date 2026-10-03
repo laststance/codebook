@@ -2150,15 +2150,11 @@ test('a later server stop whose registration the adapter acknowledges on the nex
   harness.holdSourceBoundWait()
   // Act
   await harness.run.continue('server', first.pause)
-  const second = await waitUntil(
-    () => {
-      const view = harness.run.view()
-      if (view.failures.length) throw new Error(view.failures.join('; '))
-      return view.snapshots[1]
-    },
-    'second server stop captured while the wait for its own pause is held open',
-    2_000,
-  )
+  const second = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1]
+  }, 'second server stop captured while the wait for its own pause is held open')
   await harness.run.continue('server', second.pause)
   await waitUntil(
     () => harness.run.view().status === 'completed',
@@ -2199,15 +2195,11 @@ test('a server stop whose pending registration binds on the next line is capture
   harness.holdSourceBoundWait()
   // Act
   harness.run.action('once', 'repository-click')
-  const server = await waitUntil(
-    () => {
-      const view = harness.run.view()
-      if (view.failures.length) throw new Error(view.failures.join('; '))
-      return view.participants.server?.snapshot
-    },
-    'server stop captured while the wait for its own pause is held open',
-    2_000,
-  )
+  const server = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.server?.snapshot
+  }, 'server stop captured while the wait for its own pause is held open')
   await harness.run.continue('server', server.pause)
   await waitUntil(
     () => harness.run.view().status === 'completed',
@@ -2464,5 +2456,32 @@ test('a later stop whose pause arrived but that the debugger never announced end
   assert.equal(
     harness.run.view().failures[0],
     'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 is paused at src/mode.ts:1, but the debugger did not announce that stop within 20 s of the preceding continuation',
+  )
+})
+
+// Value: protects=the deadline of a first server stop that never paused telling the agent which stop, how it is registered and that the action may still be running; fails_when=the run ends with the bare "Repository input reached no verified pause" (the cold-start run of Cycle 0043); why_new=Cycle 0043 N-3; seam=the harness clock
+test('a pending first server stop that the click does not reach within 20 s ends the run naming the stop, its pending registration and that the action may still be running', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'first server stop not hit',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository input reached no verified pause: declared server stop src/mode.ts:1 (registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input",
   )
 })

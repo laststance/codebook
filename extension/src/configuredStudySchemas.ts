@@ -84,6 +84,14 @@ export const configuredObservationSchema = z.strictObject({
       line: z.number().int().nonnegative(),
       column: z.number().int().nonnegative(),
     }),
+    // The run's receipt that its binding rule held when it committed the stop: the sealed map had no position on a line between the two. A saved study has no sealed map to repeat that check with; studies saved by 0.2.27 and older carry none.
+    binding: z
+      .strictObject({
+        declaredLine: z.number().int().positive(),
+        boundLine: z.number().int().positive(),
+        mappedLinesBetween: z.literal(0),
+      })
+      .optional(),
   }),
   values: z.record(configuredFactPathSchema, configuredFactValueSchema),
   debugger: replayDebugSnapshotSchema.optional(),
