@@ -788,9 +788,16 @@ export class StudyWorkspace {
   private ownsCapturedSourceTab(tab: vscode.Tab): boolean {
     return (
       this.library !== undefined &&
-      tab.input instanceof vscode.TabInputText &&
-      tab.input.uri.scheme === STUDY_SOURCE_SCHEME &&
+      this.isCapturedSourceInput(tab.input) &&
       tab.input.uri.authority === this.library.workspaceKey
+    )
+  }
+
+  /** Tells whether a tab input is a captured source document of any workspace's reader: the part of {@link ownsCapturedSourceTab} that needs no library key, which {@link admitPresentation} asks before the library exists. @example this.isCapturedSourceInput(vscode.window.tabGroups.activeTabGroup.activeTab?.input) */
+  private isCapturedSourceInput(input: unknown): input is vscode.TabInputText {
+    return (
+      input instanceof vscode.TabInputText &&
+      input.uri.scheme === STUDY_SOURCE_SCHEME
     )
   }
 
@@ -1085,8 +1092,7 @@ export class StudyWorkspace {
       leftoverTabs === 'pending' &&
       input.action === 'select' &&
       (this.deadPaneTabs().length > 0 ||
-        (activeInput instanceof vscode.TabInputText &&
-          activeInput.uri.scheme === STUDY_SOURCE_SCHEME &&
+        (this.isCapturedSourceInput(activeInput) &&
           vscode.window.activeTextEditor?.document.uri.toString() !==
             activeInput.uri.toString()))
     )
