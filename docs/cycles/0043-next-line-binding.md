@@ -169,7 +169,95 @@ Test plan after the reviews: the rule's unit table (8 cases); `isPauseAtStop` an
 
 ## Attempts and evidence
 
-No implementation yet.
+### Implementation of L, 2026-10-03
+
+Source `f234179` (tree `295e7a8e`); product files changed against `f9ac394`:
+
+| File | Change |
+| --- | --- |
+| `extension/src/utils/isBindingLineAccepted.ts` (new) | The rule (ER1): the declared line; or a later line up to the citation's last line with no mapped line strictly between, by a complete scan; the next line needs no scan. |
+| `extension/src/configuredBrowserRun.ts` | Every prepared stop carries `acceptsBoundLine`, built once from its citation and its sealed map. `armStop` passes it to the owned breakpoint and refuses a browser binding only when it refuses the line (ER2). `inspect` accepts the paused server binding under it (ER5). `verifyStackRefresh` passes it on (ER6). `progressDeadline` takes a text or a function read at expiry; `unreachedFirstStopReason` and `unreachedNextStopReason` word the two deadlines and `movedPlace` reads the stop's moved place (ER7, DX2, DX3). |
+| `extension/src/utils/isPauseAtStop.ts` | The bound line once known; before, the declared line or a line the stop's rule accepts (ER3). |
+| `extension/src/ownedRepositoryBreakpoint.ts` | An optional fifth argument `acceptsLaterLine`; a verified reply on a line it accepts is acknowledged under `'declared-line'`; the receipt gains `movedTo` only for such a reply that names its column; `movedTo(session)` reads the current one without throwing (ER4). |
+| `extension/src/utils/isRefreshedFrameAtStop.ts` | An optional `acceptsBoundLine`, used while nothing is bound (ER6). |
+| `extension/src/utils/isSavedSourceAtStop.ts` (new), `validateConfiguredStudyEvidence.ts` | The saved observation's position: the declared one, or another column or a later line within the citation when the debugger state was saved (ER8). |
+| `extension/src/resources.ts` | DX1's sentences in `sourceBinding`. |
+
+One difference from the engineering review's wording, with the same behavior: the run has no private `acceptsBoundLine(stop, line)` method; each prepared stop holds its own predicate, so the owner, the position test and the refresh check receive it without a reference to the run.
+
+The server's `stop.bound` is still set only when its pause is inspected (ER4): nothing is copied from the owner's receipt.
+
+### Tests: 38 added, one assertion changed
+
+| File | Added | What |
+| --- | --- | --- |
+| `tests/isBindingLineAccepted.test.ts` (new) | 8 | Criterion 10's table, and that only the lines strictly between are asked of the map |
+| `tests/isSavedSourceAtStop.test.ts` (new) | 3 | The predicate's table (ER8) |
+| `tests/isPauseAtStop.test.ts` | 2 | The bound line once known; the rule's line while it is not (ER3) |
+| `tests/isRefreshedFrameAtStop.test.ts` | 2 | The predicate before the binding; exactness after it (ER6) |
+| `tests/pendingRepositoryBreakpoint.test.ts` | 4 | The rule accepts a later line and the receipt names it; a line the rule refuses; a `'declared-column'` owner ignores the rule; no `movedTo` on the declared line, while pending, or without a column (ER4) |
+| `tests/configuredRuntime.test.ts` | 8 | Criteria 1, 3, 7, 7b (and the expiry before the click), three refusals of criterion 6 |
+| `tests/nativeParticipants.test.ts` | 7 | Criteria 2, 4, 5, ER6, three refusals at the pause |
+| `tests/crossRuntimeHistory.test.ts` | 3 | Criterion 8 a, b, d |
+| `tests/configuredService.test.ts` | 1, and the one changed assertion | The inspection resource reports the bound line as `source` beside `requestedSource`; criterion 9 (DX1's sentences) |
+
+Harnesses (ER9): `configuredRuntimeHarness` and `nativeParticipantsHarness` take an opt-in `fixture` (source text, citation end line, declared line), report later stops' bindings and hold the wait for an accepted stop's own pause open; `createConfiguredStudy` takes the citation's end line. Defaults are unchanged. Criterion 11: `git diff f9ac394 -- 'extension/src/tests/*.test.ts'` removes one line, the old help assertion.
+
+### Red on `f9ac394`, green on the branch
+
+The six changed product files were restored to `f9ac394`, the output was emitted with `build:fast` (the new tests name members the base does not have) and the nine touched test files were run: 225 tests, 207 passed, 18 failed. On the branch the same files: 225 of 225.
+
+| Test (criterion) | On `f9ac394` |
+| --- | --- |
+| Browser stop bound on the next line is armed and commits there (1) | `Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1, 2:1. …` |
+| Its pause is captured without the adoption wait (3) | the same text, at arming |
+| Later stop moved and not reached names the bound place (7) | the same text, as the continuation's arming error |
+| First stop moved and not reached names the bound place (7b); the expiry before the click keeps its text | the same text, at arming |
+| Later browser stop armed inside the continuation (2) | `Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. …` |
+| Server stop acknowledged on the next line (4) | `Declared stop src/mode.ts:1 was not registered: Selected adapter did not acknowledge the exact breakpoint registration: {…"selectedLine":2,"selectedColumn":1…}` |
+| Server stop with a pending registration bound on the next line (5) | With the adoption wait held open the stop is never captured (the test's own wait ends after 2 s). With the wait ended, the base text is `Declared stop src/mode.ts:1 bound at 2:1, not on its declared line`, which the existing test at `nativeParticipants.test.ts:1582` pins for a one-line citation |
+| Stack refresh before the moved binding is read (ER6) | `Native stack refresh changed the captured source location` |
+| Owner: rule accepts a later line (ER4) | `Selected adapter did not acknowledge the exact breakpoint registration: {…"selectedLine":21,"selectedColumn":7…}` |
+| Owner: a refused line has no moved place; no `movedTo` on unmoved receipts | `breakpoint.movedTo is not a function` (the member is new) |
+| Saved stop on a later line reopens (8a) | `Configured observation source differs from its sealed definition.` |
+| Saved stop on a later line whose frame names another line (8b, second half) | `Configured observation source differs from its sealed definition.` instead of `Historical debugger differs from its verified source stop.` |
+| Position test: bound line; rule's line while unknown (ER3) | the bound and the accepted line answer `false` |
+| Refresh predicate (ER6) | the accepted line answers `false` |
+| Help (9) | the old sentence |
+
+Guards that pass on base and branch (10): the three browser refusals and the three server refusals of criterion 6, the `'declared-column'` owner, criterion 8d, the inspection resource, and the exact bound position of a refresh. Criterion 8b's first half (no debugger state) is a guard; its test is red on base only by its second half. The 11 unit tests of the two new utilities have no base.
+
+### Disabled-fix controls (criterion 12, ER10)
+
+Each part was removed from the compiled `extension/dist`, the named tests were run (green before, red with the part removed) and the file was restored. 13 of 13 checks held in 9 rows; `dist` hashed the same before and after (`0f7161ae…`).
+
+| Row | Part removed | Tests that fail |
+| --- | --- | --- |
+| C1 | The rule in the browser's arming poll | criterion 1, criterion 2 |
+| C2 | The bound line in the position test | criterion 3 |
+| C3 | The owner's rule | criterion 4, the owner's acceptance test |
+| C4 | The rule at the pause (`inspect`) | criteria 4 and 5 |
+| C5 | The rule's line in the position test while the binding is unknown | criteria 4 and 5 (not captured while the wait is held) |
+| C6 | The predicate of the refresh check | ER6 |
+| C7 | The moved place in the continuation deadline | criterion 7 |
+| C8 | The moved place in the input deadline | criterion 7b |
+| C9 | The later line in the saved-study predicate | criterion 8a |
+
+### Gates on `f234179` (criterion 13)
+
+On this host (WSL2, Node 24.21.0, pnpm 12.4.2), in this order, each exit 0:
+
+| Gate | Result |
+| --- | --- |
+| `pnpm --dir extension test` | 1,856 of 1,856 (1,818 before), 86 s of tests |
+| `pnpm --dir extension test:package`, after every test process had ended | 192 of 192 |
+| `node --test .codex/restore-product-context.test.mjs` | 4 of 4 |
+| `typecheck`, `format:check` | passed |
+| `lint` | passed with `eslint . --concurrency=2 --max-warnings=0`. The package script's `--concurrency=auto` was killed by the kernel on this host (16 processors, 7.3 GB of memory, exit 137); CI runs the script as written |
+| full `build`, then `dead-code`, `dupes`, `health` | passed |
+| `node extension/scripts/build-fast.mjs --check` | 684 files, 0 differences |
+
+Criterion 14: `extension/fallow-health-baseline.json`, every `extension/src/*Schemas.ts`, the manifest's `contributes` and `extension/skills/` (bundled skill `39f03be0`) are unchanged against `f9ac394`. Health findings: 519 on base and 519 on the branch, none new; no function added by this cycle is among them. Touched functions that were findings before, cyclomatic and cognitive on base and branch: `armStop` 11/12 and 11/12, `inspect` 21/25 and 21/25, `beginAfter` 10/7 and 10/7, `action` 8/4 and 8/4, `prepareOwned` 20/19 and 20/19, the owner's `onResponse` 42/31 and 42/31, `validateConfiguredStudyEvidence` 96/103 and 94/102. `isRefreshedFrameAtStop` reached cyclomatic 5 in a first cut and was split.
 
 ## Result and decision
 
