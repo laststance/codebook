@@ -115,6 +115,7 @@ export function activate(
       returnToRepository: (selection) =>
         repository().open(selection, undefined, true),
       openArticle: (selection) => repository().open(selection),
+      repositoryWikiOpen: () => Boolean(repositoryReader?.panelOpen()),
     }))
   const repository = (): RepositoryReader =>
     (repositoryReader ??= new RepositoryReader({
