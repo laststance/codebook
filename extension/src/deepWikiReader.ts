@@ -10,8 +10,10 @@ import { join, relative, sep } from 'node:path'
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_QUESTION_LIMIT_CHARS,
+  WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
   WIKI_UPDATE_SHOWN_PATH_LIMIT,
+  WIKI_UPDATE_START_WAIT_MS,
   WIKI_UPDATE_STATUS_POLL_MS,
 } from './constants'
 import type {
@@ -51,7 +53,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS} });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');

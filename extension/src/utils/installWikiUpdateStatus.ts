@@ -7,8 +7,12 @@ export type WikiUpdatePageSettings = {
   readerPrefix: string
   /** The one wording shared with the editor notification, embedded next to this function. */
   describeUpdate: typeof describeWikiUpdate
-  /** How often the page asks for the update state while a run is active (ms). */
+  /** How often the page asks for the update state while a run is active or awaited (ms). */
   statusPollMs: number
+  /** How often the page asks while nothing is running and the tab is visible (ms). */
+  idlePollMs: number
+  /** How long after a press of the update link the page waits for the run the learner confirms in the editor (ms). */
+  startWaitMs: number
   /** How many conflict paths the sentence names before "and N more". */
   pathLimit: number
   /** How many characters of a failure reason the sentence shows. */
@@ -30,6 +34,8 @@ export type WikiUpdatePageSettings = {
  *   readerPrefix: '/w/3f9a/',
  *   describeUpdate: describeWikiUpdate,
  *   statusPollMs: 2_000,
+ *   idlePollMs: 15_000,
+ *   startWaitMs: 120_000,
  *   pathLimit: 3,
  *   reasonLimitChars: 200,
  * })
@@ -38,6 +44,16 @@ export type WikiUpdatePageSettings = {
 export function installWikiUpdateStatus(
   settings: WikiUpdatePageSettings,
 ): void {
+  /** What the status line says now; `lead + rest` is the sentence. */
+  type Shown = {
+    state: string
+    lead: string
+    rest: string
+    detail: string[]
+    output: string
+    offerReload: boolean
+  }
+
   const freshnessLabel = document.querySelector<HTMLElement>(
     '[data-codebook-freshness]',
   )
@@ -52,8 +68,16 @@ export function installWikiUpdateStatus(
     freshnessLabel.nextSibling,
   )
 
+  /** The last state the reader answered, and its serialized form for comparing two answers. */
   let lastAnswer: WikiUpdateStatus | undefined
+  let lastAnswerText = ''
+  /** After a press of the link: the answer at that moment, and until when the page waits for a different one. */
+  let isAwaitingStart = false
+  let answerAtPress: string | undefined
+  let awaitingStartUntilMs = 0
+  let didStartWaitPass = false
   let pollTimer = 0
+  let lookCount = 0
 
   /** Reads one route of this page's reader. @throws When the reader is gone or refuses. */
   const readFromReader = async (route: string): Promise<unknown> => {
@@ -108,43 +132,94 @@ export function installWikiUpdateStatus(
     }
   }
 
-  /** Puts one answer of `api/update-status` on the page. @returns Whether the run it describes just ended. */
-  const showUpdateStatus = (answer: WikiUpdateStatus): boolean => {
+  /** Takes in one answer of `api/update-status`. @returns Whether the run it describes just ended. */
+  const noteAnswer = (answer: WikiUpdateStatus): boolean => {
+    const answerText = JSON.stringify(answer)
     const didRunEnd =
       lastAnswer?.state === 'running' && answer.state !== 'running'
+    if (isAwaitingStart) {
+      // A press before the first answer takes that answer as its starting point.
+      answerAtPress ??= answerText
+      if (answerText !== answerAtPress) isAwaitingStart = false
+      else if (Date.now() >= awaitingStartUntilMs) {
+        isAwaitingStart = false
+        didStartWaitPass = true
+      }
+    } else if (answerText !== lastAnswerText) didStartWaitPass = false
     lastAnswer = answer
-    const described = settings.describeUpdate(answer, {
+    lastAnswerText = answerText
+    return didRunEnd
+  }
+
+  /** Decides what the status line says from everything the page knows. */
+  const describeShown = (): Shown | undefined => {
+    const pageOnly = { detail: [], output: '', offerReload: false }
+    // The page cannot see the editor's confirmation, so it says what it is waiting for and never claims a refusal.
+    if (isAwaitingStart)
+      return {
+        state: 'awaiting',
+        lead: 'Confirm the update in your editor',
+        rest: ' to start it.',
+        ...pageOnly,
+      }
+    if (didStartWaitPass)
+      return {
+        state: 'not-started',
+        lead: 'No update started.',
+        rest: ' Confirm it in the editor, or press Update LLM Wiki again.',
+        ...pageOnly,
+      }
+    if (!lastAnswer) return undefined
+    const described = settings.describeUpdate(lastAnswer, {
       formatTime,
       pathLimit: settings.pathLimit,
       reasonLimitChars: settings.reasonLimitChars,
       pageLoadedAtMs: performance.timeOrigin,
     })
-    const text = described
-      ? described.lead + described.rest + ' ' + described.output
+    return described && { state: lastAnswer.state, ...described }
+  }
+  /** Puts the current sentence and the state of the update link on the page. */
+  const show = (): void => {
+    const shown = describeShown()
+    const text = shown
+      ? shown.lead + shown.rest + (shown.output && ' ' + shown.output)
       : ''
     statusRegion.textContent = text
     statusRegion.hidden = !text
-    statusRegion.setAttribute('data-state', answer.state)
-    if (answer.state === 'running')
+    statusRegion.setAttribute('data-state', shown?.state ?? 'idle')
+    if (shown?.state === 'running')
       updateLink?.setAttribute('aria-disabled', 'true')
     else updateLink?.removeAttribute('aria-disabled')
-    return didRunEnd
   }
+
   const scheduleNextLook = (): void => {
     window.clearTimeout(pollTimer)
-    pollTimer = window.setTimeout(() => {
-      void refreshUpdateStatus()
-    }, settings.statusPollMs)
+    // A hidden tab keeps no timer; showing it again looks at once.
+    if (document.hidden) return
+    const isWatchingClosely = isAwaitingStart || lastAnswer?.state === 'running'
+    pollTimer = window.setTimeout(
+      () => {
+        void look(false)
+      },
+      isWatchingClosely ? settings.statusPollMs : settings.idlePollMs,
+    )
   }
-  const refreshUpdateStatus = async (): Promise<void> => {
+  /** Asks the reader for the update state and shows it. @param isReturn - Whether the learner just loaded or came back to the page, when freshness may have changed too. */
+  const look = async (isReturn: boolean): Promise<void> => {
     window.clearTimeout(pollTimer)
+    lookCount += 1
+    const lookNumber = lookCount
+    if (isReturn) void refreshFreshness()
     try {
       const answer = await readFromReader('api/update-status')
+      // A newer look is under way; its answer is the one to show.
+      if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))
         throw new Error('The update answer has no state.')
       // A finished run changes what the freshness label should say.
-      if (showUpdateStatus(answer)) void refreshFreshness()
-      if (answer.state === 'running') scheduleNextLook()
+      if (noteAnswer(answer)) void refreshFreshness()
+      show()
+      scheduleNextLook()
     } catch {
       statusRegion.hidden = true
     }
@@ -155,14 +230,21 @@ export function installWikiUpdateStatus(
       event.preventDefault()
       return
     }
-    // The editor asks for confirmation first; look for the run it starts.
+    // The editor asks for confirmation before a run exists, so the page watches for the answer to change.
+    isAwaitingStart = true
+    answerAtPress = lastAnswer && lastAnswerText
+    awaitingStartUntilMs = Date.now() + settings.startWaitMs
+    didStartWaitPass = false
+    show()
     scheduleNextLook()
   })
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) return
-    void refreshFreshness()
-    void refreshUpdateStatus()
+    if (document.hidden) window.clearTimeout(pollTimer)
+    else void look(true)
   })
-  void refreshFreshness()
-  void refreshUpdateStatus()
+  // A window beside the editor never becomes hidden; focus is when the learner comes back to it.
+  window.addEventListener('focus', () => {
+    void look(true)
+  })
+  void look(true)
 }
