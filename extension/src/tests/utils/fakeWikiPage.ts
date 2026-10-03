@@ -17,7 +17,7 @@ const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
 /**
  * One element of the hand-written page the served Wiki script runs against in tests; it has only what that script uses.
  *
- * Text nodes are plain strings. Selectors are one compound per comma (tag, `#id`, `.class`, `[attribute]`, `[attribute=value]`); anything else throws, so an unsupported selector cannot pass as "not found".
+ * Text nodes are plain strings. Selectors are `*` or one compound per comma (tag, `#id`, `.class`, `[attribute]`, `[attribute=value]`); anything else throws, so an unsupported selector cannot pass as "not found".
  *
  * @example
  * ```ts
@@ -140,6 +140,7 @@ export class PageElement {
   matches(selectorList: string): boolean {
     return selectorList.split(',').some((selector) => {
       const compound = selector.trim()
+      if (compound === '*') return true
       const conditions = [
         ...compound.matchAll(/\[([\w-]+)(?:="?([^"\]]*)"?)?\]/g),
       ]

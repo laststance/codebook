@@ -35,7 +35,7 @@ test('a page loaded during a run shows the running sentence and holds the update
   assert.equal(page.isShown(status), true)
   assert.equal(
     status?.textContent,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. Output: .codebook/wiki',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
   )
   assert.equal(link?.getAttribute('aria-disabled'), 'true')
   assert.equal(click.wasSwallowed, true)
@@ -64,7 +64,7 @@ test('a run that ends while the page is open shows its result without a reload a
   assert.equal(page.isShown(status), true)
   assert.equal(
     status?.textContent,
-    'Update cancelled at 12:10. Cursor Agent was stopped. The last usable site is kept. Output: .codebook/wiki',
+    'Update cancelled at 12:10. Cursor Agent was stopped. The last usable site is kept.',
   )
   assert.equal(page.find('.wiki-update')?.getAttribute('aria-disabled'), null)
   assert.equal(page.reloadCount(), 0)
@@ -121,13 +121,13 @@ test('the page shows the running update and then its result when the learner con
   // Assert
   assert.equal(
     textWhileRunning,
-    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. Output: .codebook/wiki',
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
   )
   assert.equal(linkStateWhileRunning, 'true')
   assert.equal(page.isShown(status), true)
   assert.equal(
     status?.textContent,
-    'Update failed at 12:09: The editor chat could not be opened. The last usable site is kept. Output: .codebook/wiki',
+    'Update failed at 12:09: The editor chat could not be opened. The last usable site is kept.',
   )
   assert.equal(link?.getAttribute('aria-disabled'), null)
 })
@@ -449,7 +449,7 @@ test('an Already current line shows while the source still matches the Wiki', as
   // Assert
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    'Already current (checked 11:00): this Wiki matches the source, so no update started. Output: .codebook/wiki',
+    'Already current (checked 11:00): this Wiki matches the source, so no update started.',
   )
 })
 
@@ -501,7 +501,7 @@ test('an Updated line is gone once the source changed again after that update', 
   // Assert
   assert.equal(
     textWhileCurrent,
-    'Updated at 11:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c). Output: .codebook/wiki',
+    'Updated at 11:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
   )
   assert.equal(status?.textContent, '')
 })
@@ -532,11 +532,11 @@ test('a publish that lands after the watch was stopped replaces the sentence and
   // Assert
   assert.equal(
     textBeforeThePublish,
-    'Stopped watching at 11:58. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself. Nothing has been replaced so far. Output: .codebook/wiki',
+    'Stopped watching at 11:58. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself. Nothing has been replaced so far.',
   )
   assert.equal(
     status?.textContent,
-    'A new site was published after this run ended and matches the source. Output: .codebook/wiki',
+    'A new site was published after this run ended and matches the source.',
   )
   assert.equal(status?.getAttribute('data-state'), 'late-publish')
   assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
@@ -663,7 +663,285 @@ test('an update that finished before the page was loaded offers no reload', asyn
   // Assert
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    'Updated at 11:50 to revision a1b2c3d4e5f6 (index 0f9e8d7c). Output: .codebook/wiki',
+    'Updated at 11:50 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
   )
   assert.equal(page.find('[data-codebook-reload]'), undefined)
+})
+
+test('the status region is on the page from load as one atomic status region and says nothing while idle', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group')
+
+  // Assert
+  const status = page.find('[data-codebook-update-status]')
+  assert.equal(page.isShown(status), true)
+  assert.equal(status?.hidden, false)
+  assert.equal(status?.getAttribute('role'), 'status')
+  assert.equal(status?.getAttribute('aria-atomic'), 'true')
+  assert.equal(status?.getAttribute('aria-live'), null)
+  assert.equal(status?.textContent, '')
+  assert.ok(
+    page
+      .injectedStyles()
+      .includes(
+        '[data-codebook-update-status]:empty{margin:0;padding:0;border:0}',
+      ),
+  )
+})
+
+test('thirty looks at an unchanged run write the status line once', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const writesAfterTheFirstLook = status?.contentWriteCount
+
+  // Act
+  await page.advance(60_000)
+
+  // Assert
+  assert.equal(
+    page.reader.requests.filter((route) => route === 'api/update-status')
+      .length,
+    31,
+  )
+  assert.equal(status?.contentWriteCount, writesAfterTheFirstLook)
+})
+
+test('the status line follows the freshness label on a site that has one', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group')
+
+  // Assert
+  const rail = page.find('.right-rail')
+  const status = page.find('[data-codebook-update-status]')
+  const label = page.find('[data-codebook-freshness]')
+  assert.ok(status && label && rail)
+  assert.equal(status.parentNode, label.parentNode)
+  assert.ok(
+    rail.querySelectorAll('*').indexOf(status) >
+      rail.querySelectorAll('*').indexOf(label),
+  )
+})
+
+test('a site without a freshness label still gets the status line, after its update button', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'link-without-freshness-label', {
+    updateStatus: runningInVsCode,
+  })
+
+  // Assert
+  const rail = page.find('.right-rail')
+  const status = page.find('[data-codebook-update-status]')
+  const link = page.find('.wiki-update')
+  assert.ok(status && link && rail)
+  assert.equal(page.isShown(status), true)
+  assert.match(status.textContent, /^Updating LLM Wiki…/)
+  assert.equal(status.parentNode, link.parentNode)
+  assert.ok(
+    rail.querySelectorAll('*').indexOf(status) >
+      rail.querySelectorAll('*').indexOf(link),
+  )
+})
+
+test('a page with neither the button nor the label shows the status line at the end of the page', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'no-rail', {
+    updateStatus: runningInVsCode,
+  })
+
+  // Assert
+  const status = page.find('[data-codebook-update-status]')
+  assert.ok(status)
+  assert.equal(page.isShown(status), true)
+  assert.match(status.textContent, /^Updating LLM Wiki…/)
+  assert.deepEqual(page.body.children.slice(-2), [
+    status,
+    page.find('[data-codebook-update-output]'),
+  ])
+  assert.equal(page.find('.right-rail'), undefined)
+})
+
+test('the offline placeholder of the published page becomes the status region instead of a second one', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'current-shell')
+
+  // Assert
+  const regions = page.body.querySelectorAll('[data-codebook-update-status]')
+  assert.equal(regions.length, 1)
+  assert.equal(regions[0]?.textContent, '')
+  assert.equal(regions[0]?.getAttribute('role'), 'status')
+})
+
+test('the words that carry the state are strong, the rest is plain text, and the output folder is on its own line outside the announced region', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'failed',
+      host: 'cursor',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  const status = page.find('[data-codebook-update-status]')
+  const outputLine = page.find('[data-codebook-update-output]')
+  assert.deepEqual(
+    status?.children.map((child) => [child.tagName, child.textContent]),
+    [['strong', 'Update failed']],
+  )
+  assert.equal(
+    status?.textContent,
+    'Update failed at 11:58: Cursor Agent stopped with exit code 1 before finishing. The last usable site is kept.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'failed')
+  assert.equal(outputLine?.textContent, 'Output: .codebook/wiki')
+  assert.equal(page.isShown(outputLine), true)
+  assert.equal(outputLine?.parentNode, status?.parentNode)
+  assert.equal(page.find('[data-codebook-update-detail]'), undefined)
+})
+
+test('a conflict over twelve files names three in the sentence and lists all twelve behind a disclosure', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      paths: [
+        'pages/01.html',
+        'pages/02.html',
+        'pages/03.html',
+        'pages/04.html',
+        'pages/05.html',
+        'pages/06.html',
+        'pages/07.html',
+        'pages/08.html',
+        'pages/09.html',
+        'pages/10.html',
+        'pages/11.html',
+        'pages/12.html',
+      ],
+      cause: 'learner-file',
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  const status = page.find('[data-codebook-update-status]')
+  const detail = page.find('[data-codebook-update-detail]')
+  assert.equal(
+    status?.textContent,
+    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them, then press Update LLM Wiki again.',
+  )
+  assert.equal(detail?.tagName, 'details')
+  assert.equal(detail?.parentNode, status?.parentNode)
+  assert.equal(status?.querySelector('details'), null)
+  assert.equal(
+    detail?.querySelector('summary')?.textContent,
+    'Show all 12 files',
+  )
+  assert.deepEqual(
+    detail?.querySelectorAll('li').map((item) => item.textContent),
+    [
+      'pages/01.html',
+      'pages/02.html',
+      'pages/03.html',
+      'pages/04.html',
+      'pages/05.html',
+      'pages/06.html',
+      'pages/07.html',
+      'pages/08.html',
+      'pages/09.html',
+      'pages/10.html',
+      'pages/11.html',
+      'pages/12.html',
+    ],
+  )
+})
+
+test('a long failure message is shortened in the sentence and kept whole behind a disclosure', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+  const longReason = `The editor agent reported ${'a very long explanation '.repeat(12)}and stopped`
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'failed',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      reason: longReason,
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  const detail = page.find('[data-codebook-update-detail]')
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    `Update failed at 11:58: The editor agent reported ${'a very long explanation '.repeat(7)}a very… The last usable site is kept.`,
+  )
+  assert.equal(
+    detail?.querySelector('summary')?.textContent,
+    'Show the full message',
+  )
+  assert.deepEqual(
+    detail?.querySelectorAll('p').map((paragraph) => paragraph.textContent),
+    [longReason],
+  )
+})
+
+test('each kind of update state has its own colour on the state words, with fallbacks for sites that lack the tokens', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '[data-codebook-update-status]{font-size:.75rem;line-height:1.45;margin:.5rem 0 0;color:var(--text,#333);overflow-wrap:anywhere}',
+    '[data-codebook-update-status] strong{font-weight:650}',
+    '[data-codebook-update-status][data-state=succeeded] strong,[data-codebook-update-status][data-state=already-current] strong,[data-codebook-update-status][data-state=late-publish] strong{color:var(--current,#236b55)}',
+    '[data-codebook-update-status][data-state=failed] strong,[data-codebook-update-status][data-state=conflict] strong{color:var(--changed,#8a3a1c)}',
+    '[data-codebook-update-status][data-state=timed-out] strong,[data-codebook-update-status][data-state=unreachable] strong{color:var(--unknown,#6b4d00)}',
+    '[data-codebook-update-status][data-state=cancelled] strong,[data-codebook-update-status][data-state=awaiting] strong,[data-codebook-update-status][data-state=not-started] strong{color:var(--muted,#625f59)}',
+    '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
 })

@@ -62,6 +62,21 @@ export function installWikiUpdateStatus(
   styles.textContent = [
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
     '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
+    // The status line is smaller than the rail text; an empty one takes no room, so it can stay in the accessibility tree.
+    '[data-codebook-update-status]{font-size:.75rem;line-height:1.45;margin:.5rem 0 0;color:var(--text,#333);overflow-wrap:anywhere}',
+    '[data-codebook-update-status]:empty{margin:0;padding:0;border:0}',
+    // State is carried by the lead words, their weight and their colour together, never by colour alone.
+    '[data-codebook-update-status] strong{font-weight:650}',
+    '[data-codebook-update-status][data-state=succeeded] strong,[data-codebook-update-status][data-state=already-current] strong,[data-codebook-update-status][data-state=late-publish] strong{color:var(--current,#236b55)}',
+    '[data-codebook-update-status][data-state=failed] strong,[data-codebook-update-status][data-state=conflict] strong{color:var(--changed,#8a3a1c)}',
+    '[data-codebook-update-status][data-state=timed-out] strong,[data-codebook-update-status][data-state=unreachable] strong{color:var(--unknown,#6b4d00)}',
+    '[data-codebook-update-status][data-state=cancelled] strong,[data-codebook-update-status][data-state=awaiting] strong,[data-codebook-update-status][data-state=not-started] strong{color:var(--muted,#625f59)}',
+    '[data-codebook-update-status]~[data-codebook-update-detail]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;overflow-wrap:anywhere}',
+    '[data-codebook-update-status]~[data-codebook-update-detail] summary{cursor:pointer}',
+    '[data-codebook-update-status]~[data-codebook-update-detail] ul{margin:.3rem 0 0;padding-left:1.1rem}',
+    '[data-codebook-update-status]~[data-codebook-update-detail] p{margin:.3rem 0 0}',
+    '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--panel,Canvas);color:var(--link,LinkText)}',
+    '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
   ].join('')
   document.head.append(styles)
 
@@ -70,16 +85,27 @@ export function installWikiUpdateStatus(
   )
   const updateLink = document.querySelector<HTMLElement>('.wiki-update')
   const updateLinkLabel = updateLink?.textContent ?? ''
-  const statusRegion = document.createElement('p')
+  // A site published from the current shell carries an offline placeholder; it becomes the status region.
+  const statusRegion =
+    document.querySelector<HTMLElement>('[data-codebook-update-status]') ??
+    document.createElement('p')
+  statusRegion.replaceChildren()
   statusRegion.id = 'codebook-update-status'
   statusRegion.setAttribute('data-codebook-update-status', '')
+  // The region is in the accessibility tree from load, so its first sentence is announced, and whole.
   statusRegion.setAttribute('role', 'status')
-  statusRegion.setAttribute('aria-live', 'polite')
-  statusRegion.hidden = true
-  freshnessLabel?.parentNode?.insertBefore(
-    statusRegion,
-    freshnessLabel.nextSibling,
-  )
+  statusRegion.setAttribute('aria-atomic', 'true')
+  if (!statusRegion.parentNode) {
+    const anchor = freshnessLabel ?? updateLink
+    if (anchor?.parentNode)
+      anchor.parentNode.insertBefore(statusRegion, anchor.nextSibling)
+    else document.body.append(statusRegion)
+  }
+  // The folder and anything the sentence shortened sit beside the region, so an announcement stays one sentence.
+  const outputLine = document.createElement('p')
+  outputLine.setAttribute('data-codebook-update-output', '')
+  const detailBox = document.createElement('details')
+  detailBox.setAttribute('data-codebook-update-detail', '')
   // A reload drops the reading position and a typed question, so the learner chooses it; it is never focused for them.
   const reloadButton = document.createElement('button')
   reloadButton.setAttribute('type', 'button')
@@ -257,18 +283,56 @@ export function installWikiUpdateStatus(
       }
     return { state, ...described }
   }
+  /** Fills the disclosure with what the sentence shortened: every conflicting file, or the whole failure message. */
+  const fillDetail = (shown: Shown): void => {
+    const isFileList = shown.state === 'conflict'
+    const summary = document.createElement('summary')
+    summary.textContent = isFileList
+      ? 'Show all ' + shown.detail.length + ' files'
+      : 'Show the full message'
+    const entries = shown.detail.map((entry) => {
+      const item = document.createElement(isFileList ? 'li' : 'p')
+      item.textContent = entry
+      return item
+    })
+    if (isFileList) {
+      const list = document.createElement('ul')
+      list.append(...entries)
+      detailBox.replaceChildren(summary, list)
+    } else detailBox.replaceChildren(summary, ...entries)
+    detailBox.removeAttribute('open')
+  }
   /** Puts the current sentence and the state of the update link on the page. */
   const show = (): void => {
     const shown = describeShown()
-    const text = shown
-      ? shown.lead + shown.rest + (shown.output && ' ' + shown.output)
-      : ''
-    shownSignature = shown ? JSON.stringify(shown) : ''
-    statusRegion.textContent = text
-    statusRegion.hidden = !text
-    statusRegion.setAttribute('data-state', shown?.state ?? 'idle')
-    if (!shown?.offerReload) reloadButton.remove()
-    else if (!reloadButton.parentNode) statusRegion.after(reloadButton)
+    const signature = shown ? JSON.stringify(shown) : ''
+    // An unchanged look writes nothing: a rewritten live region may be announced again on every poll.
+    if (signature !== shownSignature) {
+      shownSignature = signature
+      detailBox.remove()
+      reloadButton.remove()
+      outputLine.remove()
+      if (shown) {
+        const lead = document.createElement('strong')
+        lead.textContent = shown.lead
+        statusRegion.replaceChildren(lead, shown.rest)
+        statusRegion.setAttribute('data-state', shown.state)
+        const besideTheRegion: HTMLElement[] = []
+        if (shown.detail.length > 0) {
+          fillDetail(shown)
+          besideTheRegion.push(detailBox)
+        }
+        if (shown.offerReload) besideTheRegion.push(reloadButton)
+        if (shown.output) {
+          outputLine.textContent = shown.output
+          besideTheRegion.push(outputLine)
+        }
+        statusRegion.after(...besideTheRegion)
+      } else {
+        statusRegion.replaceChildren()
+        statusRegion.removeAttribute('data-state')
+      }
+    }
     if (!updateLink) return
     // The link stays a focusable link while it is held back; its label and the status line say why.
     const isRunning = shown?.state === 'running'
