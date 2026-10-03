@@ -12,7 +12,7 @@ import {
   LIVE_EDITOR_LAYOUT,
   MAX_SOURCE_DOCUMENTS,
   NODE_TEST_PROFILE,
-  PLAYBACK_SECOND_MS,
+  MILLISECONDS_PER_SECOND,
   PRESENTATION_MODE_IDS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
@@ -5356,7 +5356,7 @@ export class StudyWorkspace {
       inspection = await this.replayDebugger.present(
         bundle.projection.debugger,
         bundle.projection.debugger
-          ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / PLAYBACK_SECOND_MS).toFixed(2)} s`
+          ? `Recorded pause · ${((bundle.projection.observation?.elapsedMs ?? bundle.projection.positionMs) / MILLISECONDS_PER_SECOND).toFixed(2)} s`
           : 'Not recorded at this moment',
         signal,
         this.sourceUri && bundle.projection.observation
@@ -5375,7 +5375,7 @@ export class StudyWorkspace {
     try {
       if (bundle.image) {
         const image = bundle.image.toString('base64'),
-          label = `Recorded · ${(bundle.projection.positionMs / PLAYBACK_SECOND_MS).toFixed(2)} s`
+          label = `Recorded · ${(bundle.projection.positionMs / MILLISECONDS_PER_SECOND).toFixed(2)} s`
         // Earlier reveal/seek receipts must not be attributed to this frame's first attempt.
         this.replayDelivery = { receipts: [], omitted: 0 }
         try {

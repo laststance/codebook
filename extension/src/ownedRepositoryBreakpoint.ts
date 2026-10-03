@@ -50,6 +50,9 @@ const verifiedPlaceSchema = z.object({
   line: z.number().int(),
   column: z.number().int(),
 })
+/** Refusal of a registration whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the declared line. */
+export const OWNED_BREAKPOINT_REMOVED =
+  'Owned breakpoint was removed before registration'
 type RegistrationReceipt = {
   sessionId: string
   requestSequence: number
@@ -269,7 +272,7 @@ export class OwnedRepositoryBreakpoint {
           resolve(binding.source.path) !== resolve(this.path)) ||
         !this.acknowledgesPosition(binding)
       ) {
-        registration.failure = `Selected adapter did not acknowledge the exact breakpoint registration: ${JSON.stringify(
+        registration.failure = `Selected adapter did not acknowledge the declared breakpoint registration: ${JSON.stringify(
           {
             responseSuccess: response.success,
             responseCount: parsed.success
@@ -341,7 +344,7 @@ export class OwnedRepositoryBreakpoint {
         (breakpoint) => breakpoint.id === this.breakpoint.id,
       )
     )
-      throw new Error('Owned breakpoint was removed before registration')
+      throw new Error(OWNED_BREAKPOINT_REMOVED)
     const registration = this.registrations.get(session.id)
     if (registration?.failure) throw new Error(registration.failure)
     return registration?.receipt && { ...registration.receipt }
@@ -358,6 +361,26 @@ export class OwnedRepositoryBreakpoint {
   movedTo(session: vscode.DebugSession): VerifiedPlace | undefined {
     const registration = this.registrations.get(session.id)
     return registration?.failure ? undefined : registration?.receipt?.movedTo
+  }
+
+  /**
+   * Reads what the adapter last said about this breakpoint, for a deadline text that must not claim more than is known; {@link ConfiguredBrowserRun} calls it when a later stop's deadline expires.
+   * Unlike {@link registration} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns
+   * - `'pending'`: acknowledged but not verified in a loaded module
+   * - `'bound'`: verified
+   * - `'unacknowledged'`: refused, revoked or never acknowledged
+   * @example
+   * owned.acknowledgement(session) // => 'pending'
+   */
+  acknowledgement(
+    session: vscode.DebugSession,
+  ): RegistrationReceipt['status'] | 'unacknowledged' {
+    const registration = this.registrations.get(session.id)
+    return registration?.failure || !registration?.receipt
+      ? 'unacknowledged'
+      : registration.receipt.status
   }
 
   /** Waits for the chosen adapter's ACK without claiming that a lazy module has loaded; runtime preparation calls this before input. @example (await owned.registered(session, signal)).status // 'pending' */

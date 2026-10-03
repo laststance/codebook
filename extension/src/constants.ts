@@ -273,7 +273,8 @@ export const PNG_SIGNATURE_HEX = '89504e470d0a1a0a0000000d49484452'
 export const PLAYBACK_TICK_INTERVAL_MS = 50
 export const PLAYBACK_PREFERENCE_FILE = 'playback.v1.json'
 export const PLAYBACK_PREFERENCE_LIMIT_BYTES = 65_536
-export const PLAYBACK_SECOND_MS = 1_000
+/** Converts milliseconds to the seconds that playback labels, seek steps and run failure texts name. */
+export const MILLISECONDS_PER_SECOND = 1_000
 export const PLAYBACK_PAGE_STEP_MS = 10_000
 export const REPLAY_VIEWPORT_RECEIPT_LIMIT = 12
 export const REPOSITORY_GIT_TIMEOUT_MS = 5_000
@@ -434,8 +435,6 @@ export const REPOSITORY_ATTRIBUTE_LIMIT_CHARS = 64
 export const REPOSITORY_LITERAL_LIMIT_CHARS = 1_024
 export const REPOSITORY_INSPECTION_LIMIT = 10
 export const REPOSITORY_INSPECTION_TIMEOUT_MS = 1_000
-/** Converts the active-progress budget to the whole seconds a run failure names. */
-export const MILLISECONDS_PER_SECOND = 1_000
 export const REPOSITORY_INSPECTION_PATH_LIMIT_CHARS = 128
 export const REPOSITORY_INSPECTION_SEGMENT_LIMIT = 4
 export const REPOSITORY_STORAGE_ENTRY_LIMIT = 16

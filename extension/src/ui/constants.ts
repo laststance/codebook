@@ -1,6 +1,6 @@
 import {
   PLAYBACK_PAGE_STEP_MS,
-  PLAYBACK_SECOND_MS,
+  MILLISECONDS_PER_SECOND,
   REPLAY_DEBUG_SESSION_NAME,
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
@@ -55,13 +55,13 @@ export const STUDY_SHORTCUTS: ShortcutHelpEntry[] = [
     selector: '#playhead',
   },
   {
-    action: `Seek backward ${PLAYBACK_PAGE_STEP_MS / PLAYBACK_SECOND_MS} seconds`,
+    action: `Seek backward ${PLAYBACK_PAGE_STEP_MS / MILLISECONDS_PER_SECOND} seconds`,
     keys: 'Page Down',
     context: 'Focused recording timeline',
     selector: '#playhead',
   },
   {
-    action: `Seek forward ${PLAYBACK_PAGE_STEP_MS / PLAYBACK_SECOND_MS} seconds`,
+    action: `Seek forward ${PLAYBACK_PAGE_STEP_MS / MILLISECONDS_PER_SECOND} seconds`,
     keys: 'Page Up',
     context: 'Focused recording timeline',
     selector: '#playhead',
@@ -96,7 +96,7 @@ export const STUDY_UI_OPTIONS = {
   sequence: STUDY_SEQUENCE_LAYOUT,
   maxStickyFraction: 0.35,
   compactReaderMaxWidthPx: STUDY_COMPACT_READER_MAX_WIDTH_PX,
-  secondMs: PLAYBACK_SECOND_MS,
+  secondMs: MILLISECONDS_PER_SECOND,
   pageStepMs: PLAYBACK_PAGE_STEP_MS,
   timelineFullWidthPercent: TIMELINE_FULL_WIDTH_PERCENT,
   readingAnchors: PRESENTATION_READING_ANCHORS,

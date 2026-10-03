@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
 
+import { ACTIVE_TIMEOUT_MS } from '../constants'
 import { readResource } from '../resources'
 import { actionSchema } from '../schemas'
 import { startServer } from '../server'
@@ -714,6 +715,46 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.doesNotMatch(help.text, /exact position/)
   assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
+// Value: protects=the help naming the same deadline the run enforces; fails_when=the help keeps a hard-coded "20 seconds" after the active-progress deadline changes; why_new=Cycle 0036 C08b; seam=none
+test('configured help names the active-progress deadline the run uses, in seconds, in all four places', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Derived on purpose: the help must follow the deadline (20 s today), not repeat a number that can drift from it.
+  const deadlineSeconds = ACTIVE_TIMEOUT_MS / 1_000
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ additionalStops: z.string(), sourceBinding: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.additionalStops.includes(
+      `If a later stop is not hit within ${deadlineSeconds} seconds of the preceding continuation`,
+    ),
+    true,
+  )
+  assert.equal(
+    contract.sourceBinding.includes(
+      `the stop then fails at the ${deadlineSeconds} second deadline`,
+    ),
+    true,
+  )
+  assert.equal(
+    contract.sourceBinding.includes(
+      `A browser stop whose binding never verifies times out after ${deadlineSeconds} seconds while it is being armed`,
+    ),
+    true,
+  )
+  assert.equal(
+    (help.text.match(new RegExp(`${deadlineSeconds} second`, 'g')) ?? [])
+      .length,
+    4,
+  )
 })
 
 test('configured help tells an agent that a continuation whose next stop cannot be armed answers "Continue was not confirmed." and where the run’s reason is read', async (context) => {

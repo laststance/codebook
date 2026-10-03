@@ -1047,7 +1047,7 @@ for (const acknowledged of ['verified', 'pending'] as const)
       // Act / Assert
       await assert.rejects(
         harness.run.prepare(),
-        /Selected adapter did not acknowledge the exact breakpoint registration/,
+        /Selected adapter did not acknowledge the declared breakpoint registration/,
       )
       assert.equal(
         harness.calls.filter((call) => call === 'continue').length,
@@ -1091,7 +1091,7 @@ test('a second Node test stop acknowledged at another column is refused before t
     // Act / Assert
     await assert.rejects(
       harness.run.advance(),
-      /Selected adapter did not acknowledge the exact breakpoint registration/,
+      /Selected adapter did not acknowledge the declared breakpoint registration/,
     )
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)

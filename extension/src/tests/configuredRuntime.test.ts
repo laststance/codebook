@@ -886,7 +886,7 @@ test('an unbound second position leaves the application paused and never sends C
   // Act / Assert
   await assert.rejects(
     run.continue('browser', first.pause),
-    /a verified binding of declared stop src\/theme\.ts:1 on its declared line \(requested column 7\)/,
+    /a verified binding of declared stop src\/theme\.ts:1 \(stop 2 of 2\) on its declared line \(requested column 7\)/,
   )
   await run.stop()
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
@@ -895,7 +895,120 @@ test('an unbound second position leaves the application paused and never sends C
   assert.equal(mouse.length, 2)
   assert.match(
     run.view().failures[0] ?? '',
-    /^Next declared stop was not armed and no resume was sent: Error: Timed out waiting for a verified binding of declared stop src\/theme\.ts:1/,
+    /^Next declared stop was not armed and no resume was sent: Timed out waiting for a verified binding of declared stop src\/theme\.ts:1 \(stop 2 of 2\)/,
+  )
+})
+
+// Value: protects=an agent knowing which declared stop's module changed and in which phase; fails_when=the failure says "Pre-input executed module differs from sealed bundle" with no stop, also for a stop armed inside a continuation; why_new=Cycle 0036 OCR2; seam=replaceExecutedModule changes the bytes the page reports
+test('a first stop whose executed module differs from the sealed bundle is refused before input naming the stop', async (context) => {
+  // Arrange
+  const { run, replaceExecutedModule, mouse } =
+    await configuredRuntimeHarness(context)
+  replaceExecutedModule('rebuilt()')
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Executed module of declared stop src/theme.ts:1 differs from its sealed bundle (checked before input)',
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Value: protects=the phase named for a later stop's changed module; fails_when=a stop armed inside a continuation is still called "Pre-input", or names no stop; why_new=Cycle 0036 OCR2; seam=replaceExecutedModule changes the bytes the page reports
+test('a later stop whose executed module differs from the sealed bundle ends the run naming the stop and that it was being armed inside the continuation', async (context) => {
+  // Arrange
+  const { run, replaceExecutedModule, commands } =
+    await configuredRuntimeHarness(context, undefined, [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'enabled', mode: 'value', required: true }],
+      },
+    ])
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  replaceExecutedModule('rebuilt()')
+
+  // Act
+  const refusal = await run.continue('browser', first.pause).then(
+    () => 'continued',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Executed module of declared stop src/theme.ts:1 (stop 2 of 2) differs from its sealed bundle (checked while arming it inside the preceding continuation)',
+  )
+  assert.equal(
+    run.view().failures[0],
+    'Next declared stop was not armed and no resume was sent: Executed module of declared stop src/theme.ts:1 (stop 2 of 2) differs from its sealed bundle (checked while arming it inside the preceding continuation)',
+  )
+  assert.equal(commands.filter((command) => command === 'continue').length, 0)
+})
+
+// Value: protects=an agent knowing which declared line its action never ran; fails_when=the deadline of an unmoved first stop says only "Repository input reached no verified pause"; why_new=Cycle 0036 P03 (0043 named the stop only when its binding had moved); seam=none
+test('an accepted action whose first stop is never hit ends the run naming that declared stop and that its line must run after the input', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, advance, mouse } =
+    await configuredRuntimeHarness(context)
+  await run.prepare()
+  suppressInputPause()
+  run.action('one', 'repository-click')
+  await waitUntil(() => mouse.length === 2, 'pending input')
+
+  // Act
+  advance(20000)
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository input reached no verified pause: declared stop src/theme.ts:1 was not hit within 20 s of the accepted action; its line must execute after the input',
+  )
+})
+
+// Value: protects=bounded mapping hints that still show the citation's edges and the lines next to the attempted one; fails_when=a long citation lists every mapped line, or the sample loses its first lines, its last lines or the neighbourhood of the declared line; why_new=Cycle 0036 C07f (the sampling had no test); seam=none
+test('an unbound stop in a 120-line citation lists the first 20 mapped lines, the 40 nearest its declared line 60 and the last 20', async (context) => {
+  // Arrange: every one of the 120 cited lines has a mapped position and the debugger verifies no binding.
+  const { run, rejectBreakpointBinding } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: `AAAA${';AACA'.repeat(119)}`,
+      fixture: {
+        source: 'const nextTheme = "dark";\n'.repeat(120),
+        citationEndLine: 120,
+        declaredLine: 60,
+      },
+    },
+  )
+  rejectBreakpointBinding()
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    refusal,
+    'Timed out waiting for a verified binding of declared stop src/theme.ts:60 on its declared line (requested column 1); choose an executable statement reached by the requested action. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:1, 5:1, 6:1, 7:1, 8:1, 9:1, 10:1, 11:1, 12:1, 13:1, 14:1, 15:1, 16:1, 17:1, 18:1, 19:1, 20:1, 40:1, 41:1, 42:1, 43:1, 44:1, 45:1, 46:1, 47:1, 48:1, 49:1, 50:1, 51:1, 52:1, 53:1, 54:1, 55:1, 56:1, 57:1, 58:1, 59:1, 60:1, 61:1, 62:1, 63:1, 64:1, 65:1, 66:1, 67:1, 68:1, 69:1, 70:1, 71:1, 72:1, 73:1, 74:1, 75:1, 76:1, 77:1, 78:1, 79:1, 101:1, 102:1, 103:1, 104:1, 105:1, 106:1, 107:1, 108:1, 109:1, 110:1, 111:1, 112:1, 113:1, 114:1, 115:1, 116:1, 117:1, 118:1, 119:1, 120:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
   )
 })
 
@@ -1047,7 +1160,7 @@ test('a later stop whose line never runs after the preceding continuation ends t
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) was not hit within 20 s; its line must execute after the preceding continuation',
   )
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
@@ -1281,7 +1394,7 @@ test('a continuation that reaches no next stop while the browser stays paused wi
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.',
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at eval-ca9ab6a4.cdp 1:220 without a debugger stop.',
   )
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
@@ -1522,7 +1635,7 @@ test('a later stop the debugger moved to the next line that is not reached ends 
   // Assert
   assert.equal(
     run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (stop 2 of 2) (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
   )
   assert.equal(run.view().snapshots.length, 1)
   assert.equal(commands.filter((command) => command === 'continue').length, 1)

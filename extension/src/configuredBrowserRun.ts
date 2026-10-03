@@ -30,7 +30,10 @@ import {
   REPOSITORY_STACK_FRAME_LIMIT,
 } from './constants'
 import { StudyError } from './errors'
-import { OwnedRepositoryBreakpoint } from './ownedRepositoryBreakpoint'
+import {
+  OWNED_BREAKPOINT_REMOVED,
+  OwnedRepositoryBreakpoint,
+} from './ownedRepositoryBreakpoint'
 import type { BundleSource } from './repositoryBundle'
 import { RepositorySourceService } from './repositorySource'
 import type {
@@ -69,6 +72,7 @@ import { continuationReceipts } from './utils/continuationReceipts'
 import { createBundleVerifier } from './utils/createBundleVerifier'
 import { describeCdpPause } from './utils/describeCdpPause'
 import { elapsedMsSince } from './utils/elapsedMsSince'
+import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBindingLineAccepted } from './utils/isBindingLineAccepted'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
@@ -435,18 +439,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.manifest = { ...bound, hash: sha256(JSON.stringify(bound)) }
     // Later stops are armed only in their turn, so a line that can never bind is refused here, before any application effect.
-    for (const stop of this.stops) {
-      const mapped = stop.verifier.mappedPositions(
-        stop.source.line,
-        stop.source.line,
+    const unmappedStop = findUnmappedDeclaredStop(this.stops)
+    if (unmappedStop)
+      throw this.bindingFailure(
+        unmappedStop,
+        `Declared stop ${this.declaredAt(unmappedStop)} has no mapped position on that line in the sealed module`,
       )
-      // A scan that stopped at its size limit proves nothing about the line; arming decides instead.
-      if (mapped.complete && !mapped.positions.length)
-        throw this.bindingFailure(
-          stop,
-          `Declared stop ${this.declaredAt(stop)} has no mapped position on that line in the sealed module`,
-        )
-    }
     if (needsServer) await this.selectServer()
     this.alive()
     await this.browser.launch(
@@ -518,9 +516,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!participant.selected || !participant.cdp)
       throw new Error('Declared debugger was not acquired')
     if (stop.participant === 'browser') {
+      // The first stop is armed before input; every later one inside the continuation that precedes it.
+      const phase =
+        stop === this.stops[0]
+          ? 'before input'
+          : 'while arming it inside the preceding continuation'
       await waitUntil(
         () => stop.script,
-        'selected repository module',
+        `the loaded module of declared stop ${this.declaredAt(stop)} (${phase})`,
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
@@ -530,7 +533,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       this.alive()
       if (sha256(executed.scriptSource) !== stop.verifier.hashes.javascript)
-        throw new Error('Pre-input executed module differs from sealed bundle')
+        throw new Error(
+          `Executed module of declared stop ${this.declaredAt(stop)} differs from its sealed bundle (checked ${phase})`,
+        )
     }
     stop.breakpoint ??= new OwnedRepositoryBreakpoint(
       stop.bundle.sourcePath,
@@ -602,7 +607,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Waits for a declared stop's acknowledged registration, called wherever the run needs that receipt (arming, the final input check and the pause).
-   * The tracker's refusal carries positions only as JSON, so the failure gains the declared stop and the mapping hints here.
+   * The tracker's refusal carries positions only as JSON, so the failure gains the declared stop and the mapping hints here; a breakpoint that was removed gets no hints, because another line would not help.
    * @param stop - A declared server stop whose owned breakpoint exists.
    * @returns The adapter's current receipt, `pending` until the module loads and `bound` afterwards.
    * @throws When the adapter refuses or revokes the registration, for example by acknowledging another line.
@@ -621,16 +626,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
     } catch (error) {
       if (this.abort.signal.aborted) throw error
-      throw this.bindingFailure(
-        stop,
-        `Declared stop ${this.declaredAt(stop)} was not registered: ${thrownMessage(error)}`,
-      )
+      const reason = thrownMessage(error),
+        message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
+      // A removed breakpoint says nothing about the line, so no other position is suggested.
+      if (reason === OWNED_BREAKPOINT_REMOVED) throw new Error(message)
+      throw this.bindingFailure(stop, message)
     }
   }
 
-  /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change. @example this.declaredAt(stop) // 'app/lib/actions.ts:36' */
+  /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change; stops that share one line (a line that runs twice) are told apart by their place in the declared order. @example this.declaredAt(stop) // 'app/lib/actions.ts:36', or 'app/lib/actions.ts:36 (stop 2 of 3)' when another stop names that line */
   private declaredAt(stop: PreparedStop): string {
-    return `${stop.source.path}:${stop.source.line}`
+    const place = `${stop.source.path}:${stop.source.line}`,
+      sharesLine = this.stops.some(
+        (other) =>
+          other !== stop &&
+          other.source.path === stop.source.path &&
+          other.source.line === stop.source.line,
+      )
+    return sharesLine
+      ? `${place} (stop ${this.stops.indexOf(stop) + 1} of ${this.stops.length})`
+      : place
   }
 
   /**
@@ -669,8 +684,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private unreachedFirstStopReason(): string {
     const stop = this.stops[0]!,
       moved = this.movedPlace(stop)
-    if (!moved || !this.operation?.inputDispatched)
+    if (!this.operation?.inputDispatched)
       return 'Repository input reached no verified pause'
+    // An unmoved stop is named too, so the agent knows which declared line the input never ran.
+    if (!moved)
+      return `Repository input reached no verified pause: declared stop ${this.declaredAt(stop)} was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action; its line must execute after the input`
     return `Repository input reached no verified pause: declared stop ${this.declaredAt(stop)} ${this.boundAt(moved)} was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action; the bound line, not the declared one, must execute after the input`
   }
 
@@ -687,9 +705,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const moved = this.movedPlace(stop),
       opening = `Repository continuation reached no next declared pause: declared stop ${this.declaredAt(stop)}`,
       within = `was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
-    return moved
-      ? `${opening} ${this.boundAt(moved)} ${within}; the bound line, not the declared one, must execute after the preceding continuation`
-      : `${opening} ${within}; its line must execute after the preceding continuation`
+    if (moved)
+      return `${opening} ${this.boundAt(moved)} ${within}; the bound line, not the declared one, must execute after the preceding continuation`
+    // A server stop is bound only at its pause; until then the order rule would claim more than its acknowledgement says.
+    const session = this.participants[stop.participant].selected,
+      acknowledgement =
+        stop.participant === 'server' && !stop.bound && session
+          ? stop.breakpoint?.acknowledgement(session)
+          : undefined
+    if (acknowledgement === 'pending')
+      return `${opening} ${within}; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation`
+    if (acknowledgement === 'unacknowledged')
+      return `${opening} ${within}; the debugger no longer acknowledged its breakpoint, so the stop could not pause`
+    return `${opening} ${within}; its line must execute after the preceding continuation`
   }
 
   /**
@@ -1750,7 +1778,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       position = stop.source
     // The paused frame must be the position the debugger bound, which may differ from the requested column and, by the stop's rule, from the declared line.
     if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
-      throw new Error('DAP frame differs from exact configured source')
+      throw new Error(
+        'DAP frame differs from the bound configured source position',
+      )
     await this.verifySources()
     current()
     const executed = await participant.cdp!.request(
@@ -1900,7 +1930,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         } catch (error) {
           // Nothing has been resumed yet, so the record says exactly that instead of an uncertain continuation.
           this.fail(
-            `Next declared stop was not armed and no resume was sent: ${String(error)}`,
+            `Next declared stop was not armed and no resume was sent: ${thrownMessage(error)}`,
           )
           throw error
         }

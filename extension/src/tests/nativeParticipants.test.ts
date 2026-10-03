@@ -760,6 +760,32 @@ test('server registration revoked during the final DOM check prevents the mouse 
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
+// Value: protects=an agent not being told to pick another line when the learner removed Codebook's breakpoint; fails_when=every registration failure gets the mapping hints appended, also one whose cause is not a binding; why_new=Cycle 0036 C02d; seam=the editor's breakpoint list
+test('a server stop whose breakpoint the learner removed before the input fails naming the stop and the removal, without mapping hints', async (context) => {
+  // Arrange
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.breakpoints.splice(0, harness.breakpoints.length)
+
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'removed registration found at the final input check',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Declared stop src/mode.ts:1 was not registered: Owned breakpoint was removed before registration',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+})
+
 const MAPPING_HINTS =
   'These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.'
 
@@ -1050,7 +1076,7 @@ test('a paused frame at another column than the paused binding on the same line 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Error: DAP frame differs from exact configured source',
+    'Error: DAP frame differs from the bound configured source position',
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
@@ -1121,7 +1147,7 @@ test('a browser stop that binds on another line while the server is paused ends 
   assert.ok(failedWithinMs < 1_000, `failed after ${failedWithinMs} ms`)
   assert.equal(
     harness.run.view().failures[0],
-    `Next declared stop was not armed and no resume was sent: Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
+    `Next declared stop was not armed and no resume was sent: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
   )
   assert.equal(
     harness.commands.some((command) => command.method === 'continue'),
@@ -1151,11 +1177,11 @@ test('a later server stop whose registration is acknowledged on another line end
   // Assert
   assert.match(
     cause,
-    /^Error: Declared stop src\/mode\.ts:1 was not registered: Selected adapter did not acknowledge the exact breakpoint registration: \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
+    /^Error: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration: \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
   )
   assert.match(
     harness.run.view().failures[0] ?? '',
-    /^Next declared stop was not armed and no resume was sent: Error: Declared stop src\/mode\.ts:1 was not registered: Selected adapter did not acknowledge the exact breakpoint registration: /,
+    /^Next declared stop was not armed and no resume was sent: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration: /,
   )
   assert.equal(
     harness.commands.some((command) => command.method === 'continue'),
@@ -2000,7 +2026,7 @@ test('a later server stop that pauses on another line of its module while the pr
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    `Error: Declared stop src/mode.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
+    `Error: Declared stop src/mode.ts:1 (stop 2 of 2) bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
   )
   assert.equal(harness.run.view().snapshots.length, 1)
   assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
@@ -2132,7 +2158,7 @@ test('a later browser stop the debugger binds on the next line of its citation i
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
 })
 
-// Value: protects=a later server stop in a module that is already loaded going on when the adapter acknowledges its registration on the next line; fails_when=the owned breakpoint refuses that acknowledgement ("was not registered: Selected adapter did not acknowledge the exact breakpoint registration"), or its pause reaches the stop only when the 3 s wait for the stop's own pause ends; why_new=the owner accepted the declared line only (Cycle 0043, criterion 4, ER4, ER5); seam=the run's wait for the accepted stop's own pause, held open by the harness
+// Value: protects=a later server stop in a module that is already loaded going on when the adapter acknowledges its registration on the next line; fails_when=the owned breakpoint refuses that acknowledgement ("was not registered: Selected adapter did not acknowledge the declared breakpoint registration"), or its pause reaches the stop only when the 3 s wait for the stop's own pause ends; why_new=the owner accepted the declared line only (Cycle 0043, criterion 4, ER4, ER5); seam=the run's wait for the accepted stop's own pause, held open by the harness
 test('a later server stop whose registration the adapter acknowledges on the next line is accepted and captured there without waiting for a pause on the declared line', async (context) => {
   // Arrange: the second stop is registered after the module loaded and the adapter verifies it at 2:1.
   const harness = await nativeParticipantsHarness(
@@ -2342,6 +2368,36 @@ test('a server stop the debugger binds and pauses two lines below fails when the
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 
+// Value: protects=the deadline of a later server stop saying what is known about its breakpoint; fails_when=a stop whose registration is still pending (never verified in a loaded module) is told "its line must execute after the preceding continuation" as if it were bound there; why_new=Cycle 0036 C02c (0043 named only an acknowledged move); seam=the harness clock
+test('a later server stop whose registration is still pending when its deadline passes ends the run saying the breakpoint was never verified', async (context) => {
+  // Arrange: the adapter acknowledges the second registration as unverified and no pause arrives.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'pending server stop not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation',
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
 // Value: protects=the deadline telling an agent which line has to run when a later server stop the adapter acknowledged on the next line lies in a branch the action skips; fails_when=the deadline reads a moved place only from the binding the run records at a pause, which an unreached server stop never has, so the text names the declared line alone; why_new=the deadline tests reach a browser stop only, and the owner's moved place is read only in the owner's own test (Cycle 0043, ER7, O1); seam=the harness clock
 test('a later server stop in a loaded module that the adapter acknowledged on the next line and that is not reached ends the run naming the bound place and that this line must run', async (context) => {
   // Arrange: the second stop is registered after the module loaded, the adapter verifies it at 2:1 and that line never runs.
@@ -2366,7 +2422,7 @@ test('a later server stop in a loaded module that the adapter acknowledged on th
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
   )
   assert.equal(harness.run.view().snapshots.length, 1)
   assert.equal(
