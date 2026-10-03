@@ -342,6 +342,25 @@ No finding is critical. Five findings are defects this cycle's own changes intro
 
 Every other finding goes to the next cycle's Issue (B-M2, B-M3, C-M1, C-M2, D-M1 to D-M4 and the 37 low ones; the list is under "Defects this cycle leaves unfixed"). The fixes themselves were not reviewed by a second reader. Not proven: the takeover claim on Windows (a directory rename onto an existing directory is written from the documented behaviour).
 
+### Native re-run of the fixed rows on candidate 5, 2026-10-04
+
+Delegated agent, driver over the public MCP protocol, no chat request; candidate 5 (`9b1a9b02…`, source `7385c59`: candidate 4 plus a first attempt at **Show Variables**), installed in both QA profiles (each profile's `build.json` names that revision; "Codebook: Set Up AI Chat" run once in Cursor); VS Code 1.140.0 and Cursor 3.23.12 for Linux, one at a time; dashboard `1936e41` clean before and after. Evidence: `/home/murakami/codebook-qa/n13p3/` (`results.json`, `log.txt`, stills, videos, focus logs).
+
+| Row or finding | VS Code | Cursor |
+| --- | --- | --- |
+| 0038-N7-e | PASS: two choices with the panel maximized, the panel stays maximized and Saved studies shows the chosen entry; after Restore Panel Size the source and Study pane follow within 0.3 s, the application image within 0.5 to 0.7 s | PASS: three choices; the chosen study is shown in the still 10 s after the restore (the restore itself is not in the video) |
+| 0039-N8-b / 0040-N9-img | PASS: after the choice, and after a seek made while the panel is maximized, the Application group has its normal height and `layoutConfirmed` is true | Saved studies route PASS; a seek made while the panel is maximized leaves the Application group as a strip with `layoutConfirmed` false in two takes (FAIL; the row names VS Code and a chosen entry, so this is a finding for the next cycle) |
+| 0035-O01 | PASS: 1.10 s, 1.20 s and 1.37 s in three takes (limit 2.0 s; recordings 152 to 239 s long) | not run (the row names VS Code) |
+| 0037-F6 (focus after a capture) | PARTIAL: the Application pane's webview has the focus after 4 of 4 captures when the debugger's file opened in the Application group, and the document body after 8 of 8 when it opened in the captured-source group; after the first reveal the body for 2.0 s in one run | not run |
+| "Existing editor groups were preserved" on a live entry | PASS: no such line, `layoutConfirmed` true at ready | PARTIAL: no such line, but `layoutConfirmed` false at ready ("The native editor layout receipt no longer matches the Study panes…"; the earlier candidate's transcript shows the same) |
+| the run resource of a run a learner breakpoint ended | PASS: `terminalReason`, `error.message` and `error.cause` read "Unexpected or additional server stop invalidated the declared operation" | PASS |
+| "Selected item belongs to another configured article." | PASS: absent while a recording of the session's own run is open | PASS |
+| **Show Variables** | FAIL: Run and Debug opens with the focus on "Start Debugging", and nothing changes when the Variables section is collapsed | PASS for what the row reopened: no "command … not found", Run and Debug opens and the hint leaves |
+
+The Show Variables result corrected an assumption of both the Group 5 fix and candidate 5: neither host has a `workbench.debug.variablesView.focus`. Both workbench bundles register the Variables view with its own focus command, `workbench.debug.action.focusVariablesView`; the Group 5 closure had named the other id as "confirmed in the installed bundles", which was wrong, and the mechanism test passed because the harness modelled a host with that id. `79e5d0c` runs the view's own command (the harness now models the hosts' real command list; the first Show Variables test is red with the old id: the host only opens Run and Debug). Its native check on candidate 6 is below.
+
+Other findings of that run, tasks of the next cycle: in Cursor a seek to a recorded stop leaves the layout unconfirmed also at normal panel height; in Cursor Restore did not confirm the layout in 2 of 5 presses (once with "The learner changed native tab focus while the Study layout command was pending."); in Cursor the Study pane kept "Loading the selected observation…" for over 60 s after Restore Panel Size until a wheel movement; in Cursor Show Variables replaces the Learning summary, which shares the side bar. One rule of the QA procedure was broken by the delegated agent (a `pkill -f` to stop its own focus-log receiver; it matched only its own processes).
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
