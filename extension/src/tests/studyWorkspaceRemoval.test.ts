@@ -4089,7 +4089,15 @@ test('a removal whose room read and list read fail after every file moved still 
       ),
       true,
     )
-    assert.equal(kept.id.length > 0, true)
+    // Only the removed study's files went to the Trash; the other study was not touched.
+    assert.deepEqual(
+      harness.trashMoves.map((move) => basename(move.path)),
+      [`${removed.id}.study.meta.v3.json`, `${removed.id}.study.v3.json`],
+    )
+    assert.deepEqual(
+      (await studyFiles(harness)).map(([name]) => name),
+      [`${kept.id}.study.meta.v3.json`, `${kept.id}.study.v3.json`],
+    )
   } finally {
     context.mock.restoreAll()
     await harness.close()

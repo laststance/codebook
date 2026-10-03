@@ -38,6 +38,7 @@ import { repositoryActionSchema } from './repositoryView'
 import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace } from './studyWorkspace'
+import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
 import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
@@ -448,11 +449,7 @@ export function activate(
       }
     }
     notifyMcpDefinitions()
-    void vscode.window.showInformationMessage(
-      isCursorHost
-        ? 'Codebook skill and workspace setup saved. Check Cursor Customize > MCPs for Codebook before using /codebook; if absent, close and reopen this work window.'
-        : 'Codebook AI chat is ready for this workspace. Open a new chat and choose /codebook.',
-    )
+    void vscode.window.showInformationMessage(aiChatReadyMessage(isCursorHost))
   }
   /** Coalesces overlapping Cursor setup commands so removal can await the whole deployment and saved state. @example await setupAiChat() */
   const setupAiChat = (): Promise<void> => {

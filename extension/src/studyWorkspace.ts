@@ -489,6 +489,8 @@ export class StudyWorkspace {
   private revision = 0
   private sourceRevision?: number
   private historyRequest = 0
+  /** Counts the refused controls reported so far; a pane message that was already being handled when a control was refused does not retire that newer refusal. */
+  private controlRefusals = 0
   /** Counts the saved studies and Node test histories the learner chose; a removal reads it to tell a choice made meanwhile from other actions that only take a {@link historyRequest} number. */
   private studyChoices = 0
   private repositoryNavigation?: number
@@ -8464,10 +8466,13 @@ export class StudyWorkspace {
     owner: vscode.WebviewPanel | vscode.WebviewView,
   ): Promise<void> {
     const reply = this.openReplyOwedTo(value, owner)
+    const refusalsBefore = this.controlRefusals
     let isRejected = false
     try {
       await this.receive(value, origin, owner)
-      this.retireControlRefusal(value)
+      // A control refused while this message was being handled is newer than this message and stays.
+      if (this.controlRefusals === refusalsBefore)
+        this.retireControlRefusal(value)
     } catch (error) {
       isRejected = true
       throw error
@@ -9973,6 +9978,7 @@ export class StudyWorkspace {
 
   /** Keeps storage, control and renderer failures distinct in the learner-facing status. @example this.report('archive', error) */
   private report(kind: string, error: unknown): void {
+    if (kind === 'control') this.controlRefusals++
     this.errors.set(kind, String(error))
     if (kind === 'presentation') this.clearReadyReplayWarning()
     this.publish()
