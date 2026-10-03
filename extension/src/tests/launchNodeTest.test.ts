@@ -161,6 +161,89 @@ test('a Node test that exits before inspection reports the failure and still cle
   }
 })
 
+// Cycle 0044 (0041-F2): red while the closer accepted only ESRCH, so macOS's EPERM for an exited, unreaped member rejected close() with "kill EPERM".
+test('closing a finished Node test resolves while macOS still answers its exited, unreaped group with EPERM', async (context) => {
+  // Arrange
+  const workspace = await mkdtemp(
+    join(tmpdir(), 'codebook-unreaped-node-test-'),
+  )
+  const program = join(workspace, 'runner.cjs')
+  await writeFile(program, 'process.exit(0)\n')
+  const launch = {
+    workspace,
+    program,
+    args: ['run', 'src/test.test.ts', '--inspect-brk'],
+  }
+  const owned = await launchNodeTest(launch, process.execPath, () => undefined)
+  const kill = process.kill.bind(process)
+  context.mock.property(process, 'platform', 'darwin')
+  let unreapedAnswers = 2
+  // macOS answers EPERM to every signal, signal 0 included, sent to a group that holds only exited members their parent has not reaped yet.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && unreapedAnswers > 0) {
+        unreapedAnswers -= 1
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const closing = owned.close()
+    // Assert
+    await assert.doesNotReject(closing)
+    assert.equal(unreapedAnswers, 0)
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0044 (0041-F2): red while close() kept its first rejected promise, so every later close replayed the first signal failure.
+test('a later close retries a Node test release whose first signal failed instead of replaying that failure', async (context) => {
+  // Arrange
+  const workspace = await mkdtemp(join(tmpdir(), 'codebook-retried-node-test-'))
+  const program = join(workspace, 'runner.cjs')
+  await writeFile(program, 'process.exit(0)\n')
+  const launch = {
+    workspace,
+    program,
+    args: ['run', 'src/test.test.ts', '--inspect-brk'],
+  }
+  const owned = await launchNodeTest(launch, process.execPath, () => undefined)
+  const kill = process.kill.bind(process)
+  let transientFailures = 1
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0 && signal === 'SIGTERM' && transientFailures > 0) {
+        transientFailures -= 1
+        throw Object.assign(new Error('kill EAGAIN'), { code: 'EAGAIN' })
+      }
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const firstClose = await owned.close().then(
+      () => 'released',
+      (error: Error) => error.message,
+    )
+    const secondClose = await owned.close().then(
+      () => 'released',
+      (error: Error) => error.message,
+    )
+    // Assert
+    assert.equal(firstClose, 'kill EAGAIN')
+    assert.equal(secondClose, 'released')
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
+})
+
 test('a Node test reports its final exit and output after a long log', async () => {
   // Arrange
   const workspace = await mkdtemp(join(tmpdir(), 'codebook-node-result-'))

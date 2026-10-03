@@ -10,8 +10,10 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
+import { isProcessGroupGone } from './isProcessGroupGone'
 import type { PreparedNodeTestLaunch } from './prepareNodeTestLaunch'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
+import { signalProcessGroup } from './signalProcessGroup'
 
 const OUTPUT_LIMIT_BYTES = 32_768
 const OUTPUT_EVENT_LIMIT_CHARS = 4_096
@@ -214,38 +216,16 @@ export async function launchNodeTest(
     },
     /** Releases the entire owned test process group, including a paused worker, after success or failure. @example await testRun.close() */
     async close(): Promise<void> {
-      closing ??= (async () => {
+      const attempt = (closing ??= (async () => {
         if (!child.pid) {
           await exit
           await outputWrites
           return
         }
-        try {
-          process.kill(-child.pid, 'SIGTERM')
-        } catch (cause) {
-          if (!(
-            cause &&
-            typeof cause === 'object' &&
-            'code' in cause &&
-            cause.code === 'ESRCH'
-          ))
-            throw cause
-        }
-        const groupGone = () => {
-          try {
-            process.kill(-child.pid!, 0)
-            return false
-          } catch (cause) {
-            if (
-              cause &&
-              typeof cause === 'object' &&
-              'code' in cause &&
-              cause.code === 'ESRCH'
-            )
-              return true
-            throw cause
-          }
-        }
+        const processGroup = child.pid
+        // A group whose exited members macOS has not reaped yet answers EPERM; both utilities wait for it instead of failing the release.
+        signalProcessGroup(processGroup, 'SIGTERM')
+        const groupGone = (): boolean => isProcessGroupGone(processGroup)
         const waitForRelease = async (): Promise<void> => {
           await awaitResponse(
             exit,
@@ -263,17 +243,7 @@ export async function launchNodeTest(
         try {
           await waitForRelease()
         } catch {
-          try {
-            process.kill(-child.pid, 'SIGKILL')
-          } catch (cause) {
-            if (!(
-              cause &&
-              typeof cause === 'object' &&
-              'code' in cause &&
-              cause.code === 'ESRCH'
-            ))
-              throw cause
-          }
+          signalProcessGroup(processGroup, 'SIGKILL')
           await waitForRelease()
         }
         await outputWrites
@@ -282,8 +252,14 @@ export async function launchNodeTest(
           exitCode: child.exitCode,
           signal: child.signalCode,
         })
-      })()
-      await closing
+      })())
+      // Keep a finished release, while a later close retries a failed signal or exit check instead of replaying its rejection.
+      try {
+        await attempt
+      } catch (cause) {
+        if (closing === attempt) closing = undefined
+        throw cause
+      }
     },
   }
 }
