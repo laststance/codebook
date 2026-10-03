@@ -36,6 +36,34 @@ test('internal browser setup stops do not consume the configured learning pause 
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
 })
 
+test('a required value inspection of an object commits the stop with an object marker and the run continues to completion', async (context) => {
+  // Arrange: the agent asked for value:nextTheme, which is an application object at the pause.
+  const { run, useObjectValue, commands } =
+    await configuredRuntimeHarness(context)
+  useObjectValue()
+  await run.prepare()
+  // Act
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'configured learning pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(
+    () => run.view().status === 'completed',
+    'configured completion',
+  )
+  await run.stop()
+  // Assert: the pause is not the end of the run; the object's members are not captured facts.
+  assert.deepEqual(snapshot.values['value:nextTheme'], { type: 'object' })
+  assert.deepEqual(
+    snapshot.unavailableValues.map((value) => value.path),
+    ['value:renderLocal'],
+  )
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(commands.filter((command) => command === 'continue').length, 1)
+})
+
 test('VS Code startup cannot hit Codebook’s click breakpoint before the learner input', async (context) => {
   // Arrange: the installed host can report a breakpoint stop while the page hydrates.
   const { run, stopOnStartupWhenOwnedBreakpointPresent, mouse, commands } =
@@ -76,7 +104,7 @@ test('an unbound configured stop reports sealed map positions as unverified hint
     )
     assert.match(
       error.message,
-      /^Timed out waiting for a verified binding of declared stop src\/theme\.ts:1 on its declared line \(requested column 1\)/,
+      /^Timed out waiting for a verified binding of declared stop src\/theme\.ts:1 on its declared line or a later line its binding rule accepts \(requested column 1\)/,
     )
     assert.match(
       error.message,
@@ -861,7 +889,7 @@ test('an unbound second position leaves the application paused and never sends C
   // Act / Assert
   await assert.rejects(
     run.continue('browser', first.pause),
-    /a verified binding of declared stop src\/theme\.ts:1 on its declared line \(requested column 7\)/,
+    /a verified binding of declared stop src\/theme\.ts:1 on its declared line or a later line its binding rule accepts \(requested column 7\)/,
   )
   await run.stop()
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
@@ -921,7 +949,7 @@ test('a browser stop the debugger binds on another line fails at once and names 
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      'Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+      'Error: Declared stop src/theme.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
     )
     return true
   })
@@ -964,7 +992,7 @@ test('a binding failure on a sealed map too large to scan completely says its ma
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      'Error: Declared stop src/theme.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation (partial map scan): none. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+      'Error: Declared stop src/theme.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation (partial map scan): none. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
     )
     return true
   })
@@ -1450,15 +1478,11 @@ test('a pause at the line the debugger moved a browser stop to is captured as th
   await run.prepare()
   // Act
   run.action('moved-line', 'repository-click')
-  const stop = await waitUntil(
-    () => {
-      const view = run.view()
-      if (view.failures.length) throw new Error(view.failures.join('; '))
-      return view.participants.browser.snapshot
-    },
-    'stop captured while the wait for its own pause is held open',
-    2_000,
-  )
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop captured while the wait for its own pause is held open')
   await run.stop()
   // Assert
   assert.equal(stop.source.line, 2)
@@ -1565,7 +1589,7 @@ test('a browser stop the debugger binds on an earlier line of its citation is re
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:2 bound at 1:1, not on its declared line. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:2 bound at 1:1, refused: line 1 is before the declared line 2. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
@@ -1592,7 +1616,7 @@ test('a browser stop the debugger binds across a line that has a mapped position
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:1 bound at 3:1, not on its declared line. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a mapped position. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
@@ -1619,7 +1643,7 @@ test('a browser stop the debugger binds two lines below is refused when the seal
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:1 bound at 3:1, not on its declared line. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line and line 3 may hold code. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
@@ -1666,4 +1690,149 @@ test('a browser stop the debugger binds two lines below, across a line the seale
   assert.equal(run.view().failures.length, 0)
   assert.equal(run.view().finalOutcome, 'demonstrated')
   assert.equal(mouse.length, 2)
+})
+
+// Value: protects=a stop declared above a comment that the development build keeps (Next keeps `// Auth.js error messages…` and maps it) being accepted on the code line after it; fails_when=a mapping onto a kept comment counts as a line that could run and refuses the binding; why_new=Cycle 0043 N-2 (N12-d′ refused actions.ts 33 bound at 35 across comment line 34); seam=none
+test('a browser stop the debugger binds two lines below, across a comment the generated module kept and mapped, is armed and commits at the bound line', async (context) => {
+  // Arrange: the module mirrors the source, so line 2 of the map points at the kept comment.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: 'AAAA;AACA;AACA',
+      fixture: {
+        source: 'const nextTheme = "dark";\n// Keep the saved theme.\n',
+        citationEndLine: 3,
+      },
+    },
+  )
+  bindFirstStopAt(3, 1)
+  // Act
+  await run.prepare()
+  run.action('across-comment', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed below the kept comment')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  assert.equal(stop.source.line, 3)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})
+
+// Value: protects=a stop declared on a blank or comment line being refused before any input whatever the size of the sealed map; fails_when=a map over the scan limit skips the preparation check and the click is sent; why_new=Cycle 0043 R3; seam=none
+test('a stop declared on a blank line is refused before any click also when the sealed map is too large to scan completely', async (context) => {
+  // Arrange: the stop is declared on the blank line 2 and the scan stops at its generated-line limit.
+  const { run, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: `${';'.repeat(100_000)}AAAA`,
+      fixture: {
+        source: THREE_LINE_SOURCE,
+        citationEndLine: 3,
+        declaredLine: 2,
+      },
+    },
+  )
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      `Error: Declared stop src/theme.ts:2 has no mapped position on that line in the sealed module. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
+    )
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a later line being taken as the stop only when the debugger could not pause on the declared line, not when the requested column lay after the declared statement; fails_when=a binding slid to the next line is accepted although the declared line has a break location; why_new=Cycle 0043 R12(b); seam=the adapter's possible break locations
+test('a browser stop slid to the next line although its declared line has a break location is refused at arming without a click', async (context) => {
+  // Arrange: the adapter verifies the stop declared at 1:1 at 2:1 and lists a break location on generated line 0, which the map puts on line 1.
+  const { run, bindFirstStopAt, listPossibleBreakLines, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], TWO_LINE_CITATION)
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; request the column where the statement begins. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+    )
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=the deadline of a first browser stop that was not moved still naming that stop once the click was sent; fails_when=the run ends with the bare "Repository input reached no verified pause"; why_new=Cycle 0043 N-3; seam=the harness clock
+test('a first stop on its declared line that the click does not reach ends the run naming the stop and that its line must run', async (context) => {
+  // Arrange
+  const { run, suppressInputPause, advance } =
+    await configuredRuntimeHarness(context)
+  suppressInputPause()
+  await run.prepare()
+  run.action('not-reached', 'repository-click')
+  await waitUntil(
+    () => run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  // Act
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'first stop not hit')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository input reached no verified pause: declared stop src/theme.ts:1 was not hit within 20 s of the accepted action; its line must execute after the input',
+  )
+})
+
+// Value: protects=one statement never being committed twice as two different declared stops, and a later stop never waiting for a line that already ran as an earlier one; fails_when=a stop declared on the line an earlier stop was moved to is armed on that same bound place; why_new=Cycle 0043 R4; seam=none
+test('two stops declared on different lines that bind on one place fail when the second is armed, naming both declared stops and the place, without a resume', async (context) => {
+  // Arrange: the first stop is declared at 1:1 and the adapter moves it to 2:1; the second is declared at 2:1.
+  const { run, bindFirstStopAt, commands } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [
+      {
+        line: 2,
+        column: 1,
+        inspections: [{ path: 'enabled', mode: 'value', required: true }],
+      },
+    ],
+    TWO_LINE_CITATION,
+  )
+  bindFirstStopAt(2, 1)
+  await run.prepare()
+  run.action('same-place', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  // Act / Assert
+  await assert.rejects(
+    run.continue('browser', first.pause),
+    (error: unknown) => {
+      assert.equal(
+        String(error),
+        `Error: Declared stops src/theme.ts:1 and src/theme.ts:2 both bound at 2:1; one bound place is one stop, so declare it once. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+      )
+      return true
+    },
+  )
+  await run.stop()
+  assert.equal(run.view().snapshots.length, 1)
+  assert.equal(commands.filter((command) => command === 'continue').length, 0)
 })

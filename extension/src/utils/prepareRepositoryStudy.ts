@@ -13,6 +13,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
+import { describeCitationMismatch } from './describeCitationMismatch'
 
 /** Binds an already reserved start to immutable article/source identity before a runtime can acquire or dispatch input. @example await prepareRepositoryStudy(configuration, books, { signal, deadlineAt }) */
 export async function prepareRepositoryStudy(
@@ -68,9 +69,11 @@ export async function prepareRepositoryStudy(
   try {
     assertConfiguredDescriptor(configuration, definition.descriptor)
   } catch (error) {
+    // An index that selects the wrong citation is named with the valid range and the covering index; other refusals keep the rule text.
     throw new StudyError(
       'INVALID_CONFIGURATION',
-      'configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation.',
+      describeCitationMismatch(configuration, node.anchors) ??
+        'configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation.',
       String(error),
     )
   }

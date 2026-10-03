@@ -86,6 +86,7 @@ import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { fullLibraryMessage } from './utils/fullLibraryMessage'
 import { historyExclusionReason } from './utils/historyExclusionReason'
+import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
@@ -792,6 +793,9 @@ export class StudyService {
       }
       return { accepted: true, runUri: this.uri(record.id) }
     }
+    // A reveal accepted for this pause finishes first: resuming under it would retire the pause its reader is still presenting.
+    if (record.sourceReveals.size)
+      await Promise.allSettled([...record.sourceReveals])
     if (
       !record.runtime ||
       record.stopping ||
@@ -1030,6 +1034,18 @@ export class StudyService {
         'BUSY',
         'Source reveal requires an active run. Read the captured source resource after cleanup.',
       )
+    const isCurrentPause = (): boolean =>
+      Object.values(record.runtime!.view().participants).some((participant) =>
+        isPausedAtSnapshot(participant, snapshot),
+      )
+    const noLongerCurrentPause = (cause?: unknown): StudyError =>
+      new StudyError(
+        'STALE_PAUSE',
+        'Reveal shows only the current pause, and this snapshot is no longer it: its continuation was accepted or the debugger moved on. Reveal a stop before continuing it; its captured source stays readable at sourceUri.',
+        cause === undefined ? undefined : String(cause),
+      )
+    // The reader presents only the live pause; a snapshot already continued would otherwise answer an evidence failure.
+    if (!isCurrentPause()) throw noLongerCurrentPause()
     // Reserve before editor I/O; stop must not finish while a source tab can still be acquired.
     const pending = Promise.resolve().then(() =>
       record.runtime!.reveal(snapshot),
@@ -1037,6 +1053,10 @@ export class StudyService {
     record.sourceReveals.add(pending)
     try {
       await pending
+    } catch (error) {
+      // A pause that ended while the reader was presenting it (a manual resume) is the cause, whatever the reader reported.
+      if (!isCurrentPause()) throw noLongerCurrentPause(error)
+      throw error
     } finally {
       record.sourceReveals.delete(pending)
     }
@@ -1303,12 +1323,7 @@ export class StudyService {
         ? this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`)
         : undefined
       const resumable = Boolean(
-        canControl &&
-        snapshot &&
-        participant?.phase === 'paused' &&
-        participant.pause?.generation === snapshot.pause.generation &&
-        participant.pause.sessionId === snapshot.pause.sessionId &&
-        participant.pause.threadId === snapshot.pause.threadId,
+        canControl && snapshot && isPausedAtSnapshot(participant, snapshot),
       )
       return {
         snapshotUri,

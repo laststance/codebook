@@ -11,7 +11,7 @@ import {
 } from '../constants'
 import type { RepositoryConfiguration } from '../repositoryConfigSchemas'
 
-/** Captures declared bounded facts for {@link ConfiguredBrowserRun}; explicit unavailability preserves other facts while the caller gates continuation. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
+/** Captures declared bounded facts for {@link ConfiguredBrowserRun}; an object or function is captured as its `{ type }` marker, because its members are not bounded, and explicit unavailability preserves other facts while the caller gates continuation. @example await inspectConfiguredValues(evaluate, callFrameId, configuration.inspections, assertCurrent) */
 export async function inspectConfiguredValues(
   evaluate: (
     parameters: Protocol.Debugger.EvaluateOnCallFrameRequest,
@@ -25,11 +25,11 @@ export async function inspectConfiguredValues(
   for (const inspection of inspections) {
     assertCurrent()
     const path = `${inspection.mode}:${inspection.path}`
-    // Tag actual undefined before serialization; application objects, including lookalike tags, remain rejected.
+    // Tag actual undefined, objects and functions before serialization: an object's members are not bounded, so only a fresh marker crosses the transport and application lookalike tags never do.
     const expression =
       inspection.mode === 'type'
         ? `typeof ${inspection.path}`
-        : `((value) => typeof value === 'undefined' ? { type: 'undefined' } : value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : void 0)(${inspection.path})`
+        : `((value) => typeof value === 'undefined' ? { type: 'undefined' } : value === null || typeof value === 'boolean' || typeof value === 'number' && value - value === 0 || typeof value === 'string' && value.length <= ${REPOSITORY_LITERAL_LIMIT_CHARS} ? value : typeof value === 'object' || typeof value === 'function' ? { type: typeof value } : void 0)(${inspection.path})`
     const response = await evaluate({
       callFrameId,
       expression,

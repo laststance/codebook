@@ -7,6 +7,7 @@ import type { Protocol } from 'devtools-protocol'
 import { bundleSchema, mapSchema, type BundleSource } from '../repositoryBundle'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import { isCommentAt } from './isCommentAt'
 import { isSourcePosition } from './isSourcePosition'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
 
@@ -29,6 +30,13 @@ export function createBundleVerifier(input: BundleSource) {
   if (canonicalSource(bundle.sourcePath) !== originalPath)
     throw new Error('Map original differs from native source path')
   const sourceMap = new SourceMap(payload)
+  // Split once on first use: a scan asks the generated text at every mapping in its range.
+  let generatedLines: string[] | undefined
+  const isCodeAt = (generatedLine: number, generatedColumn: number): boolean =>
+    !isCommentAt(
+      (generatedLines ??= bundle.javascript.split(/\r\n|\r|\n/))[generatedLine],
+      generatedColumn,
+    )
   const hashes = Object.freeze({
     typescript: sha256(bundle.source),
     javascript: sha256(bundle.javascript),
@@ -36,13 +44,14 @@ export function createBundleVerifier(input: BundleSource) {
   })
   return {
     hashes,
-    /** Reports frozen-map positions in a line range: preparation asks whether a declared line is mapped at all, and a binding failure lists the selected citation's lines as hints; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
+    /** Reports frozen-map positions in a line range, leaving out mappings onto a comment the generated module kept: preparation asks whether a declared line is mapped at all, the binding rule asks which later line is the first that could run, and a binding failure lists the selected citation's lines as hints; callers must still verify a real pause. @example verifier.mappedPositions(1, 3).positions // [{ line: 1, column: 1 }] */
     mappedPositions(startLine: number, endLine: number) {
       return sourceMapMappedPositions(
         payload.mappings,
         matches[0]!,
         startLine,
         endLine,
+        isCodeAt,
       )
     },
     /**

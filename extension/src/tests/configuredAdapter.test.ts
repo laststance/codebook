@@ -410,13 +410,49 @@ test('large optional application objects and strings become unavailable before a
     ],
     () => {},
   )
-  // Assert
-  assert.deepEqual(facts.values, { 'value:useful': 0 })
+  // Assert: the array crosses the transport only as its object marker.
+  assert.deepEqual(facts.values, {
+    'value:huge': { type: 'object' },
+    'value:useful': 0,
+  })
   assert.deepEqual(
     facts.unavailableValues.map((value) => value.path),
-    ['value:huge', 'value:long'],
+    ['value:long'],
   )
-  assert.deepEqual(payloadSizes, [20, 20, 27])
+  assert.deepEqual(payloadSizes, [43, 20, 27])
+})
+
+test('a required value inspection of an object or a function is captured as its type marker instead of ending the stop as unavailable', async () => {
+  // Arrange: evaluate the actual generated expression, as the debugger would at the pause.
+  const environment = {
+    credentials: { email: 'learner@example.com', password: 'secret' },
+    authorize(): void {},
+    lookalike: { type: 'undefined' },
+  }
+  const evaluate = async (
+    parameters: Protocol.Debugger.EvaluateOnCallFrameRequest,
+  ): Promise<Protocol.Debugger.EvaluateOnCallFrameResponse> => {
+    const value = runInNewContext(parameters.expression, environment)
+    return { result: { type: typeof value, value } }
+  }
+  // Act
+  const facts = await inspectConfiguredValues(
+    evaluate,
+    'exact-frame',
+    [
+      { path: 'credentials', mode: 'value', required: true },
+      { path: 'authorize', mode: 'value', required: true },
+      { path: 'lookalike', mode: 'value', required: false },
+    ],
+    () => {},
+  )
+  // Assert
+  assert.deepEqual(facts.values, {
+    'value:credentials': { type: 'object' },
+    'value:authorize': { type: 'function' },
+    'value:lookalike': { type: 'object' },
+  })
+  assert.deepEqual(facts.unavailableValues, [])
 })
 
 test('a pause invalidated while an evaluation response is delayed cannot publish that response as captured facts', async () => {
@@ -714,7 +750,7 @@ test('invalid browser-native CSS fails a declared condition or click target befo
   })
 })
 
-test('required undefined remains an observed value distinct from null strings and rejected application objects', async () => {
+test('required undefined remains an observed value distinct from null strings and from application objects, which keep only their object marker', async () => {
   // Arrange
   const environment = {
     missing: undefined,
@@ -751,9 +787,11 @@ test('required undefined remains an observed value distinct from null strings an
     'value:missing': { type: 'undefined' },
     'value:text': 'undefined',
     'value:empty': null,
+    'value:fake': { type: 'object' },
+    'value:handler': { type: 'function' },
   })
   assert.deepEqual(
     result.unavailableValues.map((value) => value.path),
-    ['value:fake', 'value:huge', 'value:invalid', 'value:handler'],
+    ['value:huge', 'value:invalid'],
   )
 })
