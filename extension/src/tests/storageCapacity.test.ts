@@ -73,6 +73,53 @@ test('a seventeenth saved study and recording remain discoverable after restart 
   assert.deepEqual(await library.readStudy(first.study.id), first.study)
 })
 
+// Value: protects=the disclosed limit of the start check: it reserves no place; fails_when=the README's statement no longer holds (the second window's save is silently kept past the limit, or its refusal loses the retry-storage wording); why_new=Cycle 0037 PR2 (the race was known and not disclosed or pinned); seam=two stores over one library directory stand for two editor windows
+test('two windows admitted for the last free place both start, and the study saved second is refused at its save with the retry-storage message', async (context) => {
+  // Arrange: a limit of two with one study saved; each window asks before either has saved.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-race-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const saved = capacityStudy(),
+    firstWindow = capacityStudy(),
+    secondWindow = capacityStudy(),
+    workspaceKey = saved.study.workspaceKey
+  const library = new LearningLibrary(directory, workspaceKey, () => 2)
+  await library.saveStudy(saved.study)
+  const firstStore = new RecordingStore(
+      directory,
+      workspaceKey,
+      {},
+      undefined,
+      () => 2,
+    ),
+    secondStore = new RecordingStore(
+      directory,
+      workspaceKey,
+      {},
+      undefined,
+      () => 2,
+    )
+
+  // Act
+  const firstAdmitted = await firstStore.admitsStudy(firstWindow.study.id),
+    secondAdmitted = await secondStore.admitsStudy(secondWindow.study.id)
+  await library.saveStudy(firstWindow.study)
+  const secondSave = await new LearningLibrary(directory, workspaceKey, () => 2)
+    .saveStudy(secondWindow.study)
+    .then(
+      () => 'saved',
+      (error: unknown) => String(error),
+    )
+
+  // Assert
+  assert.equal(firstAdmitted, true)
+  assert.equal(secondAdmitted, true)
+  assert.equal(
+    secondSave,
+    'Error: Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, then retry storage. Existing learning was kept.',
+  )
+  assert.equal((await library.list()).length, 2)
+})
+
 test('raising the setting recovers both full stores and lowering it keeps prior checkpoints and recordings readable', async (context) => {
   // Arrange
   const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-change-'))
