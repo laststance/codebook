@@ -1,9 +1,9 @@
 # Cycle 0043 — A stop the debugger binds on the next line is accepted there instead of ending the run
 
 Type: product-increment with a bounded native experiment\
-Status: validating\
+Status: closed\
 Result: demonstrated\
-Delivery: committed\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/80 \
 Goal issue: https://github.com/laststance/codebook/issues/1 \
@@ -12,7 +12,7 @@ Source state: [Cycle 0042 result and decision](0042-adapter-resumed-pause.md#res
 
 Owner authority:
 
-- [D047](../../DECISIONS.md#d047--resume-with-cycle-0043-on-a-windows-wsl-host-2026-10-03) (owner, 2026-10-03): the pause of D046 is lifted. The owner named this cycle ("まずはこちらのサイクルから着手して" with Issue #80), set the goal again ("Codebookを完成させてください、VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。返事ができないので、選択肢はReccomendをpickしてください") and said that this machine is Windows with WSL and that the dashboard checkout is at `~/laststance/nextjs-dashboard`.
+- [D047](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d047--resume-with-cycle-0043-on-a-windows-wsl-host-2026-10-03) (owner, 2026-10-03): the pause of D046 is lifted. The owner named this cycle ("まずはこちらのサイクルから着手して" with Issue #80), set the goal again ("Codebookを完成させてください、VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。返事ができないので、選択肢はReccomendをpickしてください") and said that this machine is Windows with WSL and that the dashboard checkout is at `~/laststance/nextjs-dashboard`.
 - D045: every decision point takes the recommended option and this record names it.
 - D040: VS Code practical trials use Copilot Chat **Auto**; the Codex Extension only after observed credit exhaustion.
 - Owner statements of 2026-10-02 and 2026-10-03 that stay in force: only a critical review finding is fixed, the others are recorded and carried; Codex automatic review is off; Cursor trials use Composer 2.5.
@@ -492,9 +492,16 @@ The delivery's scratch files (the commit script, the pull request text, the clos
 
 ## Next action
 
-- Exact next action: finish the delivery of 0.2.27.0 (`/ship`: the documentation audit, the commits, the pull request with `@coderabbitai ignore`, CI on the head, the separate exact-HEAD gate, the merge in its own step with `--match-head-commit`, CI on `main`), then close Issue #80 by hand with the outcomes that are not PASS and every carried defect named. Then Cycle 0044 under the cycle rule of AGENTS.md: `/spec` plans its increment from the goal and the gap audit alone, and the Issue receives, in full and without selection, every defect this cycle leaves unfixed (R1 to R19, O1 to O8, N-1 to N-13). The findings that Cycles 0031 to 0042 left in their records (among them SR1 to SR34, F1 to F10, D1 to D14, the numbered findings of Cycles 0038 and 0039 and the Cycle 0031 UI items) were never fixed in a next cycle either; Cycle 0044's Issue takes those that are still open in the same way, each read against the current source first.
+- Exact next action: Cycle 0044 under the cycle rule of AGENTS.md: `/spec` plans its increment from the goal and the gap audit alone, and the Issue receives, in full and without selection, every defect this cycle leaves unfixed (R1 to R19, O1 to O8, N-1 to N-13). The findings that Cycles 0031 to 0042 left in their records (among them SR1 to SR34, F1 to F10, D1 to D14, the numbered findings of Cycles 0038 and 0039 and the Cycle 0031 UI items) were never fixed in a next cycle either; Cycle 0044's Issue takes those that are still open in the same way, each read against the current source first.
 - Prerequisite the owner can give at any time: `coderabbit auth login` lets the local CodeRabbit review run.
 - Changed files / branch / active processes: branch `codex/cycle-0043-next-line-binding`. The two signed-in QA editors (VS Code and Cursor for Linux) had been left open because the owner was using them (the owner installed the Codex extension into the VS Code profile during the check); they and the user-space PostgreSQL ended with WSL at about 19:47 JST (it was started again at 20:41 JST), and their signed-in profiles stay in the private QA folder. No development server, Chrome or debugger process of a run remains.
 - State updated in PROJECT_STATE.md: the active cycle, the assignment (D047), the checkout, the development target's path on this host, the AC-LIVE, AC-SAVE and AC-SKILL rows and the one next action.
 - Owner rules stated in the required reads: the cycle rule of 2026-10-03, in AGENTS.md and DEVELOPMENT.md, with the cycle template's carried-defect section and the closed-log header of DECISIONS.md (the owner's direction). D047, written at this cycle's start, is the last entry of that log.
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue): R1 to R19, O1 to O8, N-1 to N-13.
+
+## Delivery closure, 2026-10-03
+
+- Second `/ship` invocation, documentation audit attempt 2: status updated, no blocker, one file changed by the audit (`PROJECT_STATE.md`, two clarity edits), HEAD and index unchanged. Commits `3f3e3ec`, `845f4e8`, `fed67d8`, `0b34dcb`, `42267aa`, `3981ec3`; release tree `3ea265a8` differs from the reviewed tree `b3fe9db4` in authored documents only. Evidence ledger on that tree: tests 1,860 of 1,860, package 192 of 192 (after the test processes ended), hook 4 of 4, `format:check`, each FRESH.
+- Pull request [#81](https://github.com/laststance/codebook/pull/81) (`@coderabbitai ignore`, "Linked to #80"); the credential pre-push guard was installed (the owner could not answer; the recommended option). CI on the head: 22 of 22 check runs passed, twelve Test jobs of 35 to 48 s, package job 2 m 5 s. Separate exact-HEAD gate (read-only): PR head, local HEAD and `origin` all `3981ec3`, base `main` `f9ac394`, mergeable and clean, no review thread. Merge in its own step: `gh pr merge 81 --squash --match-head-commit 3981ec3`, squash `e32add3` at 2026-10-03T12:06:18Z. CI on `main`: Format, TypeCheck, Build, Lint, Fallow, Test (twelve jobs of 34 to 46 s and one of 74 s) and the package workflow all succeeded.
+- Issue #80 was closed by hand at 2026-10-03T12:09:33Z with the outcome table and the carried defects named. Under the cycle rule every one of them (R1 to R19, O1 to O8, N-1 to N-13), SR21 and SR24 of Cycle 0042, and every still-open finding of Cycles 0031 to 0042 is a task of Cycle 0044's Issue.
+- Retired: `DECISIONS.md` (D001 to D047). The standing owner rules moved into DEVELOPMENT.md ("Standing owner direction"); the product rules were already in PRODUCT_GOAL, the feature contracts and DESIGN. Links to it in older records point to its last commit (`e32add3`).

@@ -11,25 +11,24 @@ Before implementation or runtime trials, complete this sequence at each new sess
 
 Reading is preparation. Reconcile every acceptance row with current source and evidence as required by the gap audit. Each selected increment must name the gap it closes, the source to change and an observable verification procedure. At closure, update affected rows with expected/actual results and the next action. Unperformed work stays unverified.
 
-
 ## Load when taking the branch
 
-| Work | Read before acting |
-| --- | --- |
-| Select/start/close a cycle; choose skills; review or deliver changes | [DEVELOPMENT.md](DEVELOPMENT.md); [DECISIONS.md](DECISIONS.md) only where an older record cites a D-number |
-| Live/capture/replay, runtime, storage, evidence ownership or cross-feature architecture | [Behavioral design](docs/designs/codebook.md) |
-| Shared skill or onboarding | [Bundled skill contract](docs/plans/bundled-codebook-skill.md) |
-| Wiki generation/update | [Generation skill contract](docs/plans/deepwiki-generation-skill.md) |
-| UI implementation or visual verification | [GStack state/interaction review](docs/plans/cycle-0029-product-design.md) |
-| Native editor video / motion evidence | [OBS window-recording procedure](docs/qa/native-recording.md) |
-| Test execution / performance | [Parallel test and package ordering](docs/qa/test-execution.md) |
-| Final acceptance | Full [protocol](docs/acceptance/FINAL_REVIEW.md) and [fixed nine-project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) |
+| Work                                                                                    | Read before acting                                                                                                     |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Select/start/close a cycle; choose skills; review or deliver changes                    | [DEVELOPMENT.md](DEVELOPMENT.md)                                                                                       |
+| Live/capture/replay, runtime, storage, evidence ownership or cross-feature architecture | [Behavioral design](docs/designs/codebook.md)                                                                          |
+| Shared skill or onboarding                                                              | [Bundled skill contract](docs/plans/bundled-codebook-skill.md)                                                         |
+| Wiki generation/update                                                                  | [Generation skill contract](docs/plans/deepwiki-generation-skill.md)                                                   |
+| UI implementation or visual verification                                                | [GStack state/interaction review](docs/plans/cycle-0029-product-design.md)                                             |
+| Native editor video / motion evidence                                                   | [OBS window-recording procedure](docs/qa/native-recording.md)                                                          |
+| Test execution / performance                                                            | [Parallel test and package ordering](docs/qa/test-execution.md)                                                        |
+| Final acceptance                                                                        | Full [protocol](docs/acceptance/FINAL_REVIEW.md) and [fixed nine-project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) |
 
 Historical cycles, generation prompts and external references are evidence consulted when needed, not recursive mandatory reads. Local requirements and the next action must be recoverable without Issues or this chat.
 
 ## Authority and completion
 
-- PRODUCT_GOAL owns outcomes; its feature contracts own details; DESIGN owns the approved visual target; PROJECT_STATE owns current gaps; the active cycle owns the bounded plan/results. Later explicit owner direction takes precedence. A rule the owner sets is stated, as the rule itself, in the required read that governs the work; DECISIONS.md is a closed log through D047 and takes no new entry.
+- PRODUCT_GOAL owns outcomes; its feature contracts own details; DESIGN owns the approved visual target; PROJECT_STATE owns current gaps; the active cycle owns the bounded plan/results. Later explicit owner direction takes precedence. A rule the owner sets is stated, as the rule itself, in the required read that governs the work; there is no decision log.
 - Preserve all active goals while selecting one increment. Change accepted behavior only on explicit owner direction. Routine implementation choices within the authorized phase need no repeated permission. An open gap does not authorize leaving that phase.
 - Keep VS Code and Cursor evidence separate. Use the designated dashboard for development and the fixed nine-project protocol for final acceptance. Preserve runtime/library coverage and stage order; fixture or development passes earn no acceptance credit.
 - Complete the authorized cycle, update records and recommend one next action. Continue further cycles only within owner authorization. These instructions do not create background jobs, separate tasks or automations.

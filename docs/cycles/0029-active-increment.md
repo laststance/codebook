@@ -587,7 +587,7 @@ Frozen increment (before source edits): primary AC-REPLAY; regressions AC-GAPS/A
 - Falsifiers: diagnostics absent, unbounded or containing image data/hashes; retry count or saved position changed; a successful seek changed; a target action repeated.
 - Verification: red-then-green workspace tests; full extension and package suites; package, then install in the VS Code QA profile only; with the unrelated `Next.js: debug server-side` session running, repeat gap → 55.87 s stop → non-adjacent seek on `…e4906307` using click-only controls; read the error details if failure recurs; attempt QuickTime window-bound recording and inspect frames before any motion claim. Cursor follows only after VS Code is stable.
 
-Owner direction recorded during this entry as [D039](../../DECISIONS.md#d039--deliver-each-completed-cycle-through-review-pr-ci-and-merge-2026-09-29): complete Codebook; when the current cycle's work is done, review with `open-code-review-delegate`, deliver through `/ship`, merge after CI and plan the next cycle; VS Code trials keep Copilot Chat Auto first.
+Owner direction recorded during this entry as [D039](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d039--deliver-each-completed-cycle-through-review-pr-ci-and-merge-2026-09-29): complete Codebook; when the current cycle's work is done, review with `open-code-review-delegate`, deliver through `/ship`, merge after CI and plan the next cycle; VS Code trials keep Copilot Chat Auto first.
 
 ### Replay-diagnostics implementation, installed trial and new AC-REPLAY defect, 20:20–20:46 JST
 
