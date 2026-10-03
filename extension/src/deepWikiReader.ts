@@ -10,9 +10,12 @@ import { join, relative, sep } from 'node:path'
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_QUESTION_LIMIT_CHARS,
+  WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
   WIKI_UPDATE_SHOWN_PATH_LIMIT,
+  WIKI_UPDATE_START_WAIT_MS,
   WIKI_UPDATE_STATUS_POLL_MS,
+  WIKI_UPDATE_STATUS_RETRY_LIMIT,
 } from './constants'
 import type {
   WikiAnswer,
@@ -21,6 +24,7 @@ import type {
 import { describeWikiUpdate } from './utils/describeWikiUpdate'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { installShortcutHelp } from './utils/installShortcutHelp'
+import { installWikiUpdateStatus } from './utils/installWikiUpdateStatus'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
@@ -50,50 +54,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  var freshness = document.querySelector('[data-codebook-freshness]');
-  async function refreshFreshness() {
-    if (!freshness) return;
-    try {
-      var response = await fetch(prefix + 'api/freshness');
-      if (!response.ok) throw new Error('Freshness check unavailable');
-      var result = await response.json();
-      freshness.textContent = result.status === 'current' ? 'Wiki source current' : result.status === 'changed' ? 'Source changed — update LLM Wiki' : 'Wiki freshness unknown';
-      freshness.setAttribute('data-status', result.status);
-      if (result.reason) freshness.title = result.reason;
-    } catch { freshness.textContent = 'Wiki freshness unknown'; freshness.setAttribute('data-status', 'unknown'); }
-  }
-  var updateLink = document.querySelector('.wiki-update');
-  var updateStatus = document.createElement('p');
-  updateStatus.setAttribute('data-codebook-update-status', ''); updateStatus.setAttribute('role', 'status'); updateStatus.setAttribute('aria-live', 'polite'); updateStatus.hidden = true;
-  if (freshness && freshness.parentNode) freshness.parentNode.insertBefore(updateStatus, freshness.nextSibling);
-  var lastUpdateState = '';
-  var updatePoll = 0;
-  var describeUpdate = (${describeWikiUpdate.toString()});
-  async function refreshUpdateStatus() {
-    window.clearTimeout(updatePoll);
-    try {
-      var response = await fetch(prefix + 'api/update-status');
-      if (!response.ok) throw new Error('Update state unavailable');
-      var result = await response.json();
-      var described = describeUpdate(result, { formatTime: function (isoTimestamp) { return new Date(isoTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, pageLoadedAtMs: performance.timeOrigin });
-      var text = described ? described.lead + described.rest + ' ' + described.output : '';
-      updateStatus.textContent = text; updateStatus.hidden = !text;
-      updateStatus.setAttribute('data-state', result.state);
-      if (updateLink) { if (result.state === 'running') updateLink.setAttribute('aria-disabled', 'true'); else updateLink.removeAttribute('aria-disabled'); }
-      // A finished run changes what the freshness label should say.
-      if (lastUpdateState === 'running' && result.state !== 'running') void refreshFreshness();
-      lastUpdateState = result.state;
-      if (result.state === 'running') updatePoll = window.setTimeout(function () { void refreshUpdateStatus(); }, ${WIKI_UPDATE_STATUS_POLL_MS});
-    } catch { updateStatus.hidden = true; }
-  }
-  if (updateLink) updateLink.addEventListener('click', function (event) {
-    if (updateLink.getAttribute('aria-disabled') === 'true') { event.preventDefault(); return; }
-    // The editor asks for confirmation first; look for the run it starts.
-    window.clearTimeout(updatePoll); updatePoll = window.setTimeout(function () { void refreshUpdateStatus(); }, ${WIKI_UPDATE_STATUS_POLL_MS});
-  });
-  void refreshFreshness();
-  void refreshUpdateStatus();
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) { void refreshFreshness(); void refreshUpdateStatus(); } });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
@@ -254,7 +215,7 @@ export async function startDeepWikiReader(
     // The update state needs no manifest, so it answers while a publish is replacing the site.
     if (relativePath === 'api/update-status') {
       if (request.method !== 'GET') {
-        sendJson(response, 405, { error: 'Unsupported Wiki update request.' })
+        sendGetOnly(response)
         return
       }
       sendJson(response, 200, readUpdateStatus())
@@ -265,9 +226,7 @@ export async function startDeepWikiReader(
       await readDeepWikiManifest(outputDirectory, projectRoot)
     if (relativePath === 'api/freshness') {
       if (request.method !== 'GET') {
-        sendJson(response, 405, {
-          error: 'Unsupported Wiki freshness request.',
-        })
+        sendGetOnly(response)
         return
       }
       sendJson(
@@ -330,7 +289,7 @@ export async function startDeepWikiReader(
       return
     }
     if (request.method !== 'GET') {
-      sendJson(response, 405, { error: 'Unsupported Wiki request.' })
+      sendGetOnly(response)
       return
     }
     if (relativePath === 'codebook-qa.js') {
@@ -339,6 +298,12 @@ export async function startDeepWikiReader(
       return
     }
     if (!files.has(relativePath)) {
+      // A page the last update removed or renamed sends the learner to the overview instead of a JSON error.
+      if (relativePath.endsWith('.html')) {
+        response.writeHead(302, { Location: `${prefix}index.html` })
+        response.end()
+        return
+      }
       sendJson(response, 404, {
         error: 'This file is not published by the Wiki.',
       })
@@ -399,6 +364,12 @@ export async function startDeepWikiReader(
     if (server.listening) server.close()
     throw error
   }
+}
+
+/** Refuses any other method on a read-only Wiki route and names the one that works, so a caller is told what to send instead. @param response - The answer to the refused request. @example sendGetOnly(response) // 405, Allow: GET */
+function sendGetOnly(response: ServerResponse): void {
+  response.setHeader('Allow', 'GET')
+  sendJson(response, 405, { error: 'This Wiki route only answers GET.' })
 }
 
 /** Returns a no-store JSON result to the browser reader after a page or model request. @example sendJson(response, 404, { error: 'Missing' }) */
