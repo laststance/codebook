@@ -1835,6 +1835,41 @@ test('a native values notification the reader failed to handle is shown, and the
   }
 })
 
+// Value: protects=the reader still telling the learner that the historical debugger failed to stop; fails_when=the disposal failure shares the notification key, so the next values-loaded notification silently clears it; why_new=Cycle 0044 (0034-PL2); seam=ReplayDebugger.dispose replaced on the live owner
+test('a historical debugger that failed to stop stays reported after native values load', async () => {
+  // Arrange: an opened recording whose historical debugger then fails to stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const owner = harness.reader['replayDebugger']
+    assert.ok(owner)
+    owner.dispose = async (): Promise<void> => {
+      throw new Error('The historical debugger did not stop.')
+    }
+    await harness.reader['retireReplayDebugger'](owner)
+    const afterFailure = harness.reader.inspect().view!.errors
+
+    // Act
+    harness.reader['replayDebuggerChanged']('values-loaded')
+
+    // Assert
+    const afterValuesLoaded = harness.reader.inspect().view!.errors
+    assert.equal(
+      afterFailure.includes('Error: The historical debugger did not stop.'),
+      true,
+    )
+    assert.equal(
+      afterValuesLoaded.includes(
+        'Error: The historical debugger did not stop.',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a stale "native values did not update" error leaving the reader once the debugger notifies again, even with no Run and Debug hint showing; fails_when=the reader is published only when a hint or a Node stop changes, so the cleared error stays on screen; why_new=Cycle 0034 T3 (the failureCleared publish had no test without a hint); seam=none
 test('a handled native values notification clears an earlier notification failure while no Run and Debug hint is showing', async () => {
   // Arrange: native values are loaded, so no hint is showing, and one notification failed to be handled.

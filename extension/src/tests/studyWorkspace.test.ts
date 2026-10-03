@@ -1797,6 +1797,61 @@ test('closing the reader drops the Run and Debug hint of a saved Node stop', asy
   }
 })
 
+// Value: protects=Inspect offered again for a saved Node stop after closing disposed its native session; fails_when=close() keeps the stop's debugger availability, so the reopened reader hides Inspect although no session shows the stop; why_new=Cycle 0044 (0032-T6d / 0033-S7c); seam=none
+test('a saved Node stop shown in Run and Debug before the reader closed offers Inspect again after the reader reopens', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'the Node stop shows its values in Run and Debug',
+      1_000,
+    )
+
+    // Act
+    await harness.reader.close()
+    await harness.reader.open()
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+        2,
+      'the reopened reader restores the Node stop',
+      1_000,
+    )
+
+    // Assert: no native session shows the stop, so Inspect (offered while debuggerAvailable is false) is back.
+    const reopened = harness.postedMessages().slice(-1)[0]!
+    assert.equal(reopened.nodeHistoryPosition?.sourceAvailable, true)
+    assert.equal(reopened.nodeHistoryPosition?.debuggerAvailable, false)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a refused recording open leaves a Node stop that is still loading its native values to finish; fails_when=openRecording abandons the Node selection before its own admission checks pass; why_new=the supersede test only covers an admitted recording; seam=none
 test('a refused recording open lets a loading Node history stop finish its selection', async () => {
   // Arrange

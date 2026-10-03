@@ -2259,6 +2259,63 @@ test('a Node test history chosen during Recording is refused with its sentence a
   }
 })
 
+// Value: protects=a stale refusal line after the learner did what it asked; fails_when=the Node refusal is reported under `control`, which only a live-run action retires, so it stays after a later successful Node open; why_new=Cycle 0044 (0031-U5); seam=the summary webview, stubbed at the vscode boundary
+test('the browser-replay refusal of a Node test history disappears once that history opens after the learner left Recording', async () => {
+  // Arrange: a Node history was refused during Recording, then the learner left Recording.
+  const harness = await recordedReaderHarness()
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.openRecording(harness.studyId)
+    await waitUntil(
+      () => harness.controller.state().readiness === 'ready',
+      'the opened recording',
+      2_000,
+    )
+    sendFromPane(harness, {
+      type: 'node-history',
+      studyId: nodeHistory.studyId,
+      openRequest: 4,
+    })
+    await waitUntil(
+      () => harness.openRequestReplies().length > 0,
+      'the reply to the refused open request',
+      1_000,
+    )
+    const refusal =
+      'Error: Close browser replay before opening a separate Node test history.'
+    const refusedErrors = [...harness.reader.inspect().view!.errors]
+    await harness.reader['receive'](
+      {
+        type: 'tab',
+        revision: harness.reader.inspect().view!.revision,
+        tab: 'overview',
+      },
+      'context',
+    )
+
+    // Act
+    sendFromPane(harness, {
+      type: 'node-history',
+      studyId: nodeHistory.studyId,
+      openRequest: 5,
+    })
+    await waitUntil(
+      () => harness.reader.inspect().view!.nodeHistory !== undefined,
+      'the opened Node test history',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(refusedErrors.includes(refusal), true)
+    assert.equal(harness.reader.inspect().view!.errors.includes(refusal), false)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a saved study chosen during Recording keeps its pane waiting while that recording loads, and releases it when the load failed; fails_when=the reply is posted as soon as the open was accepted, so the delete button names the study shown before while another recording is on its way, or it is never posted after a failed load; why_new=a recording open outlives the message that started it; seam=the reader's replay-debugger preparation, held and then failed by the test
 test('a saved study chosen during Recording is answered only once its recording load has ended', async () => {
   // Arrange: a saved recorded run whose recording is open; the next recording load is held before it can fail.

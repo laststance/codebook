@@ -5184,8 +5184,11 @@ export class StudyWorkspace {
       await earlier
       try {
         await owner.dispose()
+        // A later owner stopped cleanly, so an earlier failed disposal no longer describes the debugger.
+        if (this.errors.delete('replay-debugger-disposal')) this.publish()
       } catch (error) {
-        this.report('replay-debugger', error)
+        // Its own key: a later values-loaded or session-ended notification clears only notification failures.
+        this.report('replay-debugger-disposal', error)
       }
     })().finally(() => {
       if (this.replayDebuggerRetirement === retirement)
@@ -8416,16 +8419,22 @@ export class StudyWorkspace {
   /**
    * Names the status line for a failed panel message, for the three panel listeners that call {@link receive}.
    * A replay control's failure gets its own line, which the next accepted replay control or loaded recording retires; `control` is retired only by a live-run action and would keep a replay refusal forever.
+   * A Node test history message likewise gets its own line, which the next Node history message accepted outside browser replay retires.
    * @param value - The raw message the panel sent.
-   * @returns `'replay-control'` for a valid playback message, `'control'` for everything else.
+   * @returns `'replay-control'` for a valid playback message, `'node-history-control'` for a valid Node test history message, `'control'` for everything else.
    * @example
    * this.panelFailureKind({ type: 'playback', action: 'seek', revision: 4, expectedRevision: 2, positionMs: 0 }) // => 'replay-control'
    * this.panelFailureKind({ type: 'tab', revision: 4, tab: 'live' })                                              // => 'control'
+   * this.panelFailureKind({ type: 'node-history', revision: 4, studyId: 'node-study' })                            // => 'node-history-control'
    */
-  private panelFailureKind(value: unknown): 'replay-control' | 'control' {
+  private panelFailureKind(
+    value: unknown,
+  ): 'replay-control' | 'node-history-control' | 'control' {
     const parsed = messageSchema.safeParse(value)
-    return parsed.success && parsed.data.type === 'playback'
-      ? 'replay-control'
+    if (!parsed.success) return 'control'
+    if (parsed.data.type === 'playback') return 'replay-control'
+    return parsed.data.type.startsWith('node-history')
+      ? 'node-history-control'
       : 'control'
   }
 
@@ -8684,6 +8693,13 @@ export class StudyWorkspace {
     // Choosing another entry retires the last removal's outcome line.
     if (message.type === 'node-history' || message.type === 'history')
       this.dismissStudyRemoval()
+    // A Node history message accepted outside browser replay answers an earlier refusal of one, which no live-run action retires.
+    if (
+      message.type.startsWith('node-history') &&
+      !this.recordingActive &&
+      this.errors.delete('node-history-control')
+    )
+      this.publish()
     if (message.type === 'node-history') {
       if (this.recordingActive)
         throw new Error(
