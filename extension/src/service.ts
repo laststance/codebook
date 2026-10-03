@@ -486,12 +486,16 @@ export class StudyService {
         uri: `codebook://${this.instanceId}/playback`,
       }
     } catch (error) {
+      // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
+      const readerClosed = !this.playbackController.state().readerOpen
       throw new StudyError(
         String(error).includes('Stale playback revision')
           ? 'STALE_PLAYBACK'
           : 'PLAYBACK_UNAVAILABLE',
         String(error),
-        `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
+        readerClosed
+          ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
+          : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
       )
     }
   }

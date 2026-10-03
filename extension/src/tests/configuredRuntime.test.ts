@@ -679,6 +679,31 @@ test('a held configured pause expires at five minutes while retaining its origin
   assert.match(run.view().failures.join('\n'), /pause hold deadline/)
 })
 
+// Value: protects=a live pause the learner keeps while reading a replay longer than five minutes; fails_when=reading cannot renew the hold and the pause is released at 300 s; why_new=Cycle 0035 O3; seam=none
+test('a held configured pause that is renewed while a replay is read is still held at five minutes and expires five minutes after the renewal', async (context) => {
+  // Arrange
+  const { run, advance } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => run.view().snapshots[0], 'held pause')
+  advance(200000)
+
+  // Act
+  run.renewPauseHold()
+  advance(100000)
+  const statusAtFiveMinutes = run.view().status
+  advance(199999)
+  const statusBeforeRenewedExpiry = run.view().status
+  advance(1)
+  await run.stop()
+
+  // Assert
+  assert.equal(statusAtFiveMinutes, 'paused-browser')
+  assert.equal(statusBeforeRenewedExpiry, 'paused-browser')
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+  assert.match(run.view().failures.join('\n'), /pause hold deadline/)
+})
+
 test('a late action cannot reset the original ten-minute run deadline', async (context) => {
   // Arrange
   const { run, advance } = await configuredRuntimeHarness(context)

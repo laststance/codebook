@@ -5224,12 +5224,18 @@ export class StudyWorkspace {
   /**
    * Shows the loading page on a live run's viewport while a recording loads, releasing the recording renderer that page replaces.
    *
-   * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays.
+   * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays;
+   * a renderer that still holds the panel is kept and only cleared, so a reload needs no new renderer handshake.
    *
    * @example this.showRecordingLoadingOnLiveViewport()
    */
   private showRecordingLoadingOnLiveViewport(): void {
     if (!this.viewport) return
+    // A recording renderer still holding the shared panel is kept and cleared: a new renderer's handshake would sit on the 2.0 s recovery path.
+    if (this.replayViewport && !this.replayNeedsReveal) {
+      this.replayViewport.clearRecorded()
+      return
+    }
     // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
     this.dropReplayViewport()
     this.viewport.showHistory(
@@ -5240,7 +5246,8 @@ export class StudyWorkspace {
   /**
    * Releases the recording renderer whenever another writer takes over the shared Application panel's document or the recording is left.
    *
-   * {@link loadPlayback}, {@link presentation}'s new live lease, a failed load, {@link leavePlayback} and {@link close} call it;
+   * {@link loadPlayback}, {@link presentation}'s new live lease, a failed load, {@link leavePlayback}, {@link close}, the Application panel's
+   * dispose handler and a renderer that never became ready in {@link ensureReplayViewport} call it;
    * {@link ensureReplayViewport} then constructs a new renderer for the next presentation, which performs its own first reveal.
    *
    * @example this.dropReplayViewport()
@@ -5283,10 +5290,7 @@ export class StudyWorkspace {
       if (this.replayViewport === viewport) {
         // An abandoned request leaves the viewport to the newer one that may already be painting through it; the next presentation finishes its handshake.
         if (signal.aborted) this.replayNeedsReveal = true
-        else {
-          viewport.close()
-          this.replayViewport = undefined
-        }
+        else this.dropReplayViewport()
       }
       throw error
     }
@@ -5298,6 +5302,9 @@ export class StudyWorkspace {
     signal: AbortSignal,
   ): Promise<void> {
     signal.throwIfAborted()
+    // Reading a replay keeps an attached live run's held pause, which would otherwise expire while the learner studies.
+    for (const record of this.service?.records.values() ?? [])
+      record.runtime?.renewPauseHold?.()
     // Retire the previous native Variables tree before publishing another recorded source or frame.
     await this.replayDebugger?.retire(bundle.projection.debugger, signal)
     signal.throwIfAborted()
@@ -6266,11 +6273,12 @@ export class StudyWorkspace {
                   : [new vscode.Range(position, position)],
               )
           }
-        // Replace transient source-derived revisions while preserving deliberately opened observed-source tabs.
+        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab.
         if (
           previousUri &&
           previousUri.toString() !== uri.toString() &&
-          previousUri.path.startsWith('/source-derived/')
+          (previousUri.path.startsWith('/source-derived/') ||
+            basename(previousUri.path) === basename(uri.path))
         ) {
           const obsolete = vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
@@ -6587,7 +6595,8 @@ export class StudyWorkspace {
         new Error('The current application pane was closed.'),
       )
       this.app = undefined
-      this.replayViewport = undefined
+      // A renderer created for the next pane performs its own first reveal, so a reveal owed to this pane is dropped with it.
+      this.dropReplayViewport()
       if (this.recordingActive) this.playback?.hide()
     })
     let visible = panel.visible

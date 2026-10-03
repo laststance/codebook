@@ -886,6 +886,43 @@ test('saved replay reports a second viewport paint loss without advancing the sa
   }
 })
 
+// Value: protects=one renderer handshake per seek after the learner closed a hidden Recorded application pane; fails_when=the dispose handler drops the renderer without resetting replayNeedsReveal, so the new renderer's next seek repeats its reveal; why_new=Cycle 0035 R06; seam=replayNeedsReveal set directly to stand for the hidden pane
+test('a recording renderer created after the hidden Recorded application pane was closed reveals once and not again on the next seek', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.reader['replayNeedsReveal'] = true
+    harness.reader['app']!.dispose()
+    const revealsAfterPaneClosed = harness.viewportEvents.filter(
+      (event) => event === 'reveal:recording',
+    ).length
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().presentedMs, 100)
+    assert.equal(
+      harness.viewportEvents.filter((event) => event === 'reveal:recording')
+        .length,
+      revealsAfterPaneClosed + 1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('saved replay does not retry a non-paint viewport failure', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
@@ -1385,6 +1422,33 @@ test('configured recording-context failure remains visible beside independently 
       'saved',
     )
     assert.equal(harness.configuredRuntimes[0]!.dispatches, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=one captured-source tab per source file across runs; fails_when=each run's observed stop opens another Captured-theme.ts tab beside the earlier run's; why_new=Cycle 0035 O4 (six Captured-auth.ts tabs piled up natively); seam=none
+test('a second run stopping in the same source file replaces the first run captured-source tab instead of adding another', async () => {
+  // Arrange
+  const harness = await configuredWorkspaceHarness()
+  try {
+    await harness.start()
+    await harness.reader.action('click')
+    await harness.reader.action('stop')
+
+    // Act
+    await harness.start()
+    await harness.reader.action('click')
+
+    // Assert
+    const capturedThemeTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .filter(
+        (tab) =>
+          'uri' in tab.input &&
+          tab.input.uri.path.endsWith('/Captured-theme.ts'),
+      )
+    assert.equal(capturedThemeTabs.length, 1)
   } finally {
     await harness.close()
   }
@@ -2548,6 +2612,73 @@ test('opening a recording while a live run is attached presents its saved frame'
   }
 })
 
+// Value: protects=the 2.0 s recovery of Recording pressed again with a live run attached; fails_when=every load drops the recording renderer and waits for a new renderer handshake; why_new=Cycle 0035 R02 (P1 "Latency"); seam=none
+test('pressing Recording again while a live run is attached presents the saved frame through the same recording renderer', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  const liveFailures: string[] = []
+  try {
+    harness.reader.presentation.createViewport(
+      'attached-live',
+      () => {},
+      (reason) => liveFailures.push(reason),
+      'normal',
+    )
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.endHistoricalDebugSession()
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    const state = harness.controller.state()
+    assert.equal(state.reason, undefined)
+    assert.equal(state.readiness, 'ready')
+    assert.equal(harness.historicalDebuggers.length, 2)
+    assert.equal(
+      harness.viewportInstances.filter(
+        (viewport) => viewport.mode === 'recording',
+      ).length,
+      1,
+    )
+    assert.deepEqual(liveFailures, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a live run's held pause while the learner reads a replay; fails_when=presenting replay moments never renews the attached run's pause hold, so it is released after five minutes of reading; why_new=Cycle 0035 O3; seam=renewPauseHold spy on the attached runtime
+test('reading a recording while a live run is attached renews the live pause hold for each presented moment', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  let renewals = 0
+  try {
+    harness.record.runtime!.renewPauseHold = (): void => {
+      renewals++
+    }
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const renewalsAfterOpen = renewals
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(renewalsAfterOpen, 1)
+    assert.equal(renewals, 2)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the moment the learner confirmed last when Recording is pressed before its position save has landed; fails_when=the reload reads the older stored position and presents and saves it; why_new=Cycle 0035 H2 (the workspace reload tests let every save land first); seam=none
 test('pressing Recording after the historical session ended keeps the moment whose position save is still held by storage', async () => {
   // Arrange: storage holds the opening position; the save of the confirmed 100 ms waits behind the storage lock.
@@ -2647,6 +2778,43 @@ test('an agent seeking or playing a recording after the reader closed is refused
     assert.equal(harness.reader['app'], undefined)
     assert.equal(harness.historicalDebuggers.length, debuggersAtClose)
     assert.equal(harness.controller.state().presentedMs, 100)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent learning from the playback resource that the reader closed and that only open recovers; fails_when=the resource keeps saying ready with no reader-open field and the refusal's hint sends the agent back to read that resource; why_new=Cycle 0035 R04; seam=none
+test('after the reader closed the playback state says the reader is closed and a refused seek tells the agent to send open', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const readerOpenBeforeClose = harness.controller.state().readerOpen
+    await harness.reader.close()
+
+    // Act
+    const readerOpenAfterClose = harness.controller.state().readerOpen
+    let refusalCause = ''
+    try {
+      harness.service.playback({
+        instanceId: harness.service.instanceId,
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        action: 'seek',
+        positionMs: 0,
+      })
+    } catch (error) {
+      refusalCause = (error as { causeDetail: string }).causeDetail
+    }
+
+    // Assert
+    assert.equal(readerOpenBeforeClose, true)
+    assert.equal(readerOpenAfterClose, false)
+    assert.equal(
+      refusalCause,
+      `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${harness.studyId} to reopen it before another control. No application input was sent.`,
+    )
   } finally {
     await harness.close()
   }
@@ -2847,6 +3015,38 @@ test('a recording whose recorded-application renderer never became ready opens a
     assert.equal(state.reason, undefined)
     assert.equal(recordingRenderers.length, 2)
     assert.equal(harness.reader['replayViewport'], recordingRenderers[1])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the non-abort arm of ensureReplayViewport on its own; fails_when=a renderer whose first reveal failed without a cancellation stays as the replay renderer, which the H5d test cannot see because the failed-readiness handler also drops it; why_new=Cycle 0035 R07d; seam=ensureReplayViewport called directly, without the playback controller
+test('a recording renderer whose first reveal fails without a cancellation is released by the renderer setup itself', async () => {
+  // Arrange: a recording is selected and no recording renderer exists yet.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.reader['dropReplayViewport']()
+    const reveal = harness.holdNextRecordingReveal()
+
+    // Act
+    const setup = harness.reader['ensureReplayViewport'](
+      new AbortController().signal,
+    ).then(
+      () => 'ready',
+      (error: unknown) => String(error),
+    )
+    await reveal.started
+    reveal.fail(new Error('The recorded application renderer did not start'))
+    const outcome = await setup
+
+    // Assert
+    assert.equal(
+      outcome,
+      'Error: The recorded application renderer did not start',
+    )
+    assert.equal(harness.reader['replayViewport'], undefined)
   } finally {
     await harness.close()
   }

@@ -367,16 +367,18 @@ test('an Open Study cancelled while it waits for an abandoned first entry leaves
       .catch((error: unknown) => error)
     await new Promise<void>((resolve) => setImmediate(resolve))
 
-    // Act
-    const cancelledAtMs = performance.now()
+    // Act: the abandoned entry stays held, so only the waiter's own cancellation can settle it before the next macrotask.
     waitingEntry.abort(new Error('Second entry cancelled'))
-    const outcome = await second
-    const leftAfterMs = performance.now() - cancelledAtMs
+    const outcome = await Promise.race([
+      second,
+      new Promise<string>((resolve) =>
+        setImmediate(() => resolve('still waiting for the abandoned entry')),
+      ),
+    ])
 
     // Assert
-    assert.equal(String(outcome), 'Error: Second entry cancelled')
     // The waiter leaves on its own cancellation, not when the five-second wait for the abandoned entry runs out.
-    assert.equal(leftAfterMs < 250, true, `left after ${leftAfterMs} ms`)
+    assert.equal(String(outcome), 'Error: Second entry cancelled')
   } finally {
     entry.release()
     await Promise.allSettled([first, second])

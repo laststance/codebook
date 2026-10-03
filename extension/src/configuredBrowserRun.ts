@@ -226,6 +226,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   private transientBrowserPause?: { timer: ReturnType<typeof setTimeout> }
   private progressTimer?: ReturnType<typeof setTimeout>
+  /** True while {@link progressTimer} is the pause hold, the only deadline {@link renewPauseHold} may restart. */
+  private holdingPause = false
   private runTimer?: ReturnType<typeof setTimeout>
   private cleaning = false
   private cleaned = false
@@ -2279,6 +2281,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       conflict: participant.gate.conflict,
     }
   }
+  /**
+   * Restarts the pause hold while the learner reads a replay, so studying a recording longer than the hold does not release the live pause.
+   *
+   * Called by the study workspace each time it presents a replay moment. Only a held pause is renewed; an active,
+   * refresh or continuation deadline and the whole-run deadline are never extended.
+   *
+   * @example
+   * run.renewPauseHold() // a held pause now expires REPOSITORY_PAUSE_HOLD_TIMEOUT_MS from now
+   */
+  renewPauseHold(): void {
+    // Only the hold deadline of a still-held pause may restart.
+    if (
+      this.cleaning ||
+      !this.holdingPause ||
+      !this.status.startsWith('paused-')
+    )
+      return
+    this.progressDeadline(
+      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
+      'Repository pause hold deadline exceeded',
+    )
+    this.evidence.record('pause-hold.renewed', { status: this.status })
+  }
   /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle. @example run.fail('source changed') */
   fail(reason: string): void {
     if (this.cleaning || this.status === 'failed') return
@@ -2436,6 +2461,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     reason: string | (() => string),
   ): void {
     clearTimeout(this.progressTimer)
+    this.holdingPause = milliseconds === REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
     // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
     this.progressTimer = setTimeout(
       () =>

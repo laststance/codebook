@@ -2273,6 +2273,11 @@ test('a stop the editor never answers after a 4 s startup fails the retirement 5
 test('a waiting presentation still fails with the closed-debugger error when the reader listener and its error channel both throw as the startup bound expires', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseStartup = (): void => {}
+  // Released only in cleanup, so dispose cannot hang on the startup when the give-up regresses and the assertion fails instead.
+  const startupGate = new Promise<void>((resolve) => {
+    releaseStartup = resolve
+  })
   const fixture = harness(
     undefined,
     undefined,
@@ -2280,7 +2285,7 @@ test('a waiting presentation still fails with the closed-debugger error when the
     false,
     false,
     undefined,
-    new Promise<void>(() => {}),
+    startupGate,
     {
       changed: () => {
         throw new Error('reader publish failed')
@@ -2318,6 +2323,7 @@ test('a waiting presentation still fails with the closed-debugger error when the
     assert.equal(fixture.owner.available, false)
   } finally {
     context.mock.timers.reset()
+    releaseStartup()
     await fixture.owner.dispose()
   }
 })
@@ -2398,7 +2404,10 @@ test('a retirement that was waiting for a startup during which the reader closed
   const outcome = await retiring
   await closing
 
-  // Assert
-  assert.match(outcome, /Historical debugger closed/)
+  // Assert: the retirement's own closed guard answers, not the startup's "closed during startup" rejection.
+  assert.equal(
+    outcome,
+    'Error: Historical debugger closed. Reopen the learning replay to restore it.',
+  )
   assert.deepEqual(fixture.stopped, ['historical-owned'])
 })

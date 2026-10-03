@@ -64,8 +64,8 @@ export class PlaybackController {
   private readonly clock: () => number
   private disposed = false
   private saves: Promise<void> = Promise.resolve()
-  /** The position of the bundle {@link remember} last queued for saving; an open of the same study prefers it to a stored preference that the queued save may not have written yet. It deliberately survives {@link leave}. */
-  private rememberedPosition?: { studyId: string; positionMs: number }
+  /** The position of the bundle {@link remember} last queued for saving, per study; an open of that study prefers it to a stored preference that the queued save may not have written yet, also after another recording was opened in between. It deliberately survives {@link leave}. */
+  private readonly rememberedPositionMsByStudy = new Map<string, number>()
 
   constructor(private readonly dependencies: PlaybackDependencies) {
     this.clock = dependencies.now ?? (() => performance.now())
@@ -198,6 +198,8 @@ export class PlaybackController {
       contextHash: this.data?.contextHash,
       contextReason: this.data?.contextReason,
       reason: this.reason,
+      // Agents read this before a control: false means only open (or pause) is accepted until the reader is reopened.
+      readerOpen: this.dependencies.readerOpen?.() ?? true,
       frame: this.presented?.projection.frame && {
         sequence: this.presented.projection.frame.sequence,
         hash: this.presented.projection.frame.hash,
@@ -398,9 +400,8 @@ export class PlaybackController {
           const range = this.range()!
           // The moment this controller last confirmed for the study outranks storage: its save may still be queued, and a failed save must not move the learner back.
           const preferredPositionMs =
-            this.rememberedPosition?.studyId === request.studyId
-              ? this.rememberedPosition.positionMs
-              : data.preferredPositionMs
+            this.rememberedPositionMsByStudy.get(request.studyId) ??
+            data.preferredPositionMs
           const positionMs =
             request.positionMs ??
             Math.min(
@@ -525,10 +526,10 @@ export class PlaybackController {
   private remember(): void {
     const bundle = this.presented
     if (!bundle) return
-    this.rememberedPosition = {
-      studyId: bundle.studyId,
-      positionMs: bundle.projection.positionMs,
-    }
+    this.rememberedPositionMsByStudy.set(
+      bundle.studyId,
+      bundle.projection.positionMs,
+    )
     this.saves = this.saves
       .then(() => this.dependencies.save(bundle))
       .catch((error) => {

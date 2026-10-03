@@ -987,6 +987,58 @@ test('a recording reloaded while its position save is still held by storage pres
   await player.controller.dispose()
 })
 
+// Value: protects=each recording's confirmed moment when the learner visits another recording before the first one's save lands; fails_when=position memory keeps only the last recording, so A reopens at its older stored 100 ms and saves it last; why_new=Cycle 0035 R05 (Codex adversarial P2); seam=none
+test('recording A reopened after visiting recording B while A position save is held presents and saves the moment confirmed in A', async () => {
+  // Arrange: A's storage holds 100 ms; the save of A's confirmed 200 ms waits behind the storage lock.
+  const player = playbackHarness(),
+    recordingB = playbackFixture(),
+    recordingBId = recordingB.index.header.studyId
+  let releaseSave: () => void = () => undefined
+  const storedPositionMsByStudy = new Map<string, number>()
+  player.dependencies.load = async (studyId) => ({
+    ...(studyId === recordingBId ? recordingB : player.data),
+    // The workspace restores whatever position storage holds when the load reads it.
+    preferredPositionMs: storedPositionMsByStudy.get(studyId),
+  })
+  player.dependencies.save = async (bundle): Promise<void> => {
+    storedPositionMsByStudy.set(bundle.studyId, bundle.projection.positionMs)
+    player.saved.push(bundle.projection.positionMs)
+  }
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  await player.controller.saved()
+  const storageHeld = new Promise<void>((resolve) => {
+    releaseSave = resolve
+  })
+  player.dependencies.save = async (bundle): Promise<void> => {
+    if (bundle.studyId === player.studyId) await storageHeld
+    storedPositionMsByStudy.set(bundle.studyId, bundle.projection.positionMs)
+    player.saved.push(bundle.projection.positionMs)
+  }
+  player.seek(200)
+  await player.controller.settle(new AbortController().signal, 1_000)
+  player.controller.command({
+    studyId: recordingBId,
+    action: 'open',
+    expectedRevision: player.controller.state().revision,
+  })
+  await player.controller.settle(new AbortController().signal, 1_000)
+
+  // Act
+  player.open()
+  await player.controller.settle(new AbortController().signal, 1_000)
+  const presentedWhileSaveHeld = player.controller.state().presentedMs
+  releaseSave()
+  await player.controller.saved()
+
+  // Assert
+  assert.equal(presentedWhileSaveHeld, 200)
+  assert.equal(storedPositionMsByStudy.get(player.studyId), 200)
+  await player.controller.dispose()
+})
+
 // Value: protects=the learner's confirmed moment when its position save fails; fails_when=a reload falls back to the older stored position, or the failed save is no longer reported; why_new=Cycle 0035 H2 keeps the confirmed position in memory and must keep it after a storage failure; seam=none
 test('a recording reloaded after its position save failed still presents the moment the learner confirmed last and reports the failed save', async () => {
   // Arrange: storage holds 100 ms and rejects every later save.
