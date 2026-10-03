@@ -12,6 +12,7 @@ import type { Participant } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
+import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
 
@@ -30,6 +31,20 @@ export async function nativeParticipantsHarness(
     declaredColumn?: Partial<Record<Participant, number>>
     /** Replaces a participant's sealed map; the default maps only generated 0:0 to source 1:1. */
     mappings?: Partial<Record<Participant, string>>
+    /** Opts a participant into a stop the debugger can bind on another line than declared. The executed module is the source text, so generated line n is source line n + 1 under a map such as 'AAAA;AACA'. */
+    fixture?: Partial<
+      Record<
+        Participant,
+        {
+          /** Replaces the participant's one-statement source; its default already has an empty line 2. */
+          source?: string
+          /** Last line of the participant's citation instead of line 1. */
+          citationEndLine?: number
+          /** Line the participant's stops are declared on instead of line 1. */
+          declaredLine?: number
+        }
+      >
+    >
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -39,11 +54,31 @@ export async function nativeParticipantsHarness(
   })
   const repository = await repositoryHarness(context),
     history = createCrossRuntimeStudy()
-  const original = configuredStops(history.configuration)
+  const original = configuredStops(history.configuration),
+    described = history.descriptor!
+  // A fixture replaces a participant's source text or widens its citation; every hash that names that source follows.
+  for (const stop of [original[0]!, original[1]!]) {
+    const fixture = options.fixture?.[stop.participant]
+    if (!fixture) continue
+    const source = described.sources.find(
+        (candidate) => candidate.path === stop.source.path,
+      )!,
+      anchor = described.anchors[stop.anchorIndex]!
+    if (fixture.source !== undefined) {
+      source.text = fixture.source
+      source.hash = anchor.hash = sha256(fixture.source)
+      source.lineCount = fixture.source.split(/\r\n?|\n/).length
+    }
+    anchor.endLine = fixture.citationEndLine ?? anchor.endLine
+  }
+  described.citationContext = citationContext(described.anchors)
   const declared = (stop: (typeof original)[number]) => ({
     ...stop,
     source: {
       ...stop.source,
+      hash: described.anchors[stop.anchorIndex]!.hash,
+      line:
+        options.fixture?.[stop.participant]?.declaredLine ?? stop.source.line,
       column: options.declaredColumn?.[stop.participant] ?? stop.source.column,
     },
   })
@@ -100,6 +135,8 @@ export async function nativeParticipantsHarness(
   let nextPauseHeld = false,
     inputHeld = false,
     sourceBoundWaitExpired = false
+  // A held wait for an accepted stop's own pause never times out until the test releases it.
+  let sourceBoundWait: { released: boolean } | undefined
   // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
   const pausedAt: Record<
     Participant,
@@ -581,6 +618,20 @@ export async function nativeParticipantsHarness(
             if (value) return value
             return waitUntil(read, description, 0, signal)
           }
+          // A held wait looks until the pause is there or the test releases it, then ends as its 3 s bound would.
+          const heldWait = sourceBoundWait
+          if (heldWait && description === 'source-bound CDP stop') {
+            for (;;) {
+              signal?.throwIfAborted()
+              const value = await read()
+              if (value) return value
+              if (heldWait.released)
+                return waitUntil(read, description, 0, signal)
+              await new Promise<void>((resolve) => {
+                setImmediate(resolve)
+              })
+            }
+          }
           return waitUntil(read, description, timeoutMs, signal)
         },
       },
@@ -755,6 +806,16 @@ export async function nativeParticipantsHarness(
     /** Ends the wait for an accepted stop's own pause after one look, as its 3 s bound would. */
     expireSourceBoundWait(): void {
       sourceBoundWaitExpired = true
+    },
+    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example const wait = harness.holdSourceBoundWait(); wait.release() */
+    holdSourceBoundWait() {
+      const held = { released: false }
+      sourceBoundWait = held
+      return {
+        release: (): void => {
+          held.released = true
+        },
+      }
     },
     // A changed native frame must not inherit a previously captured source pause.
     movePausedFrame(line: number, column = 1): void {

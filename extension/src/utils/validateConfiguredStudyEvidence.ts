@@ -8,6 +8,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { configuredStops } from './configuredStops'
+import { isSavedSourceAtStop } from './isSavedSourceAtStop'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
 export function validateConfiguredStudyEvidence(
@@ -98,10 +99,13 @@ export function validateConfiguredStudyEvidence(
       !source ||
       observation.source.text !== source.text ||
       observation.source.hash !== source.hash ||
-      observation.source.line !== stop.source.line ||
-      // The debugger chooses the column on the declared line. A column other than the requested one is kept only when the saved native top frame confirms it, which the debugger check below requires.
-      (observation.source.column !== stop.source.column &&
-        !observation.debugger)
+      // The debugger chooses the position: another column of the declared line, or a later line within the stop's citation. A position other than the declared one is kept only when the saved native top frame confirms it, which the debugger check below requires.
+      !isSavedSourceAtStop(
+        observation.source,
+        Boolean(observation.debugger),
+        stop.source,
+        descriptor.anchors[stop.anchorIndex],
+      )
     )
       throw new Error(
         'Configured observation source differs from its sealed definition.',

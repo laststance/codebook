@@ -79,3 +79,53 @@ test('a pause is at no stop when none is expected, when the stop’s module is n
   // Assert
   assert.deepEqual(answers, [false, false, false])
 })
+
+/** The stop on line 23 under a sealed map that also puts generated line 33 on line 24 and generated line 34 on line 25. */
+const stopWithLaterLines: PauseStopTarget = {
+  ...stopOnLine23,
+  verifier: {
+    originalLine: (location) =>
+      ({ 32: 23, 33: 24, 34: 25 })[location.lineNumber],
+  },
+}
+
+// Value: protects=a pause at the place the debugger bound a stop to being that stop's pause, and nothing else being it once the binding is known; fails_when=a known bound line is ignored for the declared one, or the declared line still counts beside it; why_new=a binding can now sit on a later line than declared (Cycle 0043, ER3); seam=none
+test('once a stop’s binding is known, a pause is at that stop only on the bound line', () => {
+  // Arrange: declared on line 23, bound on line 24.
+  const boundOnLine24: PauseStopTarget = {
+    ...stopWithLaterLines,
+    bound: { line: 24 },
+    acceptsBoundLine: () => true,
+  }
+  // Act
+  const answers = [
+    isPauseAtStop(pauseAt('9', 33, 4), boundOnLine24),
+    isPauseAtStop(pauseAt('9', 32, 4), boundOnLine24),
+    isPauseAtStop(pauseAt('9', 34, 4), boundOnLine24),
+  ]
+  // Assert
+  assert.deepEqual(answers, [true, false, false])
+})
+
+// Value: protects=a server stop whose binding is read only at its pause being found at once on the one line that binding may move to; fails_when=an unknown binding admits the declared line only, so the moved pause waits out the adoption bound, or admits lines the stop's rule refuses; why_new=a binding can now sit on a later line than declared (Cycle 0043, ER3, ER5); seam=none
+test('while a stop’s binding is unknown, a pause is at that stop on its declared line and on a line the stop accepts as its binding', () => {
+  // Arrange: the stop's rule accepts line 24 and refuses line 25.
+  const asked: number[] = []
+  const unbound: PauseStopTarget = {
+    ...stopWithLaterLines,
+    acceptsBoundLine: (line) => {
+      asked.push(line)
+      return line === 24
+    },
+  }
+  // Act
+  const answers = [
+    isPauseAtStop(pauseAt('9', 32, 4), unbound),
+    isPauseAtStop(pauseAt('9', 33, 4), unbound),
+    isPauseAtStop(pauseAt('9', 34, 4), unbound),
+    isPauseAtStop(pauseAt('9', 33, 4), stopWithLaterLines),
+  ]
+  // Assert: the declared line needs no rule, and a stop without a rule accepts no other line.
+  assert.deepEqual(answers, [true, true, false, false])
+  assert.deepEqual(asked, [24, 25])
+})

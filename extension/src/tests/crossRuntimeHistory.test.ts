@@ -11,6 +11,7 @@ import { repositoryConfigSchema } from '../repositoryConfigSchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from '../utils/assertStudyCheckpoint'
 import { buildRecordingContext } from '../utils/buildRecordingContext'
+import { citationContext } from '../utils/citationContext'
 import { configuredObservationPosition } from '../utils/configuredObservationPosition'
 import { decodeConfiguredStudy } from '../utils/decodeConfiguredStudy'
 import { projectRecording } from '../utils/projectRecording'
@@ -432,4 +433,66 @@ test('a saved stop whose column moved is rejected when its native top frame name
         'Configured observation source differs from its sealed definition.',
     },
   )
+})
+
+/** A cross-runtime study whose server stop was declared at 1:1, cited over lines 1 to 2 and committed at 2:1, where its saved native top frame also is. @example decodeConfiguredStudy(studyWithMovedServerLine(), workspaceKey) */
+const studyWithMovedServerLine = () => {
+  const study = createCrossRuntimeStudy(),
+    server = study.observations[1]!,
+    descriptor = study.descriptor!
+  descriptor.anchors[1]!.endLine = 2
+  descriptor.citationContext = citationContext(descriptor.anchors)
+  server.source = { ...server.source, line: 2 }
+  const frame = server.debugger!.frames[0]!
+  frame.line = 2
+  frame.source!.line = 2
+  return study
+}
+
+// Value: protects=a study saved with a stop the debugger moved to the next line of its citation reopening with that line and its native values; fails_when=the saved-study check accepts the declared line only and answers "Configured observation source differs from its sealed definition."; why_new=a run never committed a stop on another line before (Cycle 0043, criterion 8a); seam=none
+test('a saved stop the debugger bound on a later line within its citation reopens when its native top frame names that line', () => {
+  // Arrange
+  const study = studyWithMovedServerLine()
+  // Act
+  const decoded = decodeConfiguredStudy(study, study.workspaceKey)
+  // Assert
+  assert.equal(decoded.observations[1]?.source.line, 2)
+  assert.equal(decoded.observations[1]?.source.column, 1)
+  assert.equal(decoded.observations[1]?.debugger?.frames[0]?.line, 2)
+  assert.equal(decoded.finalOutcome, 'demonstrated')
+})
+
+// Value: protects=a saved observation on another line than declared never being trusted on its own word; fails_when=a later line within the citation is accepted although no saved native frame confirms it, or although the frame names another line; why_new=the acceptance of a later line is new (Cycle 0043, criterion 8b); seam=none
+test('a saved stop on a later line within its citation is rejected without its native debugger state, and when that state names another line', () => {
+  // Arrange
+  const withoutDebugger = studyWithMovedServerLine()
+  delete withoutDebugger.observations[1]!.debugger
+  const besideFrame = studyWithMovedServerLine()
+  besideFrame.observations[1]!.debugger!.frames[0]!.line = 1
+  // Act / Assert
+  assert.throws(
+    () => decodeConfiguredStudy(withoutDebugger, withoutDebugger.workspaceKey),
+    {
+      message:
+        'Configured observation source differs from its sealed definition.',
+    },
+  )
+  assert.throws(
+    () => decodeConfiguredStudy(besideFrame, besideFrame.workspaceKey),
+    { message: 'Historical debugger differs from its verified source stop.' },
+  )
+})
+
+// Value: protects=studies saved before a later line could be accepted decoding to exactly what was saved; fails_when=the new position check changes, drops or rejects an observation on its declared line; why_new=the saved-study position check was rewritten (Cycle 0043, criterion 8d); seam=none
+test('a study whose stops were committed on their declared lines decodes to the observations it saved', () => {
+  // Arrange: the study an earlier version saved, with the server stop at another column of its declared line.
+  const study = createCrossRuntimeStudy(),
+    server = study.observations[1]!
+  server.source = { ...server.source, column: 8 }
+  server.debugger!.frames[0]!.column = 8
+  const saved = structuredClone(study.observations)
+  // Act
+  const decoded = decodeConfiguredStudy(study, study.workspaceKey)
+  // Assert
+  assert.deepEqual(decoded.observations, saved)
 })

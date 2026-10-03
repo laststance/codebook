@@ -6,15 +6,29 @@ import {
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { citationContext } from '../../utils/citationContext'
 
-/** Supplies immutable configured history for decoder/storage tests without pretending to run an app or debugger. @example createConfiguredStudy().observations[0]?.values['value:nextTheme'] // 'dark' */
+/**
+ * Supplies immutable configured history for decoder/storage tests without pretending to run an app or debugger.
+ * @param source - Text of the cited browser source `src/theme.ts`; its default has the statement on line 1 and an empty line 2.
+ * @param citationEndLine - Last line of that source's citation; the default cites line 1 only, so a test of a stop the debugger moves to a later line widens it.
+ * @returns A demonstrated one-stop study declared and observed at 1:1.
+ * @example
+ * createConfiguredStudy().observations[0]?.values['value:nextTheme'] // 'dark'
+ * createConfiguredStudy(undefined, 2).descriptor?.anchors[0]?.endLine // 2
+ */
 export function createConfiguredStudy(
   source = 'const nextTheme = "dark";\n',
+  citationEndLine = 1,
 ): ConfiguredStudy & { version: 3; configuration: RepositoryConfiguration } {
   const instanceId = '11111111-1111-4111-8111-111111111111',
     runId = '22222222-2222-4222-8222-222222222222'
   const secondary = 'export const mode = "display";\n'
   const anchors = [
-    { path: 'src/theme.ts', hash: sha256(source), startLine: 1, endLine: 1 },
+    {
+      path: 'src/theme.ts',
+      hash: sha256(source),
+      startLine: 1,
+      endLine: citationEndLine,
+    },
     { path: 'src/mode.ts', hash: sha256(secondary), startLine: 1, endLine: 1 },
   ]
   const configuration = repositoryConfigSchema.parse({

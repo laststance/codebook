@@ -37,6 +37,15 @@ export async function configuredRuntimeHarness(
     mappings?: string
     /** Replaces the declared before conditions, so a test can make a text or attribute condition the one that fails. */
     before?: RepositoryConfiguration['action']['before']
+    /** Opts into a source the debugger can bind on another line than declared: the executed module is then the source text itself, so generated line n is source line n + 1 under a map such as 'AAAA;AACA'. */
+    fixture?: {
+      /** Replaces the one-statement source; its default already has an empty line 2. */
+      source?: string
+      /** Last line of the first citation instead of line 1. */
+      citationEndLine?: number
+      /** Line the first stop is declared on instead of line 1. */
+      declaredLine?: number
+    }
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -44,12 +53,15 @@ export async function configuredRuntimeHarness(
     await owned?.stop()
   })
   const repository = await repositoryHarness(context),
-    reference = createConfiguredStudy()
+    fixture = options.fixture,
+    reference = createConfiguredStudy(fixture?.source, fixture?.citationEndLine)
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
   if (options.before) reference.configuration.action.before = options.before
-  // Either change makes the frozen intent hash stale.
-  if (additionalStops.length || options.before)
+  if (fixture?.declaredLine)
+    reference.configuration.source.line = fixture.declaredLine
+  // Each of these changes makes the frozen intent hash stale.
+  if (additionalStops.length || options.before || fixture)
     reference.configurationHash = sha256(
       JSON.stringify(reference.configuration),
     )
@@ -68,7 +80,8 @@ export async function configuredRuntimeHarness(
       definition.configuration.source.path,
     ),
     source = reference.descriptor!.sources[0]!.text,
-    javascript = 'const nextTheme = "dark";'
+    // With a fixture the executed module mirrors the source line for line, so a pause can be placed on any of its lines.
+    javascript = fixture ? source : 'const nextTheme = "dark";'
   const bundle: BundleSource = {
     sourcePath,
     source,
@@ -110,11 +123,16 @@ export async function configuredRuntimeHarness(
     captureEntered = (): void => {}
   let run: ConfiguredBrowserRun
   let currentColumn = 1,
+    currentLine = 1,
     stopCount = 0,
     breakpointCount = 0
   // Where the adapter reports the first stop's verified binding when it differs from the requested position.
   let firstStopBinding: { line: number; column: number } | undefined,
     emitNextPause = true
+  // Where the adapter reports every later stop's verified binding when it differs from the requested position.
+  let laterStopBinding: { line: number; column: number } | undefined
+  // A held wait for an accepted stop's own pause never times out until the test releases it.
+  let sourceBoundWait: { released: boolean } | undefined
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
@@ -166,7 +184,7 @@ export async function configuredRuntimeHarness(
               id: 1,
               name: 'configured',
               source: { path: sourcePath },
-              line: 1,
+              line: currentLine,
               column: currentColumn,
             },
           ],
@@ -211,7 +229,11 @@ export async function configuredRuntimeHarness(
         const next = additionalStops[stopCount - 1]
         if (next) {
           // A line that ran only before its breakpoint existed never pauses again.
-          if (emitNextPause) emitPause(next.column)
+          if (emitNextPause)
+            emitPause(
+              laterStopBinding?.column ?? next.column,
+              laterStopBinding?.line,
+            )
         } else inputResolve()
         return {}
       }
@@ -222,16 +244,20 @@ export async function configuredRuntimeHarness(
         (candidate) => candidate.id === breakpoint.id,
       )
       if (owned && bindingLookupFailure) throw new Error(bindingLookupFailure)
+      // The first stop and every later one can each be reported at another position than requested; the learner's own breakpoint never is.
+      const reported =
+        owned?.id === 'owned-breakpoint'
+          ? firstStopBinding
+          : owned?.id.startsWith('owned-breakpoint-')
+            ? laterStopBinding
+            : undefined
       return bound && !rejectBinding && owned
         ? {
             id: 1,
             verified: true,
-            line:
-              (owned.id === 'owned-breakpoint' && firstStopBinding?.line) ||
-              owned.location.range.start.line + 1,
+            line: reported?.line ?? owned.location.range.start.line + 1,
             column:
-              (owned.id === 'owned-breakpoint' && firstStopBinding?.column) ||
-              owned.location.range.start.character + 1,
+              reported?.column ?? owned.location.range.start.character + 1,
           }
         : undefined
     },
@@ -245,15 +271,16 @@ export async function configuredRuntimeHarness(
           callFrameId: 'selected-frame',
           location: {
             scriptId: 'actual',
-            lineNumber: 0,
+            lineNumber: currentLine - 1,
             columnNumber: currentColumn - 1,
           },
         },
       ],
     })
   }
-  const emitPause = (column = 1): void => {
+  const emitPause = (column = 1, line = 1): void => {
     currentColumn = column
+    currentLine = line
     stopCount++
     // A real debugger may reveal an existing source tab over the leased application panel.
     if (hideViewportAtPause) viewportReady = false
@@ -378,7 +405,11 @@ export async function configuredRuntimeHarness(
           inputResolve = resolve
           inputReject = reject
         })
-        if (emitInputPause) emitPause(firstStopBinding?.column)
+        if (emitInputPause)
+          emitPause(
+            firstStopBinding?.column,
+            firstStopBinding?.line ?? fixture?.declaredLine,
+          )
         return pending
       }
       if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
@@ -569,6 +600,20 @@ export async function configuredRuntimeHarness(
             signal?.throwIfAborted()
             return waitUntil(read, description, 0, signal)
           }
+          // A held wait for the accepted stop's own pause looks until the pause is there or the test releases it, then ends as its 3 s bound would.
+          const heldWait = sourceBoundWait
+          if (heldWait && description === 'source-bound CDP stop') {
+            for (;;) {
+              signal?.throwIfAborted()
+              const value = await read()
+              if (value) return value
+              if (heldWait.released)
+                return waitUntil(read, description, 0, signal)
+              await new Promise<void>((resolve) => {
+                setImmediate(resolve)
+              })
+            }
+          }
           return waitUntil(read, description, timeoutMs, signal)
         },
       },
@@ -654,6 +699,20 @@ export async function configuredRuntimeHarness(
     /** Reports the first stop's verified binding, and its pause, at this position instead of the requested one. */
     bindFirstStopAt(line: number, column: number): void {
       firstStopBinding = { line, column }
+    },
+    /** Reports every later stop's verified binding, and its pause, at this position instead of the requested one. */
+    bindLaterStopsAt(line: number, column: number): void {
+      laterStopBinding = { line, column }
+    },
+    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example const wait = harness.holdSourceBoundWait(); wait.release() */
+    holdSourceBoundWait() {
+      const held = { released: false }
+      sourceBoundWait = held
+      return {
+        release: (): void => {
+          held.released = true
+        },
+      }
     },
     /** Lets a continuation run on without the next declared stop ever pausing. */
     suppressNextPause(): void {
