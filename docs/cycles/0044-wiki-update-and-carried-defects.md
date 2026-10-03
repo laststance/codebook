@@ -87,7 +87,51 @@ All 440 rows, with their source evidence and closing criterion, are in [0044-car
 
 ## Attempts and evidence
 
-No observations yet.
+### Entry repeated after a second compaction, 2026-10-03
+
+The working context was compacted again while Part 2 ran. Before any further source change the mandatory entry was repeated from the files on disk: PRODUCT_GOAL (v9), the three feature contracts, IMPLEMENTATION, DESIGN and DEVELOPMENT in full; PROJECT_STATE's header table, assignment, all thirteen gap rows and its "One next action" paragraph in full (the historical checkpoints between them by their first lines only); this record in full. The approved PNG was opened with the image viewer again (SHA-256 unchanged, `f189ee82…`): region 3's right rail shows "Source changed · Update available" above the **Update LLM Wiki** button, then "On this page", "Open in VS Code" and "Output: project folder / Change location". Checkout at that point: this branch at `908e3f4`, clean.
+
+### Part 1 mechanism (`908e3f4`)
+
+One extension-owned run state, `WikiUpdateRun` (`extension/src/utils/wikiUpdateRun.ts`), is shared by the command, the `/update` link and the browser button and is served by the reader at `api/update-status` (GET only, the same token and loopback rules as `api/freshness`).
+
+- VS Code has no chat result API. After the chat opens, the extension watches the owned manifest: an identity that changed (manifest revision plus a digest of the sorted sources) with freshness `current` is `succeeded`; the watch ends as `timed-out` after 15 minutes (`WIKI_UPDATE_WATCH_TIMEOUT_MS`), as `cancelled` when the extension stops it, and as `conflict` when a learner-owned file in the output folder collides with a page or asset of a candidate staged after the run began.
+- Cursor keeps its CLI run and maps its result to the same states (`succeeded`, `cancelled` through its cancellation token, `conflict`, `failed` with the reason).
+- A second start while a run is active is refused in all three entries ("Codebook is already updating this project’s LLM Wiki."); a start on a site that already matches the source records `already-current` and starts nothing.
+- The page shows the state under the freshness label (`role="status"`, polite), polls every 2 s while a run is active and on load, and holds the update link back while running. Its wording is one function (`describeWikiUpdate`) that the page script embeds, so the tests read the wording the page uses.
+
+Tests: 44 in eight new files (`wikiUpdateRun` 7, `wikiManifestIdentity` 3, `waitForWikiPublish` 7, `describeWikiUpdate` 4, `describeUpdateFailure` 3, `detectWikiPublishConflicts` 6, `deepWikiReaderUpdateStatus` 5, `wikiUpdateFlow` 9), and two changed tests in `extension.test.ts` (a second VS Code start is refused; the Cursor update starts from a stale site).
+
+| Criterion (Issue #83, Part 1)             | Test                                                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1 exactly one result, shown without reload | `wikiUpdateFlow`: VS Code running then succeeded; chat failure; `waitForWikiPublish`: timed-out with a manual clock |
+| 2 Cursor reports the same states          | `wikiUpdateFlow`: Cursor success, failure, cancel                                                                 |
+| 3 no second run                           | `wikiUpdateRun`: `begin` refuses; `extension.test`: second start refused with its notice                          |
+| 4 new identity and `current`              | `wikiUpdateFlow`: succeeded carries the new identity; `describeWikiUpdate`: "Updated to …"                         |
+| 5 byte-identical after cancel or failure  | `wikiUpdateFlow`: cancel with a directory hash before and after                                                   |
+| 6 configured output                       | `wikiUpdateFlow`: relocation                                                                                      |
+| 7 survives a reader reload                | `deepWikiReaderUpdateStatus`: the route answers the running state to a new request                                |
+| 8 manual-file conflict                    | `detectWikiPublishConflicts` (6), `wikiUpdateFlow`: conflict names the path                                       |
+
+Disabled-fix controls (the compiled file is patched, the named test is run, the file is restored and its hash compared; all nine failed as expected and every restore matched):
+
+| Control | Disabled                                             | Test that fails                                   |
+| ------- | ---------------------------------------------------- | ------------------------------------------------- |
+| C1      | the running check in `updateDeepWiki`                | `extension.test`: second start refused            |
+| C2      | the already-aborted return of the watch's sleep      | `waitForWikiPublish`: cancel returns at once      |
+| C3      | the cancellation mapping of the Cursor branch        | `wikiUpdateFlow`: Cursor cancel                   |
+| C4      | the already-current return                           | `wikiUpdateFlow`: already-current starts nothing  |
+| C5      | the conflict probe of the watch                      | `wikiUpdateFlow`: conflict                        |
+| C6      | the `api/update-status` route                        | `deepWikiReaderUpdateStatus`                      |
+| C7      | `begin`'s refusal                                    | `wikiUpdateRun`                                   |
+| C8      | `#finish`'s running check                            | `wikiUpdateRun`: a late result is ignored         |
+| C9      | the native-error test of `describeUpdateFailure`     | `describeUpdateFailure`: no `Error:` prefix       |
+
+Limits of this level: the page wording is tested through the served script run in a vm, not in a browser DOM; the conflict probe reads the publisher's sibling `<output>.stage-<id>` folders; criterion 9 (both hosts, natively) is run on the final candidate and recorded below.
+
+### Part 2
+
+Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
 
 ## Result and decision
 
