@@ -11,7 +11,7 @@ export interface PauseStopTarget {
   /** The line the debugger verified the stop's breakpoint on, once that binding is known; it may be a later line than declared. */
   bound?: { line: number }
   /** Tells whether a line other than the declared one may be the stop's binding; asked only while the binding is not known yet. */
-  acceptsBoundLine?: (line: number) => boolean
+  acceptsBoundLine: (line: number) => boolean
 }
 
 /**
@@ -23,9 +23,10 @@ export interface PauseStopTarget {
  * - `true` when the top frame is in the stop's module and maps to the stop's bound line, or, while no binding is known, to its declared line or a line the stop accepts as its binding; at any column
  * - `false` without a stop, before the stop's module was announced, for an empty stack, another script, another line, or a location the map does not reach
  * @example
- * isPauseAtStop(pauseAt('9', 32, 4), { script: { scriptId: '9' }, source: { line: 23 }, verifier }) // the map puts 32:4 on line 23 => true
- * isPauseAtStop(pauseAt('9', 27, 23), { script: { scriptId: '9' }, source: { line: 23 }, verifier }) // the map puts 27:23 on line 18 => false
- * isPauseAtStop(pauseAt('9', 33, 4), { script: { scriptId: '9' }, source: { line: 23 }, bound: { line: 24 }, verifier }) // the map puts 33:4 on line 24, where the debugger bound the stop => true
+ * const acceptsBoundLine = (line: number) => line === 23 || line === 24
+ * isPauseAtStop(pauseAt('9', 32, 4), { script: { scriptId: '9' }, source: { line: 23 }, verifier, acceptsBoundLine }) // the map puts 32:4 on line 23 => true
+ * isPauseAtStop(pauseAt('9', 27, 23), { script: { scriptId: '9' }, source: { line: 23 }, verifier, acceptsBoundLine }) // the map puts 27:23 on line 18 => false
+ * isPauseAtStop(pauseAt('9', 33, 4), { script: { scriptId: '9' }, source: { line: 23 }, bound: { line: 24 }, verifier, acceptsBoundLine }) // the map puts 33:4 on line 24, where the debugger bound the stop => true
  */
 export function isPauseAtStop(
   event: Protocol.Debugger.PausedEvent,
@@ -46,9 +47,9 @@ function isLocationAtStop(
   return line !== undefined && isLineOfStop(line, stop)
 }
 
-/** Tells {@link isLocationAtStop} whether a source line is where a stop's breakpoint sits: the bound line once known, otherwise the declared line or a line the binding may move to. @example isLineOfStop(24, { source: { line: 23 }, bound: { line: 24 }, verifier }) // true */
+/** Tells {@link isLocationAtStop} whether a source line is where a stop's breakpoint sits: the bound line once known, otherwise the declared line or a line the binding may move to. @example isLineOfStop(24, { source: { line: 23 }, bound: { line: 24 }, verifier, acceptsBoundLine }) // true */
 function isLineOfStop(line: number, stop: PauseStopTarget): boolean {
   // A known binding is exact: the breakpoint sits on that line and no other.
   if (stop.bound) return line === stop.bound.line
-  return line === stop.source.line || Boolean(stop.acceptsBoundLine?.(line))
+  return line === stop.source.line || stop.acceptsBoundLine(line)
 }

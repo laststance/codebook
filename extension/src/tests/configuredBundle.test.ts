@@ -466,3 +466,30 @@ test('the sealed map gives the cited source’s line for a generated location at
   // Assert
   assert.deepEqual(lines, [1, 1, 2, 2, undefined, undefined])
 })
+
+// Value: protects=the binding rule and the declared-line check telling a comment the development build kept from code; fails_when=a mapping onto a `//` comment of the generated module is reported as a mapped position; why_new=Cycle 0043 N-2 (Next's webpack build maps `// Auth.js error messages…`); seam=none
+test('a line whose only mapping points at a comment the generated module kept is not a mapped position, while code beside a comment is', () => {
+  // Arrange: generated lines 0 to 3 map to source lines 1 to 4; lines 2 and 3 are kept comments, line 4 holds code before a comment.
+  const citedSource =
+    'first();\n// Auth.js error messages\n/* kept */\nsecond(); // why\n'
+  const verifier = createBundleVerifier({
+    ...bundle,
+    source: citedSource,
+    javascript: citedSource,
+    sourceMap: JSON.stringify({
+      ...payload,
+      sourcesContent: ['other();', citedSource],
+      mappings: 'ACAA;AACA;AACA;AACA',
+    }),
+  })
+  // Act
+  const result = verifier.mappedPositions(1, 4)
+  // Assert
+  assert.deepEqual(result, {
+    positions: [
+      { line: 1, column: 1 },
+      { line: 4, column: 1 },
+    ],
+    complete: true,
+  })
+})

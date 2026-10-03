@@ -137,6 +137,8 @@ export async function configuredRuntimeHarness(
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
+  // The generated lines the adapter lists as break locations of the module; without them it cannot answer.
+  let possibleBreakLines: number[] | undefined
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
     requiredValueObject = false,
@@ -417,6 +419,14 @@ export async function configuredRuntimeHarness(
         return pending
       }
       if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
+      if (method === 'Debugger.getPossibleBreakpoints' && possibleBreakLines)
+        return {
+          locations: possibleBreakLines.map((lineNumber) => ({
+            scriptId: 'actual',
+            lineNumber,
+            columnNumber: 0,
+          })),
+        }
       throw new Error(`Unexpected CDP request: ${method}`)
     },
   }
@@ -703,6 +713,10 @@ export async function configuredRuntimeHarness(
     /** Reports the first stop's verified binding, and its pause, at this position instead of the requested one. */
     bindFirstStopAt(line: number, column: number): void {
       firstStopBinding = { line, column }
+    },
+    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with a location at column 0 of each of these zero-based generated lines. */
+    listPossibleBreakLines(lines: number[]): void {
+      possibleBreakLines = lines
     },
     /** Reports every later stop's verified binding, and its pause, at this position instead of the requested one. */
     bindLaterStopsAt(line: number, column: number): void {

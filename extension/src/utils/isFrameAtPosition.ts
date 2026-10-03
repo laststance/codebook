@@ -4,7 +4,7 @@ import type { DebugProtocol } from '@vscode/debugprotocol'
 
 /**
  * Tells whether a native top frame sits in a file at an exact position, for {@link ConfiguredBrowserRun} when it commits a pause and when it re-checks one after a stack refresh.
- * The position is the one the debugger bound, which lies on the declared line and may differ from the requested column.
+ * The position is the one the debugger bound, which lies on the declared line or on a later line the stop's binding rule accepts, and may differ from the requested column.
  * @param frame - The debugger's top stack frame, if it reported one.
  * @param sourcePath - Absolute path of the source file the stop belongs to.
  * @param position - One-based line and column the breakpoint bound at; `undefined` while nothing is bound.

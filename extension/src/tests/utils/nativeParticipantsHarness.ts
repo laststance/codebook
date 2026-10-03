@@ -861,6 +861,28 @@ export async function nativeParticipantsHarness(
     bindAt(name: Participant, line: number, column: number): void {
       boundAt[name] = { line, column }
     },
+    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads. */
+    announceBreakpointVerified(
+      name: Participant,
+      line: number,
+      column: number,
+    ): void {
+      for (const breakpoint of breakpoints)
+        run.onEvent(sessions[name], {
+          type: 'event',
+          seq: ++sequence,
+          event: 'breakpoint',
+          body: {
+            reason: 'changed',
+            breakpoint: {
+              id: breakpoint.id.length,
+              verified: true,
+              line,
+              column,
+            },
+          },
+        })
+    },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {
       acknowledgedAt = { line, column }

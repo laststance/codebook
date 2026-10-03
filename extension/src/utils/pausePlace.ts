@@ -8,7 +8,7 @@ import {
 import type { PauseStopTarget } from './isPauseAtStop'
 
 /** A declared stop as a place can be named after it: the comparison target plus the repository path the declaration cites. */
-export type PausePlaceStop = PauseStopTarget & {
+export type PausePlaceStop = Omit<PauseStopTarget, 'acceptsBoundLine'> & {
   source: { path: string; line: number }
 }
 

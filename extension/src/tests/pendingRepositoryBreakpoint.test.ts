@@ -738,3 +738,99 @@ test('a breakpoint replacement after a moved acknowledgement clears the moved pl
   )
   assert.equal(breakpoint.movedTo(session), undefined)
 })
+
+// Value: protects=a moved owned breakpoint still listed by a retirement reply without ids keeping retirement unconfirmed; fails_when=the fallback compares only the declared position 20:5 and counts the breakpoint left at its moved place 21:7 as retired; why_new=Cycle 0043 R5; seam=none
+test('without breakpoint ids in the adapter reply, a breakpoint left on the place the owned one moved to still blocks retirement', async () => {
+  // Arrange: the owner declared 20:5, its rule accepts line 21 and the adapter verified the breakpoint at 21:7.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 7 }),
+  )
+  await breakpoint.registered(session, signal)
+  // Act: the reply cannot say which breakpoint remains on 21:7.
+  const retiring = breakpoint.retire(session, AbortSignal.timeout(1_000))
+  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]))
+  breakpoint.onResponse(session, {
+    seq: 102,
+    type: 'response',
+    command: 'setBreakpoints',
+    request_seq: 2,
+    success: true,
+    body: {
+      breakpoints: [
+        { verified: true, line: 2, column: 1 },
+        { verified: true, line: 21, column: 7 },
+      ],
+    },
+  })
+  // Assert
+  await assert.rejects(
+    retiring,
+    /did not confirm retirement of the owned breakpoint/,
+  )
+  assert.equal(breakpoint.retired, false)
+})
+
+// Value: protects=a deadline never naming a moved place of a registration that later failed; fails_when=movedTo reads the receipt's place without the registration's failure; why_new=Cycle 0043 R14 (removing the failure check left every test green); seam=none
+test('a moved acknowledgement followed by a failed duplicate reply for the same registration leaves no moved or verified place', async () => {
+  // Arrange: the adapter verified the owned breakpoint at 21:7, which the owner's rule accepts.
+  const { breakpoint, session, request, response } = await breakpointHarness(
+    'declared-line',
+    (line) => line === 21,
+  )
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 7 }),
+  )
+  const placeBeforeFailure = JSON.stringify(breakpoint.movedTo(session))
+  // Act: a duplicate reply to the same request is unsuccessful.
+  breakpoint.onResponse(session, { ...response(1), success: false })
+  // Assert
+  assert.equal(placeBeforeFailure, '{"line":21,"column":7}')
+  assert.equal(breakpoint.movedTo(session), undefined)
+  assert.equal(breakpoint.verifiedPlace(session), undefined)
+})
+
+// Value: protects=a pending server stop learning where the adapter bound it when its module loads, so its deadline can name that place and a pause is compared with it; fails_when=the adapter's DAP breakpoint event is ignored and the place stays unknown; why_new=Cycle 0043 R8/O1 (only a setBreakpoints reply gave a place); seam=none
+test('a pending registration that the adapter later reports verified on a later line the owner’s rule accepts gains that moved place, and one on a refused line does not', async () => {
+  // Arrange: the owner declared 20:5 and its rule accepts line 21; the registration is pending.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(session, response())
+  // Act
+  breakpoint.onEvent(session, {
+    seq: 200,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 30, column: 1 },
+    },
+  })
+  const placeAfterRefusedLine = breakpoint.movedTo(session)
+  breakpoint.onEvent(session, {
+    seq: 201,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 21, column: 7 },
+    },
+  })
+  const receipt = await breakpoint.registered(session, signal)
+  // Assert
+  assert.equal(placeAfterRefusedLine, undefined)
+  assert.equal(
+    JSON.stringify(breakpoint.movedTo(session)),
+    '{"line":21,"column":7}',
+  )
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',
+  )
+})
