@@ -996,7 +996,7 @@ test('the update group is a bordered panel with a filled button, and keeps a bou
   for (const rule of [
     '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
     filledButton,
-    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0}}',
+    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
   ])
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
   // Both rules weigh the same, so the held-back look must come later to win.

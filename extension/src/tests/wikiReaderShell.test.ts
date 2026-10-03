@@ -43,7 +43,7 @@ test('the published page draws the group as a panel with a filled update button 
     assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
   assert.match(
     shell,
-    /@media\(max-width:1000px\)\{[^\n]*\[data-codebook-update-group\]\{flex:0 1 18rem;min-width:0\}/,
+    /@media\(max-width:1000px\)\{[^\n]*\[data-codebook-update-group\]\{flex:0 1 18rem;min-width:0;align-self:flex-start\}/,
   )
 })
 

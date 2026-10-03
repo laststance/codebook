@@ -65,8 +65,8 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-group=bare]{background:none;border:0;padding:0}',
     '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem}',
     '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}',
-    // In the narrow layout the rail is a row; the group keeps a bounded column of it.
-    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0}}',
+    // In the narrow layout the rail is a short scrolling row; the group keeps a bounded column of it and its own height, so the panel encloses its text.
+    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
     '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
     // The status line is smaller than the rail text; an empty one takes no room, so it can stay in the accessibility tree.
