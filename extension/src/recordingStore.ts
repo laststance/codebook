@@ -172,6 +172,21 @@ export class RecordingStore {
     ).admitsStudy(studyId)
   }
 
+  /**
+   * Counts the studies saved in the library that shares this store's directory, for {@link StudyService.status}.
+   * @returns The number of saved studies the Saved Study Limit is compared with.
+   * @throws When the library directory cannot be read.
+   * @example
+   * await store.savedStudyCount() // => 1
+   */
+  savedStudyCount(): Promise<number> {
+    return new LearningLibrary(
+      this.learningDirectory,
+      this.workspaceKey,
+      this.capacity,
+    ).savedStudyCount()
+  }
+
   /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
   start(
     input: RecordingBinding,

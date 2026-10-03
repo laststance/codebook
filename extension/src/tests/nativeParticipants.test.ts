@@ -1177,11 +1177,11 @@ test('a later server stop whose registration is acknowledged on another line end
   // Assert
   assert.match(
     cause,
-    /^Error: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration: \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
+    /^Error: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration \(declared 1:1, answered 2:1 verified\): \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
   )
   assert.match(
     harness.run.view().failures[0] ?? '',
-    /^Next declared stop was not armed and no resume was sent: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration: /,
+    /^Next declared stop was not armed and no resume was sent: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration \(declared 1:1, answered 2:1 verified\): /,
   )
   assert.equal(
     harness.commands.some((command) => command.method === 'continue'),
