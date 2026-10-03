@@ -2,6 +2,7 @@ import { WIKI_UPDATE_SHOWN_PATH_LIMIT } from '../constants'
 
 import { describeWikiUpdate } from './describeWikiUpdate'
 import { formatClockTime } from './formatClockTime'
+import { plainNotificationText } from './plainNotificationText'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
 /** The editor notification for one ended update: how loud it is and what it says. */
@@ -45,7 +46,8 @@ export function wikiUpdateNotice(
     reasonLimitChars: Number.POSITIVE_INFINITY,
   })
   if (!described) return undefined
-  const sentence = described.lead + described.rest
+  // The sentence carries paths, a candidate's name and an agent's own failure text; none of them may become a link the editor renders.
+  const sentence = plainNotificationText(described.lead + described.rest)
   if (status.state === 'succeeded')
     return {
       severity: 'information',

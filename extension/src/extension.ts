@@ -58,6 +58,7 @@ import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from './utils/listWikiCandidates'
+import { plainNotificationText } from './utils/plainNotificationText'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
 import {
@@ -241,7 +242,9 @@ export function activate(
         } catch (error) {
           if (!stopping && !cursorRemoving && running === server)
             void vscode.window.showWarningMessage(
-              `Codebook agent server started, but Cursor MCP registration failed: ${String(error)}. Run Codebook: Set Up AI Chat to repair the connection.`,
+              plainNotificationText(
+                `Codebook agent server started, but Cursor MCP registration failed: ${String(error)}. Run Codebook: Set Up AI Chat to repair the connection.`,
+              ),
             )
         }
       }
@@ -814,7 +817,9 @@ export function activate(
       // Without a manifest there is nothing to update; the learner needs the generate step, not a file-system error.
       if (tokenAtStart === undefined) {
         void vscode.window.showErrorMessage(
-          `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`,
+          plainNotificationText(
+            `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`,
+          ),
         )
         return
       }
@@ -998,7 +1003,9 @@ export function activate(
                   : 'open the Wiki citation'
             // An update that failed before any state was recorded reads without the `Error:` prefix.
             void vscode.window.showErrorMessage(
-              `Codebook could not ${action}: ${incomingUri.path === '/update' ? describeUpdateFailure(error) : String(error)}`,
+              plainNotificationText(
+                `Codebook could not ${action}: ${incomingUri.path === '/update' ? describeUpdateFailure(error) : String(error)}`,
+              ),
             )
           }
         },
@@ -1056,7 +1063,9 @@ export function activate(
               )
             } catch (error) {
               void vscode.window.showWarningMessage(
-                `Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: ${String(error)}. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.`,
+                plainNotificationText(
+                  `Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: ${String(error)}. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.`,
+                ),
               )
             }
           } finally {
@@ -1097,7 +1106,9 @@ export function activate(
         } catch (error) {
           // Cold failures have no Wiki panel; report them without waiting for notification dismissal or swallowing rejection.
           void vscode.window.showErrorMessage(
-            `Codebook could not open Repository Wiki: ${String(error)}`,
+            plainNotificationText(
+              `Codebook could not open Repository Wiki: ${String(error)}`,
+            ),
           )
           throw error
         }
@@ -1197,7 +1208,9 @@ export function activate(
         await deepWikiReader?.close()
         deepWikiReader = undefined
         void vscode.window.showErrorMessage(
-          `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
+          plainNotificationText(
+            `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
+          ),
         )
         throw error
       }
@@ -1207,7 +1220,9 @@ export function activate(
         await updateDeepWiki()
       } catch (error) {
         void vscode.window.showErrorMessage(
-          `Codebook could not start the Wiki update: ${describeUpdateFailure(error)}`,
+          plainNotificationText(
+            `Codebook could not start the Wiki update: ${describeUpdateFailure(error)}`,
+          ),
         )
         throw error
       }
@@ -1219,7 +1234,9 @@ export function activate(
           await workspace().saveLearningReplay(studyId)
         } catch (error) {
           void vscode.window.showErrorMessage(
-            `Codebook could not save learning: ${String(error)}`,
+            plainNotificationText(
+              `Codebook could not save learning: ${String(error)}`,
+            ),
           )
           throw error
         }
@@ -1303,7 +1320,9 @@ export function activate(
         }
       })().catch((error) =>
         vscode.window.showErrorMessage(
-          `Codebook cleanup incomplete: ${String(error)}`,
+          plainNotificationText(
+            `Codebook cleanup incomplete: ${String(error)}`,
+          ),
         ),
       )
     }),
@@ -1326,7 +1345,9 @@ export function activate(
       notifyMcpDefinitions()
     })().catch((error) => {
       void vscode.window.showWarningMessage(
-        `Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`,
+        plainNotificationText(
+          `Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`,
+        ),
       )
     })
   }

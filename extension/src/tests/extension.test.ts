@@ -631,6 +631,90 @@ test('browser source citations activate only the matching checkout and report ch
   }
 })
 
+test('a citation link whose path is written as a command link shows an error without a clickable link', async () => {
+  // Arrange
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-wiki-link-'))
+  const projectRoot = await realpath(projectDirectory)
+  let handleUri:
+    ((uri: { path: string; query: string }) => Promise<void>) | undefined
+  const opened: string[] = [],
+    errors: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          openTextDocument: async (uri: { fsPath: string }) => ({
+            uri,
+            lineCount: 2,
+          }),
+        },
+        Uri: { file: (fsPath: string) => ({ fsPath }) },
+        window: {
+          registerUriHandler: (handler: {
+            handleUri(uri: { path: string; query: string }): Promise<void>
+          }) => {
+            handleUri = handler.handleUri
+            return { dispose(): void {} }
+          },
+          showTextDocument: async (document: { uri: { fsPath: string } }) => {
+            opened.push(document.uri.fsPath)
+          },
+          showErrorMessage: (message: string) => {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: projectRoot },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    assert.ok(handleUri)
+    // Act
+    await handleUri({
+      path: '/source',
+      query: new URLSearchParams({
+        root: projectRoot,
+        path: '[Open cited line](command:workbench.action.terminal.new)',
+        line: '1',
+        sha256: '0'.repeat(64),
+      }).toString(),
+    })
+
+    // Assert
+    assert.deepEqual(opened, [])
+    assert.equal(errors.length, 1)
+    assert.match(errors[0]!, /^Codebook could not open the Wiki citation: /)
+    assert.match(
+      errors[0]!,
+      /\[Open cited line\] \(command:workbench\.action\.terminal\.new\)/,
+    )
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(projectDirectory, { recursive: true, force: true })
+  }
+})
+
 test('browser Update LLM Wiki starts the shared skill only for its opened repository and refuses a second start while the first run is watched', async () => {
   // Arrange
   const projectDirectory = await mkdtemp(

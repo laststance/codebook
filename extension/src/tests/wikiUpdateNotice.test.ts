@@ -116,6 +116,51 @@ test('a learner file in the way is a warning that names the file and the next st
   })
 })
 
+test('a learner file whose name is written as a command link is named as plain text, so the editor draws no link in the warning', () => {
+  // Act
+  const notice = wikiUpdateNotice(
+    {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt: '2026-10-03T12:10:00.000Z',
+      paths: ['[Fix it](command:workbench.action.terminal.new)'],
+      cause: 'learner-file',
+      site: 'kept',
+      ...OUTPUT,
+    },
+    at2110,
+  )
+
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'warning',
+    message:
+      'Update stopped at 21:10: it would overwrite your own file in the Wiki folder ([Fix it] (command:workbench.action.terminal.new)). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+  })
+})
+
+test('an agent failure text that carries a command link is an error notice without link syntax', () => {
+  // Act
+  const notice = wikiUpdateNotice(
+    {
+      state: 'failed',
+      host: 'cursor',
+      finishedAt: '2026-10-03T12:10:00.000Z',
+      reason: 'See [the log](command:workbench.action.openSettings) now.',
+      site: 'kept',
+      ...OUTPUT,
+    },
+    at2110,
+  )
+
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'error',
+    message:
+      'Update failed at 21:10: See [the log] (command:workbench.action.openSettings) now. The last usable site is kept.',
+  })
+})
+
 test('a failed update is an error notice that says whether the site was kept', () => {
   // Act
   const notice = wikiUpdateNotice(
