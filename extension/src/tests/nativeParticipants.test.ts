@@ -1469,6 +1469,7 @@ test('a continued and a pause the debugger makes for itself after the last conti
 })
 
 // Value: protects=a run never being certified as completed while its server is still paused; fails_when=the after phase completes with a pause nobody announced still open, or never completes after that pause is resumed; why_new=an unannounced pause no longer fails the run, so completion has to wait for its resume (Cycle 0042 ER5); seam=none
+// Value: protects=the after image being taken only once no participant is paused at a pause the debugger made for itself (ER5, the wait before the after capture); fails_when=the wait before the after capture is removed, so the after image is taken while the server is still paused; why_new=the wait after the capture still holds completion, so no assertion read the after image while that pause was open (SR5); seam=none
 test('a run does not complete while the server is still paused at a pause the debugger made for itself, and completes once that pause is resumed', async (context) => {
   // Arrange: every other completion condition is met while the pause is open.
   const harness = await nativeParticipantsHarness(
@@ -1495,6 +1496,7 @@ test('a run does not complete while the server is still paused at a pause the de
     status: harness.run.view().status,
     afterVerified: harness.run.view().operation?.afterVerified,
     failures: harness.run.view().failures.join('; '),
+    afterImage: harness.run.view().captures.after?.status ?? 'not requested',
   }
   harness.emitResume('server')
   await waitUntil(
@@ -1507,6 +1509,7 @@ test('a run does not complete while the server is still paused at a pause the de
     status: 'resuming',
     afterVerified: false,
     failures: '',
+    afterImage: 'not requested',
   })
   assert.equal(harness.run.view().operation?.afterVerified, true)
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
@@ -1965,3 +1968,115 @@ for (const moment of [
     assert.equal(harness.run.view().snapshots.length, 1)
     assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
   })
+
+// Value: protects=the failure text naming where a later server stop bound when its pause on another line of its module arrives while the preceding continuation is in flight; fails_when=that pause keeps a stale stop (the one being continued), so the adoption refuses it and the run ends on a timeout that names nothing; why_new=the adoption is tested at the first stop only (:1583), so the stop a held pause keeps is unpinned for a later stop (SR23); seam=the 3 s bound of the wait for the stop's own pause, ended after one look
+test('a later server stop that pauses on another line of its module while the preceding continue response is outstanding fails naming the declared stop and where it landed', async (context) => {
+  // Arrange: both stops are in one module; the first is captured, and its continuation has both resume receipts but not its response.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.expireSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdContinueResponse()
+  const continuation = harness.run.continue('server', first.pause)
+  await serverContinueRequested(harness)
+  // Act: the second stop's breakpoint binds on line 2 and the runtime pauses there before the response; the debugger announces that stop after the continuation.
+  harness.bindAt('server', 2, 1)
+  harness.pauseAt('server', 1, 0)
+  nextStop.paused()
+  harness.releaseContinueResponse()
+  await continuation
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'later stop on another line rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 2:1, not on its declared line. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a resume announced after the next declared stop's stopped was queued ending the run, because that stop was resumed before it could be captured; fails_when=the queued-stop clause of the idle rule is dropped, so that continued is ignored and the queued stopped is replayed as the stop after its resume; why_new=no test reads a continued after a queued stopped, and none expects "Unowned continuation invalidated live pause" (SR6); seam=none
+test('a continued the debugger sends after the next declared stop’s stopped was queued ends the run as an unowned continuation', async (context) => {
+  // Arrange: the first stop is captured, and its continuation has both resume receipts but not its response.
+  const harness = await nativeParticipantsHarness(context, ['server', 'server'])
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdContinueResponse()
+  const continuation = harness.run.continue('server', first.pause)
+  await serverContinueRequested(harness)
+  // Act: the debugger announces the second stop, which is queued behind the continuation, and then a resume of the same session.
+  nextStop.stopped()
+  emitAdapterContinued(harness, 958)
+  const failuresAtContinued = harness.run.view().failures.join('; ')
+  harness.releaseContinueResponse()
+  // A continuation the run cancelled is reported above through the run's own failure text.
+  await continuation.catch(() => undefined)
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    failuresAtContinued,
+    'Unowned continuation invalidated live pause',
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a pause being compared only with its own participant's expected stop: script ids are numbered per runtime, so a server script can carry the page module's id; fails_when=the expected stop's participant check is dropped, so the server's pause on the browser stop's mapped line is taken for that stop and its resume ends the run; why_new=every test gives the two runtimes distinct script ids, so no test reaches the participant check; seam=none
+test('a server pause in a script that carries the id of the browser stop’s module is not taken for the browser stop, and the run completes', async (context) => {
+  // Arrange: the server stop is continued and the browser stop is next; this harness gives the page's module the script id `browser`.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  harness.announceScript(
+    'server',
+    'browser',
+    'webpack-internal:///(rsc)/./src/session.ts',
+  )
+  // Act: the server's adapter pauses at generated 0:0 of that script, where the browser stop's map puts its declared line, and resumes it.
+  harness.emitUnannouncedPause('server', {
+    scriptId: 'browser',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: 'readSession',
+    hitBreakpoints: ['4:0:0:session'],
+  })
+  harness.emitResume('server')
+  nextStop.paused()
+  nextStop.stopped()
+  const browser = await pauseReady(harness, 'browser')
+  await harness.run.continue('browser', browser.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after the browser stop',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(browser.values['value:nextTheme'], 'dark')
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+  assert.deepEqual(
+    retiredPauses(harness).map(
+      (detail) => JSON.parse(JSON.stringify(detail)).place,
+    ),
+    ['webpack-internal:///(rsc)/./src/session.ts 1:1'],
+  )
+})
