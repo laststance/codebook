@@ -4519,7 +4519,7 @@ export class StudyWorkspace {
         // A debugger that was never created is started by the next presentation; only one that ended needs the reload.
         presentable: () =>
           this.replayReaderOpen && this.replayDebugger?.available !== false,
-        invalidate: () => {
+        invalidate: (keepPixels) => {
           this.replayDebugger?.invalidate()
           if (this.highlight)
             for (const editor of vscode.window.visibleTextEditors) {
@@ -4535,7 +4535,8 @@ export class StudyWorkspace {
           this.lastRendered = undefined
           this.sourceRevision = undefined
           this.lastSelectionKey = undefined
-          this.replayViewport?.clearRecorded()
+          // A reload of the displayed recording keeps its frame until the reloaded moment paints.
+          if (!keepPixels) this.replayViewport?.clearRecorded()
         },
         changed: () => {
           const state = this.playback?.state()
@@ -5237,17 +5238,14 @@ export class StudyWorkspace {
    * Shows the loading page on a live run's viewport while a recording loads, releasing the recording renderer that page replaces.
    *
    * {@link loadPlayback} calls it before it reads the recording. Without a live viewport nothing is written and the renderer stays;
-   * a renderer that still holds the panel is kept and only cleared, so a reload needs no new renderer handshake.
+   * a renderer that still holds the panel is kept, so a reload needs no new renderer handshake.
    *
    * @example this.showRecordingLoadingOnLiveViewport()
    */
   private showRecordingLoadingOnLiveViewport(): void {
     if (!this.viewport) return
-    // A recording renderer still holding the shared panel is kept and cleared: a new renderer's handshake would sit on the 2.0 s recovery path.
-    if (this.replayViewport && !this.replayNeedsReveal) {
-      this.replayViewport.clearRecorded()
-      return
-    }
+    // A recording renderer still holding the shared panel is kept: a new renderer's handshake would sit on the 2.0 s recovery path. The playback controller clears its frame, except for a reload of the recording on screen.
+    if (this.replayViewport && !this.replayNeedsReveal) return
     // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
     this.dropReplayViewport()
     try {

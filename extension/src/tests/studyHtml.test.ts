@@ -15,3 +15,22 @@ test('the Run and Debug hint tells the learner to expand the first Variables sco
   // Assert
   assert.equal(readerHtml.includes(expectedHint), true)
 })
+
+// Value: protects=the Study and Learning replay titles staying readable while their pane is squeezed during arrangement; fails_when=the title has no minimum inline size, so `overflow-wrap: anywhere` on the body wraps it one character per line in a very narrow pane; why_new=Cycle 0037 N6d (seen during a live run's arrangement); seam=none
+for (const kind of ['context', 'moments'] as const)
+  test(`the ${kind} pane keeps its title at least twelve characters wide instead of wrapping it one character per line`, () => {
+    // Act
+    const html = studyHtml(kind)
+
+    // Assert
+    assert.equal(
+      html.includes(
+        'h1{font-size:20px;line-height:1.25;margin:16px 0 8px;min-width:12ch}',
+      ),
+      true,
+    )
+    assert.equal(
+      html.includes('body{margin:0;padding:16px;overflow-wrap:anywhere'),
+      true,
+    )
+  })

@@ -28,7 +28,8 @@ export interface PlaybackDependencies {
   load(studyId: string, signal: AbortSignal): Promise<PlaybackData>
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
-  invalidate(): void
+  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded: its frame stays until the reloaded moment paints, instead of a blank pane. */
+  invalidate(keepPixels?: boolean): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
@@ -102,6 +103,9 @@ export class PlaybackController {
         return this.state()
       }
       this.remember()
+      // A reload of the recording that is on screen keeps its frame until the reloaded moment is presented.
+      const reloadsDisplayedRecording =
+        this.studyId === input.studyId && Boolean(this.presented)
       this.controlRevision++
       this.mode = 'paused'
       this.stopTimer()
@@ -110,7 +114,11 @@ export class PlaybackController {
       this.presented = undefined
       this.requestedMs = undefined
       this.boundaries = []
-      this.queue({ studyId: input.studyId, save: true })
+      this.queue(
+        { studyId: input.studyId, save: true },
+        true,
+        reloadsDisplayedRecording,
+      )
       return this.state()
     }
     if (input.studyId !== this.studyId)
@@ -357,8 +365,9 @@ export class PlaybackController {
   private queue(
     input: Omit<PresentationRequest, 'revision'>,
     clear = true,
+    keepPixels = false,
   ): void {
-    if (clear) this.invalidate()
+    if (clear) this.invalidate(keepPixels)
     else {
       this.presentationRevision++
       this.abort?.abort(new Error('New playback frame'))
@@ -524,11 +533,11 @@ export class PlaybackController {
   }
 
   /** Invalidates renderer work synchronously so a slow read or late ACK cannot commit across controls. @example this.invalidate() */
-  private invalidate(): void {
+  private invalidate(keepPixels = false): void {
     this.presentationRevision++
     this.abort?.abort(new Error('Playback presentation superseded'))
     this.cleared = true
-    this.dependencies.invalidate()
+    this.dependencies.invalidate(keepPixels)
   }
 
   /** Serializes explicit navigation saves and records the confirmed position that the next open of the same study prefers over the stored preference, also when its save fails; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */

@@ -2678,6 +2678,47 @@ test('a study whose stop the debugger bound at column 7 of its declared line ope
   }
 })
 
+// Value: protects=the recorded frame staying on screen while Recording reloads the same recording; fails_when=the reload clears the frame before the reloaded moment is ready, so the Recorded application pane is blank for about a second; why_new=Cycle 0037 N6e; seam=holdHistoricalDebugPresentation keeps the reload from finishing
+test('pressing Recording again on the same recording keeps its displayed frame until the reloaded moment is presented', async () => {
+  // Arrange: the captured frame is displayed and the historical session ended, so Recording reloads.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const displayedBeforeReload = harness.displayedImage()
+    harness.endHistoricalDebugSession()
+    const reload = harness.holdHistoricalDebugPresentation()
+
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await reload.started
+    const displayedDuringReload = harness.displayedImage()
+    reload.release()
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(
+      displayedBeforeReload,
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+    )
+    assert.equal(
+      displayedDuringReload,
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
+    )
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().presentedMs, 100)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the 2.0 s recovery of Recording pressed again with a live run attached; fails_when=every load drops the recording renderer and waits for a new renderer handshake; why_new=Cycle 0035 R02 (P1 "Latency"); seam=none
 test('pressing Recording again while a live run is attached presents the saved frame through the same recording renderer', async () => {
   // Arrange
