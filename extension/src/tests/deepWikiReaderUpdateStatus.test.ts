@@ -91,3 +91,29 @@ test('the update state is served while a publish has left the manifest unreadabl
     await wiki.close()
   }
 })
+
+test('a page the last update removed sends the browser to the overview of the same reader', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    const removedPage = new URL('pages/removed.html', wiki.reader.url)
+
+    // Act
+    const redirect = await fetch(removedPage, { redirect: 'manual' })
+    const followed = await fetch(removedPage)
+    const otherFile = await fetch(new URL('pages/removed.css', wiki.reader.url))
+
+    // Assert
+    assert.equal(redirect.status, 302)
+    assert.equal(
+      redirect.headers.get('location'),
+      new URL(wiki.reader.url).pathname,
+    )
+    assert.equal(followed.status, 200)
+    assert.equal(followed.url, wiki.reader.url)
+    assert.match(await followed.text(), /Wiki/)
+    assert.equal(otherFile.status, 404)
+  } finally {
+    await wiki.close()
+  }
+})

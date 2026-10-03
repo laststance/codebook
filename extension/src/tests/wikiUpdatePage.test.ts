@@ -96,6 +96,7 @@ test('the page shows the running update and then its result when the learner con
   const page = await openFakeWikiPage(
     await readServedWikiScript(),
     'published-before-the-group',
+    { freshness: 'changed' },
   )
   const status = page.find('[data-codebook-update-status]')
   const link = page.find('.wiki-update')
@@ -429,4 +430,240 @@ test('a page whose reader was gone before it read any status says nothing and ke
   // Assert
   assert.equal(page.find('[data-codebook-update-status]')?.textContent, '')
   assert.equal(page.pendingTimerCount(), 1)
+})
+
+test('an Already current line shows while the source still matches the Wiki', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'already-current',
+      finishedAt: '2026-10-03T11:00:00.000Z',
+      ...output,
+    },
+    freshness: 'current',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    'Already current (checked 11:00): this Wiki matches the source, so no update started. Output: .codebook/wiki',
+  )
+})
+
+test('an Already current line is gone once the freshness label reads that the source changed', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'already-current',
+      finishedAt: '2026-10-03T11:00:00.000Z',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-freshness]')?.getAttribute('data-status'),
+    'changed',
+  )
+  assert.equal(page.find('[data-codebook-update-status]')?.textContent, '')
+})
+
+test('an Updated line is gone once the source changed again after that update', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'succeeded',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:00:00.000Z',
+        identity: 'a1b2c3d4e5f6+0f9e8d7c',
+        ...output,
+      },
+      freshness: 'current',
+    },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const textWhileCurrent = status?.textContent
+
+  // Act
+  page.reader.freshness = 'changed'
+  await page.focusWindow()
+
+  // Assert
+  assert.equal(
+    textWhileCurrent,
+    'Updated at 11:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c). Output: .codebook/wiki',
+  )
+  assert.equal(status?.textContent, '')
+})
+
+test('a publish that lands after the watch was stopped replaces the sentence and offers a reload', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'cancelled',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const textBeforeThePublish = status?.textContent
+
+  // Act
+  page.reader.freshness = 'current'
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    textBeforeThePublish,
+    'Stopped watching at 11:58. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself. Nothing has been replaced so far. Output: .codebook/wiki',
+  )
+  assert.equal(
+    status?.textContent,
+    'A new site was published after this run ended and matches the source. Output: .codebook/wiki',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'late-publish')
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
+})
+
+test('a page loaded after the late publish says so without asking for another reload', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'timed-out',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      timeoutMs: 900_000,
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'current',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.getAttribute('data-state'),
+    'late-publish',
+  )
+  assert.equal(page.find('[data-codebook-reload]'), undefined)
+})
+
+test('the page keeps checking freshness after a run that ended without success, and not after a success', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+  const failedPage = await openFakeWikiPage(
+    script,
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'failed',
+        host: 'cursor',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+  const succeededPage = await openFakeWikiPage(
+    script,
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'succeeded',
+        host: 'cursor',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        identity: 'a1b2c3d4e5f6+0f9e8d7c',
+        ...output,
+      },
+      freshness: 'current',
+    },
+  )
+  const freshnessReads = (requests: string[]): number =>
+    requests.filter((route) => route === 'api/freshness').length
+
+  // Act
+  await failedPage.advance(30_000)
+  await succeededPage.advance(30_000)
+
+  // Assert
+  assert.equal(freshnessReads(failedPage.reader.requests), 3)
+  assert.equal(freshnessReads(succeededPage.reader.requests), 1)
+})
+
+test('an update that finished after the page was loaded offers a reload button after the status line, and pressing it reloads the page', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  page.reader.updateStatus = {
+    state: 'succeeded',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:05:00.000Z',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    ...output,
+  }
+  page.reader.freshness = 'current'
+  await page.advance(2_000)
+  const status = page.find('[data-codebook-update-status]')
+  const reloadButton = page.find('[data-codebook-reload]')
+
+  // Act
+  await page.click(reloadButton)
+
+  // Assert
+  assert.equal(page.isShown(reloadButton), true)
+  assert.equal(reloadButton?.tagName, 'button')
+  assert.equal(reloadButton?.getAttribute('type'), 'button')
+  assert.equal(reloadButton?.textContent, 'Reload to read the new pages')
+  assert.equal(status?.nextSibling, reloadButton)
+  assert.equal(status?.querySelector('[data-codebook-reload]'), null)
+  assert.equal(reloadButton?.focusCount, 0)
+  assert.equal(page.reloadCount(), 1)
+})
+
+test('an update that finished before the page was loaded offers no reload', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'succeeded',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:50:00.000Z',
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      ...output,
+    },
+    freshness: 'current',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    'Updated at 11:50 to revision a1b2c3d4e5f6 (index 0f9e8d7c). Output: .codebook/wiki',
+  )
+  assert.equal(page.find('[data-codebook-reload]'), undefined)
 })

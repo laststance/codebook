@@ -80,10 +80,22 @@ export function installWikiUpdateStatus(
     statusRegion,
     freshnessLabel.nextSibling,
   )
+  // A reload drops the reading position and a typed question, so the learner chooses it; it is never focused for them.
+  const reloadButton = document.createElement('button')
+  reloadButton.setAttribute('type', 'button')
+  reloadButton.setAttribute('data-codebook-reload', '')
+  reloadButton.textContent = 'Reload to read the new pages'
+  reloadButton.addEventListener('click', () => {
+    location.reload()
+  })
 
   /** The last state the reader answered, and its serialized form for comparing two answers. */
   let lastAnswer: WikiUpdateStatus | undefined
   let lastAnswerText = ''
+  /** The last freshness the reader answered; undefined before the first answer and after a read that failed. */
+  let freshness: string | undefined
+  /** Whether this page saw the site out of date, so a later "current" is a publish it has not loaded. */
+  let hasSeenStaleSite = false
   /** After a press of the link: the answer at that moment, and until when the page waits for a different one. */
   let isAwaitingStart = false
   let answerAtPress: string | undefined
@@ -116,8 +128,16 @@ export function installWikiUpdateStatus(
       minute: '2-digit',
     })
 
-  /** Writes what `api/freshness` answered into the freshness label. */
-  const showFreshness = (status: string, reason: string): void => {
+  const isEndedWithoutSuccess = (state: string): boolean =>
+    state === 'failed' ||
+    state === 'cancelled' ||
+    state === 'timed-out' ||
+    state === 'conflict'
+
+  /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. */
+  const noteFreshness = (status: string | undefined, reason: string): void => {
+    freshness = status
+    if (status !== undefined && status !== 'current') hasSeenStaleSite = true
     if (!freshnessLabel) return
     freshnessLabel.textContent =
       status === 'current'
@@ -125,11 +145,10 @@ export function installWikiUpdateStatus(
         : status === 'changed'
           ? 'Source changed — update LLM Wiki'
           : 'Wiki freshness unknown'
-    freshnessLabel.setAttribute('data-status', status)
+    freshnessLabel.setAttribute('data-status', status ?? 'unknown')
     if (reason) freshnessLabel.title = reason
   }
-  const refreshFreshness = async (): Promise<void> => {
-    if (!freshnessLabel) return
+  const readFreshness = async (): Promise<void> => {
     try {
       const answer = await readFromReader('api/freshness')
       if (
@@ -139,14 +158,14 @@ export function installWikiUpdateStatus(
         typeof answer.status !== 'string'
       )
         throw new Error('The freshness answer has no status.')
-      showFreshness(
+      noteFreshness(
         answer.status,
         'reason' in answer && typeof answer.reason === 'string'
           ? answer.reason
           : '',
       )
     } catch {
-      showFreshness('unknown', '')
+      noteFreshness(undefined, '')
     }
   }
 
@@ -218,7 +237,25 @@ export function installWikiUpdateStatus(
       reasonLimitChars: settings.reasonLimitChars,
       pageLoadedAtMs: performance.timeOrigin,
     })
-    return described && { state: lastAnswer.state, ...described }
+    if (!described) return undefined
+    const state = lastAnswer.state
+    // Freshness is read live and a result is history: a line that says the Wiki matches gives way once the source moved on.
+    if (
+      (state === 'succeeded' || state === 'already-current') &&
+      freshness === 'changed'
+    )
+      return undefined
+    // The editor chat may publish after its run was given up; the site on disk then matches the source after all.
+    if (isEndedWithoutSuccess(state) && freshness === 'current')
+      return {
+        state: 'late-publish',
+        lead: 'A new site was published',
+        rest: ' after this run ended and matches the source.',
+        detail: [],
+        output: described.output,
+        offerReload: hasSeenStaleSite,
+      }
+    return { state, ...described }
   }
   /** Puts the current sentence and the state of the update link on the page. */
   const show = (): void => {
@@ -230,6 +267,8 @@ export function installWikiUpdateStatus(
     statusRegion.textContent = text
     statusRegion.hidden = !text
     statusRegion.setAttribute('data-state', shown?.state ?? 'idle')
+    if (!shown?.offerReload) reloadButton.remove()
+    else if (!reloadButton.parentNode) statusRegion.after(reloadButton)
     if (!updateLink) return
     // The link stays a focusable link while it is held back; its label and the status line say why.
     const isRunning = shown?.state === 'running'
@@ -262,18 +301,25 @@ export function installWikiUpdateStatus(
     window.clearTimeout(pollTimer)
     lookCount += 1
     const lookNumber = lookCount
-    if (isReturn) void refreshFreshness()
+    let isFreshnessDue = isReturn
     try {
       const answer = await readFromReader('api/update-status')
       // A newer look is under way; its answer is the one to show.
       if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))
         throw new Error('The update answer has no state.')
-      // A finished run changes what the freshness label should say.
-      if (noteAnswer(answer)) void refreshFreshness()
+      // A finished run changes freshness, and a run that ended without success may be overtaken by a later publish.
+      if (noteAnswer(answer) || isEndedWithoutSuccess(answer.state))
+        isFreshnessDue = true
     } catch {
       if (lookNumber !== lookCount) return
       noteFailedRead()
+    }
+    if (isFreshnessDue) {
+      // A result is weighed against freshness before it is shown; a run in progress shows at once.
+      if (lastAnswer?.state === 'running' || isUnreachable) show()
+      await readFreshness()
+      if (lookNumber !== lookCount) return
     }
     show()
     // A reader that stopped answering is asked again, so one lost read heals itself.

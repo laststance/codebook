@@ -300,6 +300,12 @@ export async function startDeepWikiReader(
       return
     }
     if (!files.has(relativePath)) {
+      // A page the last update removed or renamed sends the learner to the overview instead of a JSON error.
+      if (relativePath.endsWith('.html')) {
+        response.writeHead(302, { Location: `${prefix}index.html` })
+        response.end()
+        return
+      }
       sendJson(response, 404, {
         error: 'This file is not published by the Wiki.',
       })
