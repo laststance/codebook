@@ -57,6 +57,7 @@ import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecut
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
+import { wikiOutputLabel } from './utils/wikiOutputLabel'
 import { WikiUpdateRun } from './utils/wikiUpdateRun'
 
 let stopExtension: (() => Promise<void>) | undefined
@@ -612,13 +613,14 @@ export function activate(
         } else if (result.outcome === 'not-current')
           wikiUpdateRun.fail(
             'The editor agent published a Wiki that is not verified current. Inspect its freshness and retry the update.',
+            'replaced',
           )
         else if (result.outcome === 'blocked')
-          wikiUpdateRun.conflict(result.paths)
-        else if (result.outcome === 'cancelled') wikiUpdateRun.cancel()
-        else wikiUpdateRun.timeOut()
+          wikiUpdateRun.conflict(result.paths, 'learner-file', 'kept')
+        else if (result.outcome === 'cancelled') wikiUpdateRun.cancel('kept')
+        else wikiUpdateRun.timeOut('kept')
       } catch (error) {
-        wikiUpdateRun.fail(describeUpdateFailure(error))
+        wikiUpdateRun.fail(describeUpdateFailure(error), 'kept')
       } finally {
         if (wikiWatch === controller) wikiWatch = undefined
       }
@@ -646,16 +648,24 @@ export function activate(
         )
         return
       }
+      const wikiOutput = {
+        outputDirectory,
+        outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
+      }
       const before = await readPublishedWiki(projectRoot, outputDirectory)
       if (before && (await isPublishedWikiCurrent(projectRoot, before))) {
-        wikiUpdateRun.alreadyCurrent(outputDirectory, before.identity)
+        wikiUpdateRun.alreadyCurrent(wikiOutput, before.identity)
         void vscode.window.showInformationMessage(
           'This project’s LLM Wiki already matches the current source; nothing to update.',
         )
         return
       }
       const startedAtMs = Date.now()
-      wikiUpdateRun.begin(isCursorHost ? 'cursor' : 'vscode', outputDirectory)
+      wikiUpdateRun.begin(
+        isCursorHost ? 'cursor' : 'vscode',
+        wikiOutput,
+        WIKI_UPDATE_WATCH_TIMEOUT_MS,
+      )
       const query = `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(join(outputDirectory, 'codebook-wiki.json'))} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure, then report changed pages and citations. Do not start a debugger or application.`
       if (!isCursorHost) {
         try {
@@ -664,7 +674,7 @@ export function activate(
             isPartialQuery: false,
           })
         } catch (error) {
-          wikiUpdateRun.fail(describeUpdateFailure(error))
+          wikiUpdateRun.fail(describeUpdateFailure(error), 'kept')
           throw error
         }
         // The chat API reports no result, so the extension watches for the publish itself.
@@ -726,9 +736,10 @@ export function activate(
           outputDirectory,
           startedAtMs,
         ).catch(() => [])
-        if (cursorToken?.isCancellationRequested) wikiUpdateRun.cancel()
-        else if (blocking.length) wikiUpdateRun.conflict(blocking)
-        else wikiUpdateRun.fail(describeUpdateFailure(error))
+        if (cursorToken?.isCancellationRequested) wikiUpdateRun.cancel('kept')
+        else if (blocking.length)
+          wikiUpdateRun.conflict(blocking, 'learner-file', 'kept')
+        else wikiUpdateRun.fail(describeUpdateFailure(error), 'kept')
         throw error
       }
     })()

@@ -13,12 +13,25 @@ import {
 
 type MappedPosition = { line: number; column: number }
 
-/** Finds the first mapped column of each original line in a range, for the declared-line check before input and for the hints of a binding failure; {@link createBundleVerifier} calls it only for a sealed map. @example sourceMapMappedPositions('AAAA;AACA', 0, 1, 2).positions // [{ line: 1, column: 1 }, { line: 2, column: 1 }] */
+/**
+ * Finds the first mapped column of each original line in a range, for the declared-line check before input, the binding rule and the hints of a binding failure; {@link createBundleVerifier} calls it only for a sealed map.
+ * @param mappings - The map's VLQ `mappings` string.
+ * @param selectedSourceIndex - Index of the cited original in the map's `sources`.
+ * @param startLine - First one-based original line to report.
+ * @param endLine - Last one-based original line to report.
+ * @param isCodeAt - Tells whether the generated text at a zero-based generated line and column can run; a mapping it refuses (a kept comment) is not a position. Without it every mapping counts.
+ * @returns The ordered positions, and whether the scan read the whole map before its size limits.
+ * @example
+ * sourceMapMappedPositions('AAAA;AACA', 0, 1, 2).positions // [{ line: 1, column: 1 }, { line: 2, column: 1 }]
+ * sourceMapMappedPositions('AAAA;AACA', 0, 1, 2, (line) => line === 0).positions // [{ line: 1, column: 1 }]
+ */
 export function sourceMapMappedPositions(
   mappings: string,
   selectedSourceIndex: number,
   startLine: number,
   endLine: number,
+  isCodeAt: (generatedLine: number, generatedColumn: number) => boolean = () =>
+    true,
 ): { positions: MappedPosition[]; complete: boolean } {
   const columns = new Map<number, number>()
   let sourceIndex = 0,
@@ -73,7 +86,8 @@ export function sourceMapMappedPositions(
           sourceIndex === selectedSourceIndex &&
           line >= startLine &&
           line <= endLine &&
-          (columns.get(line) ?? Infinity) > column
+          (columns.get(line) ?? Infinity) > column &&
+          isCodeAt(generatedLinesRead - 1, generatedColumn)
         )
           columns.set(line, column)
       }

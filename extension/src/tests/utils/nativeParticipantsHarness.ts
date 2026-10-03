@@ -19,6 +19,8 @@ import { configuredStops } from '../../utils/configuredStops'
 import { pausePlace } from '../../utils/pausePlace'
 
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
+import { createManualClock } from './createManualClock'
+import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
@@ -139,17 +141,17 @@ export async function nativeParticipantsHarness(
     heldResponse: (() => void) | undefined,
     holdResponse = false
   // Event controls for a test that sends the adapter's own pauses between the declared ones.
+  // The click reaches no declared stop, as an action whose first stop's line does not run in time.
+  let firstPauseHeld = false
   let nextPauseHeld = false,
     inputHeld = false,
     sourceBoundWaitExpired = false
-  // A held wait for an accepted stop's own pause never times out until the test releases it.
-  let sourceBoundWait: { released: boolean } | undefined
+  // A held wait for an accepted stop's own pause does not end after 3 s of real time.
+  const sourceBoundWait = createSourceBoundWaitHold()
   // Every bounded wait the run entered, by its description, in order.
   const enteredWaits: string[] = []
   // The run's timers under a manual clock: each fires only when the test advances the clock to its time.
-  const manualTimers = new Map<number, { at: number; callback: () => void }>()
-  let manualClockMs = 0,
-    manualTimerId = 0
+  const manualClock = createManualClock()
   // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
   const pausedAt: Record<
     Participant,
@@ -355,6 +357,27 @@ export async function nativeParticipantsHarness(
     emitDeclaredPause(name)
     emitStopped(name)
   }
+  /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold once the input was sent (or at once, when a test says so). */
+  const pageEvaluation = (expression: string | undefined): unknown => {
+    if (expression === 'location.href') return 'about:blank'
+    if (expression === 'location.origin') return 'http://127.0.0.1:4321'
+    if (expression === afterExpression)
+      return {
+        ready:
+          afterReadyBeforeInput ||
+          (afterReadyAfterInput &&
+            Boolean(run.view().operation?.inputDispatched)),
+      }
+    return { ready: true, x: 12, y: 18 }
+  }
+  /** Gives a participant's inspected path its value at the pause: a type name for a type inspection, otherwise that participant's mode or theme. */
+  const inspectedValue = (
+    name: Participant,
+    expression: string | undefined,
+  ): string => {
+    if (expression?.startsWith('typeof ')) return 'function'
+    return name === 'server' ? 'display' : 'dark'
+  }
   const proxy = (name: Participant) => ({
     name,
     closed: false,
@@ -408,23 +431,7 @@ export async function nativeParticipantsHarness(
       )
         afterReadCount++
       if (method === 'Runtime.evaluate')
-        return {
-          result: {
-            value:
-              parameters?.expression === 'location.href'
-                ? 'about:blank'
-                : parameters?.expression === 'location.origin'
-                  ? 'http://127.0.0.1:4321'
-                  : parameters?.expression === afterExpression
-                    ? {
-                        ready:
-                          afterReadyBeforeInput ||
-                          (afterReadyAfterInput &&
-                            Boolean(run.view().operation?.inputDispatched)),
-                      }
-                    : { ready: true, x: 12, y: 18 },
-          },
-        }
+        return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         emitScript('browser')
         return {}
@@ -438,11 +445,7 @@ export async function nativeParticipantsHarness(
       if (method === 'Debugger.evaluateOnCallFrame')
         return {
           result: {
-            value: parameters?.expression?.startsWith('typeof ')
-              ? 'function'
-              : name === 'server'
-                ? 'display'
-                : 'dark',
+            value: inspectedValue(name, parameters?.expression),
           },
         }
       if (method === 'Page.captureScreenshot')
@@ -480,7 +483,7 @@ export async function nativeParticipantsHarness(
             }),
           )
         }
-        emitPause(stops[0]!.participant)
+        if (!firstPauseHeld) emitPause(stops[0]!.participant)
         return pending
       }
       throw new Error(`Unexpected inspector method: ${method}`)
@@ -658,20 +661,8 @@ export async function nativeParticipantsHarness(
             if (value) return value
             return waitUntil(read, description, 0, signal)
           }
-          // A held wait looks until the pause is there or the test releases it, then ends as its 3 s bound would.
-          const heldWait = sourceBoundWait
-          if (heldWait && description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) {
-            for (;;) {
-              signal?.throwIfAborted()
-              const value = await read()
-              if (value) return value
-              if (heldWait.released)
-                return waitUntil(read, description, 0, signal)
-              await new Promise<void>((resolve) => {
-                setImmediate(resolve)
-              })
-            }
-          }
+          if (sourceBoundWait.holds(description))
+            return sourceBoundWait.wait(read, description, signal)
           return waitUntil(read, description, timeoutMs, signal)
         },
       },
@@ -729,16 +720,10 @@ export async function nativeParticipantsHarness(
     },
     options.manualClock
       ? {
-          setTimeout: (callback: () => void, delay: number) => {
-            const id = ++manualTimerId
-            manualTimers.set(id, { at: manualClockMs + delay, callback })
-            return id
-          },
-          clearTimeout: (id: number): void => {
-            manualTimers.delete(id)
-          },
+          setTimeout: manualClock.setTimeout,
+          clearTimeout: manualClock.clearTimeout,
           // The run measures how long it held a pause on this clock.
-          performance: { now: () => manualClockMs },
+          performance: { now: manualClock.now },
         }
       : {},
   )
@@ -836,6 +821,10 @@ export async function nativeParticipantsHarness(
         paused: (): void => emitDeclaredPause(stops[currentIndex]!.participant),
       }
     },
+    /** Keeps the click from pausing at the first declared stop, as a server action that is still compiling or a line the input does not reach. */
+    holdFirstPause(): void {
+      firstPauseHeld = true
+    },
     /** Keeps the input acknowledgement back after the last continuation, so a test can send events while the after conditions are still open. */
     holdInput(): void {
       inputHeld = true
@@ -877,16 +866,8 @@ export async function nativeParticipantsHarness(
     expireSourceBoundWait(): void {
       sourceBoundWaitExpired = true
     },
-    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example const wait = harness.holdSourceBoundWait(); wait.release() */
-    holdSourceBoundWait() {
-      const held = { released: false }
-      sourceBoundWait = held
-      return {
-        release: (): void => {
-          held.released = true
-        },
-      }
-    },
+    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example harness.holdSourceBoundWait() */
+    holdSourceBoundWait: sourceBoundWait.hold,
     // A changed native frame must not inherit a previously captured source pause.
     movePausedFrame(line: number, column = 1): void {
       pausedLine = line
@@ -913,6 +894,28 @@ export async function nativeParticipantsHarness(
     bindAt(name: Participant, line: number, column: number): void {
       boundAt[name] = { line, column }
     },
+    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads. */
+    announceBreakpointVerified(
+      name: Participant,
+      line: number,
+      column: number,
+    ): void {
+      for (const breakpoint of breakpoints)
+        run.onEvent(sessions[name], {
+          type: 'event',
+          seq: ++sequence,
+          event: 'breakpoint',
+          body: {
+            reason: 'changed',
+            breakpoint: {
+              id: breakpoint.id.length,
+              verified: true,
+              line,
+              column,
+            },
+          },
+        })
+    },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {
       acknowledgedAt = { line, column }
@@ -926,14 +929,7 @@ export async function nativeParticipantsHarness(
       reboundPauseId = true
     },
     /** Moves a manual clock forward and fires every run timer that is due by then; it does nothing for a run on real timers. @example harness.advance(20_000) */
-    advance(milliseconds: number): void {
-      manualClockMs += milliseconds
-      for (const [id, timer] of [...manualTimers])
-        if (timer.at <= manualClockMs) {
-          manualTimers.delete(id)
-          timer.callback()
-        }
-    },
+    advance: manualClock.advance,
     emitBrowserAdapterPause(): void {
       listeners.browser.get('Debugger.paused')?.(
         debuggerPausedEvent({

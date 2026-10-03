@@ -7,7 +7,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
 
+import { StudyError } from '../errors'
 import { readResource } from '../resources'
+import { sha256 } from '../runtimeSupport/utils/sha256'
+import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { actionSchema } from '../schemas'
 import { startServer } from '../server'
 
@@ -732,7 +735,7 @@ for (const version of [1, 2])
     }
   })
 
-test('configured help tells an agent that only the next stop is armed and that a stop binds anywhere on its declared line', async (context) => {
+test('configured help tells an agent that only the next stop is armed and where its binding may lie', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -764,7 +767,15 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.match(
     contract.sourceBinding,
-    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position, and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\. A moved binding can lie in a branch the action skips; the stop then fails at the 20 second deadline, whose text names the bound place\./,
+    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position \(a kept comment is not one\), and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run \(the stop then ends at the 20 second deadline\); declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
+  )
+  assert.match(
+    contract.sourceBinding,
+    /A declared line without a mapped position \(a blank line, or a comment the generated module kept\) is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either\. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none\./,
   )
   assert.match(
     contract.sequence[2] ?? '',
@@ -778,7 +789,7 @@ test('configured help tells an agent that only the next stop is armed and that a
   assert.doesNotMatch(help.text, /first stop of each participant/)
 })
 
-// Cycle 0044 (0042-SR19): red while the help said "Any other binding on another line fails at once" and "an unexpected pause or manual resume invalidates this operation", although a server binding fails about 3 s after its pause and a pause the debugger resumes by itself is retired.
+// Cycle 0044 (0042-SR19): red while the help said "Any other binding on another line fails at once" and "an unexpected pause or manual resume invalidates this operation", although a server binding fails about 3 s after its pause and a pause the debugger resumes by itself is retired; one sentence with Group 1's R18 (the pending-registration qualifier).
 test('configured help tells an agent when a binding on another line fails for each participant and that a pause the debugger resumes by itself is retired', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
@@ -791,15 +802,15 @@ test('configured help tells an agent when a binding on another line fails for ea
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sourceBinding.includes(
-      "Any other verified binding on another line is refused: a browser stop's while it is armed, before any input; a server stop's binding is checked when it pauses, so that failure comes about 3 seconds after the pause, and when its bound line does not run the stop fails at the 20 second deadline instead. Declare the bound place instead, in a citation that covers it.",
+      'Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run (the stop then ends at the 20 second deadline); declare the bound place instead, in a citation that covers it.',
     ),
     true,
   )
   assert.doesNotMatch(help.text, /fails at once/)
-  // Cycle 0044 (0041-N10-1b): the help no longer says that every declared line without a mapped position fails preparation.
+  // Cycle 0044 (0041-N10-1b, R3): one rule whatever the map's size; the help no longer says that every declared line without a mapped position fails preparation.
   assert.equal(
     contract.sourceBinding.includes(
-      "A declared line without a mapped position is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation has a mapped position either (unless the map was too large to scan completely).",
+      "A declared line without a mapped position (a blank line, or a comment the generated module kept) is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none.",
     ),
     true,
   )
@@ -1023,6 +1034,183 @@ test('an observation committed on the line the debugger moved its stop to report
   assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
   assert.equal(facts.source.line, 2)
   assert.equal(facts.source.column, 1)
+})
+
+// Value: protects=an editor chat that reads an observation's inspectionUri, its pages or its imageUri with the standard MCP resources/read; fails_when=those URIs answer "Resource … not found" and are readable only through codebook_read_resource; why_new=resource tests read these URIs through the service, never through MCP templates (Cycle 0044 rows N-5, N-13); seam=the synthetic runtime's snapshot capture
+test('MCP resources/read returns an observation’s inspection, its pages and its snapshot image', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    endpoint = await startServer(service)
+  context.after(() => endpoint.close())
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'mcp-evidence',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    snapshot = runtime.snapshots[0]!,
+    image = Buffer.from('snapshot png fixture')
+  await writeFile(join(runtime.evidence.directory, 'snapshot-1.png'), image)
+  const view = runtime.view.bind(runtime)
+  runtime.view = () => ({
+    ...view(),
+    snapshotCaptures: {
+      [snapshot.id]: {
+        status: 'captured',
+        file: 'snapshot-1.png',
+        renderer: { epoch: 'fixture', id: 1, hash: sha256(image) },
+      },
+    },
+  })
+  const observation = service.state(record).observations[0]!
+  const client = new Client({ name: 'mcp-evidence-test', version: '1.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${endpoint.descriptor.token}` },
+      },
+    }),
+  )
+  context.after(() => client.close())
+  // Act
+  const inspection = await client.readResource({
+    uri: observation.inspectionUri,
+  })
+  const inspectionPage = z
+    .object({ contentHash: z.string(), content: z.string() })
+    .parse(
+      JSON.parse(
+        z.object({ text: z.string() }).parse(inspection.contents[0]).text,
+      ),
+    )
+  const firstPage = await client.readResource({
+    uri: `${observation.inspectionUri}/pages/${inspectionPage.contentHash}/0`,
+  })
+  const snapshotImage = await client.readResource({
+    uri: observation.imageUri!,
+  })
+  // Assert
+  assert.equal(
+    JSON.stringify(JSON.parse(inspectionPage.content).requestedSource),
+    '{"line":1,"column":1}',
+  )
+  assert.equal(
+    z
+      .object({ content: z.string() })
+      .parse(
+        JSON.parse(
+          z.object({ text: z.string() }).parse(firstPage.contents[0]).text,
+        ),
+      ).content,
+    inspectionPage.content,
+  )
+  assert.deepEqual(
+    z
+      .object({ mimeType: z.string(), blob: z.string() })
+      .parse(snapshotImage.contents[0]),
+    {
+      mimeType: 'image/png',
+      blob: Buffer.from('snapshot png fixture').toString('base64'),
+    },
+  )
+})
+
+// Value: protects=an agent that sends codebook_reveal and codebook_continue for the same stop together; fails_when=the reveal answers EVIDENCE_UNAVAILABLE ("Matching captured source is not displayed") because the continuation retired the pause the reader presents; why_new=reveal tests never ran beside a continuation (Cycle 0044 row N-13, native N12-a); seam=the synthetic runtime's reveal, which fails like the reader once the pause is gone
+for (const order of ['reveal first', 'continue first'] as const)
+  test(`a reveal and a continuation of the same stop issued together, ${order}, never answer an evidence failure`, async (context) => {
+    // Arrange
+    const { service, configuration, runtimes } =
+      await configuredServiceHarness(context)
+    const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: 'repository-browser',
+        key: `together-${order}`,
+        configuration,
+      }),
+      record = service.record(receipt)
+    await record.preparation
+    service.action({ ...receipt, action: 'repository-click', key: 'one' })
+    const runtime = runtimes[0]!,
+      browser = service.state(record).participants.browser,
+      snapshotUri = browser.snapshotUri!
+    let release!: () => void,
+      entered = false
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // The reader presents a source only while its snapshot is the live pause.
+    runtime.reveal = async (): Promise<void> => {
+      entered = true
+      await barrier
+      if (runtime.gate.phase !== 'paused')
+        throw new StudyError(
+          'EVIDENCE_UNAVAILABLE',
+          'Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
+        )
+    }
+    // Act
+    if (order === 'reveal first') {
+      const revealing = service.reveal({ ...receipt, snapshotUri })
+      await waitUntil(() => entered, 'source reveal started', 1_000)
+      const continuing = service.continue(browser.continueArguments!)
+      await Promise.resolve()
+      const statusWhileRevealing = runtime.status
+      release()
+      const revealed = await revealing,
+        continued = await continuing
+      // Assert: the continuation waited for the accepted reveal, then resumed.
+      assert.equal(statusWhileRevealing, 'paused-browser')
+      assert.equal(revealed.revealed, true)
+      assert.equal(continued.accepted, true)
+      assert.equal(runtime.status, 'running')
+    } else {
+      release()
+      const continued = await service.continue(browser.continueArguments!)
+      // Assert: the reveal names the retired pause and the remedy, and the reader is never asked.
+      await assert.rejects(service.reveal({ ...receipt, snapshotUri }), {
+        code: 'STALE_PAUSE',
+        message:
+          'Reveal shows only the current pause, and this snapshot is no longer it: its continuation was accepted or the debugger moved on. Reveal a stop before continuing it; its captured source stays readable at sourceUri.',
+      })
+      assert.equal(continued.accepted, true)
+      assert.equal(entered, false)
+    }
+  })
+
+test('a reveal whose pause the learner resumes in the debugger meanwhile answers STALE_PAUSE instead of an evidence failure', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'manual-resume',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    snapshotUri = service.state(record).participants.browser.snapshotUri!
+  runtime.reveal = async (): Promise<void> => {
+    // The learner presses Continue in the native debugger while the source is being presented.
+    runtime.gate.invalidate(true)
+    throw new StudyError(
+      'EVIDENCE_UNAVAILABLE',
+      'Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
+    )
+  }
+  // Act / Assert
+  await assert.rejects(service.reveal({ ...receipt, snapshotUri }), {
+    code: 'STALE_PAUSE',
+    causeDetail:
+      'Error: Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
+  })
 })
 
 test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {

@@ -18,6 +18,7 @@ import {
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
+  RECORDING_WINDOW_FOCUS_WAIT_MS,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
@@ -118,6 +119,7 @@ import {
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusWebview } from './utils/focusWebview'
+import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import {
@@ -2787,6 +2789,30 @@ export class StudyWorkspace {
     }
   }
 
+  /**
+   * Lists the workspace files the selected study cites, so {@link placePresentation} keeps a clean debugger preview of one instead of refusing it as foreign.
+   * @returns Absolute paths of the cited files; empty before the workspace is initialized or without a cited study.
+   * @example this.citedWorkspacePaths().has('/repo/app/ui/login-form.tsx') // => true while login-form.tsx is cited
+   */
+  private citedWorkspacePaths(): Set<string> {
+    const workspace = this.repositorySources?.workspace,
+      sources = this.selectedStudy(true)?.descriptor?.sources
+    if (!workspace || !sources) return new Set()
+    return new Set(sources.map((source) => join(workspace, source.path)))
+  }
+
+  /**
+   * Names an editor tab the way its tab strip shows it, for the shared foreign-preview obstacle text of {@link placePresentation} and {@link readMainEditorGrid}.
+   * @param tab - A tab of any editor group.
+   * @returns A text tab's file name, otherwise the tab's label.
+   * @example this.editorTabName(loginFormPreview) // => 'login-form.tsx'
+   */
+  private editorTabName(tab: vscode.Tab): string {
+    return tab.input instanceof vscode.TabInputText
+      ? basename(tab.input.uri.fsPath)
+      : tab.label
+  }
+
   /** Relocates retained native panels/source and certifies the final descriptor after movement; no renderer ACK runs under this lock. @example await this.placePresentation('living-book', signal) */
   private async placePresentation(
     mode: PresentationMode,
@@ -2832,25 +2858,22 @@ export class StudyWorkspace {
             tab.input instanceof vscode.TabInputWebview &&
             [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
         )
-      // Names the tab and both remedies, so the learner or agent can act on the first refusal instead of guessing which editor is meant.
-      const foreignPreviewObstacle = (
-        tab: vscode.Tab,
-        group: vscode.TabGroup,
-      ): Error =>
-        new Error(
-          `A destination group contains a foreign preview: "${tab.label}" in editor group ${group.viewColumn}. Keep that editor (double-click its tab or run View: Keep Editor) or close it, then switch again; Codebook does not move or close an editor it did not open.`,
-        )
       const assertPreviewOwnership = (): void => {
-        for (const group of vscode.window.tabGroups.all) {
-          const foreign = group.tabs.find(
-            (tab) => tab.isPreview && !isOwnedPreview(tab),
-          )
-          if (!foreign) continue
-          // A preview opened during a passive await belongs to the learner, including its current focus.
-          this.presentationMovedFocus = false
-          throw foreignPreviewObstacle(foreign, group)
-        }
+        const foreignPreview = vscode.window.tabGroups.all
+          .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
+          .find(({ tab }) => tab.isPreview && !isOwnedPreview(tab))
+        if (!foreignPreview) return
+        // A preview opened during a passive await belongs to the learner, including its current focus.
+        this.presentationMovedFocus = false
+        throw new Error(
+          foreignPreviewObstacle(
+            this.editorTabName(foreignPreview.tab),
+            foreignPreview.group.viewColumn,
+          ),
+        )
       }
+      // A debugger stop opens a cited workspace file as a clean preview; it is kept like a prepared source instead of refusing the first selection.
+      const citedWorkspacePaths = this.citedWorkspacePaths()
       const preparedPreviews: {
         uri: vscode.Uri
         group: vscode.TabGroup
@@ -2862,11 +2885,15 @@ export class StudyWorkspace {
           if (
             tab.input instanceof vscode.TabInputText &&
             tab.input.uri.scheme === 'file' &&
-            this.runtimeSourcePaths.has(tab.input.uri.fsPath) &&
+            (this.runtimeSourcePaths.has(tab.input.uri.fsPath) ||
+              citedWorkspacePaths.has(tab.input.uri.fsPath)) &&
             !tab.isDirty
           )
             preparedPreviews.push({ uri: tab.input.uri, group, tab })
-          else throw foreignPreviewObstacle(tab, group)
+          else
+            throw new Error(
+              foreignPreviewObstacle(this.editorTabName(tab), group.viewColumn),
+            )
         }
       }
       // Reject known foreign previews before even borrowing focus to identify the native editor part.
@@ -3875,11 +3902,32 @@ export class StudyWorkspace {
         }
         this.publish()
       }
-      if (this.summaryComposition)
+      if (this.summaryComposition) {
+        // Open replay clicked while another window has the desktop focus opens the summary once this window gains focus.
+        if (!vscode.window.state.focused)
+          await waitUntil(
+            () => {
+              this.assertLifetime(lifetime)
+              return vscode.window.state.focused
+            },
+            'Codebook work window focus',
+            RECORDING_WINDOW_FOCUS_WAIT_MS,
+            signal,
+          ).catch(() => {
+            signal?.throwIfAborted()
+            this.assertLifetime(lifetime)
+            throw new StudyError(
+              'PRESENTATION_UNAVAILABLE',
+              `Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for ${RECORDING_WINDOW_FOCUS_WAIT_MS / PLAYBACK_SECOND_MS} s. Click in this editor window, then choose Open replay again.`,
+            )
+          })
+        this.assertLifetime(lifetime)
+        signal?.throwIfAborted()
         await this.showLearningSummary(
           signal,
           origin !== 'repository' && (firstOpen || compositionChanged),
         )
+      }
       if (request === this.openRequest) this.initialAppPlacement = undefined
     } catch (error) {
       // A failed first entry remains retryable without retiring a newer Open or discarding accepted native effects.
@@ -7263,7 +7311,9 @@ export class StudyWorkspace {
         )
       const primaryVersion = primaryEditor?.document.version,
         primarySelections = JSON.stringify(primaryEditor?.selections)
-      const useCitation = Boolean(acquireSourceFocus && !identifiableFirst)
+      const useCitation = Boolean(acquireSourceFocus && !identifiableFirst),
+        mainGroupCount = count
+      let didLearnerChangePrimaryTab = false
       // Empty/opaque primary panes need the actual requested citation, never a disposable placeholder or unobserved command result.
       beforeScopeFocus?.(
         useCitation
@@ -7322,6 +7372,7 @@ export class StudyWorkspace {
           // Group focus preserves its active tab; a different tab belongs to the learner, not this temporary focus request.
           if (!useCitation && identifiableFirst && !samePrimaryInput) {
             this.presentationMovedFocus = false
+            didLearnerChangePrimaryTab = true
             throw new Error(
               'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
             )
@@ -7331,7 +7382,34 @@ export class StudyWorkspace {
         'identifiable primary editor focus',
         PRESENTATION_READY_TIMEOUT_MS,
         signal,
-      )
+      ).catch((error: unknown) => {
+        signal?.throwIfAborted()
+        // Cursor never reports primary focus beside a learner's preview tab; name that tab and its remedy instead of a bare timeout.
+        const foreignPreview = vscode.window.tabGroups.all
+          .filter((group) => group.viewColumn <= mainGroupCount)
+          .flatMap((group) => group.tabs.map((tab) => ({ group, tab })))
+          .find(
+            ({ tab }) =>
+              tab.isPreview &&
+              !(
+                tab.input instanceof vscode.TabInputWebview &&
+                isCodebookPaneViewType(tab.input.viewType)
+              ) &&
+              !(
+                tab.input instanceof vscode.TabInputText &&
+                tab.input.uri.scheme === STUDY_SOURCE_SCHEME
+              ),
+          )
+        // Only the expired wait is renamed; a learner focus change keeps its own refusal.
+        if (didLearnerChangePrimaryTab || !foreignPreview) throw error
+        throw new StudyError(
+          'PRESENTATION_UNAVAILABLE',
+          foreignPreviewObstacle(
+            this.editorTabName(foreignPreview.tab),
+            foreignPreview.group.viewColumn,
+          ),
+        )
+      })
       assertCurrent()
       assertGroups()
       const assertFocused = this.retainPresentationPlacement()

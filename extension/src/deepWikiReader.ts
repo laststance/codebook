@@ -10,6 +10,8 @@ import { join, relative, sep } from 'node:path'
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_QUESTION_LIMIT_CHARS,
+  WIKI_UPDATE_REASON_LIMIT_CHARS,
+  WIKI_UPDATE_SHOWN_PATH_LIMIT,
   WIKI_UPDATE_STATUS_POLL_MS,
 } from './constants'
 import type {
@@ -73,7 +75,8 @@ const qaClient = `(function () {
       var response = await fetch(prefix + 'api/update-status');
       if (!response.ok) throw new Error('Update state unavailable');
       var result = await response.json();
-      var text = describeUpdate(result);
+      var described = describeUpdate(result, { formatTime: function (isoTimestamp) { return new Date(isoTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, pageLoadedAtMs: performance.timeOrigin });
+      var text = described ? described.lead + described.rest + ' ' + described.output : '';
       updateStatus.textContent = text; updateStatus.hidden = !text;
       updateStatus.setAttribute('data-state', result.state);
       if (updateLink) { if (result.state === 'running') updateLink.setAttribute('aria-disabled', 'true'); else updateLink.removeAttribute('aria-disabled'); }

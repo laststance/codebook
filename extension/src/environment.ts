@@ -8,7 +8,11 @@ import * as vscode from 'vscode'
 import { z } from 'zod'
 
 import { ConfiguredBrowserRun } from './configuredBrowserRun'
-import { PREREQUISITE_TIMEOUT_MS } from './constants'
+import {
+  CHROME_LINUX_EXECUTABLE_NAMES,
+  PREREQUISITE_TIMEOUT_MS,
+  WSL_REMOTE_NAME,
+} from './constants'
 import { StudyError } from './errors'
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type {
@@ -25,6 +29,7 @@ import {
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
 import { configuredStops } from './utils/configuredStops'
+import { resolveChromeExecutable } from './utils/resolveChromeExecutable'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 
 export interface StudyPresentation {
@@ -44,7 +49,11 @@ const productSchema = z.object({
   vscodeVersion: z.string().optional(),
 })
 
-/** Rejects unsupported execution contexts even when extension trust support is manually overridden. @example requireWorkspace() */
+/**
+ * Rejects unsupported execution contexts even when extension trust support is manually overridden.
+ * A WSL remote is accepted: the extension (a `workspace` kind) then runs in the WSL extension host, where the folder is a `file` URI and every path, process and Chrome is the Linux one.
+ * @example requireWorkspace()
+ */
 export function requireWorkspace(): string {
   const folder = vscode.workspace.workspaceFolders?.[0]
   if (!vscode.workspace.isTrusted)
@@ -52,10 +61,15 @@ export function requireWorkspace(): string {
       'PREREQUISITE_MISSING',
       'Trust this workspace before starting the agent server.',
     )
-  if (!folder || folder.uri.scheme !== 'file' || vscode.env.remoteName)
+  // Only a local window or a WSL remote host owns its files and processes like a local one; SSH, containers, tunnels and virtual folders do not.
+  if (
+    !folder ||
+    folder.uri.scheme !== 'file' ||
+    (vscode.env.remoteName && vscode.env.remoteName !== WSL_REMOTE_NAME)
+  )
     throw new StudyError(
       'PREREQUISITE_MISSING',
-      'Open a trusted local file workspace; remote and virtual workspaces are not supported.',
+      'Open a trusted file workspace on this machine or in WSL; other remote and virtual workspaces are not supported.',
     )
   return folder.uri.fsPath
 }
@@ -142,24 +156,38 @@ export async function createEnvironment(
       )
     }
     const nodeMissing = [...missing]
-    try {
-      const binary = configuration.get<string>(
-        'chromeExecutable',
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      )
-      await access(binary, filesystemConstants.X_OK)
-      const version = (
-        await executeFile(binary, ['--version'], {
-          timeout: PREREQUISITE_TIMEOUT_MS,
-        })
-      ).stdout.trim()
-      if (!version) throw new Error('Missing Chrome version')
-      chrome = { binary, version }
-    } catch {
+    const binary = await resolveChromeExecutable(
+      configuration.get<string>('chromeExecutable', ''),
+      process.platform,
+      process.env.PATH,
+      (path) =>
+        access(path, filesystemConstants.X_OK).then(
+          () => true,
+          () => false,
+        ),
+    )
+    // An unset setting on Linux that found nothing on PATH gets the Linux remedy, not the generic one.
+    if (!binary)
       missing.push(
-        'codebook.chromeExecutable: configure an installed executable Chrome.',
+        process.platform === 'linux'
+          ? `codebook.chromeExecutable: no ${CHROME_LINUX_EXECUTABLE_NAMES.slice(0, -1).join(', ')} or ${CHROME_LINUX_EXECUTABLE_NAMES.at(-1)} is on PATH. Install Google Chrome for Linux (or Chromium), or set codebook.chromeExecutable to its executable path.`
+          : 'codebook.chromeExecutable: configure an installed executable Chrome.',
       )
-    }
+    else
+      try {
+        await access(binary, filesystemConstants.X_OK)
+        const version = (
+          await executeFile(binary, ['--version'], {
+            timeout: PREREQUISITE_TIMEOUT_MS,
+          })
+        ).stdout.trim()
+        if (!version) throw new Error('Missing Chrome version')
+        chrome = { binary, version }
+      } catch {
+        missing.push(
+          'codebook.chromeExecutable: configure an installed executable Chrome.',
+        )
+      }
     return {
       ready: missing.length === 0,
       missing,

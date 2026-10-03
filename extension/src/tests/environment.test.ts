@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
-import { lstat, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type { DebugAdapterTrackerFactory, DebugSession } from 'vscode'
+import { z } from 'zod'
 
 import type { ConfiguredBrowserRun } from '../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../configuredStudySchemas'
@@ -28,13 +37,190 @@ test('untrusted, remote and virtual workspaces reject execution before creating 
   assert.throws(() => boundary.requireWorkspace(), /Trust this workspace/)
   workspace.isTrusted = true
   env.remoteName = 'ssh-remote'
-  assert.throws(() => boundary.requireWorkspace(), /local file workspace/)
-  env.remoteName = ''
+  assert.throws(
+    () => boundary.requireWorkspace(),
+    /Open a trusted file workspace on this machine or in WSL; other remote and virtual workspaces are not supported\./,
+  )
+  env.remoteName = 'wsl'
   workspace.workspaceFolders[0]!.uri.scheme = 'virtual'
-  assert.throws(() => boundary.requireWorkspace(), /local file workspace/)
+  assert.throws(() => boundary.requireWorkspace(), /file workspace/)
+  env.remoteName = ''
+  assert.throws(() => boundary.requireWorkspace(), /file workspace/)
   workspace.workspaceFolders[0]!.uri.scheme = 'file'
   assert.equal(boundary.requireWorkspace(), '/workspace')
 })
+
+// Value: protects=Codebook on VS Code or Cursor for Windows opened on a repository in WSL; fails_when=a WSL remote file workspace is refused like any other remote, so Set Up AI Chat and status answer "not supported"; why_new=the boundary test only proved that every remote is refused (Cycle 0044 row N-1); seam=none
+test('a trusted file workspace opened in WSL is accepted and its prerequisites answer ready', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wsl-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'dist'))
+  await writeFile(
+    join(directory, 'dist/build.json'),
+    JSON.stringify({
+      revision: 'fixture',
+      dirty: false,
+      sourceHash: 'fixture',
+    }),
+  )
+  const chromeExecutable = join(directory, 'chrome')
+  await writeFile(chromeExecutable, '#!/bin/sh\n', { mode: 0o755 })
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      'node:util': {
+        promisify: () => async () => ({ stdout: 'Google Chrome 140.0' }),
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (key: string, fallback: string) =>
+              key === 'chromeExecutable' ? chromeExecutable : fallback,
+          }),
+        },
+        env: {
+          appRoot: directory,
+          appName: 'Visual Studio Code',
+          remoteName: 'wsl',
+        },
+        version: '1.140.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+  )
+  // Act
+  const workspace = boundary.requireWorkspace()
+  const environment = await boundary.createEnvironment({
+    extensionPath: directory,
+  })
+  context.after(() => environment.dispose())
+  const prerequisites = await environment.prerequisites()
+  // Assert
+  assert.equal(workspace, directory)
+  assert.deepEqual([...prerequisites.missing], [])
+  assert.equal(prerequisites.ready, true)
+})
+
+// Value: protects=a Linux or WSL learner who never set codebook.chromeExecutable; fails_when=the unset setting still names the macOS bundle path and status answers only "configure an installed executable Chrome"; why_new=the prerequisite test configured an absent path on every platform (Cycle 0044 row N-6); seam=the package.json default read as VS Code applies it
+for (const scenario of [
+  { name: 'google-chrome on PATH is used', installed: true },
+  {
+    name: 'no Chrome on PATH is named with a Linux remedy',
+    installed: false,
+  },
+])
+  test(`on Linux with codebook.chromeExecutable unset, ${scenario.name}`, async (context) => {
+    // Arrange
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-linux-chrome-'))
+    context.after(() => rm(directory, { recursive: true, force: true }))
+    await writeFile(
+      join(directory, 'product.json'),
+      JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+    )
+    await mkdir(join(directory, 'dist'))
+    await writeFile(
+      join(directory, 'dist/build.json'),
+      JSON.stringify({
+        revision: 'fixture',
+        dirty: false,
+        sourceHash: 'fixture',
+      }),
+    )
+    const binDirectory = join(directory, 'bin')
+    await mkdir(binDirectory)
+    if (scenario.installed)
+      await writeFile(join(binDirectory, 'google-chrome'), '#!/bin/sh\n', {
+        mode: 0o755,
+      })
+    const manifest = z
+      .object({
+        contributes: z.object({
+          configuration: z.object({
+            properties: z.record(
+              z.string(),
+              z.object({ default: z.unknown().optional() }),
+            ),
+          }),
+        }),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
+        ),
+      )
+    const disposable = { dispose(): void {} }
+    const boundary = await loadModule<typeof EnvironmentModule>(
+      resolve(__dirname, '../environment.js'),
+      {
+        './configuredBrowserRun': {},
+        './utils/resolveExternalNodeExecutable': {
+          resolveExternalNodeExecutable: async () => '/external/node',
+        },
+        'node:util': {
+          promisify: () => async () => ({ stdout: 'Google Chrome 140.0' }),
+        },
+        vscode: {
+          workspace: {
+            isTrusted: true,
+            workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+            // An unset setting answers the manifest default, as VS Code does.
+            getConfiguration: () => ({
+              get: (key: string, fallback: unknown) =>
+                manifest.contributes.configuration.properties[`codebook.${key}`]
+                  ?.default ?? fallback,
+            }),
+          },
+          env: { appRoot: directory, appName: 'Visual Studio Code' },
+          version: '1.140.0',
+          extensions: { getExtension: () => ({}) },
+          debug: {
+            registerDebugAdapterTrackerFactory: () => disposable,
+            onDidTerminateDebugSession: () => disposable,
+            onDidChangeActiveDebugSession: () => disposable,
+          },
+        },
+      },
+      {
+        process: { platform: 'linux', env: { PATH: binDirectory } },
+      },
+    )
+    const environment = await boundary.createEnvironment({
+      extensionPath: directory,
+    })
+    context.after(() => environment.dispose())
+    // Act
+    const prerequisites = await environment.prerequisites()
+    // Assert
+    if (scenario.installed) {
+      assert.deepEqual([...prerequisites.missing], [])
+      assert.equal(prerequisites.ready, true)
+    } else {
+      assert.equal(prerequisites.ready, false)
+      assert.deepEqual(
+        [...prerequisites.missing],
+        [
+          'codebook.chromeExecutable: no google-chrome, google-chrome-stable, chromium or chromium-browser is on PATH. Install Google Chrome for Linux (or Chromium), or set codebook.chromeExecutable to its executable path.',
+        ],
+      )
+    }
+  })
 
 test('the configured environment routes only owned DAP responses and reveals immutable Study source without a demo or raw-tab fallback', async (context) => {
   // Arrange: constructor/host effects are controlled; the environment bridge and prerequisite decisions are real.
