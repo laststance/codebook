@@ -266,6 +266,21 @@ Generation (prerequisite, candidate 1): `/codebook このプロジェクトの L
 
 Also seen: the page learns of a source change when its window regains focus (a click inside an already focused page does not look again); a page opened from disk in the editor's own browser shows the offline note under the button.
 
+### Native check N13: results in Cursor and what is left, 2026-10-04
+
+Cursor 3.23.12 for Linux through WSLg, candidate 3, the same site and browser; the reader was opened from Cursor ("Codebook: Open DeepWiki in Browser") and the page's update link was `cursor://laststance.codebook/update?…`.
+
+| Check | Result | Observed |
+| --- | --- | --- |
+| N13-e, first press (browser button) | PASS for the guard it met | The press showed "Confirm the update in your editor to start it."; Cursor asked "Allow 'codebook' extension to open this URI?" and then Codebook's confirmation, which WSLg painted as a black window (confirmed with Return). The start was refused: failed, site kept, "Another editor window or an earlier chat appears to be updating this Wiki (candidate dashboard-wiki-deepwiki.stage-aca0feca-…, written 01:09 AM). Wait for it to finish, or delete that folder, then press Update LLM Wiki again." That candidate was the one the stopped VS Code chat of N13-b had left. Read from the reader's `api/update-status`; the page itself was not captured for this state. |
+| N13-e, second start (palette, after the candidate was moved aside) | FAIL as expected on this host | failed, site kept: "Cursor Agent CLI is not installed. Install and sign in, then retry the Wiki update." within two seconds; folder hash `7a91ea5d…` before and after. The running line was not seen (the run ended before the first look). No editor notification was visible in the still taken afterwards; the bell showed an unread mark. |
+| N13-e success, N13-f cancel | NOT RUN | The Cursor Agent CLI (`cursor-agent`) is not installed on this host and its sign-in is the owner's. Running then "Updated", and a cancel of a running agent, are unobserved in Cursor. |
+| N13-h lost contact | PASS | With "Stopped watching …" on the page the VS Code window was closed: within 22 s the page read "Lost contact with the editor, so the update status is unknown. Reopen this Wiki with “Codebook: Open DeepWiki in Browser” to see it. The pages you are reading are unchanged." and the button was usable. |
+
+Criterion 9 therefore holds in VS Code (running, then "Updated"; a cancel; a refused start) and in Cursor only for a refused start and an immediate failure. Afterwards the editors were closed, the comment lines were removed from the copy (`git status` clean) and the output setting was removed from both QA profiles.
+
+Not yet done when this was written (state for a resumed session): the Part 2 native rows of the frozen table above (sixteen rows; none has been run), the Closed column of the carried-defects file (`c44-work/fill/fill.py --write` fills it from the five closure files, `pl-closure.md`, `merge-notes.md` and `fill/overrides.json`; a native result goes into `overrides.json` under the row's label), `extension/test-timings.json` (`pnpm --dir extension test:shard --record`), the health baseline (590 functions above the thresholds against 519 on `main`; eight new functions and thirteen grown ones exceed the complexity or size thresholds themselves, the rest is the static zero-coverage estimate), the full suite on the final tree, CHANGELOG and version (notes in `c44-work/changelog-notes.md`), PROJECT_STATE, the local reviews and the delivery.
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
@@ -284,7 +299,7 @@ Five groups were closed in parallel in five worktrees branched from `908e3f4`, o
 
 ## Next action
 
-- Exact next action: plan reviews for Part 1, then the mechanism tests and the update-run state (Part 1), then Part 2 group by group.
+- Exact next action: run the Part 2 native rows of the frozen N13 table in the QA editors (candidate 3 or a later one built from the final tree), record each in `c44-work/fill/overrides.json`, fill the Closed column, then the gates, the records and the delivery.
 - Changed files / branch / active processes: branch `codex/cycle-0044-wiki-update-and-carried-defects`; no editor or database process running.
 - State updated in PROJECT_STATE.md: not yet.
 - Owner rules stated in the required reads: the cycle rule (AGENTS.md, DEVELOPMENT.md); nothing new this cycle.
