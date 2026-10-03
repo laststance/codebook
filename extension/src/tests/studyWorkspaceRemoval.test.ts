@@ -840,7 +840,7 @@ test('a second delete request while the confirmation is waiting opens no second 
 })
 
 // Value: protects=a study whose files are being moved can be neither opened nor played, and the pane says that the move is in progress; fails_when=a reader or an agent opens a half-moved study; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
-test('while a saved study is being moved to the Trash it cannot be opened or played and the pane says it is moving', async () => {
+test('while a saved study is being moved to the Trash it cannot be opened or played and the pane says it is moving, and the removal then completes', async () => {
   // Arrange: the Trash holds the first move of a confirmed removal.
   const harness = await workspaceHarness()
   try {
@@ -1837,7 +1837,7 @@ test('a removal confirmed while another saved study is still opening moves nothi
 })
 
 // Value: protects=a delete request while a Node test history is still opening waits like one behind a saved study; fails_when=only saved studies mark themselves as opening, so the request is taken for the study shown before; why_new=a Node test history that is opening had no marker; seam=the Node history store's read, held by the test
-test('a delete request while a chosen Node test history is still opening is refused with the same sentence', async (context) => {
+test('a delete request while a chosen Node test history is still opening is refused with the same sentence, and is asked and carried out once the history has opened', async (context) => {
   // Arrange: a saved study is shown; the learner chooses a Node test history whose journal is still being read.
   const harness = await workspaceHarness()
   try {
