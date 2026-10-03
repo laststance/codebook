@@ -2004,6 +2004,36 @@ test('a superseded frame that is still waiting to paint does not count against t
   }
 })
 
+// Value: protects=the decided replay behaviour of "Open article" (learning-replay.md: a replay may link to repository documentation, and stays independent of it); fails_when=the link is withdrawn during replay, or opening the article leaves, reloads or moves the replay; why_new=Cycle 0044 (0033-L2: the behaviour was never decided); seam=the reader's openArticle control, recorded by the harness
+test('Open article stays offered during replay and opens the article without leaving or moving the replay', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const replayBefore = harness.controller.state()
+    const offered = harness.reader.inspect().view!.repositoryArticleAvailable
+
+    // Act
+    await harness.reader.action('open-article')
+
+    // Assert
+    assert.equal(offered, true)
+    assert.equal(harness.articleOpens.length, 1)
+    assert.deepEqual(harness.controller.state(), replayBefore)
+    assert.equal(harness.reader.inspect().view!.recording?.presentedMs, 100)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the recording renderer handshake after abandoned reveals; fails_when=the pending reveal is cleared before it completes, so after two aborted reveals a later presentation gets the viewport without its handshake; why_new=Cycle 0044 (0034-C4); seam=the reused recording viewport's reveal, replaced to observe each handshake
 test('after two abandoned recording reveals the next presentation still waits for the renderer handshake', async () => {
   // Arrange: a reused recording viewport whose reveal is still owed, and a reveal that finishes only after its caller left.

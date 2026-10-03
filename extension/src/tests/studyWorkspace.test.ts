@@ -1936,6 +1936,58 @@ test('a saved Node stop shown in Run and Debug before the reader closed offers I
   }
 })
 
+// Value: protects=the two debugger notifications keeping their own meaning for a saved Node stop; fails_when=a values-loaded notification is handled like an ended session, so the stop that Run and Debug now shows is marked unavailable and offers Inspect again; why_new=Cycle 0044 (0032-T6h, "the reason mapping": only the session-ended branch had a failing control); seam=TestReplayDebugger models the native load notification
+test('native values loading for a saved Node stop drops its Run and Debug hint and keeps the stop shown in the native debugger', async () => {
+  // Arrange: a selected Node stop committed without native values.
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    harness.setHistoricalDebugInspection('uninspected')
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.nativeValuesUninspected === true,
+      'the stop shows the Run and Debug hint',
+      1_000,
+    )
+    const beforeValuesLoad = harness.postedMessages().slice(-1)[0]!
+      .nodeHistoryPosition
+
+    // Act
+    harness.loadHistoricalDebugValues()
+
+    // Assert
+    const afterValuesLoad = harness.postedMessages().slice(-1)[0]!
+      .nodeHistoryPosition
+    assert.equal(beforeValuesLoad?.debuggerAvailable, true)
+    assert.equal(afterValuesLoad?.nativeValuesUninspected, false)
+    assert.equal(afterValuesLoad?.debuggerAvailable, true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a refused recording open leaves a Node stop that is still loading its native values to finish; fails_when=openRecording abandons the Node selection before its own admission checks pass; why_new=the supersede test only covers an admitted recording; seam=none
 test('a refused recording open lets a loading Node history stop finish its selection', async () => {
   // Arrange
