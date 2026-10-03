@@ -293,6 +293,22 @@ Run by a delegated agent on candidate 3 (`b27fa6d6…`, source `258508b`) in VS 
 
 New findings of that run (not rows carried into this cycle): "Existing editor groups were preserved" on a live entry in a window the learner had not split; an enabled learner breakpoint ends a run ("Unexpected or additional server stop…") while the run resource an agent reads says "The study operation failed." / "Error: CDP disconnected"; "Error: Selected item belongs to another configured article." shown for as long as a recording of the session's own run is open; a learner's tab in the application group keeps the Application pane hidden after a cold open; no control leads from a paused live run to its Recording; in one of five takes the previous stop's Variables stayed about 0.4 s beside a cleared image with a red "Canceled". Each is fixed in this cycle if the delivery review rates it critical, and is otherwise a task of the next cycle.
 
+### Fixes after the VS Code native run (`f29acca`), 2026-10-04
+
+Merged from `codex/cycle-0044-nf`; the per-row causes, tests and red proofs are in `c44-work/nf-closure.md`. Full suite on its clean build: 2,362 of 2,362. Candidate 4 (`923ccfe9…`, source `f29acca`) is installed in the VS Code QA profile; **the native re-run of these rows on it is not done yet**, and each fix rests on an assumption about the editor that only that re-run confirms (listed in the closure file).
+
+| Row or finding | State | What changed |
+| --- | --- | --- |
+| 0038-N7-e | fixed, native re-run pending (`0470aea`) | A Saved studies choice made while the editor area is hidden (panel maximized) updates the panel only; the panes follow when the area is back. |
+| 0039-N8-b / 0040-N9-img | fixed, native re-run pending (`7794af0`) | A source revealed into a hidden editor area is followed by re-applying the confirmed layout; a status read while the area is hidden no longer unconfirms it. |
+| 0035-O01 | fixed, native re-run pending (`bde5347`) | The read of this session's own in-progress recording no longer hashes its frames again (about 650 ms to about 80 ms at 1,065 frames, measured on a synthetic recording), and a reload during a paused live session no longer waits the 1.0 s inspection grace. Computed total about 0.8 to 1.0 s instead of 2.4 to 2.9 s. |
+| 0037-F6 | partly fixed (`352287f`) | The focus drop after each committed capture is fixed (the Application pane takes the focus the debugger gave the paused file). The drop at a run's first reveal is not: the extension API cannot tell an editor that holds keyboard focus from one that is only active while the learner types in the chat, so taking focus there would take it from the chat input. |
+| "Existing editor groups were preserved" on a live entry | fixed (`5e615f4`) | The arrangement waits for a retired pane's tab to close before it counts the groups. |
+| A learner breakpoint ends a run and the agent reads "CDP disconnected" | reason fixed (`1027330`) | The run resource carries the runtime's own reason. An enabled learner breakpoint on a stop's path still ends the run, by design. |
+| "Selected item belongs to another configured article." while a recording is open | fixed (`6e13b5c`) | A study held in memory is selected together with its item. |
+| A learner's tab hides the Application pane after a cold open | not fixed | A fix contradicts an existing test of the focus return to the learner's file; it needs the owner's choice between "focus returns to the learner's file" and "Application pane in front". Next cycle. |
+| No control leads from a paused live run to its Recording | not fixed | It needs a new control. Next cycle. |
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
