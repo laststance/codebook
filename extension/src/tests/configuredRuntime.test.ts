@@ -756,6 +756,24 @@ test('a held configured pause that is renewed while a replay is read is still he
   assert.match(run.view().failures.join('\n'), /pause hold deadline/)
 })
 
+// Value: protects=the run's bounded evidence journal while a replay plays beside a paused live run; fails_when=each renewal of the pause hold (one per presented replay frame) writes a journal event and long reading overflows the journal, failing the live run; why_new=Cycle 0035 O3 renews on every presented moment; seam=none
+test('renewing a held pause for every replay frame adds no events to the run journal', async (context) => {
+  // Arrange
+  const { run } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => run.view().snapshots[0], 'held pause')
+  const eventsBeforeRenewals = run.view().events.length
+
+  // Act
+  for (let frame = 0; frame < 200; frame++) run.renewPauseHold()
+  const eventsAfterRenewals = run.view().events.length
+  await run.stop()
+
+  // Assert
+  assert.equal(eventsAfterRenewals, eventsBeforeRenewals)
+})
+
 test('a late action cannot reset the original ten-minute run deadline', async (context) => {
   // Arrange
   const { run, advance } = await configuredRuntimeHarness(context)

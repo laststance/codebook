@@ -2402,11 +2402,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       !this.status.startsWith('paused-')
     )
       return
+    // No journal entry: a playing replay renews on every frame, and the bounded journal must keep its room for the run's own events.
     this.progressDeadline(
       REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
       'Repository pause hold deadline exceeded',
     )
-    this.evidence.record('pause-hold.renewed', { status: this.status })
   }
   /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle. @example run.fail('source changed') */
   fail(reason: string): void {
