@@ -259,7 +259,7 @@ async function recoverRemoval(
   return undefined
 }
 
-/** Waits briefly for another active Cursor window's catalog writer without displacing an interrupted lock. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
+/** Waits briefly for another active Cursor window's catalog writer, also one that is taking a stale lock over; the retries displace no lock themselves. {@link withStorageLock} takes over a lock whose writer process is gone from this machine, and any other lock that stays through the retries is reported. @example await withCatalogLockRetry(() => withStorageLock('/private', update)) */
 async function withCatalogLockRetry<Result>(
   operation: () => Promise<Result>,
 ): Promise<Result> {

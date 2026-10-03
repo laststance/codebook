@@ -71,6 +71,8 @@ async function openWikiWindow(
     outputDirectory,
     manifestPath,
     publish,
+    /** Closes the window and keeps the project on disk, for a test that looks at what a closed window still does. */
+    closeWindow: (): Promise<void> => window.close(),
     async close(): Promise<void> {
       await window.close()
       await rm(projectDirectory, { recursive: true, force: true })
@@ -633,6 +635,81 @@ test('closing the window stops the Cursor agent and waits until its process has 
   assert.equal(wiki.status().state, 'cancelled')
   assert.deepEqual(wiki.notices, [])
   await click
+})
+
+// Cycle 0044 review B-M1: red while an update that was still in its start checks at shutdown went on to start its run, which the closing window had already looked for and nothing aborted.
+test('closing the window while a Cursor update is still in its start checks starts no agent once the checks have ended', async () => {
+  // Arrange: the freshness inspection of the start checks is held open.
+  let agentStarts = 0
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      agentStarts += 1
+      return 'Updated'
+    },
+  })
+  try {
+    const inspection = wiki.hold('freshness-inspection')
+    const click = wiki.clickUpdate()
+    await inspection.started
+
+    // Act: the window closes, then the held check answers.
+    await wiki.closeWindow()
+    inspection.release()
+    await click
+
+    // Assert
+    assert.equal(agentStarts, 0)
+    assert.equal(wiki.status().state, 'idle')
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('closing the window while a VS Code update is still in its start checks sends no chat request and starts no watch once the checks have ended', async () => {
+  // Arrange: the freshness inspection of the start checks is held open.
+  const wiki = await openWikiWindow({ cancellable: [] })
+  try {
+    const inspection = wiki.hold('freshness-inspection')
+    const click = wiki.clickUpdate()
+    await inspection.started
+
+    // Act: the window closes, then the held check answers.
+    await wiki.closeWindow()
+    inspection.release()
+    await click
+
+    // Assert
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.equal(wiki.status().state, 'idle')
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('closing the window while the VS Code chat is still opening ends the update as cancelled and starts no watch once the chat has opened', async () => {
+  // Arrange: the run has begun and the chat command has not answered yet.
+  const wiki = await openWikiWindow({ cancellable: [] })
+  try {
+    const chat = wiki.hold('chat-open')
+    const click = wiki.clickUpdate()
+    await chat.started
+    const whileChatOpens = wiki.status().state
+
+    // Act: the window closes, then the chat opens.
+    await wiki.closeWindow()
+    chat.release()
+    await click
+
+    // Assert
+    assert.equal(whileChatOpens, 'running')
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.equal(wiki.status().state, 'cancelled')
+    assert.deepEqual(wiki.notices, [])
+  } finally {
+    await wiki.close()
+  }
 })
 
 test(

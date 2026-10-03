@@ -457,6 +457,8 @@ export class StudyWorkspace {
   private readonly disposables: vscode.Disposable[] = []
   private highlight?: vscode.TextEditorDecorationType
   private sourceUri?: vscode.Uri
+  /** The repository path declared for the captured source that {@link sourceUri} shows; none for a source-derived placeholder. Captured tabs are named by base name only, so this tells an earlier capture of the same file from another file of that name. */
+  private sourceDeclaredPath?: string
   private sourceGroup?: vscode.TabGroup
   private opened = false
   private sourceEntryPending = false
@@ -4650,6 +4652,7 @@ export class StudyWorkspace {
       this.repositoryLayoutOrigin = undefined
       this.repositoryLayoutRestored = undefined
       this.sourceUri = undefined
+      this.sourceDeclaredPath = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.lastSelectionKey = undefined
@@ -4922,15 +4925,21 @@ export class StudyWorkspace {
     }
   }
 
-  /** Saves material state only; forced retirement explicitly captures the state after the final observer tick. @example await this.checkpoint(service, record, true) */
+  /**
+   * Saves material state only; forced retirement explicitly captures the state after the final observer tick.
+   * @param isAwaitedByRemoval - Set by {@link saveLearningReplay}, the one caller a confirmed removal waits for ({@link settleStudyWrites}): its checkpoint never waits for that removal in turn.
+   * @example await this.checkpoint(service, record, true)
+   */
   private async checkpoint(
     service: StudyService,
     record: StudyRecord,
     force = false,
+    isAwaitedByRemoval = false,
   ): Promise<void> {
     const id = `${service.instanceId}_${record.id}`
     // Retirement must not lose the final state of a study whose removal then moves nothing, so a forced checkpoint waits for the move.
-    if (force && this.movingStudyId() === id) await this.studyMove
+    if (force && !isAwaitedByRemoval && this.movingStudyId() === id)
+      await this.studyMove
     const signature = service.state(record).materialSignature
     // A study on its way to the Trash is not captured again; saved material is not captured twice.
     if (this.skipsCheckpoint(id, signature, force)) return
@@ -4955,8 +4964,8 @@ export class StudyWorkspace {
         return
       }
       // A capture that was in flight when the removal was confirmed waits for the files to settle: it queues nothing for a study that left, and is written when nothing moved.
-      if (this.movingStudyId() === id) await this.studyMove
-      if (this.discardsCapture(id, record)) return
+      if (await this.dropsCaptureAfterMove(id, record, isAwaitedByRemoval))
+        return
       if (record === this.currentRecord()) this.activeArchive = archive
       if (this.selectedArchive?.id === id) this.selectedArchive = archive
       this.archiveSignatures.set(id, signature)
@@ -4973,8 +4982,8 @@ export class StudyWorkspace {
       else void write.catch(() => undefined)
     } catch (error) {
       // A capture that failed because its study's files were on their way to the Trash reports no failed receipt once the study left; the removal's own outcome says what happened.
-      if (this.movingStudyId() === id) await this.studyMove
-      if (this.discardsCapture(id, record)) return
+      if (await this.dropsCaptureAfterMove(id, record, isAwaitedByRemoval))
+        return
       if (service.state(record).materialSignature === signature)
         this.archiveSignatures.set(id, signature)
       this.reportCheckpoint(
@@ -5173,7 +5182,9 @@ export class StudyWorkspace {
       await service.stop({ instanceId: service.instanceId, runId: record.id })
       // A removal confirmed while the run was stopping waits for this save; the forced checkpoint would wait for that removal in turn, so the save ends here instead.
       this.assertStudyNotMoving(studyId)
-      await this.checkpoint(service, record, true)
+      await this.checkpoint(service, record, true, true)
+      // A removal confirmed during the checkpoint waits for this save too: the checkpoint did not wait for it and wrote nothing, so the save ends here and the removal settles what was captured.
+      this.assertStudyNotMoving(studyId)
       const state = service.state(record)
       if (
         state.historyOutcome.status !== 'saved' ||
@@ -6552,8 +6563,10 @@ export class StudyWorkspace {
           throw new Error(
             'Displayed captured source does not match the selected observation.',
           )
-        const previousUri = this.sourceUri
+        const previousUri = this.sourceUri,
+          previousDeclaredPath = this.sourceDeclaredPath
         this.sourceUri = uri
+        this.sourceDeclaredPath = declaredSourcePosition?.path
         // Every visible copy of the same immutable source describes the same selected stop.
         if (this.highlight)
           for (const visibleEditor of vscode.window.visibleTextEditors) {
@@ -6565,12 +6578,13 @@ export class StudyWorkspace {
                   : [new vscode.Range(position, position)],
               )
           }
-        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab.
+        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab. The file is the declared path: two routes' `page.tsx` share a tab name and keep a tab each.
         if (
           previousUri &&
           previousUri.toString() !== uri.toString() &&
           (previousUri.path.startsWith('/source-derived/') ||
-            basename(previousUri.path) === basename(uri.path))
+            (previousDeclaredPath !== undefined &&
+              previousDeclaredPath === declaredSourcePosition?.path))
         ) {
           const obsolete = vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
@@ -9654,6 +9668,27 @@ export class StudyWorkspace {
       this.movingStudyId() === studyId ||
       (!force && this.archiveSignatures.get(studyId) === signature)
     )
+  }
+
+  /**
+   * Settles for {@link checkpoint} what becomes of a capture, or of its failure, that ended while a confirmed removal of its study is in progress: waits until the files are settled, then lets {@link discardsCapture} judge it.
+   * A checkpoint the removal itself waits for cannot wait in turn (each would wait for the other for ever). Its capture is kept: {@link persistArchive} leaves it unwritten while the study is moving, and the removal drops it when something moved ({@link forgetRemovedStudy}) or writes it when nothing did ({@link resumeHeldBackWrite}).
+   * @param studyId - The study the checkpoint captured.
+   * @param record - The run of that study.
+   * @param isAwaitedByRemoval - Whether the removal waits for the checkpoint's caller, see {@link checkpoint}.
+   * @returns Whether the capture was dropped.
+   * @example if (await this.dropsCaptureAfterMove(id, record, false)) return
+   */
+  private async dropsCaptureAfterMove(
+    studyId: string,
+    record: StudyRecord,
+    isAwaitedByRemoval: boolean,
+  ): Promise<boolean> {
+    if (this.movingStudyId() === studyId) {
+      if (isAwaitedByRemoval) return false
+      await this.studyMove
+    }
+    return this.discardsCapture(studyId, record)
   }
 
   /**

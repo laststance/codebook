@@ -9,6 +9,7 @@ import type { BookObservationBinding } from '../repositorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bookObservationHash } from '../utils/bookObservationHash'
+import { citationContext } from '../utils/citationContext'
 
 import {
   workspaceHarness,
@@ -16,6 +17,7 @@ import {
   configuredWorkspaceHarness,
   readerSeams,
 } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
   advanceClock,
   advanceClockUntil,
@@ -1474,6 +1476,76 @@ test('a second run stopping in the same source file replaces the first run captu
           tab.input.uri.path.endsWith('/Captured-theme.ts'),
       )
     assert.equal(capturedThemeTabs.length, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=two different source files with the same name (the page.tsx of two routes) each keep their captured-source tab; fails_when=the one-tab-per-source rule compares the tab's base name instead of the declared source path, so showing one file closes the other file's captured tab (Cycle 0044 review A-M1); why_new=the one-tab test above stops in one file only; seam=none
+test('a saved study that stops in another file of the same name keeps the earlier study’s captured-source tab open beside its own', async () => {
+  // Arrange: two saved studies whose stops are declared in different files, both named page.tsx.
+  const harness = await workspaceHarness(false)
+  try {
+    const library = await harness.reader.learningStorage()
+    const saveStudyDeclaredAt = async (path: string, runId: string) => {
+      const study = createConfiguredStudy(),
+        descriptor = study.descriptor!
+      for (const observation of study.observations)
+        observation.snapshotUri = observation.snapshotUri.replace(
+          study.runId,
+          runId,
+        )
+      study.workspaceKey = library.workspaceKey
+      study.runId = runId
+      study.id = `${study.instanceId}_${runId}`
+      study.configuration.source.path = path
+      study.configurationHash = sha256(JSON.stringify(study.configuration))
+      descriptor.anchors[0]!.path = path
+      descriptor.sources[0]!.path = path
+      descriptor.citationContext = citationContext(descriptor.anchors)
+      await library.saveStudy(study)
+      return study
+    }
+    const chooseStudy = async (studyId: string): Promise<void> => {
+      harness.receive({
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.model.selection.studyId === studyId &&
+          !harness.reader.inspect().view!.loading,
+        'the chosen saved study',
+        1_000,
+      )
+    }
+    const first = await saveStudyDeclaredAt(
+        'app/a/page.tsx',
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      ),
+      second = await saveStudyDeclaredAt(
+        'app/b/page.tsx',
+        'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      )
+    await harness.reader.open()
+    await chooseStudy(first.id)
+
+    // Act
+    await chooseStudy(second.id)
+
+    // Assert
+    const capturedPageTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .flatMap((tab) =>
+        'uri' in tab.input && tab.input.uri.path.endsWith('/Captured-page.tsx')
+          ? [tab.input.uri.path.split('/')[1]]
+          : [],
+      )
+    assert.deepEqual(capturedPageTabs, [
+      '11111111-1111-4111-8111-111111111111_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '11111111-1111-4111-8111-111111111111_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    ])
   } finally {
     await harness.close()
   }

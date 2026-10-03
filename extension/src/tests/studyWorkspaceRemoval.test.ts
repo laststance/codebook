@@ -4849,6 +4849,155 @@ test('a Save learning replay that is still stopping the run when its study’s r
   }
 })
 
+// Value: protects=a Save learning replay whose checkpoint is capturing its study when the removal of that study is confirmed cannot lock the two against each other, and the removed study is not written back; fails_when=the capture waits for the move while the move waits for the save, so the removal stays "moving" and the save "saving" until the window is reloaded (Cycle 0044 review A-H1); why_new=the save was only tested while stopping its run and while writing, never with its capture in flight at the confirmation; seam=the service's stop, after which the runtime's view confirms the dialog
+test('a Save learning replay that is capturing its study when the removal is confirmed is answered as unavailable, and the removal moves the study without it being written back', async () => {
+  // Arrange: a recorded, stopped and saved run with a captured image; the learner confirms while the save's capture reads it.
+  const harness = await recordedReaderHarness(true)
+  try {
+    const library = await harness.reader.learningStorage(),
+      directory = harness.reader.inspect().libraryDirectory!
+    let confirm: ((answer: string) => void) | undefined
+    harness.answerWarningDialogs(
+      ([answer]) =>
+        new Promise<string | undefined>((resolve) => {
+          confirm = (): void => resolve(answer)
+        }),
+    )
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.warningDialogs.length === 1,
+      'the confirmation dialog',
+      1_000,
+    )
+    const runtime = harness.record.runtime!,
+      view = runtime.view.bind(runtime),
+      stop = harness.service.stop.bind(harness.service)
+    let capturing = false
+    runtime.view = () => {
+      // The capture reads the runtime again for its image; the confirmation arrives at that moment.
+      if (capturing) {
+        confirm?.(`Move to ${TRASH}`)
+        confirm = undefined
+      }
+      return view()
+    }
+    harness.service.stop = async (input) => {
+      const stopped = await stop(input)
+      // The save's checkpoint is the next reader of the runtime.
+      capturing = true
+      return stopped
+    }
+    // Act
+    const [saveAnswer] = await Promise.race([
+      Promise.all([
+        harness.reader.saveLearningReplay(harness.studyId).then(
+          () => 'saved',
+          (error: unknown) => String(error),
+        ),
+        removal,
+      ]),
+      failAfter(3_000, 'the save and the removal'),
+    ])
+    capturing = false
+    // Assert
+    assert.equal(saveAnswer, 'Error: Study archive is unavailable.')
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'moved')
+    assert.deepEqual(await library.list(), [])
+    assert.deepEqual(
+      (await readdir(directory)).filter((name) =>
+        name.includes(harness.studyId),
+      ),
+      [],
+    )
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the state a Save learning replay captured is saved when the removal confirmed during that capture moved nothing; fails_when=the save and the removal wait for each other, or the capture is dropped and nothing writes the state afterwards (Cycle 0044 review A-H1); why_new=the capture in flight at the confirmation was only tested for a forced checkpoint outside a save; seam=the service's stop, after which the runtime's view confirms the dialog, and the editor's Trash, which refuses every move
+test('a Save learning replay that was capturing its study when a removal that moved nothing was confirmed is answered as unavailable, and its capture is written once that removal has ended', async (context) => {
+  // Arrange: a recorded, stopped and saved run with a captured image; the learner confirms while the save's capture reads it, and the Trash refuses every move.
+  const harness = await recordedReaderHarness(true)
+  try {
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let writtenStudies = 0
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      async function (
+        this: LearningLibrary,
+        study: Parameters<LearningLibrary['saveStudy']>[0],
+      ) {
+        await saveStudy.call(this, study)
+        writtenStudies++
+      },
+    )
+    harness.rejectTrashMoves(() => true)
+    let confirm: ((answer: string) => void) | undefined
+    harness.answerWarningDialogs(
+      ([answer]) =>
+        new Promise<string | undefined>((resolve) => {
+          confirm = (): void => resolve(answer)
+        }),
+    )
+    const removal = requestRemoval(harness, harness.studyId)
+    await waitUntil(
+      () => harness.warningDialogs.length === 1,
+      'the confirmation dialog',
+      1_000,
+    )
+    const runtime = harness.record.runtime!,
+      view = runtime.view.bind(runtime),
+      stop = harness.service.stop.bind(harness.service)
+    let capturing = false
+    runtime.view = () => {
+      // The capture reads the runtime again for its image; the confirmation arrives at that moment.
+      if (capturing) {
+        confirm?.(`Move to ${TRASH}`)
+        confirm = undefined
+      }
+      return view()
+    }
+    harness.service.stop = async (input) => {
+      const stopped = await stop(input)
+      // The save's checkpoint is the next reader of the runtime.
+      capturing = true
+      return stopped
+    }
+    // Act
+    const [saveAnswer] = await Promise.race([
+      Promise.all([
+        harness.reader.saveLearningReplay(harness.studyId).then(
+          () => 'saved',
+          (error: unknown) => String(error),
+        ),
+        removal,
+      ]),
+      failAfter(3_000, 'the save and the removal'),
+    ])
+    capturing = false
+    const writtenBeforeRemovalEnded = writtenStudies
+    await waitUntil(
+      () => writtenStudies === 1,
+      'the write of the capture the removal held back',
+      2_000,
+    )
+    // Assert
+    assert.equal(saveAnswer, 'Error: Study archive is unavailable.')
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'failed')
+    assert.equal(writtenBeforeRemovalEnded, 0)
+    assert.equal(
+      harness.service.state(harness.record).historyOutcome.status,
+      'saved',
+    )
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the study being moved cannot be opened through the pane's list or through the playback controller; fails_when=either entry point reads or plays a half-moved study (0038-T9); why_new=the guard was only tested through the reader's own methods; seam=the editor's Trash, held by the test
 test('while a saved study is being moved to the Trash, choosing it in the pane and opening its recording through the playback controller both answer that the archive is unavailable', async () => {
   // Arrange: the Trash holds the first move of the confirmed removal of a recorded study.

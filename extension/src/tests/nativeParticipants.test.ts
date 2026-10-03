@@ -2990,6 +2990,28 @@ test('a server pause no debugger stop announced that is resumed within three sec
   assert.equal(retiredPauses(harness).length, 1)
 })
 
+// Cycle 0044 review B-H1: red while the one-second bound of a stop that still waits for its own pause stayed in force after the last stop had been captured and continued, so the adapter's own pause in the after phase ended the run.
+test('a server pause the debugger makes for itself after the last stop was continued and resumes after more than a second, within its three seconds, is retired and the run does not fail', async (context) => {
+  // Arrange: the only declared stop is captured and continued, the after conditions are still open, and the adapter pauses for itself.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    ...TWO_LINE_SERVER_MODULE,
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdInput()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  emitEntryBreakpointPause(harness)
+  // Act
+  harness.advance(1_500)
+  harness.emitResume('server')
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(retiredPauses(harness).length, 1)
+})
+
 // Cycle 0044 (0042-SR25): red while a held pause that was resumed during the wait for the accepted stop's own pause was retired however long it had lasted, so a resume from outside the editor was not caught.
 test('a pause held in an accepted server stop’s module that is resumed during the wait for that stop’s own pause after more than a second ends the run as a manual or competing resume', async (context) => {
   // Arrange: the runtime pauses on line 2 of the stop's module, the debugger announces a stop, and the wait for a pause on the declared line is held open.
