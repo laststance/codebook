@@ -281,6 +281,18 @@ Criterion 9 therefore holds in VS Code (running, then "Updated"; a cancel; a ref
 
 Not yet done when this was written (state for a resumed session): the Part 2 native rows of the frozen table above (sixteen rows; none has been run), the Closed column of the carried-defects file (`c44-work/fill/fill.py --write` fills it from the five closure files, `pl-closure.md`, `merge-notes.md` and `fill/overrides.json`; a native result goes into `overrides.json` under the row's label), `extension/test-timings.json` (`pnpm --dir extension test:shard --record`), the health baseline (590 functions above the thresholds against 519 on `main`; eight new functions and thirteen grown ones exceed the complexity or size thresholds themselves, the rest is the static zero-coverage estimate), the full suite on the final tree, CHANGELOG and version (notes in `c44-work/changelog-notes.md`), PROJECT_STATE, the local reviews and the delivery.
 
+### Native check N13: Part 2 rows in VS Code, 2026-10-04
+
+Run by a delegated agent on candidate 3 (`b27fa6d6…`, source `258508b`) in VS Code 1.140.0 for Linux, with the driver over the public MCP protocol and no chat request; target `nextjs-dashboard` `1936e41`, clean before and after. Private evidence: `/home/murakami/codebook-qa/n13p2/` (`results.json` with one entry per row, `log.txt`, stills, videos, journals). Each row's observation is in the Closed column of [the carried-defects file](0044-carried-defects.md).
+
+| Result | Rows |
+| --- | --- |
+| PASS (7 of 14, VS Code only; the Cursor half of the both-host rows is still to run) | R19, 0042-N11d (two `cdp.pause-observed` at `eval-811676bc.cdp`, retired after 47 and 42 ms), 0033-L1 (no layout error at three gaps), 0031-U8, 0031-V1, 0032-N1c / 0033-N2d, AC-ENTRY-1, 0037-N6d |
+| PARTIAL | 0038-N7-f (the slow move, the limit of 256 and the Windows wording could not be produced), 0031-U4 (the first click acts; after Show Learning Summary the focus stays in the summary view and does not return to the invoking control) |
+| FAIL: the defect is still there and is fixed before the cycle closes | 0038-N7-e (choosing another saved study takes the bottom panel out of its maximized state, also at the second choice), 0039-N8-b / 0040-N9-img (the Application group stays a strip of about 35 px and the layout is not confirmed), 0035-O01 (Recording on the paused run's own recording took 2.4 to 2.9 s in three takes; the limit is 2.0 s), 0037-F6 (during a live run the keyboard focus falls to the document body 0.7 s after the start and after each capture) |
+
+New findings of that run (not rows carried into this cycle): "Existing editor groups were preserved" on a live entry in a window the learner had not split; an enabled learner breakpoint ends a run ("Unexpected or additional server stop…") while the run resource an agent reads says "The study operation failed." / "Error: CDP disconnected"; "Error: Selected item belongs to another configured article." shown for as long as a recording of the session's own run is open; a learner's tab in the application group keeps the Application pane hidden after a cold open; no control leads from a paused live run to its Recording; in one of five takes the previous stop's Variables stayed about 0.4 s beside a cleared image with a red "Canceled". Each is fixed in this cycle if the delivery review rates it critical, and is otherwise a task of the next cycle.
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
