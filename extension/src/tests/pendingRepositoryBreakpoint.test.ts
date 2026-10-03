@@ -12,6 +12,8 @@ import { loadModule } from './utils/loadModule'
 /** Supplies native API identities and explicit adapter messages without starting an editor or application; `acknowledgedAt` selects the registration rule of the owner under test. @example const harness = await breakpointHarness(); const nodeTestStop = await breakpointHarness('declared-column') */
 async function breakpointHarness(
   acknowledgedAt?: 'declared-line' | 'declared-column',
+  /** The owner's rule for a verified reply on another line; without it such a reply is refused. */
+  acceptsLaterLine?: (line: number) => boolean,
 ) {
   class Position {
     constructor(
@@ -71,6 +73,7 @@ async function breakpointHarness(
     20,
     5,
     acknowledgedAt,
+    acceptsLaterLine,
   )
   const request = (
     sequence = 1,
@@ -586,4 +589,152 @@ test('an owner that captures at the declared column accepts a registration verif
     ),
     /Selected adapter did not acknowledge the exact breakpoint registration/,
   )
+})
+
+// Value: protects=a configured run's server stop in a loaded module going on when the adapter verifies its breakpoint on the line the run's rule accepts, with the place kept for a deadline that must name it; fails_when=the owner refuses every verified reply on another line, or accepts it without keeping where it is; why_new=the owner had no rule and its receipt no place (Cycle 0043, ER4); seam=none
+test('a registration the adapter verifies on a later line the owner’s rule accepts is bound and its receipt names where it moved', async () => {
+  // Arrange: the owner declared 20:5 and its rule accepts line 21.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 7 }),
+  )
+  const receipt = await breakpoint.registered(session, signal)
+  // Assert
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',
+  )
+  assert.equal(
+    JSON.stringify(breakpoint.movedTo(session)),
+    '{"line":21,"column":7}',
+  )
+})
+
+// Value: protects=the owner's rule deciding, not the mere presence of one: a line the rule refuses still blocks the input; fails_when=any verified reply on another line is accepted once a rule exists; why_new=the rule is new (Cycle 0043, ER4); seam=none
+test('a registration the adapter verifies on a line the owner’s rule refuses blocks continuation and identifies the rejected position', async () => {
+  // Arrange: the rule accepts line 21 only and the adapter verifies line 22.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 22, column: 5 }),
+  )
+  // Assert
+  await assert.rejects(breakpoint.registered(session, signal), (error) => {
+    assert.match(
+      String(error),
+      /Selected adapter did not acknowledge the exact breakpoint registration/,
+    )
+    assert.match(String(error), /"expectedLine":20/)
+    assert.match(String(error), /"selectedLine":22/)
+    return true
+  })
+  assert.equal(breakpoint.movedTo(session), undefined)
+})
+
+// Value: protects=a Node test stop staying refused on another line, because that caller captures its pause at the declared column; fails_when=a rule passed to a 'declared-column' owner is consulted; why_new=the rule is new and must not reach Node test stops (Cycle 0043, ER4); seam=none
+test('an owner that captures at the declared column refuses a verified reply on another line even when a rule would accept it', async () => {
+  // Arrange
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-column', () => true)
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 5 }),
+  )
+  // Assert
+  await assert.rejects(
+    breakpoint.registered(session, signal),
+    /did not acknowledge/,
+  )
+})
+
+// Value: protects=a receipt keeping its shape for every acknowledgement that did not move the breakpoint, and a reply that names no column being accepted without a place nobody could report; fails_when=a same-line or pending acknowledgement gains a movedTo key, or a later line without a column is refused or given an incomplete place; why_new=the receipt's place is new (Cycle 0043, ER4); seam=none
+test('a registration on the declared line, a pending one and a later line without a column carry no moved place', async () => {
+  const receipts: string[] = []
+  for (const selected of [
+    { id: 8, verified: true, line: 20, column: 12 },
+    { id: 8, verified: false, reason: 'pending' },
+    { id: 8, verified: true, line: 21 },
+  ] satisfies DebugProtocol.Breakpoint[]) {
+    // Arrange
+    const { breakpoint, session, request, response, signal } =
+      await breakpointHarness('declared-line', (line) => line === 21)
+    // Act
+    breakpoint.onRequest(session, request())
+    breakpoint.onResponse(session, response(1, selected))
+    receipts.push(JSON.stringify(await breakpoint.registered(session, signal)))
+    // Assert
+    assert.equal(breakpoint.movedTo(session), undefined)
+  }
+  assert.deepEqual(receipts, [
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound"}',
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"pending"}',
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound"}',
+  ])
+})
+
+// Value: protects=application input staying blocked while the adapter has not verified the breakpoint and names a line other than the declared one, also when the owner's rule would accept that line once verified; fails_when=the rule is asked for an unverified reply, so a breakpoint nobody verified is taken as registered on the later line; why_new=the unverified replies on another line are tested for an owner without a rule, and every reply to an owner with a rule is verified or names no line; seam=none
+test('a pending registration that names a later line the owner’s rule accepts still blocks continuation and identifies the rejected position', async () => {
+  // Arrange: the owner declared 20:5, its rule accepts line 21 and the adapter has not verified the breakpoint it reports at 21:7.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  // Act
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, {
+      id: 8,
+      verified: false,
+      reason: 'pending',
+      line: 21,
+      column: 7,
+    }),
+  )
+  // Assert
+  await assert.rejects(breakpoint.registered(session, signal), {
+    message:
+      'Selected adapter did not acknowledge the exact breakpoint registration: {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":21,"selectedColumn":7,"selectedSourceMatches":null}',
+  })
+  assert.equal(breakpoint.movedTo(session), undefined)
+})
+
+// Value: protects=a deadline never naming a bound place the adapter no longer has the breakpoint at, after the editor replaced the file's breakpoints; fails_when=the moved place is kept beside the registration instead of in its current acknowledgement, so it outlives a replacement or a later acknowledgement on the declared line; why_new=the moved place is read only right after the acknowledgement that set it, and the replacement tests read the receipt of an owner without a rule; seam=none
+test('a breakpoint replacement after a moved acknowledgement clears the moved place, and a new acknowledgement on the declared line leaves none', async () => {
+  // Arrange: the owner declared 20:5, its rule accepts line 21 and the adapter verified the breakpoint at 21:7.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 7 }),
+  )
+  const placeBeforeReplacement = JSON.stringify(breakpoint.movedTo(session))
+  // Act: the editor replaces the file's breakpoints, a delayed copy of the first reply arrives, and the adapter then verifies the owned breakpoint on its declared line.
+  breakpoint.onRequest(session, request(2))
+  breakpoint.onResponse(
+    session,
+    response(1, { id: 8, verified: true, line: 21, column: 7 }),
+  )
+  const placeWhileUnacknowledged = breakpoint.movedTo(session)
+  breakpoint.onResponse(
+    session,
+    response(2, { id: 8, verified: true, line: 20, column: 5 }),
+  )
+  const receipt = await breakpoint.registered(session, signal)
+  // Assert
+  assert.equal(placeBeforeReplacement, '{"line":21,"column":7}')
+  assert.equal(placeWhileUnacknowledged, undefined)
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":2,"breakpointId":8,"status":"bound"}',
+  )
+  assert.equal(breakpoint.movedTo(session), undefined)
 })

@@ -70,6 +70,7 @@ import { createBundleVerifier } from './utils/createBundleVerifier'
 import { describeCdpPause } from './utils/describeCdpPause'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
+import { isBindingLineAccepted } from './utils/isBindingLineAccepted'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import { isPauseAtStop } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
@@ -101,8 +102,10 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
   breakpoint?: OwnedRepositoryBreakpoint
-  /** The debugger's verified binding on the declared line; every later check, the saved observation and the display use it instead of the requested column. */
+  /** The debugger's verified binding, on the declared line or on a later line {@link PreparedStop.acceptsBoundLine} accepts; every later check, the saved observation and the display use it instead of the requested position. */
   bound?: { line: number; column: number }
+  /** Tells whether a line the debugger chose is this stop's place: the declared line, or a later line within the stop's citation with no mapped line between ({@link isBindingLineAccepted}). Every site that compares a binding or a pause with this stop asks it. */
+  acceptsBoundLine: (line: number) => boolean
 }
 type DebugParticipant = {
   gate: PauseGate
@@ -377,10 +380,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop.participant === 'server' ? 'server-action' : 'browser',
       )
       this.alive()
-      const prepared = {
+      const verifier = createBundleVerifier(acquired.bundle),
+        citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+      const prepared: PreparedStop = {
         ...stop,
         bundle: acquired.bundle,
-        verifier: createBundleVerifier(acquired.bundle),
+        verifier,
+        acceptsBoundLine: (line) =>
+          isBindingLineAccepted(
+            stop.source.line,
+            line,
+            citation,
+            (startLine, endLine) =>
+              verifier.mappedPositions(startLine, endLine),
+          ),
       }
       this.stops.push(prepared)
       await this.evidence.save(
@@ -489,9 +502,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Arms the next expected stop before any input or resume can reach it, called by {@link prepareOwned} for the first stop and by {@link continue} for each later one.
-   * The declared line decides; the column is a request, and a browser stop records the debugger's verified binding on that line as its position.
+   * The declared position is a request: a browser stop records the debugger's verified binding as its position, on the declared line or on a later line the stop's rule accepts, and a server stop's owned breakpoint is given the same rule for its acknowledgement.
    * @param stop - The declared stop that is next in order.
-   * @throws When a browser binding lands on another line or never verifies, or a server registration is refused; each failure names the declared stop.
+   * @throws When a browser binding lands on a line the rule refuses or never verifies, or a server registration is refused; each failure names the declared stop.
    * @example
    * ```ts
    * await this.armStop(this.stops[0]!)
@@ -521,6 +534,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       stop.bundle.sourcePath,
       position.line,
       position.column,
+      'declared-line',
+      stop.acceptsBoundLine,
     )
     if (stop.participant === 'server') {
       const receipt = await this.registeredStop(stop)
@@ -553,8 +568,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           const parsed = bindingSchema.safeParse(result)
           if (!parsed.success) return undefined
-          // The debugger chose another line and no later poll moves it back, so the wait ends at once.
-          if (parsed.data.line !== position.line) {
+          // The debugger chose a line the stop's rule refuses and no later poll moves it back, so the wait ends at once.
+          if (!stop.acceptsBoundLine(parsed.data.line)) {
             boundElsewhere = parsed.data
             throw new Error('Repository breakpoint bound on another line')
           }
@@ -614,6 +629,65 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change. @example this.declaredAt(stop) // 'app/lib/actions.ts:36' */
   private declaredAt(stop: PreparedStop): string {
     return `${stop.source.path}:${stop.source.line}`
+  }
+
+  /**
+   * Reads where the debugger put a stop's breakpoint when that is another line than declared, for a deadline text that must point the agent at the line that has to run; {@link unreachedFirstStopReason} and {@link unreachedNextStopReason} call it when their deadline expires.
+   * A browser stop knows its binding from arming. A server stop knows it only at its pause, so before that the owned breakpoint's current acknowledgement is asked.
+   * @param stop - The declared stop that was not reached.
+   * @returns The bound line and column, or `undefined` when the stop is bound on its declared line or its place is not known.
+   * @example
+   * ```ts
+   * this.movedPlace(stop) // { line: 23, column: 5 } for a stop declared at 22:3
+   * ```
+   */
+  private movedPlace(
+    stop: PreparedStop,
+  ): { line: number; column: number } | undefined {
+    if (stop.bound)
+      return stop.bound.line === stop.source.line ? undefined : stop.bound
+    const session = this.participants[stop.participant].selected
+    return session && stop.breakpoint?.movedTo(session)
+  }
+
+  /** Names a moved place for the two deadline texts. @example this.boundAt({ line: 23, column: 5 }) // '(bound at 23:5)' */
+  private boundAt(place: { line: number; column: number }): string {
+    return `(bound at ${place.line}:${place.column})`
+  }
+
+  /**
+   * Words the failure of an action whose first declared stop never paused, read when that deadline expires (see {@link action}).
+   * The deadline starts when the action is accepted, before the input is sent. A stop whose breakpoint the debugger moved to a later line pauses only when that line runs, which can lie in a branch the action skips, so the text then names that place; before the input was sent the place explains nothing.
+   * @returns Today's text, or the text that names the declared stop and its bound place.
+   * @example
+   * ```ts
+   * this.unreachedFirstStopReason() // 'Repository input reached no verified pause'
+   * ```
+   */
+  private unreachedFirstStopReason(): string {
+    const stop = this.stops[0]!,
+      moved = this.movedPlace(stop)
+    if (!moved || !this.operation?.inputDispatched)
+      return 'Repository input reached no verified pause'
+    return `Repository input reached no verified pause: declared stop ${this.declaredAt(stop)} ${this.boundAt(moved)} was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action; the bound line, not the declared one, must execute after the input`
+  }
+
+  /**
+   * Words the failure of a continuation whose next declared stop never paused, read when that deadline expires (see {@link beginAfter}).
+   * @param stop - The declared stop that was armed inside the continuation.
+   * @returns The text that names the stop and the order rule; for a breakpoint the debugger moved to a later line it names that place and says that this line must run.
+   * @example
+   * ```ts
+   * this.unreachedNextStopReason(stop) // '... declared stop app/ui/login-form.tsx:74 (bound at 75:13) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation'
+   * ```
+   */
+  private unreachedNextStopReason(stop: PreparedStop): string {
+    const moved = this.movedPlace(stop),
+      opening = `Repository continuation reached no next declared pause: declared stop ${this.declaredAt(stop)}`,
+      within = `was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s`
+    return moved
+      ? `${opening} ${this.boundAt(moved)} ${within}; the bound line, not the declared one, must execute after the preceding continuation`
+      : `${opening} ${within}; its line must execute after the preceding continuation`
   }
 
   /**
@@ -1105,9 +1179,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       afterVerified: false,
     }
     this.status = 'acting'
-    this.progressDeadline(
-      ACTIVE_TIMEOUT_MS,
-      'Repository input reached no verified pause',
+    this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+      this.unreachedFirstStopReason(),
     )
     this.evidence.record('input.accepted', { id: this.operation.id, key })
     this.track(this.dispatchInput())
@@ -1441,6 +1514,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         sourcePath: stop.bundle.sourcePath,
         declaredLine: stop.source.line,
         bound: stop.bound,
+        acceptsBoundLine: stop.acceptsBoundLine,
       })
     )
       throw new Error(
@@ -1651,8 +1725,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw new Error(
           'Pending server breakpoint did not bind to the captured source',
         )
-      // The owned breakpoint is verified in the cited file but on another line: name where it landed so the declaration can be corrected.
-      if (parsed.data.line !== stop.source.line)
+      // The owned breakpoint is verified in the cited file but on a line the stop's rule refuses: name where it landed so the declaration can be corrected.
+      if (!stop.acceptsBoundLine(parsed.data.line))
         throw this.bindingFailure(
           stop,
           `Declared stop ${this.declaredAt(stop)} bound at ${parsed.data.line}:${parsed.data.column}, not on its declared line`,
@@ -1672,7 +1746,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const frame = stack.stackFrames[0],
       callFrame = stopped.event.callFrames[0]!,
       position = stop.source
-    // The paused frame must be the position the debugger bound, which lies on the declared line and may differ from the requested column.
+    // The paused frame must be the position the debugger bound, which may differ from the requested column and, by the stop's rule, from the declared line.
     if (!isFrameAtPosition(frame, stop.bundle.sourcePath, stop.bound))
       throw new Error('DAP frame differs from exact configured source')
     await this.verifySources()
@@ -1887,9 +1961,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.continuation = undefined
       this.status = 'acting'
       // A later stop is armed only inside the preceding continuation, so a line that ran before its turn never pauses; say which stop and why.
-      this.progressDeadline(
-        ACTIVE_TIMEOUT_MS,
-        `Repository continuation reached no next declared pause: declared stop ${this.declaredAt(this.stops[this.stopIndex]!)} was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s; its line must execute after the preceding continuation`,
+      const nextStop = this.stops[this.stopIndex]!
+      this.progressDeadline(ACTIVE_TIMEOUT_MS, () =>
+        this.unreachedNextStopReason(nextStop),
       )
       const cdpStop = this.pendingCdpStop,
         dapStop = this.pendingDapStop
@@ -2356,13 +2430,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     await this.evidence.flush()
   }
-  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
-  private progressDeadline(milliseconds: number, reason: string): void {
+  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
+  private progressDeadline(
+    milliseconds: number,
+    reason: string | (() => string),
+  ): void {
     clearTimeout(this.progressTimer)
     // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
     this.progressTimer = setTimeout(
       () =>
-        this.fail(withUnannouncedPauses(reason, this.unannouncedPausePlaces())),
+        this.fail(
+          withUnannouncedPauses(
+            typeof reason === 'function' ? reason() : reason,
+            this.unannouncedPausePlaces(),
+          ),
+        ),
       milliseconds,
     )
   }

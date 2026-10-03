@@ -13,9 +13,9 @@
 | IMPLEMENTATION.md | Execution gates, complete AC map and evidence fields. |
 | PROJECT_STATE.md | Current assignment, source-grounded gap ledger, proof limits and exact next action. Keep current; link closed cycles/Git history instead of copying chronology. |
 | docs/cycles/NNNN-topic.md | Bounded hypothesis, plan, frozen expectations, attempts, result and delivery. |
-| DECISIONS.md | Durable decisions, sources and supersession; routine checks belong in the cycle. |
+| DECISIONS.md | Closed log of decisions D001 to D047, kept because older records cite its numbers. It takes no new entry: a rule the owner sets is stated in the required read that governs the work (AGENTS.md, this file, PRODUCT_GOAL.md, IMPLEMENTATION.md). |
 | Technical plans / behavioral design | Feature-specific engineering contracts loaded through AGENTS.md; specification is not implementation proof. |
-| TODOS.md / GStack cache | Supplemental findings/reports. Reconcile relevant findings into the cycle or state; preserve useful evidence locally instead of leaving sole references in chat/cache. |
+| GStack cache | Supplemental findings/reports. Reconcile relevant findings into the cycle or state; preserve useful evidence locally instead of leaving sole references in chat/cache. No TODOS.md, backlog or ledger of unfixed defects exists or is created: an unfixed defect is a task of the next cycle's Issue ([cycle rule](AGENTS.md#cycle-rule-every-carried-defect-is-fixed-in-the-next-cycle)). |
 
 Issues mirror repository records. Remote access is not required to recover the task; record pending synchronization when unavailable. Do not create issues or publish merely to satisfy a planning tool.
 
@@ -28,13 +28,17 @@ Follow AGENTS.md; verify the actual checkout/runtime and resume the open cycle. 
 3. What smallest connected behavior or bounded experiment resolves it?
 4. What observation would falsify the approach, and what artifact preserves the result?
 
-Keep one active cycle and at most a short list of follow-ups. Plan only the selected scope. Repeated inconclusive attempts need a smaller question or changed hypothesis; they cannot silently remove required behavior.
+Carried defects take no part in this selection: the questions above choose the increment from the final product, and every defect the previous cycle left unfixed is added to the cycle afterwards, in full ([cycle rule](AGENTS.md#cycle-rule-every-carried-defect-is-fixed-in-the-next-cycle)).
+
+Keep one active cycle. Candidate increments for later cycles are at most a short list; a carried defect is never on it, because all of them are tasks of the next cycle. Plan only the selected scope. Repeated inconclusive attempts need a smaller question or changed hypothesis; they cannot silently remove required behavior.
 
 ## 2. Create or refine one cycle
 
 At each new cycle, freshly read the mandatory contracts, inspect the approved PNG and reconcile all AC rows. Use [TEMPLATE.md](docs/cycles/TEMPLATE.md): phase, goal/AC IDs, primary question, scope, expected observations and success/failure decision. A linked goal ID means relevance, not completion.
 
 Per D021/D030/D036, reconcile Goal Issue #1/current cycle tracking when available. Select a `codex/` branch; preserve existing edits and reuse an appropriate checkout. Starting with Cycle 0014, delivered cycles use a PR. Put `@coderabbitai ignore` in its initial Draft description and retain it under D027. Use a closing reference only after the cycle's required outcome/records/delivery are complete; otherwise use a non-closing reference. Keep the goal issue open until final acceptance.
+
+A cycle's Issue has two parts. The first is the increment `/spec` plans from the gap audit. The second lists every defect the previous cycle left unfixed, each as a task with its source (cycle and finding label), the fix or the evidence that closes it, and the test that fails without the fix. The second part is copied in whole from the previous cycle's record when the Issue is written; nothing in it is optional.
 
 An experiment may close with a falsified approach without verifying a capability. Product increments require appropriate regression evidence. Grow an engineering plan only when the bounded question supports it; code needed to resolve uncertainty is itself an experiment.
 
@@ -60,11 +64,26 @@ Read each installed SKILL.md at invocation; the mapping below is guidance, not a
 
 Ordinary implementation is the coding agent's work. Documentation-only changes need only applicable reviews. A failed experiment can inform the next cycle before release. Browser QA does not verify native extension pixels, DAP targeting, MCP integration or installed VSIX behavior. Report missing tools as missing coverage; keep both hosts' identities/evidence separate.
 
+### Carried defects in the skills
+
+Each skill is used as installed, with these arrangements for the [cycle rule](AGENTS.md#cycle-rule-every-carried-defect-is-fixed-in-the-next-cycle):
+
+| Skill | Arrangement |
+| --- | --- |
+| `/spec` | Plans the increment from PRODUCT_GOAL, the contracts and the gap audit, with no carried defect among its candidates or its ranking. The finished Issue then receives the carried-defect part in full. Its acceptance criteria hold one criterion per carried defect. |
+| `/plan-design-review`, `/plan-eng-review`, `/plan-devex-review` | Review both parts. They may change how a carried defect is fixed; they cannot remove, merge away or defer one. |
+| `/review`, the review steps of `/ship` | A critical finding is fixed in the delivery. Every other finding is answered Skip there and is a carried defect; the skill's automatic fixes for informational findings are not applied during a delivery. |
+| `/ship`, coverage audit | The tests it adds are committed with the delivery. A gap it leaves without a test is a carried defect. |
+| `/ship`, plan completion audit | A carried-defect task that is not closed counts as NOT DONE and stops the delivery. The options to ship anyway, defer or drop do not apply to it. |
+| `/ship`, TODOS step | Creates and updates no TODOS.md. A deferral the skill would write there is a carried defect instead. |
+| `/ship`, documentation audit | A blocker it names is a statement in the delivery's own documents and is corrected before the commit. Documentation debt it reports without blocking is a carried defect. |
+| Closure | The closing comment of the cycle's Issue names every carried defect, and the next cycle's Issue is written with all of them before any other work of that cycle starts. |
+
 ### Invocation contract
 
 Pass the active cycle path, authorized phase and bounded scope explicitly. PRODUCT_GOAL and DESIGN provide the destination, not permission to implement every capability. Retired G08/G09 must not return through an old review prompt. DESIGN.md is the stable GStack discovery entry.
 
-Honor the skill's scope gate without re-asking already authorized routine choices or presenting agent-selected targets as user-selected. Preserve required reports and reconcile generated TODOs into the current cycle/state. Approval of one recommendation does not authorize unrelated product changes.
+Honor the skill's scope gate without re-asking already authorized routine choices or presenting agent-selected targets as user-selected. Preserve required reports; a follow-up a skill generates is fixed in the cycle or becomes a carried defect. Approval of one recommendation does not authorize unrelated product changes.
 
 For shared skill/onboarding work, read the [G12 plan](docs/plans/bundled-codebook-skill.md); for Wiki generation, read the [generation contract](docs/plans/deepwiki-generation-skill.md). Use DX/engineering review for their selected implementation scope. Discovery, loaded identity, correct runtime connection and AI-owned results are separate checks; Wiki must work without runtime/debug MCP.
 
@@ -98,7 +117,7 @@ For native macOS editor video, use [the tested OBS Window Capture procedure](doc
 
 Status: ready → planning → implementing → validating → closed; use blocked with its exact condition/unblocking action. Record reasons for moving backward. Result: pending / demonstrated / falsified / inconclusive. Delivery: not-applicable / local-only / committed / PR-open / merged / packaged / published / installed-verified. These dimensions are independent.
 
-At closure, record observations and keep/revise/replace; preserve failures; rerun the affected gap audit and whole-goal route check; update cycle/state and relevant durable decisions; select at most one next candidate. Continue only within authorized scope. Use integrated checks when capabilities begin depending on each other, not only at the end.
+At closure, record observations and keep/revise/replace; preserve failures; rerun the affected gap audit and whole-goal route check; update cycle/state, and state any new owner rule in the required read it belongs in; select at most one next candidate for the increment. Every defect the cycle leaves unfixed goes to the next cycle in full, beside that increment. Continue only within authorized scope. Use integrated checks when capabilities begin depending on each other, not only at the end.
 
 A local investigation may end inconclusively without verifying a capability. A shipping task stays open until authorized delivery gates finish. Product-goal changes require explicit owner direction with evidence and a concrete alternative; the route within the goal remains the agent's responsibility.
 

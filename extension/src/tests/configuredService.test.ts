@@ -702,7 +702,7 @@ test('configured help tells an agent that only the next stop is armed and that a
   )
   assert.match(
     contract.sourceBinding,
-    /A verified binding on another line fails at once\./,
+    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position, and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\. A moved binding can lie in a branch the action skips; the stop then fails at the 20 second deadline, whose text names the bound place\. Any other binding on another line fails at once; declare the bound place instead, in a citation that covers it\./,
   )
   assert.match(
     contract.sequence[2] ?? '',
@@ -832,6 +832,33 @@ test('the second observation of a two-stop run reports the position its own stop
   )
   assert.equal(secondFacts.source.line, 1)
   assert.equal(secondFacts.source.column, 9)
+})
+
+// Value: protects=an agent reading where a stop the debugger moved to the next line really paused, beside the place it declared; fails_when=the inspection resource reports the declared line as source, or loses requestedSource, for an observation committed on another line; why_new=the requestedSource tests read observations on their declared line only (Cycle 0043, criterion 1); seam=none
+test('an observation committed on the line the debugger moved its stop to reports that line as source beside the declared requestedSource', async (context) => {
+  // Arrange: the stop is declared at 1:1 and the run committed it at 2:1.
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'moved-line',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const stop = runtimes[0]!.snapshots[0]!
+  stop.source = { ...stop.source, line: 2, column: 1 }
+  const observation = service.state(record).observations[0]!
+  // Act
+  const inspection = await readResource(service, observation.inspectionUri)
+  // Assert
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
+  assert.equal(facts.source.line, 2)
+  assert.equal(facts.source.column, 1)
 })
 
 test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {

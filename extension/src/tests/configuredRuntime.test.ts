@@ -1390,3 +1390,280 @@ test('a run does not complete while the page is paused at a pause the debugger m
     1,
   )
 })
+
+/** The hints sentence every binding failure ends with. */
+const MAPPED_POSITION_HINTS =
+  'These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.'
+
+/** A source whose citation covers lines 1 to 2, sealed under a map that puts generated line n on source line n + 1. */
+const TWO_LINE_CITATION = {
+  mappings: 'AAAA;AACA',
+  fixture: { citationEndLine: 2 },
+}
+
+/** A three-line source cited whole, for a binding two lines below the declared one. */
+const THREE_LINE_SOURCE = 'const nextTheme = "dark";\n\n'
+
+// Value: protects=a live run going on when the debugger moves a browser stop from a line it cannot pause on to the next line (`return (` onto the `<form>` line); fails_when=arming refuses a verified binding on the next line of the stop's citation, or the stop is committed at the declared line instead of the bound one; why_new=every binding on another line was refused (Cycle 0043, criterion 1); seam=none
+test('a browser stop the debugger binds on the next line of its citation is armed, pauses there and commits at the bound line', async (context) => {
+  // Arrange: the stop is declared at 1:1, its citation covers lines 1 to 2 and the adapter verifies the breakpoint at 2:1.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    TWO_LINE_CITATION,
+  )
+  bindFirstStopAt(2, 1)
+  // Act
+  await run.prepare()
+  run.action('moved-line', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the bound line')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  const bound = run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.bound')
+  assert.equal(
+    JSON.stringify(bound?.detail),
+    '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1}}',
+  )
+  assert.equal(stop.source.line, 2)
+  assert.equal(stop.source.column, 1)
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})
+
+// Value: protects=a pause at the accepted bound place being the stop's own pause at once; fails_when=the position test compares the pause with the declared line only, so the pause is held as nobody's and reaches its stop only when the 3 s wait for the stop's own pause ends; why_new=the position test knew the declared line only (Cycle 0043, criterion 3); seam=the run's wait for the accepted stop's own pause, held open by the harness so that only a pause admitted at once can be captured
+test('a pause at the line the debugger moved a browser stop to is captured as that stop’s own pause, without waiting for a pause on the declared line', async (context) => {
+  // Arrange: the wait for a pause on the stop's line never ends by itself.
+  const { run, bindFirstStopAt, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], TWO_LINE_CITATION)
+  bindFirstStopAt(2, 1)
+  holdSourceBoundWait()
+  await run.prepare()
+  // Act
+  run.action('moved-line', 'repository-click')
+  const stop = await waitUntil(
+    () => {
+      const view = run.view()
+      if (view.failures.length) throw new Error(view.failures.join('; '))
+      return view.participants.browser.snapshot
+    },
+    'stop captured while the wait for its own pause is held open',
+    2_000,
+  )
+  await run.stop()
+  // Assert
+  assert.equal(stop.source.line, 2)
+  assert.equal(stop.source.column, 1)
+})
+
+// Value: protects=the deadline telling an agent which line has to run when its later stop was moved into a branch the action skips; fails_when=the text names only the declared line, whose code did run, or the run ends at arming; why_new=a moved binding never got as far as the deadline (Cycle 0043, criterion 7, DX2); seam=the harness clock
+test('a later stop the debugger moved to the next line that is not reached ends the run naming the bound place and that this line must run', async (context) => {
+  // Arrange: the second stop is declared at 1:7 and the adapter verifies it at 2:1, a line the continuation never runs.
+  const { run, bindLaterStopsAt, suppressNextPause, advance, commands } =
+    await configuredRuntimeHarness(
+      context,
+      undefined,
+      [
+        {
+          line: 1,
+          column: 7,
+          inspections: [{ path: 'enabled', mode: 'value', required: true }],
+        },
+      ],
+      { mappings: 'AAAA,MAAM;AACN', fixture: { citationEndLine: 2 } },
+    )
+  bindLaterStopsAt(2, 1)
+  suppressNextPause()
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  await run.continue('browser', first.pause)
+  // Act: the active-progress budget passes without the second stop pausing.
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'next stop not hit')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 (bound at 2:1) was not hit within 20 s; the bound line, not the declared one, must execute after the preceding continuation',
+  )
+  assert.equal(run.view().snapshots.length, 1)
+  assert.equal(commands.filter((command) => command === 'continue').length, 1)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=the deadline of an action whose first stop was moved into a branch the click skips naming that stop and its bound place; fails_when=the run ends with "Repository input reached no verified pause" and no stop or place, or at arming; why_new=a moved first stop never got as far as the deadline, and its text named nothing (Cycle 0043, criterion 7b, DX3); seam=the harness clock
+test('a first stop the debugger moved to the next line that the click does not reach ends the run naming the bound place and that this line must run', async (context) => {
+  // Arrange: the click is sent and the bound line never pauses.
+  const { run, bindFirstStopAt, suppressInputPause, advance, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], TWO_LINE_CITATION)
+  bindFirstStopAt(2, 1)
+  suppressInputPause()
+  await run.prepare()
+  run.action('moved-line', 'repository-click')
+  await waitUntil(
+    () => run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  // Act: 20 s pass after the action was accepted.
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'first stop not hit')
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository input reached no verified pause: declared stop src/theme.ts:1 (bound at 2:1) was not hit within 20 s of the accepted action; the bound line, not the declared one, must execute after the input',
+  )
+  assert.equal(mouse.length, 2)
+  assert.equal(run.view().snapshots.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=the deadline never blaming a line for not running when the input that would run it was not sent yet; fails_when=the bound place is named whenever the first stop moved, also for an expiry before the click; why_new=the deadline starts when the action is accepted, before the input is sent (Cycle 0043, DX3); seam=the harness clock
+test('an action deadline that expires before the click was sent keeps its text although the first stop was moved to the next line', async (context) => {
+  // Arrange
+  const { run, bindFirstStopAt, advance, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], TWO_LINE_CITATION)
+  bindFirstStopAt(2, 1)
+  await run.prepare()
+  // Act: the deadline expires in the same turn the action was accepted in, before its input could be dispatched.
+  run.action('moved-line', 'repository-click')
+  advance(20_000)
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Repository input reached no verified pause',
+  )
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a run never taking a breakpoint the debugger put before the declared line for that stop; fails_when=a binding on an earlier line inside the citation is accepted; why_new=the existing refusal tests bind after the declared line and outside a one-line citation (Cycle 0043, criterion 6); seam=none
+test('a browser stop the debugger binds on an earlier line of its citation is refused at once with the declared stop and where it landed', async (context) => {
+  // Arrange: the stop is declared on line 2 and the adapter verifies it at 1:1.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { mappings: 'AAAA;AACA', fixture: { citationEndLine: 2, declaredLine: 2 } },
+  )
+  bindFirstStopAt(1, 1)
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      `Error: Declared stop src/theme.ts:2 bound at 1:1, not on its declared line. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+    )
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a run never reporting a stop past code that could run between the declared line and the pause; fails_when=a binding two lines below is accepted although the line between has a mapped position; why_new=the existing refusal tests have no line between the declared and the bound one (Cycle 0043, criterion 6); seam=none
+test('a browser stop the debugger binds across a line that has a mapped position is refused at once with the declared stop and where it landed', async (context) => {
+  // Arrange: lines 1, 2 and 3 are mapped and the adapter verifies the stop declared on line 1 at 3:1.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: 'AAAA;AACA;AACA',
+      fixture: { source: THREE_LINE_SOURCE, citationEndLine: 3 },
+    },
+  )
+  bindFirstStopAt(3, 1)
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      `Error: Declared stop src/theme.ts:1 bound at 3:1, not on its declared line. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
+    )
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a sealed map too large to scan never being read as "no code between"; fails_when=a binding two lines below is accepted because the incomplete scan found nothing between; why_new=the partial-scan tests bind outside a one-line citation (Cycle 0043, criterion 6); seam=none
+test('a browser stop the debugger binds two lines below is refused when the sealed map is too large to scan the line between', async (context) => {
+  // Arrange: the scan stops at its generated-line limit before the only mapped segment.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: `${';'.repeat(100_000)}AAAA`,
+      fixture: { source: THREE_LINE_SOURCE, citationEndLine: 3 },
+    },
+  )
+  bindFirstStopAt(3, 1)
+  // Act
+  await assert.rejects(run.prepare(), (error: unknown) => {
+    assert.equal(
+      String(error),
+      `Error: Declared stop src/theme.ts:1 bound at 3:1, not on its declared line. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
+    )
+    return true
+  })
+  await run.stop()
+  // Assert
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a live run going on when the debugger moves a browser stop across a line that holds no code (a blank line) to the line after it; fails_when=the run's rule refuses a binding two lines below although the sealed map has no position on the line between, or commits the stop at the declared line; why_new=every run-level acceptance binds on the very next line, which never asks the sealed map, and the two-lines-below runs are refusals only; seam=none
+test('a browser stop the debugger binds two lines below, across a line the sealed map has no position on, is armed, pauses there and commits at the bound line', async (context) => {
+  // Arrange: lines 1 and 3 are mapped, the blank line 2 is not, and the adapter verifies the stop declared at 1:1 at 3:1.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: 'AAAA;;AAEA',
+      fixture: { source: THREE_LINE_SOURCE, citationEndLine: 3 },
+    },
+  )
+  bindFirstStopAt(3, 1)
+  // Act
+  await run.prepare()
+  run.action('moved-two-lines', 'repository-click')
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed two lines below its declared line')
+  await run.continue('browser', stop.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert
+  const bound = run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.bound')
+  assert.equal(
+    JSON.stringify(bound?.detail),
+    '{"verified":true,"line":3,"column":1,"requested":{"line":1,"column":1}}',
+  )
+  assert.equal(stop.source.line, 3)
+  assert.equal(stop.source.column, 1)
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})

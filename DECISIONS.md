@@ -1,6 +1,6 @@
 # Durable decisions
 
-Record the date, source, reason, and affected goal/cycle. Link superseded decisions rather than silently deleting their context. These are decisions, not a task backlog.
+Closed log. D001 to D047 stay because older records cite their numbers; no entry is added after D047. A rule the owner sets is stated in the required read that governs the work ([AGENTS.md](AGENTS.md#authority-and-completion)). Superseded decisions are linked, not deleted. These are decisions, not a task backlog.
 
 > Historical authority: D029 supersedes every earlier ten-reviewer, random-pool, consecutive-pass and reset-to-zero acceptance provision (including earlier goal-continuation, D021/D022/D023/D027 references). Earlier decisions and observations remain historical; their other product and delivery requirements remain in force.
 
@@ -425,3 +425,13 @@ Source: Raphtalia's message during Cycle 0042's second `/ship` invocation, about
 Decision: finish Cycle 0042 as D045 describes. That is its `/ship` pull request, CI, the separate exact-HEAD gate, the merge in its own step, CI on `main`, Issue #78 closed by hand and the closure records. Then derive the next cycle from the goal and the gap ledger and write its Issue through `/spec`. Record that Issue and this pause in the local records, then stop. The next cycle's plan reviews, implementation, native trials and any later cycle wait for the owner's explicit message.
 
 Boundary: this is a conditional pause, not an immediate one. Until the Issue is written, D045 applies unchanged, including the recommended option at every decision point. After it, only the owner's explicit message resumes the work. The pause changes no accepted product outcome, evidence rule or acceptance gate.
+
+## D047 — Resume with Cycle 0043 on a Windows WSL host, 2026-10-03
+
+Source: Raphtalia's messages of 2026-10-03, after Issue #80 was written and the work had stopped under D046: "この環境はWindowsのWSLです、nextjs-dashboardは~/laststance/nextjs-dashboardにあります"; "まずはこちらのサイクルから着手して https://github.com/laststance/codebook/issues/80"; and the goal "Codebookを完成させてください、VSCodeの実機試験では料金が安いCopilotのAutoモデルを使用してください。クレジットがなくなった場合はCodexのExtensionを使用してください。返事ができないので、選択肢はReccomendをpickしてください".
+
+Decision: the pause of D046 is lifted. Cycle 0043 (Issue #80) starts, and D045 applies again: one bounded cycle after another, each specified through `/spec`, strengthened by the plan reviews it needs, reviewed with local CodeRabbit CLI and `open-code-review-delegate`, delivered through `/ship`, merged after required CI and the separate exact-HEAD gate. The owner cannot answer, so every decision point takes the recommended option and the cycle record names it. D040's VS Code chat order is unchanged.
+
+The development host is now a Windows machine with WSL2. D031's designated dashboard is the same repository and revision; on this host it is at `/home/murakami/laststance/nextjs-dashboard`. Paths in earlier records that begin with `/Users/ryotamurakami` describe the development Mac and stay as written. Procedures that are specific to macOS (the OBS Window Capture procedure of D041, the protected Mac settings hashes, Computer Use grants) describe the Mac; a native check on the Windows host freezes its own procedure and identities in its cycle record, keeps both editors' evidence apart and reports what it could not run.
+
+Boundary: no accepted product outcome, evidence rule or acceptance gate changes. The Mac's private `artifacts/`, its QA profiles and its local branches are not on the Windows host; evidence that depends on them is not carried over by assumption. Purchases, subscriptions, credentials, permanent deletion and security settings remain outside authorization. A pause the owner directs still stops the work at once.

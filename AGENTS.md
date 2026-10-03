@@ -16,7 +16,7 @@ Reading is preparation. Reconcile every acceptance row with current source and e
 
 | Work | Read before acting |
 | --- | --- |
-| Select/start/close a cycle; choose skills; review or deliver changes | [DEVELOPMENT.md](DEVELOPMENT.md), controlling [DECISIONS.md](DECISIONS.md) entries |
+| Select/start/close a cycle; choose skills; review or deliver changes | [DEVELOPMENT.md](DEVELOPMENT.md); [DECISIONS.md](DECISIONS.md) only where an older record cites a D-number |
 | Live/capture/replay, runtime, storage, evidence ownership or cross-feature architecture | [Behavioral design](docs/designs/codebook.md) |
 | Shared skill or onboarding | [Bundled skill contract](docs/plans/bundled-codebook-skill.md) |
 | Wiki generation/update | [Generation skill contract](docs/plans/deepwiki-generation-skill.md) |
@@ -29,12 +29,25 @@ Historical cycles, generation prompts and external references are evidence consu
 
 ## Authority and completion
 
-- PRODUCT_GOAL owns outcomes; its feature contracts own details; DESIGN owns the approved visual target; PROJECT_STATE owns current gaps; the active cycle owns the bounded plan/results. DECISIONS records durable changes. Later explicit owner direction takes precedence; record its effect.
+- PRODUCT_GOAL owns outcomes; its feature contracts own details; DESIGN owns the approved visual target; PROJECT_STATE owns current gaps; the active cycle owns the bounded plan/results. Later explicit owner direction takes precedence. A rule the owner sets is stated, as the rule itself, in the required read that governs the work; DECISIONS.md is a closed log through D047 and takes no new entry.
 - Preserve all active goals while selecting one increment. Change accepted behavior only on explicit owner direction. Routine implementation choices within the authorized phase need no repeated permission. An open gap does not authorize leaving that phase.
 - Keep VS Code and Cursor evidence separate. Use the designated dashboard for development and the fixed nine-project protocol for final acceptance. Preserve runtime/library coverage and stage order; fixture or development passes earn no acceptance credit.
 - Complete the authorized cycle, update records and recommend one next action. Continue further cycles only within owner authorization. These instructions do not create background jobs, separate tasks or automations.
 - Require mapped evidence and a current image comparison for changed UI before declaring work review-complete. Keep implementation, live validation, review, merge, packaging, publication, installed verification and owner acceptance distinct. Missing required checks prevent completion claims.
 - Preserve other people's edits and existing skills/settings/learning. Keep private recordings and sensitive runtime data outside public changes; link sanitized evidence with stable locations and source identities.
+
+## Cycle rule: every carried defect is fixed in the next cycle
+
+This rule is absolute. No planning choice, review outcome or skill default overrides it.
+
+- A cycle is planned from the final product alone. `/spec` and the plan reviews derive its increment from PRODUCT_GOAL, the feature contracts and the gap audit; carried defects are not weighed, ranked or selected there.
+- Every defect a cycle leaves unfixed is a task of the next cycle. All of them are added to the next cycle's Issue beside the planned increment, without selection. None is dropped, reduced or carried a second time.
+- A carried defect is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies. A cycle closes only when every defect carried into it is closed.
+- Carried defects live in the next cycle's Issue and its cycle record, as tasks. A TODOS file, backlog or ledger of them is forbidden: a list that only records lets the work end at the recording.
+- During a delivery a critical review finding is fixed before the merge. Every other finding of that cycle (review, delegated review, native trial, audit) is a carried defect.
+- The rule is in force from Cycle 0044. Cycle 0043 was planned and delivered before it; what it and earlier cycles left open goes to Cycle 0044's Issue in full.
+
+[DEVELOPMENT.md](DEVELOPMENT.md#carried-defects-in-the-skills) says how `/spec`, the plan reviews and `/ship` are used under this rule.
 
 ## External validation targets
 
