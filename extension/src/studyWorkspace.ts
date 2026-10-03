@@ -699,6 +699,8 @@ export class StudyWorkspace {
     if (!state.layoutConfirmed || this.presentationTransition || !receipt)
       return state
     const layout = await this.readPassivePresentationLayout()
+    // A hidden editor area (the bottom panel is maximized) reports its groups at their minimum heights: nothing was rearranged, and the editor gives the groups their sizes back with the area.
+    if (isCollapsedEditorLayout(layout)) return this.presentationState()
     if (
       !this.presentationTransition &&
       state.presentationId === this.presentationId &&
@@ -6512,12 +6514,18 @@ export class StudyWorkspace {
           group?.viewColumn ??
           STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
         const position = new vscode.Position(source.line - 1, 0)
+        const confirmedLayout = await this.confirmedLayoutBehindHiddenArea(
+          Boolean(placement),
+        )
+        if (this.closing || lifetime !== this.lifetime) return
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
           preserveFocus,
           preview: false,
           selection: new vscode.Range(position, position),
         })
+        if (this.closing || lifetime !== this.lifetime) return
+        if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
         this.sourceGroup =
@@ -6607,6 +6615,53 @@ export class StudyWorkspace {
       this.report('reader', error)
     })
     return this.rendering
+  }
+
+  /**
+   * Finds the confirmed Study layout that a source reveal is about to distort because the editor area is hidden; called by {@link renderSelection} just before it shows the source.
+   *
+   * A recorded seek, a Recording press or an agent's selection made while the bottom panel is maximized still has to show its
+   * source. The editor then brings the area back and, because the revealed group sat at its minimum height, expands that group:
+   * the Application group stays a strip of its tab row and the Study pane shrinks to its minimum width, with the layout left unconfirmed.
+   *
+   * @param isPlacement - Whether a presentation placement or an arrangement owns the layout; it measures and confirms the grid itself.
+   * @returns The confirmed layout receipt to apply again after the reveal, or `undefined` when the area is visible or no confirmed Study layout exists.
+   * @example const confirmedLayout = await this.confirmedLayoutBehindHiddenArea(Boolean(placement))
+   */
+  private async confirmedLayoutBehindHiddenArea(
+    isPlacement: boolean,
+  ): Promise<StudyWorkspace['layoutReceipt']> {
+    const receipt = this.layoutReceipt
+    if (
+      isPlacement ||
+      this.arranging ||
+      !this.presentationConfirmed ||
+      receipt?.mode !== 'study'
+    )
+      return undefined
+    return (await this.editorAreaHidden()) ? receipt : undefined
+  }
+
+  /**
+   * Gives the Study panes the sizes of the confirmed layout back after a source reveal into a hidden editor area; called by {@link renderSelection}.
+   * The measured grid is applied as it was confirmed, as Restore does after Enlarge; panes or groups that changed meanwhile are left alone.
+   * @param receipt - The layout that was confirmed before the reveal.
+   * @example if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
+   */
+  private async reapplyConfirmedLayout(
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+  ): Promise<void> {
+    if (
+      receipt !== this.layoutReceipt ||
+      this.arranging ||
+      !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) ||
+      !this.sameStudyPanePositions(receipt.panes)
+    )
+      return
+    await vscode.commands.executeCommand(
+      'vscode.setEditorLayout',
+      JSON.parse(receipt.signature),
+    )
   }
 
   /** Confirms the selected immutable source reached an active native tab before control or MCP reveal succeeds. @example this.sourceReady() */

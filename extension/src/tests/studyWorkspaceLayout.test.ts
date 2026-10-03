@@ -3634,3 +3634,76 @@ test('choosing another saved study while the bottom panel is maximized leaves th
     await harness.close()
   }
 })
+
+// Value: protects=the Application group's height and the confirmed layout after a Saved studies choice made with the bottom panel maximized (0039-N8-b / 0040-N9-img); fails_when=the choice reveals the source into the hidden editor area, where the editor expands the source group: the Application group stays a 70 px strip and the layout is unconfirmed after the panel is restored; why_new=native run of 2026-10-04 (c08-chosen2.png, c09-crop.png: strip, layoutConfirmed false); seam=workspace harness with a maximized bottom panel
+test('after a saved study was chosen with the bottom panel maximized, restoring the panel shows that study with the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    const applicationHeightBefore = harness.groupHeightPx(1)
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const confirmedWhileMaximized = (
+      await harness.reader.readPresentationState()
+    ).layoutConfirmed
+
+    // Act: the learner restores the panel, and the reader's timer runs once.
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedWhileMaximized, true)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+    assert.equal(harness.reader.inspect().sourceUri!.includes(second.id), true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized (0039-N8-b / 0040-N9-img, second occurrence); fails_when=the seek reveals its source into the hidden editor area, the editor expands the source group and brings the area back, and nothing gives the Application group its height back: it stays a 70 px strip with the layout unconfirmed until Restore; why_new=native run of 2026-10-04 (u18-max-seek.png, repaired only by Restore, u25-restored.png); seam=workspace harness with a maximized bottom panel
+test('a recorded seek made while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const applicationHeightBefore = harness.groupHeightPx(1),
+      confirmedBefore = (await harness.reader.readPresentationState())
+        .layoutConfirmed
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedBefore, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    // The editor itself brings the hidden editor area back for the recorded source.
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
