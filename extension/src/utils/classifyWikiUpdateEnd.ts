@@ -57,8 +57,12 @@ function describeUnverifiedPublish(
   const cause = (
     freshness.reason ?? 'The freshness check gave no reason.'
   ).trim()
-  // A retry cannot turn "unknown" into "current"; the manifest itself has to change.
-  return `${agent} published a new Wiki, but Codebook cannot check it against the source: ${/[.!?]$/.test(cause) ? cause : `${cause}.`} Updating again will not change this; ask the editor chat to republish with the full commit hash in generated.revision.`
+  // A retry cannot turn "unknown" into "current"; the manifest itself has to change, and how depends on what could not be checked.
+  const remedy =
+    freshness.uncheckedPath === undefined
+      ? 'with the full commit hash in generated.revision'
+      : 'with that file listed by a path inside the project and its full-file SHA-256, or without it'
+  return `${agent} published a new Wiki, but Codebook cannot check it against the source: ${/[.!?]$/.test(cause) ? cause : `${cause}.`} Updating again will not change this; ask the editor chat to republish ${remedy}.`
 }
 
 /**

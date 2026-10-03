@@ -123,6 +123,35 @@ test('a new site Codebook cannot check against the source says why and that upda
   })
 })
 
+test('a new site with an indexed source Codebook cannot check names that file and how the manifest must list it', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    tokenAtEnd: 'new@2',
+    published: {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      freshness: {
+        status: 'unknown',
+        changedPaths: [],
+        addedPaths: [],
+        reason: 'An indexed source could not be checked: ../shared/schema.ts.',
+        uncheckedPath: '../shared/schema.ts',
+      },
+    },
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    site: 'replaced',
+    reason:
+      'The editor agent published a new Wiki, but Codebook cannot check it against the source: An indexed source could not be checked: ../shared/schema.ts. Updating again will not change this; ask the editor chat to republish with that file listed by a path inside the project and its full-file SHA-256, or without it.',
+  })
+})
+
 test('a new site whose manifest cannot be read ends as failed with the site replaced', () => {
   // Arrange
   const facts: WikiUpdateEndFacts = {
