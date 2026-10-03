@@ -187,10 +187,13 @@ export async function workspaceHarness(
   let partialFocusEditor: { value: SourceEditor | undefined } | undefined
   // Captured-source tabs a previous host session left behind; only their close changes the active tab, so other close paths keep their recorded behavior.
   const leftoverCapturedTabs = new Set<Tab>()
-  let refuseLeftoverClose = false,
-    lateEditorAfterLeftoverClose = false
+  let lateEditorAfterLeftoverClose = false
+  // The captured document the active text editor still reports for a moment after its leftover tab closed.
+  let staleEditorAfterLeftoverClose: SourceEditor | undefined
   const deadPaneTabs = new Set<Tab>()
-  let refuseDeadPaneClose = false
+  // Tabs the editor will not release. A close request is answered group by group, as the editor closes: such a tab keeps the requested tabs of its own group only.
+  const closeRefusingTabs = new Set<Tab>()
+  let rejectNextTabClose = false
   const tabCloseRequests: Tab[][] = []
   let lastSourceEditor: SourceEditor | undefined
   let sourceFocusOnArrange: SourceEditor | undefined
@@ -1735,19 +1738,23 @@ export async function workspaceHarness(
           },
           close: async (tabs: Tab[]) => {
             tabCloseRequests.push([...tabs])
-            if (
-              (refuseLeftoverClose &&
-                tabs.some((tab) => leftoverCapturedTabs.has(tab))) ||
-              (refuseDeadPaneClose && tabs.some((tab) => deadPaneTabs.has(tab)))
-            )
-              return false
-            let closedActiveLeftover = false
+            if (rejectNextTabClose) {
+              rejectNextTabClose = false
+              throw new Error('Canceled')
+            }
+            let accepted = true,
+              closedActiveLeftover = false
             const emptiedByDeadPane: typeof groups = []
             for (const group of groups) {
+              const requested = group.tabs.filter((tab) => tabs.includes(tab))
+              if (!requested.length) continue
+              // One tab the editor will not release keeps every requested tab of its group and fails the answer; the other groups still close.
+              if (requested.some((tab) => closeRefusingTabs.has(tab))) {
+                accepted = false
+                continue
+              }
               const active = group.activeTab,
-                heldDeadPane = group.tabs.some(
-                  (tab) => tabs.includes(tab) && deadPaneTabs.has(tab),
-                )
+                heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
               group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
               // The editor activates the neighbouring tab when the active one closes.
               if (
@@ -1791,16 +1798,20 @@ export async function workspaceHarness(
               })
             }
             if (closedActiveLeftover) {
-              if (lateEditorAfterLeftoverClose) {
-                // The tab model already names the next tab while the active text editor is still unset.
-                partialFocusEditor = { value: undefined }
+              if (
+                lateEditorAfterLeftoverClose ||
+                staleEditorAfterLeftoverClose
+              ) {
+                // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
+                partialFocusEditor = { value: staleEditorAfterLeftoverClose }
+                staleEditorAfterLeftoverClose = undefined
                 setTimeout(() => {
                   partialFocusEditor = undefined
                   activeTextEditorChanged(focusedSourceEditor())
                 }, 60)
               } else activeTextEditorChanged(focusedSourceEditor())
             }
-            return true
+            return accepted
           },
         },
       },
@@ -1871,6 +1882,16 @@ export async function workspaceHarness(
     openArticle: async (selection: RepositorySelection): Promise<void> => {
       articleOpens.push(selection)
     },
+    // The Wiki reader owns a panel exactly while a Repository Wiki tab that no earlier host left behind is in the window.
+    repositoryWikiOpen: (): boolean =>
+      groups.some((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof TabInputWebview &&
+            tab.input.viewType.endsWith('codebook.repositoryWiki') &&
+            !deadPaneTabs.has(tab),
+        ),
+      ),
   }
   const presentationPreferences = new Map<string, unknown>()
   let preferenceFailure = false
@@ -2453,7 +2474,7 @@ export async function workspaceHarness(
         },
       }
     },
-    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
+    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. `textEditor` gives it a live editor instead, as a first open that failed leaves this host's own tab; `staleTextEditor` lets the editor report its document for a moment after the tab closed. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
     restoreLeftoverCapturedSource(
       options: {
         active?: boolean
@@ -2461,27 +2482,37 @@ export async function workspaceHarness(
         column?: number
         refuseClose?: boolean
         lateTextEditor?: boolean
+        staleTextEditor?: boolean
+        textEditor?: boolean
       } = {},
     ) {
       const group = groups.find(
         (group) =>
           group.viewColumn === (options.column ?? groups[0]!.viewColumn),
       )!
+      const document = {
+        uri: Uri.from({
+          scheme: 'codebook-source',
+          authority:
+            options.authority ?? sha256(realpathSync(harness.directory)),
+          path: '/earlier-study/repository%2Finterface%2Ftheme/hash/Captured-login-form.tsx',
+        }),
+        version: 1,
+        getText: () => 'Captured source of an earlier study.\n',
+      }
       const tab: Tab = {
-        input: new TabInputText(
-          Uri.from({
-            scheme: 'codebook-source',
-            authority:
-              options.authority ?? sha256(realpathSync(harness.directory)),
-            path: '/earlier-study/repository%2Finterface%2Ftheme/hash/Captured-login-form.tsx',
-          }),
-        ),
+        input: new TabInputText(document.uri),
         isPreview: false,
         isDirty: false,
       }
       if (options.authority === undefined) leftoverCapturedTabs.add(tab)
-      refuseLeftoverClose = Boolean(options.refuseClose)
+      if (options.refuseClose) closeRefusingTabs.add(tab)
       lateEditorAfterLeftoverClose = Boolean(options.lateTextEditor)
+      const editor = Object.assign(sourceEditor(document, group), { group })
+      staleEditorAfterLeftoverClose = options.staleTextEditor
+        ? editor
+        : undefined
+      if (options.textEditor) visibleSourceEditors.push(editor)
       group.tabs.push(tab)
       if (options.active ?? true) {
         group.activeTab = tab
@@ -2492,7 +2523,10 @@ export async function workspaceHarness(
     },
     /** Leaves a Codebook pane tab without a panel in a group, as an extension-host restart leaves the old host's panes: the tab model lists it under the main-thread view type and this host owns no panel for it. @example const deadApplication = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1); harness.leaveDeadCodebookPane('codebook.studyContext', 3, { focused: true, refuseClose: true }) */
     leaveDeadCodebookPane(
-      kind: 'codebook.scopedBrowser' | 'codebook.studyContext',
+      kind:
+        | 'codebook.scopedBrowser'
+        | 'codebook.studyContext'
+        | 'codebook.repositoryWiki',
       column: number,
       options: { focused?: boolean; refuseClose?: boolean } = {},
     ) {
@@ -2500,15 +2534,16 @@ export async function workspaceHarness(
       assert.ok(group)
       const tab: Tab = {
         input: new TabInputWebview(`mainThreadWebview-${kind}`),
-        label:
-          kind === 'codebook.scopedBrowser'
-            ? 'codebook · Application'
-            : 'codebook · Study',
+        label: {
+          'codebook.scopedBrowser': 'codebook · Application',
+          'codebook.studyContext': 'codebook · Study',
+          'codebook.repositoryWiki': 'codebook · Repository Wiki',
+        }[kind],
         isPreview: false,
         isDirty: false,
       }
       deadPaneTabs.add(tab)
-      refuseDeadPaneClose ||= Boolean(options.refuseClose)
+      if (options.refuseClose) closeRefusingTabs.add(tab)
       group.tabs.push(tab)
       // The pane was the visible tab of its group when its host ended.
       group.activeTab = tab
@@ -2521,11 +2556,25 @@ export async function workspaceHarness(
     },
     /** Lets the editor close leftover captured-source tabs again after a refusal test, so the harness can shut its reader down. @example harness.acceptLeftoverClose() */
     acceptLeftoverClose(): void {
-      refuseLeftoverClose = false
+      for (const tab of leftoverCapturedTabs) closeRefusingTabs.delete(tab)
     },
     /** Lets the editor close dead Codebook panes again after a refusal, so a test can repeat the request the editor first refused. @example harness.acceptDeadPaneClose() */
     acceptDeadPaneClose(): void {
-      refuseDeadPaneClose = false
+      for (const tab of deadPaneTabs) closeRefusingTabs.delete(tab)
+    },
+    /** Makes the editor reject the next close request instead of answering it, as it does when the request is cancelled; no tab closes. @example harness.rejectNextTabClose() */
+    rejectNextTabClose(): void {
+      rejectNextTabClose = true
+    },
+    /** Gives focus to a non-text page of the editor that is already open, as a learner's click on its tab does. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
+    focusOpaqueTab(tab: Tab): void {
+      const group = groups.find((group) => group.tabs.includes(tab))
+      assert.ok(group)
+      group.activeTab = tab
+      activeTabGroup = group
+      if (separateEditorPart) separateEditorPart.focused = false
+      for (const listener of tabChangeListeners) listener()
+      activeTextEditorChanged(focusedSourceEditor())
     },
     useOpaquePrimary(kind: 'blank' | 'settings') {
       const group = groups.find((group) => group.viewColumn === 1)!

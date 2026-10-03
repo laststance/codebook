@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -769,7 +770,7 @@ for (const editStage of [
       await harness.reader.open()
       const draft = harness.focusMutableDraft()
       harness.retainReadingRange(84, 96)
-      const restoreFocus = harness.reader['capturePresentationFocus'](false)
+      const restoreFocus = harness.reader['capturePresentationFocus'](undefined)
       await harness.reader.action('focus-app')
       const edit = (): void =>
         draft.replaceContent('New first line.\nNew last line.\n')
@@ -807,7 +808,7 @@ test('an unchanged learner draft restores its reading pose and remains dirty', a
     await harness.reader.open()
     const draft = harness.focusMutableDraft()
     harness.retainReadingRange(84, 96)
-    const restoreFocus = harness.reader['capturePresentationFocus'](false)
+    const restoreFocus = harness.reader['capturePresentationFocus'](undefined)
     await harness.reader.action('focus-app')
     // Act
     await restoreFocus()
@@ -2597,13 +2598,16 @@ test('a closed reader behind a foreign non-text editor refuses the selection and
   }
 })
 
-test('selecting a presentation on an open reader closes none of its captured-source tabs', async () => {
-  // Arrange
+// Value: protects=a selection on an open reader never closes the captured source it is showing; fails_when=the closed-reader condition is dropped from the leftover-tab list, so an open reader's own captured-source tabs are closed as leftovers; why_new=Cycle 0044 0036-C07a: the earlier test left the learner's focus on a text editor, so the leftover-tab step never ran and the condition was never reached; seam=restoreLeftoverCapturedSource
+test('selecting a presentation on an open reader whose focused captured-source tab has no text editor closes none of its captured-source tabs', async () => {
+  // Arrange: the reader is open and shows its captured source; the tab that has focus is a captured source of this workspace without a text editor.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   try {
     await harness.reader.open()
+    const focusedCapturedSource = harness.restoreLeftoverCapturedSource()
     const capturedBefore = capturedSourceTabs(harness),
+      closeRequestsBefore = harness.tabCloseRequests().length,
       state = harness.reader.presentationState()
     // Act
     await harness.reader.changePresentation({
@@ -2613,8 +2617,15 @@ test('selecting a presentation on an open reader closes none of its captured-sou
       action: 'select',
     })
     // Assert
-    assert.equal(capturedBefore > 0, true)
-    assert.equal(capturedSourceTabs(harness), capturedBefore)
+    assert.equal(capturedBefore, 2)
+    assert.equal(capturedSourceTabs(harness), 2)
+    assert.equal(harness.tabCloseRequests().length, closeRequestsBefore)
+    assert.equal(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .includes(focusedCapturedSource),
+      true,
+    )
   } finally {
     await harness.close()
   }
@@ -2633,19 +2644,26 @@ const codebookPaneTabs = (
         [kind, `mainThreadWebview-${kind}`].includes(tab.input.viewType),
     ).length
 
-test('a dead Codebook pane left in a group is a tab without a panel of this host', async () => {
-  // Arrange
+// Value: protects=the reader recognizes exactly the old host's pane as dead and asks the editor to close that tab alone; fails_when=the dead-pane reader answers none, or takes the learner's tabs or this host's live Wiki pane for dead; why_new=Cycle 0044 0037-D8: the earlier test of this name asserted the fake editor only and never called the reader; seam=leaveDeadCodebookPane
+test('the first presentation selection after an extension-host restart asks the editor to close the old host’s dead Study pane and no other tab', async () => {
+  // Arrange: the old host's Study pane is the only tab of column 3; the learner's draft has focus in column 1 and this host's Repository Wiki pane is open in column 2.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
   try {
-    // Act
     const deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    harness.focusMutableDraft('mutable-notes.txt', 1)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
     // Assert
-    assert.equal(harness.groups[2]!.activeTab, deadStudy)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.deepEqual(harness.tabCloseRequests()[0], [deadStudy])
     assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
-    assert.equal(harness.counts().panels, 0)
-    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
-    assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
     await harness.close()
   }
@@ -2801,8 +2819,9 @@ test('a presentation selection on a closed reader that already owns a live Appli
   }
 })
 
-test('a dead Codebook pane the editor refuses to close leaves every tab in place and tells why the selection could not start', async () => {
-  // Arrange
+// Value: protects=a dead pane the editor keeps ends the selection with the instruction to close it, whatever the editor closed in other groups; fails_when=the kept pane is read from the editor's one answer instead of from the tab model, or a panel is created beside the kept pane; why_new=Cycle 0044 0037-F4, 0037-D8: the fake editor closed all requested tabs or none, while the editor closes group by group; seam=leaveDeadCodebookPane refuseClose
+test('a dead Codebook pane the editor refuses to close stays in its group while the dead pane of another group closes, and the selection tells why it could not start', async () => {
+  // Arrange: the editor keeps the dead Application pane of column 1 and lets the dead Study pane of column 3 close.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
   try {
@@ -2826,15 +2845,17 @@ test('a dead Codebook pane the editor refuses to close leaves every tab in place
       {
         code: 'PRESENTATION_UNAVAILABLE',
         message:
-          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.',
+          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.',
         causeDetail: 'A leftover Codebook pane could not be closed.',
       },
     )
-    // Assert
+    // Assert: only the dead pane the editor released is gone.
     const tabs = harness.groups.flatMap((group) => group.tabs)
-    assert.deepEqual(tabs, tabsBefore)
+    assert.deepEqual(
+      tabs,
+      tabsBefore.filter((tab) => tab !== deadStudy),
+    )
     assert.equal(tabs.includes(deadApplication), true)
-    assert.equal(tabs.includes(deadStudy), true)
     assert.equal(tabs.includes(draft.tab), true)
     assert.equal(harness.reader.presentationState().state, 'closed')
     assert.equal(harness.counts().panels, 0)
@@ -2927,4 +2948,663 @@ test('a closed reader behind a foreign non-text editor still refuses the selecti
   } finally {
     await harness.close()
   }
+})
+
+/** Tells whether a request answered before one second passed, so a test can show that the five-second editor-agreement wait did not run. @example await answeredWithinOneSecond(request) // true */
+const answeredWithinOneSecond = async (
+  request: Promise<unknown>,
+): Promise<boolean> => {
+  const deadline = new AbortController()
+  try {
+    return await Promise.race([
+      request.then(
+        () => true,
+        () => true,
+      ),
+      delay(1_000, false, { signal: deadline.signal }),
+    ])
+  } finally {
+    deadline.abort()
+  }
+}
+
+/** Waits until the editor has removed a tab, so a test can act between the close and the admission that follows it. @example await tabClosed(harness, leftover) */
+const tabClosed = async (
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+  tab: ReturnType<typeof harness.restoreLeftoverCapturedSource>,
+): Promise<void> => {
+  while (harness.groups.flatMap((group) => group.tabs).includes(tab))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+}
+
+const FOREIGN_EDITOR_REFUSAL =
+  'Focus a Codebook pane or text editor before selecting a presentation; the current foreign editor cannot be restored safely.'
+
+// Value: protects=a selection that has no leftover tab to close is answered at once; fails_when=the editor-agreement wait runs although no tab closed, so the refusal arrives after five seconds; why_new=Cycle 0044 0036-C06a: no test had another workspace's captured-source tab as the focused tab; seam=restoreLeftoverCapturedSource authority
+test('a selection behind another workspace’s captured-source tab is refused without the five-second editor wait', async () => {
+  // Arrange: the focused tab is a captured source of another workspace, restored without a text editor; this workspace left no tab.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    harness.restoreLeftoverCapturedSource({ authority: 'f'.repeat(64) })
+    const state = harness.reader.presentationState()
+    // Act
+    const request = Promise.resolve().then(() =>
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select',
+      }),
+    )
+    const answered = await answeredWithinOneSecond(request)
+    // Assert
+    assert.equal(answered, true)
+    await assert.rejects(request, {
+      code: 'PRESENTATION_UNAVAILABLE',
+      message: FOREIGN_EDITOR_REFUSAL,
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a refused selection leaves this workspace's leftover tabs where they are; fails_when=the leftover tabs are closed before the refusal for a focus that cannot be kept; why_new=Cycle 0044 0036-C06b: no test combined a foreign workspace's focused captured source with an own leftover tab; seam=restoreLeftoverCapturedSource authority
+test('a selection refused behind another workspace’s captured-source tab closes none of this workspace’s leftover tabs', async () => {
+  // Arrange: this workspace's leftover captured source sits inactive beside the focused captured source of another workspace.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const leftover = harness.restoreLeftoverCapturedSource({ active: false })
+    harness.restoreLeftoverCapturedSource({ authority: 'f'.repeat(64) })
+    const state = harness.reader.presentationState(),
+      tabsBefore = harness.groups.flatMap((group) => group.tabs)
+    // Act
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: state.mode,
+          action: 'select',
+        }),
+      { code: 'PRESENTATION_UNAVAILABLE', message: FOREIGN_EDITOR_REFUSAL },
+    )
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.deepEqual(tabs, tabsBefore)
+    assert.equal(tabs.includes(leftover), true)
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the selection is admitted on the editor's settled state when a non-text page replaces the closed leftover tab; fails_when=the admission runs while the active text editor still reports the document of the tab that closed, and tries to give focus back to it; why_new=Cycle 0044 0036-C06c: the late-editor test ends on a text tab, where the wait already ran; seam=restoreLeftoverCapturedSource staleTextEditor
+test('a selection is confirmed when the editor still reports the closed captured source as its text editor for a moment after its Settings page took the tab’s place', async () => {
+  // Arrange: the group holds the editor's Settings page and, with focus, a leftover captured source; for 60 ms after the close the editor still reports that source as its active text editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const settingsPage = harness.useOpaquePrimary('settings')
+    const leftover = harness.restoreLeftoverCapturedSource({
+      staleTextEditor: true,
+    })
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(
+      tabs.some((tab) => tab === settingsPage),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a captured source this host itself shows in a text editor is kept by a selection on a closed reader; fails_when=the leftover-tab step takes every captured-source tab of the workspace for a leftover, with or without a text editor; why_new=Cycle 0044 0036-C06d: every earlier leftover tab was one without a text editor; seam=restoreLeftoverCapturedSource textEditor
+test('a selection on a closed reader does not close a focused captured-source tab that has a text editor', async () => {
+  // Arrange: a first open that failed left this host's captured source open in a live text editor, and the reader closed.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const liveCapturedSource = harness.restoreLeftoverCapturedSource({
+      textEditor: true,
+    })
+    const state = harness.reader.presentationState()
+    // Act
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    assert.equal(
+      harness.tabCloseRequests().flat().includes(liveCapturedSource),
+      false,
+    )
+    assert.equal(
+      harness.groups
+        .flatMap((group) => group.tabs)
+        .includes(liveCapturedSource),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=only the page the close itself activated is accepted in place of the closed focused tab; fails_when=any non-text page that has focus when the admission runs is accepted, so the reader opens over a page the learner chose meanwhile; why_new=Cycle 0044 0036-C06f: no test moved focus between the close and the admission; seam=focusOpaqueTab
+test('a selection is refused when the learner moves to another non-text page while the editor settles after the focused leftover tab closed', async () => {
+  // Arrange: closing the focused leftover tab activates the learner's draft, whose text editor the editor reports 60 ms later; an extension's page is open in column 2.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    await harness.reader.attach(harness.service)
+    harness.focusMutableDraft('mutable-notes.txt', 1)
+    const extensionPage = harness.addOpaqueTab('Extension page', 2)
+    const leftover = harness.restoreLeftoverCapturedSource({
+      column: 1,
+      lateTextEditor: true,
+    })
+    const state = harness.reader.presentationState()
+    // Act: the learner clicks the extension's page while the selection waits for the draft's text editor.
+    const request = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    request.catch(() => undefined)
+    await tabClosed(harness, leftover)
+    harness.focusOpaqueTab(extensionPage)
+    // Assert
+    await assert.rejects(request, {
+      code: 'PRESENTATION_UNAVAILABLE',
+      message: FOREIGN_EDITOR_REFUSAL,
+    })
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=closing the reader ends a selection that is waiting for the editor after it closed a leftover tab; fails_when=the wait ignores the reader's cancellation and holds the selection for five seconds, or the selection goes on to open a pane on the closed reader; why_new=Cycle 0044 0036-C07d: no test closed the reader during the leftover-tab step; seam=restoreLeftoverCapturedSource authority
+test('closing the reader while a selection waits for the editor after closing a leftover tab ends the selection at once and opens no pane', async () => {
+  // Arrange: closing the focused leftover tab activates another workspace's captured source, for which the editor never reports a text editor, so the selection waits.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    harness.restoreLeftoverCapturedSource({
+      active: false,
+      authority: 'f'.repeat(64),
+    })
+    const leftover = harness.restoreLeftoverCapturedSource()
+    const state = harness.reader.presentationState()
+    const request = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    request.catch(() => undefined)
+    await tabClosed(harness, leftover)
+    // Act
+    const closing = harness.reader.close()
+    const answered = await answeredWithinOneSecond(request)
+    await closing
+    // Assert
+    assert.equal(answered, true)
+    await assert.rejects(request, {
+      message:
+        'The study workspace was closed; repeat the action explicitly if needed.',
+    })
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the dead panes of an earlier host are closed by the first selection although a run already created this host's Application panel; fails_when=the dead-pane reader answers none as soon as this host owns a panel, so the selection meets two Application tabs; why_new=Cycle 0044 0037-D3: the only test with a panel created first had no dead pane; seam=leaveDeadCodebookPane
+test('the first presentation selection closes the old host’s dead panes when a run created this host’s Application panel before the reader was opened', async () => {
+  // Arrange: the old host's panes are in columns 1 and 3; an agent run then creates this host's Application panel, and the learner's draft has focus in column 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  const deadApplication = harness.leaveDeadCodebookPane(
+      'codebook.scopedBrowser',
+      1,
+    ),
+    deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+  const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
+  const viewport = harness.reader.presentation.createViewport(
+    'run-before-reader',
+    () => {},
+    () => {},
+    'normal',
+  )
+  try {
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(deadStudy), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+    assert.equal(tabs.includes(draft.tab), true)
+  } finally {
+    viewport.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=a dead pane the editor kept at a cold open is named by the next selection and closed once the editor lets it, without touching the open reader's captured source; fails_when=the selection of an open reader never looks for dead panes, so the kept pane is never reported; why_new=Cycle 0044 0037-D3: the cold-open refusal test stopped at the open; seam=leaveDeadCodebookPane refuseClose, acceptDeadPaneClose
+test('a selection on a reader that opened beside a dead pane the editor kept names that pane, and closes it once the editor lets it', async () => {
+  // Arrange: the editor refused to close the old host's Application pane when the Study workspace was opened.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const deadApplication = harness.leaveDeadCodebookPane(
+      'codebook.scopedBrowser',
+      1,
+      { refuseClose: true },
+    )
+    harness.focusMutableDraft('mutable-notes.txt', 3)
+    await harness.reader.open()
+    const capturedBefore = capturedSourceTabs(harness),
+      refusedState = harness.reader.presentationState()
+    // Act
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: refusedState.presentationId,
+          expectedRevision: refusedState.presentationControlRevision,
+          mode: refusedState.mode,
+          action: 'select',
+        }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.',
+        causeDetail: 'A leftover Codebook pane could not be closed.',
+      },
+    )
+    harness.acceptDeadPaneClose()
+    const state = harness.reader.presentationState()
+    await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+    assert.equal(capturedBefore, 1)
+    assert.equal(capturedSourceTabs(harness), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a closed reader opens when the page left active by closing its focused dead pane is a non-text page of the same group; fails_when=that page is refused as a foreign editor, so the first selection after an update needs the learner's click again; why_new=Cycle 0044 0037-D5: the same rule was tested for a focused captured source only; seam=leaveDeadCodebookPane focused
+test('a closed reader opens when closing its focused dead Study pane leaves a non-text page of the editor active in the same group', async () => {
+  // Arrange: after a host restart column 1 holds the editor's Settings page and, with focus, the old host's Study pane.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const settingsPage = harness.useOpaquePrimary('settings')
+    const deadStudy = harness.leaveDeadCodebookPane(
+      'codebook.studyContext',
+      1,
+      {
+        focused: true,
+      },
+    )
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadStudy), false)
+    assert.equal(
+      tabs.some((tab) => tab === settingsPage),
+      true,
+    )
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a selection refused for a foreign non-text editor changes nothing in the window; fails_when=the dead panes and leftover captured-source tabs are closed before the refusal is decided; why_new=Cycle 0044 0037-F5: the refusal test beside a dead pane asserted the refusal and the focused page only; seam=leaveDeadCodebookPane, restoreLeftoverCapturedSource
+test('a selection refused behind a foreign non-text editor closes neither the dead pane nor the leftover captured-source tab of an earlier session', async () => {
+  // Arrange: the editor's Settings page has focus in column 1 beside an inactive leftover captured source; the old host's Study pane is the only tab of column 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    await harness.reader.attach(harness.service)
+    harness.useOpaquePrimary('settings')
+    const leftover = harness.restoreLeftoverCapturedSource({ active: false }),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    const state = harness.reader.presentationState(),
+      tabsBefore = harness.groups.flatMap((group) => group.tabs)
+    // Act
+    await assert.rejects(
+      async () =>
+        harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: state.mode,
+          action: 'select',
+        }),
+      { code: 'PRESENTATION_UNAVAILABLE', message: FOREIGN_EDITOR_REFUSAL },
+    )
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.deepEqual(tabs, tabsBefore)
+    assert.equal(tabs.includes(leftover), true)
+    assert.equal(tabs.includes(deadStudy), true)
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    assert.equal(harness.counts().panels, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the selection waits for the editor and is confirmed when the editor closed the focused dead pane but kept a leftover tab of another group; fails_when=the editor's one answer for the whole request is read as "nothing closed", so the wait is skipped and the draft the close activated is refused as a foreign editor; why_new=Cycle 0044 0037-F4: the fake editor closed all requested tabs or none; seam=restoreLeftoverCapturedSource refuseClose lateTextEditor, leaveDeadCodebookPane focused
+test('a selection is confirmed when the editor closes the focused dead pane and keeps a leftover captured-source tab of another group', async () => {
+  // Arrange: the editor keeps the inactive leftover captured source of column 1; in column 3 the old host's Study pane has focus in front of the learner's draft, whose text editor the editor reports 60 ms after the pane closed.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
+    const keptLeftover = harness.restoreLeftoverCapturedSource({
+      active: false,
+      column: 1,
+      refuseClose: true,
+      lateTextEditor: true,
+    })
+    const deadStudy = harness.leaveDeadCodebookPane(
+      'codebook.studyContext',
+      3,
+      {
+        focused: true,
+      },
+    )
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadStudy), false)
+    assert.equal(tabs.includes(keptLeftover), true)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(codebookPaneTabs(harness, 'codebook.studyContext'), 1)
+  } finally {
+    harness.acceptLeftoverClose()
+    await harness.close()
+  }
+})
+
+// Value: protects=a close request the editor rejects is treated as a kept pane: the selection ends with the instruction and nothing changes; fails_when=the rejection escapes as the editor's own error, or the selection goes on beside the dead pane; why_new=Cycle 0044 0037-D8: the fake editor could refuse a close but never reject the request; seam=rejectNextTabClose
+test('a close request the editor rejects leaves every tab in place and the selection tells that a dead pane is still open', async () => {
+  // Arrange: the editor rejects the close request, as it does when the request is cancelled.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.focusMutableDraft('mutable-notes.txt', 2)
+    harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    harness.rejectNextTabClose()
+    const state = harness.reader.presentationState(),
+      tabsBefore = harness.groups.flatMap((group) => group.tabs)
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select',
+      }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        causeDetail: 'A leftover Codebook pane could not be closed.',
+      },
+    )
+    // Assert
+    assert.deepEqual(
+      harness.groups.flatMap((group) => group.tabs),
+      tabsBefore,
+    )
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=this host's live Study pane is never taken for a dead one while its Application pane is gone; fails_when=only the Application panel counts as "this host owns a pane", so the live Study tab is closed as a leftover; why_new=Cycle 0044 0037-D8: the Study-only half of the live-panel condition had no test; seam=nativePanels
+test('a selection after the learner closed the Application pane does not close this host’s live Study pane', async () => {
+  // Arrange: the reader is open and the learner closed its Application tab, so this host owns the Study panel only.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    await harness.reader.open()
+    const application = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.scopedBrowser'),
+      study = harness
+        .nativePanels()
+        .find((panel) => panel.kind === 'codebook.studyContext')
+    assert.ok(application)
+    assert.ok(study)
+    application.dispose()
+    const state = harness.reader.presentationState()
+    // Act
+    await harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'select',
+      })
+      .catch(() => undefined)
+    // Assert
+    assert.equal(
+      harness.tabCloseRequests().flat().includes(study.nativeTab),
+      false,
+    )
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(study.nativeTab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a dead Repository Wiki pane that had focus is closed by the first selection, which is then confirmed; fails_when=only the Application and Study view types count as Codebook panes, so the dead Wiki pane stays and the selection is refused for a foreign editor; why_new=Cycle 0044 0037-N6b: no test left a dead Wiki pane; seam=leaveDeadCodebookPane 'codebook.repositoryWiki'
+test('the first presentation selection after an extension-host restart closes the old host’s dead Repository Wiki pane that had focus', async () => {
+  // Arrange: the old host's Repository Wiki pane has focus in the only group; this host's Wiki reader has no panel.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const articleSource = harness.groups[0]!.tabs[0]!
+    const deadWiki = harness.leaveDeadCodebookPane(
+      'codebook.repositoryWiki',
+      1,
+      { focused: true },
+    )
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadWiki), false)
+    assert.equal(tabs.includes(articleSource), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=this host's live Repository Wiki pane stays open when the first selection closes the old host's dead panes; fails_when=every Repository Wiki tab is closed as a leftover without asking whether the Wiki reader owns a panel; why_new=Cycle 0044 0037-N6b: the Wiki view type was not a Codebook pane type before, so no test could close a live one; seam=leaveDeadCodebookPane
+test('the first presentation selection keeps this host’s live Repository Wiki pane while it closes the old host’s dead Application pane', async () => {
+  // Arrange: this host's Wiki reader shows its article in column 2; the old host's Application pane is the visible tab of column 1 and the learner's draft has focus in column 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const liveWiki = harness.groups[1]!.tabs[0]!
+    const deadApplication = harness.leaveDeadCodebookPane(
+      'codebook.scopedBrowser',
+      1,
+    )
+    harness.focusMutableDraft('mutable-notes.txt', 3)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.deepEqual(harness.tabCloseRequests()[0], [deadApplication])
+    assert.equal(tabs.includes(liveWiki), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the dead panes of two earlier hosts are all closed by the first selection; fails_when=only one dead pane of a kind is recognized, so a second dead Application tab stays and the selection meets two Application tabs; why_new=Cycle 0044 0037-PR3: every earlier test left at most one dead pane of a kind; seam=leaveDeadCodebookPane
+test('the first presentation selection closes the dead Application panes that two earlier extension hosts left in one window', async () => {
+  // Arrange: two host restarts each left an Application pane behind: one in column 1, one in column 2; the learner's draft has focus in column 3.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const firstDeadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        1,
+      ),
+      secondDeadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        2,
+      )
+    harness.focusMutableDraft('mutable-notes.txt', 3)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(firstDeadApplication), false)
+    assert.equal(tabs.includes(secondDeadApplication), false)
+    assert.equal(codebookPaneTabs(harness, 'codebook.scopedBrowser'), 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the reader places its panes in columns 1 and 3 after the dead pane's close removed the first editor group and renumbered the others; fails_when=the placement uses the column numbers it read before the close; why_new=Cycle 0044 0037-PR4: the only emptied-group test removed the last group, which renumbers nothing; seam=leaveDeadCodebookPane, useOpaquePrimary
+test('the first presentation selection places its panes after closing the dead Application pane removed the first editor group', async () => {
+  // Arrange: the old host's Application pane is the only tab of column 1; the learner's draft has focus in column 2 and column 3 is empty.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.useOpaquePrimary('blank')
+    const deadApplication = harness.leaveDeadCodebookPane(
+      'codebook.scopedBrowser',
+      1,
+    )
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 2)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: state.mode,
+      action: 'select',
+    })
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the extension README tells a learner and an agent the dead-pane refusal and its causes in the words the reader uses; fails_when=the README does not describe the close of an earlier session's tabs, or its texts drift from the refusal a selection gives; why_new=Cycle 0044 0037-DOC1: the README named neither the close nor the refusal; seam=none
+test('the extension README gives the refusal for a dead pane that stays open and both causes word for word', async () => {
+  // Arrange
+  const readme = await readFile(resolve(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const documented = [
+    '`A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.`',
+    '`A leftover Codebook pane could not be closed.`',
+    '`A leftover captured source tab could not be closed.`',
+  ].map((text) => readme.includes(text))
+  // Assert
+  assert.deepEqual(documented, [true, true, true])
 })

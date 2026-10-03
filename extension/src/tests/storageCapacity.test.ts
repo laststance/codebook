@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -274,6 +274,43 @@ test('a full study library tells before a run that it can keep a study it alread
   // Asking reserved nothing: no recording exists and the library still holds its one study.
   assert.equal((await recordings.list()).length, 0)
   assert.equal((await library.list()).length, 1)
+})
+
+// Value: protects=a run is admitted or refused while another window is writing the library; fails_when=the admission takes the storage lock, so a run that starts during another window's save fails with the lock error instead of its answer; why_new=Cycle 0044 0037-D8: every admission test asked while the lock was free; seam=none
+test('the run admission answers while another window holds the storage lock', async (context) => {
+  // Arrange: one saved study under a limit of one, and the writer lock of a running editor process in the library directory.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-capacity-locked-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const first = capacityStudy(),
+    second = capacityStudy()
+  const library = new LearningLibrary(
+      directory,
+      first.study.workspaceKey,
+      () => 1,
+    ),
+    recordings = new RecordingStore(
+      directory,
+      first.study.workspaceKey,
+      {},
+      undefined,
+      () => 1,
+    )
+  await library.saveStudy(first.study)
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: process.pid, hostname: hostname() }),
+  )
+  // Act
+  const admitsKeptStudy = await library.admitsStudy(first.study.id),
+    admitsNewStudy = await recordings.admitsStudy(second.study.id)
+  // Assert
+  assert.equal(admitsKeptStudy, true)
+  assert.equal(admitsNewStudy, false)
+  // The lock was real: a save is refused while it is held.
+  await assert.rejects(library.saveStudy(second.study), {
+    message:
+      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+  })
 })
 
 test('saving a new study into a full library still reports the limit setting and keeps the saved study', async (context) => {
