@@ -413,15 +413,21 @@ test('foreign instance and run errors are structured domain failures and invalid
   }
 })
 
-test('eight idle MCP clients exhaust capacity but expiry releases their slots without stopping a paused run', async () => {
+// Value: protects=a driver or chat whose clients end without DELETE; fails_when=a ninth initialize answers "MCP session limit exceeded" for five minutes although every earlier session is idle; why_new=the capacity test expected the 429 for idle sessions (Cycle 0044 row N-4); seam=the server clock
+test('a ninth MCP client while eight sessions are idle replaces the least recently seen one, which then answers Unknown MCP session', async () => {
   // Arrange
   let now = 0
   const harness = await createHarness(),
     endpoint = await startServer(harness.service, () => now)
   const connections: Awaited<ReturnType<typeof connect>>[] = []
   try {
-    for (let index = 0; index < 8; index += 1)
+    for (let index = 0; index < 8; index += 1) {
+      now = index * 1_000
       connections.push(await connect(endpoint.descriptor))
+    }
+    now = 8_000
+    // The first client is seen again, so the second becomes the least recently seen.
+    await connections[0]!.client.listTools()
     const receipt = harness.service.start({
       instanceId: harness.service.instanceId,
       profile: PROFILE_ID,
@@ -434,20 +440,69 @@ test('eight idle MCP clients exhaust capacity but expiry releases their slots wi
       key: 'click',
       action: 'repository-click',
     })
+    now = 9_000
+    // Act
+    const ninth = await connect(endpoint.descriptor)
+    connections.push(ninth)
+    // Assert
+    await assert.rejects(
+      connections[1]!.client.listTools(),
+      /Unknown MCP session\. Initialize a new transport, then read codebook_status\./,
+    )
+    assert.equal((await connections[0]!.client.listTools()).tools.length, 16)
+    assert.equal((await connections[2]!.client.listTools()).tools.length, 16)
+    assert.equal(harness.runtimes[0]?.stopped, false)
+    assert.equal(harness.runtimes[0]?.dispatches, 1)
+    const result = await ninth.client.readResource({ uri: receipt.runUri })
+    assert.match(JSON.stringify(result), /paused-browser/)
+  } finally {
+    await Promise.allSettled(
+      connections.map((connection) => connection.client.close()),
+    )
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
+test('eight MCP sessions each with a request in flight refuse a ninth client until expiry releases their slots', async () => {
+  // Arrange
+  let now = 0,
+    entered = 0,
+    release!: () => void
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now)
+  const connections: Awaited<ReturnType<typeof connect>>[] = []
+  const held: Promise<unknown>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1)
+      connections.push(await connect(endpoint.descriptor))
+    harness.service.environment.prerequisites = async () => {
+      entered += 1
+      await barrier
+      return { ready: true, missing: [] }
+    }
+    for (const connection of connections)
+      held.push(
+        connection.client.callTool({ name: 'codebook_status', arguments: {} }),
+      )
+    await waitUntil(() => entered === 8, 'eight held status calls', 1_000)
     // Act / Assert
     await assert.rejects(
       connect(endpoint.descriptor),
       /MCP session limit exceeded/,
     )
+    release()
+    await Promise.all(held)
     now = SESSION_IDLE_TIMEOUT_MS + 1
-    endpoint.expire()
+    await endpoint.expire()
     const recovered = await connect(endpoint.descriptor)
     connections.push(recovered)
-    assert.equal(harness.runtimes[0]?.stopped, false)
-    assert.equal(harness.runtimes[0]?.dispatches, 1)
-    const result = await recovered.client.readResource({ uri: receipt.runUri })
-    assert.match(JSON.stringify(result), /paused-browser/)
+    assert.equal((await recovered.client.listTools()).tools.length, 16)
   } finally {
+    release()
     await Promise.allSettled(
       connections.map((connection) => connection.client.close()),
     )
