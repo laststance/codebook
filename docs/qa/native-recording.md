@@ -2,7 +2,7 @@
 
 Use **OBS Studio → macOS Screen Capture → Window Capture** for editor QA. This records the selected native window while another application is in front. A recording must pass the short preflight below before it becomes evidence. Recording and native input are separate: a working stream does not prove that an automation action reached the intended control.
 
-Authority: the owner's three-method trial request and subsequent rejection of QuickTime/Screenshot because it prevents interaction, recorded in [D041](../../DECISIONS.md#d041--use-obs-window-capture-for-native-qa-recording-2026-09-30). [IMPLEMENTATION.md](../../IMPLEMENTATION.md) still controls product verification. This procedure acquires evidence; it does not change Codebook's internal recording/replay implementation.
+Authority: the owner's three-method trial request and subsequent rejection of QuickTime/Screenshot because it prevents interaction, recorded in [D041](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d041--use-obs-window-capture-for-native-qa-recording-2026-09-30). [IMPLEMENTATION.md](../../IMPLEMENTATION.md) still controls product verification. This procedure acquires evidence; it does not change Codebook's internal recording/replay implementation.
 
 ## Compared on 2026-09-30
 

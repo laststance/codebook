@@ -56,7 +56,7 @@ reviews:
         Hosted reviews cannot access developer-home rule files, local tools, or
         private artifacts. Use available repository and inline rules; report any
         unavailable instructions or evidence as coverage limits, never as verified.
-        Respect approved decisions in DECISIONS.md and the current cycle. Report
+        Respect the required reads (AGENTS.md, DEVELOPMENT.md, PRODUCT_GOAL.md) and the current cycle. Report
         demonstrated regressions against them; do not reopen accepted design or
         architecture choices as style preferences.
         Prioritize correctness, data loss, security, ownership, concurrency, and
@@ -97,7 +97,7 @@ reviews:
 
     - path: 'extension/src/ui/**'
       instructions: |
-        Follow DESIGN.md and the approved design, as amended by DECISIONS.md and
+        Follow DESIGN.md and the approved design, as amended by the required reads and
         the active cycle. Preserve compact understand controls, complete citation
         context, exact reading returns, and shared learning/recording identities.
         Check keyboard focus, supported themes, loading/error/paused states,
@@ -139,7 +139,6 @@ knowledge_base:
       - 'PRODUCT_GOAL.md'
       - 'PROJECT_STATE.md'
       - 'DEVELOPMENT.md'
-      - 'DECISIONS.md'
       - 'DESIGN.md'
       # Keep this mapping synchronized when PROJECT_STATE.md selects another cycle.
       - files: 'docs/cycles/0043-next-line-binding.md'

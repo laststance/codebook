@@ -11,11 +11,11 @@ Goal links: G01, G03, G06, G11\
 Source state: [Cycle 0041 delivery closure](0041-live-first-run-both-chats.md#delivery-closure-2026-10-03), [PROJECT_STATE](../../PROJECT_STATE.md)
 
 Owner authority:
-- [D045](../../DECISIONS.md#d045--resume-cycle-after-cycle-work-after-the-pause-2026-10-02): continue cycle after cycle (`/spec`, plan reviews as needed, implementation, local CodeRabbit CLI and `open-code-review-delegate`, `/ship`, CI, merge, next cycle). The owner cannot answer, so this cycle takes the recommended option at every decision point and records each one below.
+- [D045](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d045--resume-cycle-after-cycle-work-after-the-pause-2026-10-02): continue cycle after cycle (`/spec`, plan reviews as needed, implementation, local CodeRabbit CLI and `open-code-review-delegate`, `/ship`, CI, merge, next cycle). The owner cannot answer, so this cycle takes the recommended option at every decision point and records each one below.
 - D043, D044: continue to completion; plan each cycle through `/spec`.
 - D040: VS Code practical trials use Copilot Chat **Auto**; the Codex Extension only after observed credit exhaustion.
 - Owner, 2026-10-03: Cursor trials use Composer 2.5, the cheapest model.
-- [D046](../../DECISIONS.md#d046--pause-once-the-next-cycles-issue-is-written-2026-10-03) (owner, 2026-10-03, during the second `/ship` invocation): finish this cycle's delivery and closure, write the next cycle's Issue through `/spec`, then stop until the owner resumes the work.
+- [D046](https://github.com/laststance/codebook/blob/e32add3a723888166383a951d202d7d62d509d88/DECISIONS.md#d046--pause-once-the-next-cycles-issue-is-written-2026-10-03) (owner, 2026-10-03, during the second `/ship` invocation): finish this cycle's delivery and closure, write the next cycle's Issue through `/spec`, then stop until the owner resumes the work.
 - Owner statements of 2026-10-02 that stay in force: only a critical review finding is fixed, the others are recorded and carried; Codex automatic review is off, so a delivery has no Codex cloud step; the red team, the three adversarial passes and the documentation audit start together; the Mac is free for trials overnight.
 
 ## Question and authorized scope

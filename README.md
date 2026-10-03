@@ -4,11 +4,11 @@ Understand an actual project's code through standard editor AI chat, real execut
 
 ## Product features
 
-| Feature | Experience |
-| --- | --- |
-| Live explanation | Ask `/codebook` in Copilot Chat or Cursor Agent. The AI operates the real application/runtime, pauses actual source, explains in chat and continues. Inspect values in the native debugger. |
-| Learning replay / time-travel debugging | Replay the application, the source executing at that time and historical values/stack in the native debugger in sync. Repeatedly step backward/forward and seek after runtime exit. The live chat area becomes a learning summary with a sequence diagram. |
-| Independent LLM Wiki / DeepWiki | Reproduce DeepWiki itself through the editor AI's generation skill: full chapters, diagrams, source citations, reader navigation and repository Q&A. Keep local/configurable output, chat/browser updates and source links into your editor. Runtime/debug MCP and learning are independent. |
+| Feature                                 | Experience                                                                                                                                                                                                                                                                                   |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live explanation                        | Ask `/codebook` in Copilot Chat or Cursor Agent. The AI operates the real application/runtime, pauses actual source, explains in chat and continues. Inspect values in the native debugger.                                                                                                  |
+| Learning replay / time-travel debugging | Replay the application, the source executing at that time and historical values/stack in the native debugger in sync. Repeatedly step backward/forward and seek after runtime exit. The live chat area becomes a learning summary with a sequence diagram.                                   |
+| Independent LLM Wiki / DeepWiki         | Reproduce DeepWiki itself through the editor AI's generation skill: full chapters, diagrams, source citations, reader navigation and repository Q&A. Keep local/configurable output, chat/browser updates and source links into your editor. Runtime/debug MCP and learning are independent. |
 
 The owner retired the three selectable UI themes, not these distinct feature screens. Codebook Activity Bar navigation reaches them. The [v9 product image](DESIGN.md) is owner-approved after GStack design review. Implementation follows the local [execution guide and acceptance map](IMPLEMENTATION.md), reached from AGENTS.md, with mandatory visual inspection.
 
@@ -22,25 +22,25 @@ Until final acceptance begins, actual-editor development verification uses the o
 
 ## Start here
 
-| Question | Source of truth |
-| --- | --- |
-| How must an agent build and verify the product? | [AGENTS.md](AGENTS.md), [IMPLEMENTATION.md](IMPLEMENTATION.md) |
-| What image must an agent open and inspect? | [Approved v9 PNG and visual contract](DESIGN.md) |
-| What are the features and how do they relate? | [PRODUCT_GOAL.md](PRODUCT_GOAL.md) |
-| What exactly is saved learning? | [Learning replay specification](docs/specs/learning-replay.md) |
-| How is Wiki independent, generated and updated? | [LLM Wiki specification](docs/specs/llm-wiki.md) |
-| What must pass before completion? | [Final acceptance](docs/acceptance/FINAL_REVIEW.md), [fixed project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) |
-| What is implemented, verified and next? | [PROJECT_STATE.md](PROJECT_STATE.md) |
-| How does the existing preview work? | [Version-qualified installation and usage](extension/README.md), [change history](CHANGELOG.md) |
-| How do development and review work? | [DEVELOPMENT.md](DEVELOPMENT.md), [closed decision log](DECISIONS.md) |
-| What is the current design authority? | [DESIGN.md](DESIGN.md), [behavioral design](docs/designs/codebook.md) |
+| Question                                        | Source of truth                                                                                                   |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| How must an agent build and verify the product? | [AGENTS.md](AGENTS.md), [IMPLEMENTATION.md](IMPLEMENTATION.md)                                                    |
+| What image must an agent open and inspect?      | [Approved v9 PNG and visual contract](DESIGN.md)                                                                  |
+| What are the features and how do they relate?   | [PRODUCT_GOAL.md](PRODUCT_GOAL.md)                                                                                |
+| What exactly is saved learning?                 | [Learning replay specification](docs/specs/learning-replay.md)                                                    |
+| How is Wiki independent, generated and updated? | [LLM Wiki specification](docs/specs/llm-wiki.md)                                                                  |
+| What must pass before completion?               | [Final acceptance](docs/acceptance/FINAL_REVIEW.md), [fixed project matrix](docs/acceptance/ACCEPTANCE_MATRIX.md) |
+| What is implemented, verified and next?         | [PROJECT_STATE.md](PROJECT_STATE.md)                                                                              |
+| How does the existing preview work?             | [Version-qualified installation and usage](extension/README.md), [change history](CHANGELOG.md)                   |
+| How do development and review work?             | [DEVELOPMENT.md](DEVELOPMENT.md)                                                                                  |
+| What is the current design authority?           | [DESIGN.md](DESIGN.md), [behavioral design](docs/designs/codebook.md)                                             |
 
 Read [AGENTS.md](AGENTS.md) when starting or resuming work. Claude Code also enters through [CLAUDE.md](CLAUDE.md). Repository documents own outcomes/state; issues mirror them.
 
 ## Tracking and continuation
 
 - [Goal Issue #1](https://github.com/laststance/codebook/issues/1) remains open until all acceptance conditions and owner acceptance hold.
-- [Cycle 0043 Issue #80](https://github.com/laststance/codebook/issues/80) is open ([record](docs/cycles/0043-next-line-binding.md)): a stop the debugger binds on the next line is accepted there instead of ending the run. Work resumed on the owner's direction of 2026-10-03 on a Windows host with WSL (D047).
+- [Cycle 0043 Issue #80](https://github.com/laststance/codebook/issues/80) is closed after [PR #81](https://github.com/laststance/codebook/pull/81) ([record](docs/cycles/0043-next-line-binding.md)): a stop the debugger binds on the next line is accepted there instead of ending the run. Work resumed on the owner's direction of 2026-10-03 on a Windows host with WSL (D047).
 - [Cycle 0042 Issue #78](https://github.com/laststance/codebook/issues/78) is closed after PR #79 ([record](docs/cycles/0042-adapter-resumed-pause.md)): a pause away from the next declared stop's line that the debugger makes and resumes by itself after a continuation no longer ends a live run.
 - [Cycle 0041 Issue #76](https://github.com/laststance/codebook/issues/76) is closed after PR #77 ([record](docs/cycles/0041-live-first-run-both-chats.md)), [Cycle 0040 Issue #74](https://github.com/laststance/codebook/issues/74) after PR #75 ([record](docs/cycles/0040-removal-failure-paths.md)), [Cycle 0039 Issue #72](https://github.com/laststance/codebook/issues/72) after PR #73 ([record](docs/cycles/0039-removal-followups.md)), [Cycle 0038 Issue #70](https://github.com/laststance/codebook/issues/70) after PR #71 ([record](docs/cycles/0038-full-library.md)), [Cycle 0037 Issue #67](https://github.com/laststance/codebook/issues/67) after PR #68, [Cycle 0036 Issue #65](https://github.com/laststance/codebook/issues/65) after PR #66, [Cycle 0035 Issue #63](https://github.com/laststance/codebook/issues/63) after PR #64, [Cycle 0034 Issue #61](https://github.com/laststance/codebook/issues/61) after PR #62, [Cycle 0033 Issue #59](https://github.com/laststance/codebook/issues/59) after PR #60, [Cycle 0032 Issue #56](https://github.com/laststance/codebook/issues/56) after PR #58, [Cycle 0031 Issue #53](https://github.com/laststance/codebook/issues/53) after PR #54, Cycle 0030 Issue #50 after corrective PR #52, and Cycle 0029 Issue #46 after PR #48. Each next cycle Issue is created through `/spec` (D044).
 - Closed cycle records preserve historical results, failed attempts and their exact source/host boundaries.
