@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setTimeout } from 'node:timers/promises'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { thrownMessage } from '../utils/thrownMessage'
@@ -1331,5 +1332,61 @@ test('a pause the debugger makes for itself in another script between two browse
       place: 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts 1:1',
       pausedForMs: 'an integer, checked above',
     },
+  )
+})
+
+// Value: protects=a run never being certified as completed while the page is paused at a pause the debugger made for itself during the after capture; fails_when=the wait after the after capture is removed, so completion is certified while the page is paused, or the run fails or never completes once that pause is resumed; why_new=the server test of ER5 sends its pause before the after capture, so only the wait before the capture is exercised; seam=none
+test('a run does not complete while the page is paused at a pause the debugger made for itself during the after capture, and completes once that pause is resumed', async (context) => {
+  // Arrange: the last continuation is acknowledged and the after image is being presented.
+  const { run, holdCapture, announceScript, emitCdpPauseAt, manualResume } =
+    await configuredRuntimeHarness(context)
+  await run.prepare()
+  announceScript('hook', 'eval-ca9ab6a4.cdp')
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => run.view().snapshots[0], 'first stop'),
+    held = holdCapture('after')
+  await run.continue('browser', snapshot.pause)
+  await held.started
+  // Act: the adapter's hook pauses the page during the capture; three polling intervals pass after the capture before it resumes.
+  emitCdpPauseAt({
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  held.release()
+  await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.captures.after?.status === 'captured'
+  }, 'after image captured')
+  const threePollingIntervalsMs = 150
+  await setTimeout(threePollingIntervalsMs)
+  const whilePaused = {
+    status: run.view().status,
+    afterVerified: run.view().operation?.afterVerified,
+    failures: run.view().failures.join('; '),
+  }
+  manualResume()
+  await waitUntil(
+    () => run.view().status === 'completed',
+    'completed after the resume',
+  )
+  await run.stop()
+  // Assert
+  assert.deepEqual(whilePaused, {
+    status: 'resuming',
+    afterVerified: false,
+    failures: '',
+  })
+  assert.equal(run.view().operation?.afterVerified, true)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(
+    run
+      .view()
+      .events.filter((event) => event.type === 'cdp.adapter-pause-retired')
+      .length,
+    1,
   )
 })

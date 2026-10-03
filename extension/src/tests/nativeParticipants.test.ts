@@ -1738,3 +1738,180 @@ for (const moment of [
     assert.equal(harness.run.view().snapshots.length, 2)
     assert.equal(retiredPauses(harness).length, 1)
   })
+
+// Value: protects=a server stop the learner is reading staying held, with its replay interval unbroken, when the browser's adapter pauses for itself and resumes meanwhile; fails_when=that browser pause ends the run, or its resume is journaled as cdp.resumed, which ends the held stop's paused interval in the replay before its continuation; why_new=the resumed browser pause of ER13 is sent during the capture, before the stop is committed, and no test reads the paused interval; seam=none
+test('a pause the debugger makes for itself in the browser while a server stop is held is retired without ending that stop’s paused interval', async (context) => {
+  // Arrange: the server stop is committed and held for the learner.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  harness.announceScript(
+    'browser',
+    'actions',
+    'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts',
+  )
+  // Act: the browser's adapter hits its own entry breakpoint and resumes it; then both declared stops are continued.
+  harness.emitUnannouncedPause('browser', {
+    scriptId: 'actions',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:actions'],
+  })
+  harness.emitResume('browser')
+  await harness.run.continue('server', server.pause)
+  const browser = await pauseReady(harness, 'browser')
+  await harness.run.continue('browser', browser.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after both stops',
+  )
+  await harness.run.stop()
+  // Assert: the replay ends a committed stop's paused interval at the first of these events after its commit.
+  const intervalEnds = [
+    'continue.accepted',
+    'cdp.resumed',
+    'session.terminated',
+    'run.failed',
+    'cleanup.started',
+  ]
+  const types = harness.run.view().events.map((event) => event.type)
+  const serverCommitted = types.indexOf('snapshot.committed')
+  const serverIntervalEnd = types.findIndex(
+    (type, index) => index > serverCommitted && intervalEnds.includes(type),
+  )
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+  assert.equal(types[serverIntervalEnd], 'continue.accepted')
+  assert.equal(
+    types
+      .slice(serverCommitted, serverIntervalEnd)
+      .includes('cdp.adapter-pause-retired'),
+    true,
+  )
+  assert.equal(retiredPauses(harness).length, 1)
+})
+
+// Value: protects=the next declared stop being captured when the adapter's continued for its own resume is read after that stop's runtime pause was queued; fails_when=a continued read while the participant's declared pause waits behind the continuation counts as an unowned continuation and ends the run; why_new=the other tests read the adapter's continued before the declared pause is queued, or send none (ER2's idle rule no longer looks at a queued runtime pause); seam=none
+test('a continued the debugger sends for its own resume after the next declared stop’s pause was queued does not end the run', async (context) => {
+  // Arrange: both resume receipts are in and the continue response is not.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdContinueResponse()
+  const continuation = harness.run.continue('server', first.pause)
+  await serverContinueRequested(harness)
+  // Act: the adapter's own pause comes and goes, the declared pause is queued, and only then the adapter's continued is read.
+  emitEntryBreakpointPause(harness)
+  harness.emitResume('server')
+  nextStop.paused()
+  emitAdapterContinued(harness, 957)
+  nextStop.stopped()
+  harness.releaseContinueResponse()
+  // A continuation the run cancelled is reported below through the run's own failure text.
+  await continuation.catch(() => undefined)
+  const second = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(second.pause.generation, 2)
+  assert.equal(harness.run.view().snapshots.length, 2)
+  assert.equal(retiredPauses(harness).length, 1)
+  assert.equal(
+    harness.run
+      .view()
+      .events.filter((event) => event.type === 'dap.idle-continued-ignored')
+      .length,
+    1,
+  )
+})
+
+for (const held of [
+  'a pause nobody announced',
+  'its next declared pause, queued behind the continuation',
+] as const)
+  // Value: protects=a participant pausing once at a time: a second runtime pause before the first one's resume is never taken for a declared stop; fails_when=a pause held as unannounced, or queued behind the continuation, no longer counts when the next pause arrives; why_new=the additional-stop guard of configuredRuntime.test.ts covers only a pause already accepted as the stop (Cycle 0042 ER1); seam=none
+  test(`a second pause while the server still holds ${held} ends the run as an additional stop`, async (context) => {
+    // Arrange: the first stop is captured and the second has not paused yet.
+    const harness = await nativeParticipantsHarness(
+      context,
+      ['server', 'server'],
+      TWO_LINE_SERVER_MODULE,
+    )
+    await harness.run.prepare()
+    const nextStop = harness.holdNextPause()
+    harness.run.action('once', 'repository-click')
+    const first = await pauseReady(harness, 'server')
+    if (held === 'its next declared pause, queued behind the continuation')
+      harness.holdContinueResponse()
+    const continuation = harness.run.continue('server', first.pause)
+    if (held === 'a pause nobody announced') await continuation
+    else await serverContinueRequested(harness)
+    // Act: the runtime reports a second pause without resuming the one it holds.
+    if (held === 'a pause nobody announced') {
+      emitEntryBreakpointPause(harness)
+      nextStop.paused()
+    } else {
+      nextStop.paused()
+      emitEntryBreakpointPause(harness)
+    }
+    const failuresAtSecondPause = harness.run.view().failures.join('; ')
+    harness.releaseContinueResponse()
+    // A continuation the run cancelled is reported above through the run's own failure text.
+    await continuation.catch(() => undefined)
+    await harness.run.stop()
+    // Assert
+    assert.equal(
+      failuresAtSecondPause,
+      'Additional server stop invalidated the declared operation',
+    )
+    assert.equal(harness.run.view().snapshots.length, 1)
+    assert.equal(retiredPauses(harness).length, 0)
+    assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+  })
+
+// Value: protects=an accepted stop whose own pause never arrives failing as that stop's missing pause, while a pause the debugger holds in another script stays its own; fails_when=the end of the wait for the stop's pause adopts a held pause from any script, so the adapter's pause is judged as the declared stop; why_new=the adoption test pauses inside the stop's module, and no test holds a pause in another script when the wait ends (Cycle 0042 ER4); seam=none
+test('an accepted server stop whose own pause never arrives fails waiting for it, without adopting a pause the debugger holds in another script', async (context) => {
+  // Arrange: the first stop is continued, and the adapter's hook holds the server in a script of its own.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.expireSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  harness.announceScript('server', 'hook', 'eval-ca9ab6a4.cdp')
+  harness.emitUnannouncedPause('server', {
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  // Act: the debugger announces the second stop, whose own runtime pause never comes.
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'stop without its own pause rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Timed out waiting for source-bound CDP stop',
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
