@@ -2376,6 +2376,58 @@ test('a stop presented after the editor disposed the historical adapter still fa
   }
 })
 
+// Value: protects=the editor's DAP stream and event loop when the reader's listener and its error channel both fail outside the give-up path; fails_when=the values-loaded notification or the session-ended handler lets the error channel's own error escape; why_new=Cycle 0035 R09 (only giveUp() guarded the double fault); seam=none
+test('a reader listener and error channel that both throw when Run and Debug loads values or the historical session ends let no error escape into the editor', async () => {
+  // Arrange: the first stop commits without values, so a later inspection reports values-loaded.
+  let readerFailing = false
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    {
+      changed: () => {
+        if (readerFailing) throw new Error('reader publish failed')
+      },
+      failed: () => {
+        throw new Error('reader error channel failed')
+      },
+    },
+  )
+  const escapedError = (notify: () => void): string => {
+    try {
+      notify()
+      return 'none'
+    } catch (error) {
+      return String(error)
+    }
+  }
+  try {
+    const committed = await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    readerFailing = true
+
+    // Act
+    const escapedOnValuesLoaded = escapedError(() => fixture.inspect())
+    const escapedOnSessionEnded = escapedError(() => fixture.terminate())
+
+    // Assert
+    assert.equal(committed, 'uninspected')
+    assert.equal(escapedOnValuesLoaded, 'none')
+    assert.equal(escapedOnSessionEnded, 'none')
+    assert.equal(fixture.owner.available, false)
+  } finally {
+    readerFailing = false
+    await fixture.owner.dispose()
+  }
+})
+
 // Value: protects=an owner the reader closed while its native startup was still pending; fails_when=the retirement that waited for that startup resolves as retired or stops the session a second time; why_new=Cycle 0035 H5c (Cycle 0034 E2 covers the gave-up arm of the same guard only); seam=none
 test('a retirement that was waiting for a startup during which the reader closed fails closed and stops the session only once', async () => {
   // Arrange

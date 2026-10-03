@@ -147,7 +147,16 @@ export class ReplayDebugger {
           return
         }
         this.valuesUnrequested = false
-        this.changed('session-ended')
+        // The reader's listener and its error channel may both throw; neither may escape into the editor's event loop.
+        try {
+          this.changed('session-ended')
+        } catch (error) {
+          try {
+            this.failed(error)
+          } catch {
+            // The error channel failed as well; the owner is already detached, which is the signal that remains.
+          }
+        }
       }),
     )
   }

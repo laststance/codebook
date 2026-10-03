@@ -614,6 +614,7 @@ test('a repeat of a refused start that is rejected while a presentation change i
     returnToCurrent: pending,
     assertPresentationIdle: pending,
     nodeHistoryLearningMaterialSaved: pending,
+    replayControlAccepted: pending,
   }
   // Act
   let rejection: unknown

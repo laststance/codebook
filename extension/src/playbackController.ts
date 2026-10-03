@@ -6,6 +6,10 @@ import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
 import { untilAborted } from './utils/untilAborted'
 
+/** Refusal of a seek or play while the replay reader's panes do not exist; it names the only remedy, an explicit open. */
+const REPLAY_READER_CLOSED =
+  'The replay reader is closed; open the recording before another control.'
+
 export interface PlaybackData {
   index: RecordingIndex
   context?: RecordingContext
@@ -139,15 +143,20 @@ export class PlaybackController {
     }
     const range = this.range()
     // Checked before the reader guard: the reader is marked open only late in a load, and a control sent meanwhile must hear that the recording is not ready, not that the reader is closed.
-    if (!range || !this.data)
+    if (!range || !this.data) {
+      // A load the reader's close cancelled will never deliver the recording, so waiting for readiness cannot help; only open does.
+      if (
+        this.readiness !== 'loading' &&
+        !(this.dependencies.readerOpen?.() ?? true)
+      )
+        throw new Error(REPLAY_READER_CLOSED)
       throw new Error(
         'Recording is not ready; read playback state before another control.',
       )
+    }
     // A closed reader has no panes to present in, so a seek or play would recreate the Application panel alone; only an explicit open brings the reader back.
     if (!(this.dependencies.readerOpen?.() ?? true))
-      throw new Error(
-        'The replay reader is closed; open the recording before another control.',
-      )
+      throw new Error(REPLAY_READER_CLOSED)
     if (input.action === 'seek') {
       if (input.positionMs < range.startMs || input.positionMs > range.endMs)
         throw new Error('Seek lies outside the returned recording range.')

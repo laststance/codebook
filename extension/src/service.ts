@@ -189,6 +189,7 @@ export class StudyService {
     | 'returnToCurrent'
     | 'assertPresentationIdle'
     | 'nodeHistoryLearningMaterialSaved'
+    | 'replayControlAccepted'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
@@ -481,8 +482,12 @@ export class StudyService {
         'The playback workspace is unavailable.',
       )
     try {
+      const state = this.playbackController.command(input)
+      // An accepted seek, play or pause answers a refusal the Learning replay panel still shows; an open is answered when its load is ready.
+      if (input.action !== 'open')
+        this.presentationController?.replayControlAccepted()
       return {
-        ...this.playbackController.command(input),
+        ...state,
         uri: `codebook://${this.instanceId}/playback`,
       }
     } catch (error) {

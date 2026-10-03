@@ -1041,13 +1041,24 @@ export async function workspaceHarness(
       viewportEvents.push(`reveal:${this.mode}`)
     }
     /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
-    async showLive(): Promise<void> {
+    async showLive(signal?: AbortSignal): Promise<void> {
+      // Like the real viewport, a lease that is not pinned to history only restores a detached renderer, leaving an attached one's panel untouched.
+      if (!this.historical) {
+        if (!this.rendererAttached)
+          this.panel.webview.html = this.rendererDocument
+        this.rendererAttached = true
+        return
+      }
       this.historical = false
       this.panel.webview.html = this.rendererDocument
       this.rendererAttached = true
+      // Leaving history re-handshakes the renderer, as the real showLive awaits its reveal.
+      await this.reveal(signal)
     }
     /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
     showHistory(html: string): void {
+      // Like the real viewport, a lease whose panel closed cannot write its history page.
+      if (this.closed) throw new Error('Viewport lease is released')
       this.historical = true
       this.historicalHtml = html
       this.panel.webview.html = html
@@ -3003,6 +3014,31 @@ export async function recordedReaderHarness(
     record,
     png,
     controller: service.playbackController!,
+    /**
+     * Holds every playback position save that starts from now on behind a storage lock, as a slow disk does, until `release()`.
+     * @returns `release` lets the held saves write and restores normal saving.
+     * @example const held = harness.holdPositionSaves(); held.release()
+     */
+    holdPositionSaves() {
+      const savePreference = RecordingStore.prototype.savePreference
+      let releaseStorage = (): void => {}
+      const storageHeld = new Promise<void>((resolve) => {
+        releaseStorage = resolve
+      })
+      RecordingStore.prototype.savePreference = async function (
+        this: RecordingStore,
+        preference,
+      ): Promise<void> {
+        await storageHeld
+        return savePreference.call(this, preference)
+      }
+      return {
+        release(): void {
+          RecordingStore.prototype.savePreference = savePreference
+          releaseStorage()
+        },
+      }
+    },
   }
 }
 

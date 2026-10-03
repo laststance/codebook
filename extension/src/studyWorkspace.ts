@@ -715,6 +715,18 @@ export class StudyWorkspace {
     return state
   }
 
+  /**
+   * Retires a refused replay control shown in the Learning replay panel once a later seek, play or pause was accepted.
+   *
+   * Called by the panel's own playback message and by {@link StudyService.playback} for an agent's control, so the line
+   * does not outlive the refusal whichever route moved the replay.
+   *
+   * @example workspace.replayControlAccepted()
+   */
+  replayControlAccepted(): void {
+    if (this.errors.delete('replay-control')) this.publish()
+  }
+
   /** Rejects competing input/navigation before effects while preserving Stop/Close/read access. @example workspace.assertPresentationIdle() */
   assertPresentationIdle(): void {
     if (this.presentationTransition || this.returningCurrent || this.closing)
@@ -5238,9 +5250,13 @@ export class StudyWorkspace {
     }
     // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
     this.dropReplayViewport()
-    this.viewport.showHistory(
-      capturedAppHtml({ ...this.message(), loading: true }),
-    )
+    try {
+      this.viewport.showHistory(
+        capturedAppHtml({ ...this.message(), loading: true }),
+      )
+    } catch {
+      // A lease whose panel the editor already closed has no document to write; the recording loads into a new panel.
+    }
   }
 
   /**
@@ -8682,7 +8698,7 @@ export class StudyWorkspace {
         this.playback!.command({ ...identity, action: message.action })
       }
       // The control was accepted, so an earlier refusal no longer describes the replay.
-      if (this.errors.delete('replay-control')) this.publish()
+      this.replayControlAccepted()
     }
     if (message.type === 'understanding')
       await this.understand(message.understood)

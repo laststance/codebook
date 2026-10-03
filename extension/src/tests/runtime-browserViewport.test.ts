@@ -807,6 +807,65 @@ test('closing a shared application panel ends both live and replay leases unless
   replay.viewport.close()
 })
 
+// Value: protects=the real BrowserViewport behaviour that the workspace harness models for a shared Application panel; fails_when=the recording viewport rewrites its own document or confirms a paint after a live lease's history page replaced it; why_new=Cycle 0035 R07g (only the workspace harness modelled the replaced-document sequence); seam=the test panel answers a frame only while the recording renderer's document is in place
+test('a live lease writing its history page over the recording renderer on one shared panel leaves that renderer unable to confirm a paint', async () => {
+  // Arrange: a live lease and a recording lease share one panel, the recording renderer wrote its document last and confirms a first paint.
+  const renderer = viewportPanel()
+  const live = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    renderer,
+  )
+  const replay = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'recording',
+    renderer,
+  )
+  const recordingDocument = renderer.panel.webview.html,
+    epoch = '11111111-1111-1111-1111-111111111111'
+  replay.ready(epoch)
+  const answerFrameWhileRendererInPlace = async (): Promise<void> => {
+    const frame = await renderer.nextFrame()
+    // A webview whose document was replaced has no renderer left to answer.
+    if (renderer.panel.webview.html === recordingDocument)
+      renderer.receive({ type: 'painted', epoch, id: frame.id })
+  }
+  const firstAnswer = answerFrameWhileRendererInPlace()
+  await replay.viewport.present('Zmlyc3Q=', 'Recorded 0.10 s')
+  await firstAnswer
+  try {
+    // Act
+    live.viewport.showHistory('<p>Loading recording</p>')
+    const secondAnswer = answerFrameWhileRendererInPlace()
+    const secondPaint = replay.viewport
+      .present('c2Vjb25k', 'Recorded 0.20 s')
+      .then(
+        () => 'confirmed',
+        (error: unknown) => String(error),
+      )
+    await secondAnswer
+
+    // Assert
+    assert.equal(
+      await secondPaint,
+      'Error: Viewport frame acknowledgement timed out',
+    )
+    assert.equal(renderer.panel.webview.html, '<p>Loading recording</p>')
+    assert.equal(
+      replay.events.filter((event) => event.type === 'viewport.acknowledged')
+        .length,
+      1,
+    )
+  } finally {
+    live.viewport.close()
+    replay.viewport.close()
+  }
+})
+
 test('revealing a destroyed renderer cannot confirm an image using its old readiness response', async () => {
   // Arrange
   const harness = await viewportHarness('normal')
