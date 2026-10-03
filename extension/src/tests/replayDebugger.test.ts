@@ -71,6 +71,8 @@ function harness(
   configurationGate?: Promise<void>,
   refusalGate?: Promise<void>,
   listeners?: { changed?: () => void; failed?: (error: unknown) => void },
+  /** The id of another debug session whose paused thread holds the Run and Debug focus, as while a live run or a learner's own session is paused and selected in Call Stack. */
+  focusedForeignPauseSessionId?: string,
 ) {
   const terminated = new TestEmitter<vscode.DebugSession>(),
     stopped: string[] = [],
@@ -139,6 +141,27 @@ function harness(
     EventEmitter: TestEmitter,
     DebugAdapterInlineImplementation: Inline,
     debug: {
+      get activeStackItem(): vscode.DebugThread | undefined {
+        // The editor reports the focused paused thread with its session; only the session's identity is read.
+        return focusedForeignPauseSessionId === undefined
+          ? undefined
+          : {
+              session: {
+                id: focusedForeignPauseSessionId,
+                type: 'pwa-node',
+                name: 'Next.js: debug server-side',
+                configuration: {
+                  type: 'pwa-node',
+                  name: 'Next.js: debug server-side',
+                  request: 'launch',
+                },
+                workspaceFolder: undefined,
+                customRequest: async () => undefined,
+                getDebugProtocolBreakpoint: async () => undefined,
+              },
+              threadId: 1,
+            }
+      },
       registerDebugAdapterDescriptorFactory(_type, value) {
         factory = value
         return {
@@ -2589,4 +2612,43 @@ test('a retirement that was waiting for a startup during which the reader closed
     'Error: Historical debugger closed. Reopen the learning replay to restore it.',
   )
   assert.deepEqual(fixture.stopped, ['historical-owned'])
+})
+
+// Value: protects=the 2.0 s bound of a Recording press on a paused live run's own recording (0035-O01); fails_when=a recorded stop waits the whole inspection grace although another session's paused frame keeps the Run and Debug focus, so its values can never load during the wait; why_new=native run of 2026-10-04 measured 1.2 to 1.3 s between the shown range and the presented position in three takes; seam=none
+test('a recorded stop is shown at once, without its values, while a paused frame of another debug session keeps the Run and Debug focus', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    'live-next-server',
+  )
+  let outcome = 'pending'
+
+  // Act
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Assert
+    assert.equal(outcome, 'uninspected', 'shown before any timer ran')
+    assert.equal(fixture.stopped.length, 0)
+  } finally {
+    // A presentation that still waits is released, so a failure reports instead of holding the file.
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await showing
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
 })

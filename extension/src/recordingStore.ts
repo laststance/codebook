@@ -105,6 +105,13 @@ export type RecordingInput = Pick<
   'elapsedMs' | 'kind' | 'phase' | 'browserTimestamp'
 > & { bytes: Buffer }
 
+/** What a recording's journal states about one frame image and {@link RecordingStore.read} compares with its bytes. */
+interface RecordedFrameFacts {
+  byteLength: number
+  width: number
+  height: number
+}
+
 /** Owns bounded local filmstrips for {@link StudyWorkspace}; reads never restore runtime authority. @example const store = new RecordingStore(learningDirectory, workspaceKey) */
 export class RecordingStore {
   readonly directory: string
@@ -319,10 +326,9 @@ export class RecordingStore {
     const lines = bytes.toString('utf8').split('\n'),
       incomplete = lines.pop()
     const entries: RecordingEntry[] = []
-    const verifiedFrames = new Map<
-      string,
-      { byteLength: number; width: number; height: number }
-    >()
+    const verifiedFrames = new Map<string, RecordedFrameFacts>()
+    // The writer of this session already hashed and measured every frame it put on disk; reading those files again made a reload of a long in-progress recording grow by about 0.6 ms a frame.
+    const writer = seal ? undefined : this.ownWriter(studyId, header)
     let lastMs = header.startedMs,
       frameCount = 0,
       hasGap = false,
@@ -348,7 +354,8 @@ export class RecordingStore {
             )
           )
             throw new Error('Recording contains a foreign image phase.')
-          let verified = verifiedFrames.get(entry.hash)
+          let verified =
+            verifiedFrames.get(entry.hash) ?? writer?.writtenFrame(entry.hash)
           if (!verified) {
             const png = await this.readFrame(
               studyId,
@@ -845,6 +852,23 @@ export class RecordingStore {
     return seal
   }
 
+  /**
+   * Finds the writer that is recording this study in this session, for {@link read}: its frames are known without reading them back.
+   * A recording another process or an earlier session wrote has no such writer, so every one of its frames is read and hashed.
+   * @param studyId - The recording being read.
+   * @param header - Its header on disk, which names the session that owns it.
+   * @returns The active writer of this store's session, or `undefined`.
+   * @example const writer = seal ? undefined : this.ownWriter(studyId, header)
+   */
+  private ownWriter(
+    studyId: string,
+    header: RecordingHeader,
+  ): RecordingWriter | undefined {
+    return header.owner.sessionId === this.sessionId
+      ? this.active.get(studyId)
+      : undefined
+  }
+
   /** Keeps uncertain live/PID-reused owners unfinalized; only an absent local process establishes interruption. @example this.ownerState(header) // 'interrupted' */
   private ownerState(
     header: RecordingHeader,
@@ -953,6 +977,8 @@ export class RecordingWriter {
   private lastWrittenMs: number
   private lastStreamMs = -Infinity
   private readonly hashes = new Set<string>()
+  /** The frames whose bytes this writer put on disk, by hash, with what it measured before writing them. */
+  private readonly writtenFrames = new Map<string, RecordedFrameFacts>()
 
   constructor(
     readonly directory: string,
@@ -1028,8 +1054,13 @@ export class RecordingWriter {
       this.pending = this.pending
         .then(async () => {
           if (this.ioFailure) return
-          if (bytes)
+          if (bytes) {
             await this.io.binary(join(this.directory, `${hash}.png`), bytes)
+            this.writtenFrames.set(hash, {
+              byteLength: bytes.byteLength,
+              ...dimensions,
+            })
+          }
           await this.io.append(
             join(this.directory, RECORDING_JOURNAL_FILE),
             line,
@@ -1124,6 +1155,17 @@ export class RecordingWriter {
         throw error
       })
     return this.finishing
+  }
+
+  /**
+   * Tells {@link RecordingStore.read} what this writer measured for a frame it wrote, so an in-progress recording opens without reading its own frames back.
+   * A frame is known only once its bytes reached the disk; its journal line is appended after that, so every frame the journal lists is known here.
+   * @param hash - The frame's content hash, as the journal names it.
+   * @returns The byte length and pixel size the writer measured, or `undefined` for a frame this writer did not write.
+   * @example writer.writtenFrame(entry.hash) // => { byteLength: 35812, width: 1280, height: 800 }
+   */
+  writtenFrame(hash: string): RecordedFrameFacts | undefined {
+    return this.writtenFrames.get(hash)
   }
 
   /** Exposes bounded capture telemetry without parsing blobs on every workspace refresh. @example writer.state().pendingBytes // 0 */

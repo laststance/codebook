@@ -77,7 +77,9 @@ export class ReplayDebugger {
         | 'onDidTerminateDebugSession'
         | 'startDebugging'
         | 'stopDebugging'
-      >
+      > &
+        // Optional so an editor surface without the focused stack item (a test port) keeps the full grace.
+        Partial<Pick<typeof vscode.debug, 'activeStackItem'>>
     },
     private readonly changed: (reason: ReplayDebuggerChange) => void = () => {},
     private readonly failed: (error: unknown) => void = () => {},
@@ -378,15 +380,34 @@ export class ReplayDebugger {
     // Gaps and scope-less stops have nothing for Variables to load: commit at once and leave the session-level state alone.
     if (!adapter.hasLoadableValues) return 'no-values'
     // While Run and Debug requests no values, waiting on every stop would stall playback without ever loading them.
+    // A paused frame of another session keeps the Run and Debug focus, so this stop's values are not requested either: the grace would only delay the frame.
     const inspection = adapter.inspectionReady
       ? 'inspected'
-      : this.valuesUnrequested
+      : this.valuesUnrequested || this.foreignPauseFocused()
         ? 'uninspected'
         : await this.awaitInspection(adapter, revision, signal)
     signal.throwIfAborted()
     // Only a loaded Variables page (the adapter's report) clears this; a gap or scope-less stop proves nothing about Variables.
     if (inspection === 'uninspected') this.valuesUnrequested = true
     return inspection
+  }
+
+  /**
+   * Says whether a paused thread or frame of another debug session holds the focus of native Run and Debug, on behalf of {@link present}.
+   *
+   * The editor gives that focus to a newly stopped session only when nothing is focused or the focused frame is that
+   * session's own. While a learner's or a live run's pause is focused, Variables therefore keeps showing that pause and
+   * never requests the recorded stop's values, until the learner selects the recorded session in Call Stack. Pressing
+   * Recording on a paused live run's own recording is that case every time; waiting {@link REPLAY_DEBUG_INSPECTION_GRACE_MS}
+   * there added one second to each reload.
+   *
+   * @returns `true` while another session's paused thread or frame is the focused stack item; `false` when nothing is focused, the focus is this owner's session, or the editor surface does not report it.
+   * @example
+   * this.foreignPauseFocused() // => true while "Next.js: debug server-side" is paused and selected in Call Stack
+   */
+  private foreignPauseFocused(): boolean {
+    const focused = this.editor.debug.activeStackItem
+    return focused !== undefined && focused.session.id !== this.session?.id
   }
 
   /**
