@@ -338,7 +338,7 @@
         "count": 1
       },
       "crap_high": {
-        "count": 1
+        "count": 2
       },
       "crap_moderate": {
         "count": 8
@@ -516,16 +516,16 @@
     },
     "src/studyWorkspace.ts": {
       "complexity_critical": {
-        "count": 28
+        "count": 29
       },
       "crap_critical": {
-        "count": 56
+        "count": 57
       },
       "crap_high": {
         "count": 40
       },
       "crap_moderate": {
-        "count": 40
+        "count": 39
       }
     },
     "src/ui/repositoryHtml.ts": {
