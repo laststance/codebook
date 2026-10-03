@@ -1819,6 +1819,125 @@ test('Show Variables opens Run and Debug with Variables expanded and then expand
   }
 })
 
+// Value: protects=Show Variables in Cursor, which registers no command that focuses Variables; fails_when=the reader runs `workbench.debug.variablesView.focus` without asking the host, so the button does nothing and "command … not found" stays in the Learning summary and the panel; why_new=Cycle 0044 (row 0031-U1 in Cursor 3.23.12, seen natively); seam=vscode.commands.getCommands and executeCommand, modelled by the harness
+test('Show Variables on a host without a Variables focus command opens Run and Debug and leaves no error', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.removeHostCommands('workbench.debug.variablesView.focus')
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.receiveContext({
+      type: 'action',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      action: 'show-variables',
+    })
+    await waitUntil(
+      () =>
+        harness.commands.length > commandsBefore ||
+        Boolean(harness.reader.inspect().view?.errors.length),
+      'Show Variables ran a command or reported an error',
+      1_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      Array.from(harness.reader.inspect().view?.errors ?? []),
+      [],
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.view.debug',
+    ])
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables on a host that focuses Variables but lacks a later step; fails_when=the reader runs a list command the host does not register, so the click ends in "command … not found", or it leaves Variables for the Run and Debug fallback; why_new=Cycle 0044 (row 0031-U1 in Cursor: the host is asked which commands exist); seam=vscode.commands.getCommands and executeCommand, modelled by the harness
+test('Show Variables on a host with the Variables focus command runs only the steps that host registers', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.removeHostCommands('list.expand')
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.receiveContext({
+      type: 'action',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      action: 'show-variables',
+    })
+    await waitUntil(
+      () =>
+        harness.commands.length >= commandsBefore + 2 ||
+        Boolean(harness.reader.inspect().view?.errors.length),
+      'Show Variables ran its commands or reported an error',
+      1_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      Array.from(harness.reader.inspect().view?.errors ?? []),
+      [],
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.variablesView.focus',
+      'list.focusFirst',
+    ])
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner knowing what to do when the host can open neither Variables nor Run and Debug; fails_when=Show Variables shows a raw "command … not found" error or nothing at all on such a host; why_new=Cycle 0044 (row 0031-U1 in Cursor); seam=vscode.commands.getCommands and window.showInformationMessage, modelled by the harness
+test('Show Variables on a host with neither a Variables nor a Run and Debug command tells the learner the manual step in one sentence', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.removeHostCommands(
+      'workbench.debug.variablesView.focus',
+      'workbench.view.debug',
+    )
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.receiveContext({
+      type: 'action',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      action: 'show-variables',
+    })
+    await waitUntil(
+      () =>
+        harness.informationMessages.length > 0 ||
+        Boolean(harness.reader.inspect().view?.errors.length),
+      'Show Variables told the learner the manual step or reported an error',
+      1_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      Array.from(harness.reader.inspect().view?.errors ?? []),
+      [],
+    )
+    assert.deepEqual(harness.informationMessages, [
+      {
+        message:
+          'Open Run and Debug and expand Variables to see the recorded values.',
+        items: [],
+      },
+    ])
+    assert.deepEqual(harness.commands.slice(commandsBefore), [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=no enabled Inspect on a Node stop that can never be shown natively; fails_when=the reader is told about a source mismatch only for the selected stop, so an unselected stop with edited captured text keeps an Inspect that fails on every press; why_new=Cycle 0044 (0033-F3a / 0034-C3); seam=the loaded journal entry replaced in memory by one with edited captured text
 test('a shown Node stop whose captured text no longer matches its hash is reported to the reader even while another event is selected', async () => {
   // Arrange: a loaded Node history whose first event (test output) is selected.

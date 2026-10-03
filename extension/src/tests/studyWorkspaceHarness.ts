@@ -57,6 +57,15 @@ export async function workspaceHarness(
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
   let hostAppName = 'Visual Studio Code'
+  /** Native commands the fake editor answers `getCommands` with: the ones the reader asks the host about before it runs them. */
+  const nativeHostCommands = [
+    'workbench.debug.variablesView.focus',
+    'list.focusFirst',
+    'list.expand',
+    'workbench.view.debug',
+  ]
+  /** Commands this host does not register; see `removeHostCommands`. */
+  const absentHostCommands = new Set<string>()
   const trashMoves: { path: string; options: unknown }[] = []
   let rejectsTrashMove: (path: string) => boolean = () => false
   let beforeTrashMove: (path: string) => Promise<void> = async () => {}
@@ -1503,7 +1512,15 @@ export async function workspaceHarness(
         },
       },
       commands: {
+        async getCommands(): Promise<string[]> {
+          return nativeHostCommands.filter(
+            (name) => !absentHostCommands.has(name),
+          )
+        },
         async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+          // Both native hosts reject a command they do not register, in these words.
+          if (absentHostCommands.has(name))
+            throw new Error(`command '${name}' not found`)
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
             playbackPanel.visible = true
@@ -2200,6 +2217,10 @@ export async function workspaceHarness(
     /** Names the editor the reader runs in, as `vscode.env.appName` reports it. @example harness.useHostAppName('Cursor') */
     useHostAppName(name: string): void {
       hostAppName = name
+    },
+    /** Models a host that does not register the named native commands: `getCommands` omits them and running one fails as the editor does. @example harness.removeHostCommands('workbench.debug.variablesView.focus') */
+    removeHostCommands(...names: string[]): void {
+      for (const name of names) absentHostCommands.add(name)
     },
     /** Decides how the learner answers the reader's next native warning dialogs; unanswered dialogs are dismissed. @example harness.answerWarningDialogs(async ([confirm]) => confirm) */
     answerWarningDialogs(
