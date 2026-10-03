@@ -60,6 +60,13 @@ export function installWikiUpdateStatus(
   // Sites published earlier carry their own older stylesheet, so every rule of the update group comes from here.
   const styles = document.createElement('style')
   styles.textContent = [
+    // The label, the button and the status read as one callout, with the button as its filled primary control.
+    '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
+    '[data-codebook-update-group=bare]{background:none;border:0;padding:0}',
+    '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem}',
+    '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}',
+    // In the narrow layout the rail is a row; the group keeps a bounded column of it.
+    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
     '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
     // The status line is smaller than the rail text; an empty one takes no room, so it can stay in the accessibility tree.
@@ -95,12 +102,23 @@ export function installWikiUpdateStatus(
   // The region is in the accessibility tree from load, so its first sentence is announced, and whole.
   statusRegion.setAttribute('role', 'status')
   statusRegion.setAttribute('aria-atomic', 'true')
-  if (!statusRegion.parentNode) {
-    const anchor = freshnessLabel ?? updateLink
-    if (anchor?.parentNode)
-      anchor.parentNode.insertBefore(statusRegion, anchor.nextSibling)
-    else document.body.append(statusRegion)
+  // The label, the button and the status form one group in that order; a site published before the group existed is regrouped here.
+  const group =
+    document.querySelector<HTMLElement>('[data-codebook-update-group]') ??
+    document.createElement('div')
+  if (!group.parentNode) {
+    const anchor = updateLink ?? freshnessLabel
+    group.setAttribute(
+      'data-codebook-update-group',
+      anchor?.parentNode ? '' : 'bare',
+    )
+    // A page with neither the button nor the label gets the bare status at its end.
+    if (anchor?.parentNode) anchor.parentNode.insertBefore(group, anchor)
+    else document.body.append(group)
+    if (freshnessLabel) group.append(freshnessLabel)
+    if (updateLink) group.append(updateLink)
   }
+  if (!statusRegion.parentNode) group.append(statusRegion)
   // The folder and anything the sentence shortened sit beside the region, so an announcement stays one sentence.
   const outputLine = document.createElement('p')
   outputLine.setAttribute('data-codebook-update-output', '')
@@ -169,7 +187,7 @@ export function installWikiUpdateStatus(
       status === 'current'
         ? 'Wiki source current'
         : status === 'changed'
-          ? 'Source changed — update LLM Wiki'
+          ? 'Source changed · Update available'
           : 'Wiki freshness unknown'
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
     if (reason) freshnessLabel.title = reason

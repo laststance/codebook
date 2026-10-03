@@ -714,7 +714,7 @@ test('thirty looks at an unchanged run write the status line once', async () => 
   assert.equal(status?.contentWriteCount, writesAfterTheFirstLook)
 })
 
-test('the status line follows the freshness label on a site that has one', async () => {
+test('a site published before the group existed is regrouped as freshness label, button, status line', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
@@ -722,15 +722,36 @@ test('the status line follows the freshness label on a site that has one', async
   const page = await openFakeWikiPage(script, 'published-before-the-group')
 
   // Assert
-  const rail = page.find('.right-rail')
-  const status = page.find('[data-codebook-update-status]')
-  const label = page.find('[data-codebook-freshness]')
-  assert.ok(status && label && rail)
-  assert.equal(status.parentNode, label.parentNode)
-  assert.ok(
-    rail.querySelectorAll('*').indexOf(status) >
-      rail.querySelectorAll('*').indexOf(label),
+  const group = page.find('[data-codebook-update-group]')
+  assert.deepEqual(group?.children, [
+    page.find('[data-codebook-freshness]'),
+    page.find('.wiki-update'),
+    page.find('[data-codebook-update-status]'),
+  ])
+  assert.equal(group?.getAttribute('data-codebook-update-group'), '')
+  assert.deepEqual(
+    page.find('.right-rail')?.children.map((child) => child.tagName),
+    ['div', 'nav'],
   )
+})
+
+test('a site published from the current shell keeps its one group and its order', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'current-shell')
+
+  // Assert
+  assert.equal(
+    page.body.querySelectorAll('[data-codebook-update-group]').length,
+    1,
+  )
+  assert.deepEqual(page.find('[data-codebook-update-group]')?.children, [
+    page.find('[data-codebook-freshness]'),
+    page.find('.wiki-update'),
+    page.find('[data-codebook-update-status]'),
+  ])
 })
 
 test('a site without a freshness label still gets the status line, after its update button', async () => {
@@ -743,20 +764,17 @@ test('a site without a freshness label still gets the status line, after its upd
   })
 
   // Assert
-  const rail = page.find('.right-rail')
   const status = page.find('[data-codebook-update-status]')
-  const link = page.find('.wiki-update')
-  assert.ok(status && link && rail)
   assert.equal(page.isShown(status), true)
-  assert.match(status.textContent, /^Updating LLM Wiki…/)
-  assert.equal(status.parentNode, link.parentNode)
-  assert.ok(
-    rail.querySelectorAll('*').indexOf(status) >
-      rail.querySelectorAll('*').indexOf(link),
-  )
+  assert.match(status?.textContent ?? '', /^Updating LLM Wiki…/)
+  assert.deepEqual(page.find('[data-codebook-update-group]')?.children, [
+    page.find('.wiki-update'),
+    status,
+    page.find('[data-codebook-update-output]'),
+  ])
 })
 
-test('a page with neither the button nor the label shows the status line at the end of the page', async () => {
+test('a page with neither the button nor the label shows the bare status line at the end of the page', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
@@ -767,14 +785,15 @@ test('a page with neither the button nor the label shows the status line at the 
 
   // Assert
   const status = page.find('[data-codebook-update-status]')
-  assert.ok(status)
+  const group = page.find('[data-codebook-update-group]')
   assert.equal(page.isShown(status), true)
-  assert.match(status.textContent, /^Updating LLM Wiki…/)
-  assert.deepEqual(page.body.children.slice(-2), [
+  assert.match(status?.textContent ?? '', /^Updating LLM Wiki…/)
+  assert.equal(page.body.children.at(-1), group)
+  assert.equal(group?.getAttribute('data-codebook-update-group'), 'bare')
+  assert.deepEqual(group?.children, [
     status,
     page.find('[data-codebook-update-output]'),
   ])
-  assert.equal(page.find('.right-rail'), undefined)
 })
 
 test('the offline placeholder of the published page becomes the status region instead of a second one', async () => {
@@ -944,4 +963,71 @@ test('each kind of update state has its own colour on the state words, with fall
     '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
   ])
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+test('a changed source reads as a statement that stays true while an update runs', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: runningInVsCode,
+    freshness: 'changed',
+  })
+
+  // Assert
+  const label = page.find('[data-codebook-freshness]')
+  assert.equal(label?.textContent, 'Source changed · Update available')
+  assert.equal(label?.getAttribute('data-status'), 'changed')
+})
+
+test('the update group is a bordered panel with a filled button, and keeps a bounded column in the narrow layout', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  const filledButton =
+    '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}'
+  for (const rule of [
+    '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
+    filledButton,
+    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0}}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+  // Both rules weigh the same, so the held-back look must come later to win.
+  assert.ok(
+    styles.indexOf('.wiki-update[aria-disabled=true]{') >
+      styles.indexOf(filledButton),
+  )
+})
+
+test('nothing in the update group moves: the page adds no animation or transition', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: runningInVsCode,
+    freshness: 'changed',
+  })
+
+  // Assert
+  const updateStyles = page
+    .injectedStyles()
+    .split('\n')
+    .filter((sheet) => sheet.includes('data-codebook-update'))
+  assert.equal(updateStyles.length, 1)
+  assert.doesNotMatch(updateStyles[0] ?? '', /animation|transition|@keyframes/)
+  assert.deepEqual(
+    page
+      .find('[data-codebook-update-group]')
+      ?.querySelectorAll('*')
+      .map((element) => element.tagName),
+    ['p', 'a', 'p', 'strong', 'p'],
+  )
 })
