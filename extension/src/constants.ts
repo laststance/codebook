@@ -555,6 +555,10 @@ export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512
+/** Bounds a pause's script URL in the journal and in a deadline's place sentence; a URL can be of any length, and the saved study's reason holds at most {@link MAX_UI_TEXT_CHARS}. */
+export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
+/** Bounds a paused frame's function name in the journal. */
+export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 /** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */
 export const UNANNOUNCED_PAUSE_UNKNOWN_PLACE = 'an unknown place'
 /** Stands in that sentence for the URL of a script the runtime never announced; the generated position follows it. */

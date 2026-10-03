@@ -1296,6 +1296,63 @@ test('a continuation that reaches no next stop while the browser stays paused wi
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
 
+// Cycle 0044 (0042-SR3): red while the pause's script URL and function name went uncut into the journal and the deadline's place sentence, so a 9,000-char URL made a terminal reason the saved study (8,192 chars) refuses.
+test('a pause in a script with a 9,000-character URL is journaled and named in the deadline text by a bounded prefix of that URL', async (context) => {
+  // Arrange
+  const longUrl = `https://cdn.example.test/${'a'.repeat(9_000)}.js`
+  const longFunctionName = 'f'.repeat(1_000)
+  const { run, suppressNextPause, announceScript, emitCdpPauseAt, advance } =
+    await configuredRuntimeHarness(context, undefined, [
+      {
+        line: 1,
+        column: 7,
+        inspections: [{ path: 'enabled', mode: 'value', required: true }],
+      },
+    ])
+  suppressNextPause()
+  await run.prepare()
+  announceScript('long', longUrl)
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+  await run.continue('browser', first.pause)
+  // Act
+  emitCdpPauseAt({
+    scriptId: 'long',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: longFunctionName,
+    hitBreakpoints: [],
+  })
+  advance(20_000)
+  await waitUntil(() => run.view().status === 'failed', 'next stop not hit')
+  await run.stop()
+  // Assert
+  const urlPrefix = longUrl.slice(0, 512)
+  assert.equal(
+    run.view().failures[0],
+    `Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s; its line must execute after the preceding continuation. The browser is paused at ${urlPrefix} 1:1 without a debugger stop.`,
+  )
+  const observed = run
+    .view()
+    .events.filter((event) => event.type === 'cdp.pause-observed')
+    .at(-1)?.detail
+  assert.equal(
+    observed && typeof observed === 'object' && 'url' in observed
+      ? observed.url
+      : undefined,
+    urlPrefix,
+  )
+  assert.equal(
+    observed && typeof observed === 'object' && 'functionName' in observed
+      ? observed.functionName
+      : undefined,
+    'f'.repeat(256),
+  )
+})
+
 // Value: protects=a run with two browser stops going on to the second when the browser's adapter pauses for its own entry breakpoint in another script and resumes it; fails_when=that pause is taken for the next declared stop, so its resume ends the run ("Selected browser resumed outside its owned continuation"); why_new=the short bound for the adapter's own browser pauses applies only to a run that declares no browser stop (Cycle 0042 ER1, ER7); seam=none
 test('a pause the debugger makes for itself in another script between two browser stops is retired, and the second stop is captured', async (context) => {
   // Arrange

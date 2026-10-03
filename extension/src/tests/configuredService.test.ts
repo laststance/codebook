@@ -545,6 +545,66 @@ test('configured explanations retain actual false and null facts while unavailab
   assert.equal(service.state(record).participants.browser.resumable, false)
 })
 
+// Cycle 0044 (0042-R1): red while a run that failed inside its runtime had no error in its resource, so an agent asked for the cause could only quote terminalReason.
+test('a run that fails inside its runtime gives its resource an error whose cause is the failure text', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'runtime-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, key: 'click', action: 'repository-click' })
+  // Act
+  runtimes[0]!.failInRuntime(
+    'Selected server resumed outside its owned continuation',
+  )
+  const resource = await readResource(service, receipt.runUri)
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({ code: z.string(), cause: z.string() }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.equal(
+    state.terminalReason,
+    'Selected server resumed outside its owned continuation',
+  )
+  assert.deepEqual(state.error, {
+    code: 'RUNTIME_FAILED',
+    cause: 'Selected server resumed outside its owned continuation',
+  })
+})
+
+// Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
+test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'long-runtime-failure',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, key: 'click', action: 'repository-click' })
+  const longFailure = `The browser is paused at ${'u'.repeat(9_000)} without a debugger stop.`
+  // Act
+  runtimes[0]!.failInRuntime(longFailure)
+  const state = service.state(record)
+  // Assert
+  assert.equal(state.terminalReason, longFailure.slice(0, 8_192))
+  assert.equal(state.error?.cause, longFailure.slice(0, 8_192))
+})
+
 test('a repository run exposes the Study link identity separately from its debugger session identity', async (context) => {
   // Arrange
   const { service, configuration } = await configuredServiceHarness(context)

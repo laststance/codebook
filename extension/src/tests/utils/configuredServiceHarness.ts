@@ -30,6 +30,8 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
   stopped = false
   dispatches = 0
   releases = 0
+  /** Failures the runtime itself reported, as a native coordinator does when an adapter event ends the run. */
+  readonly failures: string[] = []
   constructor(
     directory: string,
     readonly definition: ConfiguredDefinition,
@@ -127,7 +129,7 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
       observed: undefined,
       links: [],
       captures: {},
-      failures: [],
+      failures: [...this.failures],
       events: this.evidence.events,
       artifactDirectory: this.evidence.directory,
       activeSessionIds: this.stopped ? [] : ['browser-session'],
@@ -142,6 +144,12 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
   }
   /** Revokes test control on service deadline/error without claiming a native debugger fault. @example runtime.fail('expired') */
   fail(_reason: string): void {
+    this.status = 'failed'
+    this.gate.invalidate()
+  }
+  /** Ends the run from inside the runtime with this text, as a native coordinator does on an adapter event the run does not own. @example runtime.failInRuntime('Selected server resumed outside its owned continuation') */
+  failInRuntime(reason: string): void {
+    this.failures.push(reason)
     this.status = 'failed'
     this.gate.invalidate()
   }
