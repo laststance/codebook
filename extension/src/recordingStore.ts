@@ -139,7 +139,7 @@ export class RecordingStore {
       throw new Error('Recording journal must reserve terminal metadata.')
   }
 
-  /** Reports the current admission setting to {@link StudyService.status} without blocking history discovery on bad configuration. @example store.capacityStatus().limit // 64 */
+  /** Reports the current admission setting without blocking history discovery on bad configuration; called by {@link StudyService.status} and by the service's admission of a run, which refuses an invalid setting before it asks the library. @example store.capacityStatus().limit // 64 */
   capacityStatus(): {
     setting: string
     maximum: number
@@ -233,11 +233,13 @@ export class RecordingStore {
           join(directory, RECORDING_JOURNAL_FILE),
           Buffer.alloc(0),
         )
-        const writer = new RecordingWriter(
+        const writer: RecordingWriter = new RecordingWriter(
           directory,
           header,
           this.limits,
           this.io,
+          // A sealed recording is read from its final checkpoint; its writer, journal and frame hashes are not kept for the rest of the session.
+          () => this.release(header.studyId, writer),
         )
         this.active.set(header.studyId, writer)
         return writer
@@ -245,6 +247,17 @@ export class RecordingStore {
     )
     this.writes = pending.catch(() => undefined)
     return pending
+  }
+
+  /**
+   * Drops the writer this window keeps for a study's recording, so record-and-delete cycles do not accumulate journals and frame hashes; called when the writer has sealed its recording and by {@link StudyWorkspace} once the study was moved to the Trash.
+   * @param studyId - The study whose recording is no longer written.
+   * @param writer - When given, only this writer is dropped, so a newer recording under the same id keeps its own.
+   * @example store.release(studyId)
+   */
+  release(studyId: string, writer?: RecordingWriter): void {
+    if (writer && this.active.get(studyId) !== writer) return
+    this.active.delete(studyId)
   }
 
   /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. @example await store.list() */
@@ -897,19 +910,11 @@ export class RecordingStore {
       if (!stat) continue
       if (!stat.isDirectory())
         throw new Error('Recording root is not a regular directory.')
-      let count = 0
+      // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
       for await (const entry of await opendir(directory)) {
-        if (++count > MAX_SAVED_STUDIES)
-          throw new Error(
-            'Recording library exceeds its directory limit; no history was deleted.',
-          )
         if (!entry.isDirectory())
           throw new Error('Recording library contains a non-directory entry.')
         identities.add(studyIdSchema.parse(entry.name))
-        if (identities.size > MAX_SAVED_STUDIES)
-          throw new Error(
-            'Recording library exceeds its directory limit; no history was deleted.',
-          )
       }
     }
     return [...identities]
@@ -954,6 +959,8 @@ export class RecordingWriter {
     readonly header: RecordingHeader,
     private readonly limits: RecordingLimits,
     private readonly io: RecordingIo,
+    /** Called once the final checkpoint is on disk, so the owning store stops keeping this writer. */
+    private readonly sealed: () => void = () => {},
   ) {
     this.lastAdmittedMs = header.startedMs
     this.lastWrittenMs = header.startedMs
@@ -1108,6 +1115,7 @@ export class RecordingWriter {
           MAX_RECORDING_HEADER_BYTES,
         )
         this.finalized = true
+        this.sealed()
         return seal
       })
       .catch((error) => {

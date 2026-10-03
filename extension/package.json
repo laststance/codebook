@@ -89,10 +89,6 @@
         "title": "Codebook: Close Study Workspace"
       },
       {
-        "command": "codebook.selectPresentation",
-        "title": "Codebook: Select Presentation"
-      },
-      {
         "command": "codebook.markUnderstanding",
         "title": "Codebook: Toggle Understanding for Selected Source"
       },
@@ -203,9 +199,9 @@
         },
         "codebook.chromeExecutable": {
           "type": "string",
-          "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "default": "",
           "scope": "machine",
-          "description": "Chrome executable for the configured repository browser."
+          "description": "Chrome executable for the configured repository browser. When empty, Codebook uses /Applications/Google Chrome.app/Contents/MacOS/Google Chrome on macOS and the first google-chrome, google-chrome-stable, chromium or chromium-browser on PATH on Linux (including WSL)."
         },
         "codebook.savedStudyLimit": {
           "type": "integer",

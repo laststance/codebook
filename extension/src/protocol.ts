@@ -161,7 +161,7 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_presentation',
     {
       description:
-        'Select Study workspace, Living book or Guided walkthrough in the same reader without starting or continuing execution. Copy instanceId, presentationId and presentationControlRevision (as expectedRevision) from discovery/presentation. Mode and content tab are independent. Selection pauses replay at the confirmed position. Default action select; focus explicitly returns to the open Study explanation from Wiki or another editor without changing layout, preference or execution (supply the current mode); restore repairs the selected mode; save-preference retries only its confirmed preference with no layout effect. Busy, stale and closed-reader identities require a fresh read. Read state after response loss; applied layout and saved preference are separate outcomes.',
+        'Open, focus or restore the Study workspace in the same reader without starting or continuing execution. The Living book and Guided walkthrough layouts are retired: selecting one is refused unless the reader already shows it from a saved preference. Copy instanceId, presentationId and presentationControlRevision (as expectedRevision) from discovery/presentation. Mode and content tab are independent. Selection pauses replay at the confirmed position. Default action select; focus explicitly returns to the open Study explanation from Wiki or another editor without changing layout, preference or execution (supply the current mode); restore repairs the selected mode; save-preference retries only its confirmed preference with no layout effect. Busy, stale and closed-reader identities require a fresh read. Read state after response loss; applied layout and saved preference are separate outcomes.',
       inputSchema: presentationCommandSchema,
       annotations: mutation,
     },
@@ -282,7 +282,7 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_reveal',
     {
       description:
-        'Reveal the exact source location bound to this snapshot while its run is active. repository-browser shows immutable captured Study source without verifying current workspace freshness. Cleanup rejects reveal; immutable source resources remain readable after stop or drift.',
+        'Reveal the exact source location bound to this snapshot while its run is active. repository-browser shows immutable captured Study source without verifying current workspace freshness. Only the current pause is revealed: reveal a stop before continuing it (a continuation sent together waits for the reveal; after one was accepted, reveal answers STALE_PAUSE). Cleanup rejects reveal; immutable source resources remain readable after stop or drift.',
       inputSchema: revealSchema,
       annotations: { ...mutation, idempotentHint: true },
     },
@@ -411,6 +411,21 @@ export function createProtocol(service: StudyService): McpServer {
       'snapshot',
       'codebook://{instance}/runs/{run}/snapshots/{snapshot}',
       'Immutable captured values and source binding; reading does not make it a live pause.',
+    ],
+    [
+      'inspection',
+      'codebook://{instance}/runs/{run}/snapshots/{snapshot}/inspection',
+      "An observation's inspectionUri: bound source position beside requestedSource and the captured values, as a bounded JSON page with nextUri.",
+    ],
+    [
+      'inspection-page',
+      'codebook://{instance}/runs/{run}/snapshots/{snapshot}/inspection/pages/{hash}/{offset}',
+      'A later page of an inspection; use only the returned nextUri. Concatenate every page in order before parsing.',
+    ],
+    [
+      'snapshot-image',
+      'codebook://{instance}/runs/{run}/snapshots/{snapshot}/image',
+      "An observation's imageUri: the confirmed PNG of the application at that stop; unavailable is explicit.",
     ],
     [
       'source',

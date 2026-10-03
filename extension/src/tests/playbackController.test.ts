@@ -185,6 +185,50 @@ test('opening recorded data is paused and seeking does not expose values before 
   await player.controller.dispose()
 })
 
+// Value: protects=a driver that rounds a recorded stop's fractional elapsedMs down to whole milliseconds; fails_when=the seek lands 0.02 ms before the stop and presents "Not recorded at this moment" instead of the stop; why_new=seek tests used whole-millisecond stops only (Cycle 0044 row N-12, Cursor check: 122,822 for 122,822.02); seam=none
+test('a seek to the whole millisecond just before a recorded stop presents that stop with its values', async () => {
+  // Arrange: the stop was recorded at 100.02 ms, paused until 150 ms.
+  const player = playbackHarness()
+  const context = player.data.context!
+  context.study.observations[0]!.elapsedMs = 100.02
+  context.pausedIntervals = [
+    {
+      snapshotId: context.study.observations[0]!.id,
+      startMs: 100.02,
+      endMs: 150,
+    },
+  ]
+  player.open()
+  await player.controller.settle()
+  // Act
+  player.seek(100)
+  await player.controller.settle()
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 100.02)
+  assert.equal(
+    player.controller.bundle()?.projection.observation?.values[
+      'value:nextTheme'
+    ],
+    'dark',
+  )
+  await player.controller.dispose()
+})
+
+test('a seek one millisecond or more before a recorded stop stays where it was asked and shows no stop', async () => {
+  // Arrange: the stop was recorded at 100.02 ms.
+  const player = playbackHarness()
+  player.data.context!.study.observations[0]!.elapsedMs = 100.02
+  player.open()
+  await player.controller.settle()
+  // Act
+  player.seek(99)
+  await player.controller.settle()
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 99)
+  assert.equal(player.controller.bundle()?.projection.observation, undefined)
+  await player.controller.dispose()
+})
+
 test('opening a recording publishes its sealed history gaps without changing the saved playhead', async () => {
   // Arrange
   const player = playbackHarness()

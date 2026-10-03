@@ -6,6 +6,7 @@ import type { DebugSession } from 'vscode'
 import type { ConfiguredBrowserRun } from '../../configuredBrowserRun'
 import type * as ConfiguredBrowserRunModule from '../../configuredBrowserRun'
 import { configuredDefinitionSchema } from '../../configuredStudySchemas'
+import { SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION } from '../../constants'
 import type * as OwnedRepositoryBreakpointModule from '../../ownedRepositoryBreakpoint'
 import { crossRuntimeRepositoryConfigSchema } from '../../repositoryConfigSchemas'
 import type { Participant } from '../../runtime'
@@ -15,8 +16,12 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { citationContext } from '../../utils/citationContext'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
+import { pausePlace } from '../../utils/pausePlace'
 
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
+import { createManualClock } from './createManualClock'
+import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
+import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 
@@ -47,6 +52,8 @@ export async function nativeParticipantsHarness(
     >
     /** Opts the run into a clock that only `advance` moves, so a test can let a 20 s deadline expire without waiting for it; by default the run keeps real timers. */
     manualClock?: boolean
+    /** Gives a participant's sealed map a second original, so a map such as 'AAAA;ACAA' puts generated line 1 in that other source. */
+    otherOriginal?: Partial<Record<Participant, boolean>>
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -134,15 +141,17 @@ export async function nativeParticipantsHarness(
     heldResponse: (() => void) | undefined,
     holdResponse = false
   // Event controls for a test that sends the adapter's own pauses between the declared ones.
+  // The click reaches no declared stop, as an action whose first stop's line does not run in time.
+  let firstPauseHeld = false
   let nextPauseHeld = false,
     inputHeld = false,
     sourceBoundWaitExpired = false
-  // A held wait for an accepted stop's own pause never times out until the test releases it.
-  let sourceBoundWait: { released: boolean } | undefined
+  // A held wait for an accepted stop's own pause does not end after 3 s of real time.
+  const sourceBoundWait = createSourceBoundWaitHold()
+  // Every bounded wait the run entered, by its description, in order.
+  const enteredWaits: string[] = []
   // The run's timers under a manual clock: each fires only when the test advances the clock to its time.
-  const manualTimers = new Map<number, { at: number; callback: () => void }>()
-  let manualClockMs = 0,
-    manualTimerId = 0
+  const manualClock = createManualClock()
   // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
   const pausedAt: Record<
     Participant,
@@ -152,7 +161,13 @@ export async function nativeParticipantsHarness(
     server: { lineNumber: 0, columnNumber: 0 },
   }
   let revokeDuringDom = false,
-    afterReadyBeforeInput = false
+    afterReadyBeforeInput = false,
+    afterReadyAfterInput = true,
+    afterReadCount = 0
+  // The failure a test makes the run's place naming throw, as a sealed map that cannot be read would.
+  let pausePlaceFailure: string | undefined
+  // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
+  let earlyBrowserPause: 'pending' | 'sent' | undefined
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
@@ -174,8 +189,12 @@ export async function nativeParticipantsHarness(
       javascript: source.text,
       sourceMap: JSON.stringify({
         version: 3,
-        sources: [sourcePath],
-        sourcesContent: [source.text],
+        sources: options.otherOriginal?.[name]
+          ? [sourcePath, `${sourcePath}.other.ts`]
+          : [sourcePath],
+        sourcesContent: options.otherOriginal?.[name]
+          ? [source.text, 'other();']
+          : [source.text],
         names: [],
         mappings: options.mappings?.[name] ?? 'AAAA',
       }),
@@ -241,6 +260,11 @@ export async function nativeParticipantsHarness(
           ],
         }
       if (command === 'continue') {
+        // No round trip on the browser channel came first, so the earlier pause is read only now, after the continuation exists.
+        if (earlyBrowserPause === 'pending') {
+          earlyBrowserPause = 'sent'
+          emitDeclaredPause('browser')
+        }
         run.onRequest(sessions[name], {
           type: 'request',
           seq: ++sequence,
@@ -256,8 +280,9 @@ export async function nativeParticipantsHarness(
         listeners[name].get('Debugger.resumed')?.({})
         currentIndex++
         const next = stops[currentIndex]
-        // A held next pause or input is released by the test, after the events it sends in between.
-        if (next && !nextPauseHeld) emitPause(next.participant)
+        // A held next pause or input is released by the test, after the events it sends in between; a hold covers one stop only.
+        if (next && nextPauseHeld) nextPauseHeld = false
+        else if (next) emitPause(next.participant)
         if (!next && !inputHeld) inputResolve()
         if (holdResponse)
           await new Promise<void>((resolve) => {
@@ -311,16 +336,14 @@ export async function nativeParticipantsHarness(
   const emitDeclaredPause = (name: Participant): void => {
     // Server code is first loaded by application input, never imported during preparation.
     emitScript(name)
-    listeners[name].get('Debugger.paused')?.({
-      reason: 'other',
-      hitBreakpoints: ['native'],
-      callFrames: [
-        {
-          callFrameId: name,
-          location: { scriptId: name, ...pausedAt[name] },
-        },
-      ],
-    })
+    listeners[name].get('Debugger.paused')?.(
+      debuggerPausedEvent({
+        callFrameId: name,
+        scriptId: name,
+        ...pausedAt[name],
+        hitBreakpoints: ['native'],
+      }),
+    )
   }
   const emitStopped = (name: Participant): void => {
     run.onEvent(sessions[name], {
@@ -333,6 +356,27 @@ export async function nativeParticipantsHarness(
   const emitPause = (name: Participant): void => {
     emitDeclaredPause(name)
     emitStopped(name)
+  }
+  /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold once the input was sent (or at once, when a test says so). */
+  const pageEvaluation = (expression: string | undefined): unknown => {
+    if (expression === 'location.href') return 'about:blank'
+    if (expression === 'location.origin') return 'http://127.0.0.1:4321'
+    if (expression === afterExpression)
+      return {
+        ready:
+          afterReadyBeforeInput ||
+          (afterReadyAfterInput &&
+            Boolean(run.view().operation?.inputDispatched)),
+      }
+    return { ready: true, x: 12, y: 18 }
+  }
+  /** Gives a participant's inspected path its value at the pause: a type name for a type inspection, otherwise that participant's mode or theme. */
+  const inspectedValue = (
+    name: Participant,
+    expression: string | undefined,
+  ): string => {
+    if (expression?.startsWith('typeof ')) return 'function'
+    return name === 'server' ? 'display' : 'dark'
   }
   const proxy = (name: Participant) => ({
     name,
@@ -370,23 +414,24 @@ export async function nativeParticipantsHarness(
         failedRegistration = true
         acknowledge(bundle('server').sourcePath)
       }
+      // A round trip on the browser channel delivers the pause the page made before it.
+      if (
+        name === 'browser' &&
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'undefined' &&
+        earlyBrowserPause === 'pending'
+      ) {
+        earlyBrowserPause = 'sent'
+        emitDeclaredPause('browser')
+      }
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression &&
+        run.view().operation?.inputDispatched
+      )
+        afterReadCount++
       if (method === 'Runtime.evaluate')
-        return {
-          result: {
-            value:
-              parameters?.expression === 'location.href'
-                ? 'about:blank'
-                : parameters?.expression === 'location.origin'
-                  ? 'http://127.0.0.1:4321'
-                  : parameters?.expression === afterExpression
-                    ? {
-                        ready:
-                          afterReadyBeforeInput ||
-                          Boolean(run.view().operation?.inputDispatched),
-                      }
-                    : { ready: true, x: 12, y: 18 },
-          },
-        }
+        return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
         emitScript('browser')
         return {}
@@ -400,11 +445,7 @@ export async function nativeParticipantsHarness(
       if (method === 'Debugger.evaluateOnCallFrame')
         return {
           result: {
-            value: parameters?.expression?.startsWith('typeof ')
-              ? 'function'
-              : name === 'server'
-                ? 'display'
-                : 'dark',
+            value: inspectedValue(name, parameters?.expression),
           },
         }
       if (method === 'Page.captureScreenshot')
@@ -432,22 +473,17 @@ export async function nativeParticipantsHarness(
             body: { reason: 'breakpoint', threadId: 1 },
           })
           emitScript('browser')
-          listeners.browser.get('Debugger.paused')?.({
-            reason: 'other',
-            hitBreakpoints: ['native'],
-            callFrames: [
-              {
-                callFrameId: 'browser',
-                location: {
-                  scriptId: 'browser',
-                  lineNumber: 0,
-                  columnNumber: 0,
-                },
-              },
-            ],
-          })
+          listeners.browser.get('Debugger.paused')?.(
+            debuggerPausedEvent({
+              callFrameId: 'browser',
+              scriptId: 'browser',
+              lineNumber: 0,
+              columnNumber: 0,
+              hitBreakpoints: ['native'],
+            }),
+          )
         }
-        emitPause(stops[0]!.participant)
+        if (!firstPauseHeld) emitPause(stops[0]!.participant)
         return pending
       }
       throw new Error(`Unexpected inspector method: ${method}`)
@@ -613,10 +649,11 @@ export async function nativeParticipantsHarness(
           timeoutMs?: number,
           signal?: AbortSignal,
         ) => {
+          enteredWaits.push(description)
           // The capture bound is 3 s of real time; a test of its expiry looks once and then lets the real timeout contract end the wait.
           if (
             sourceBoundWaitExpired &&
-            description === 'source-bound CDP stop'
+            description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION
           ) {
             signal?.throwIfAborted()
             const value = await read()
@@ -624,21 +661,15 @@ export async function nativeParticipantsHarness(
             if (value) return value
             return waitUntil(read, description, 0, signal)
           }
-          // A held wait looks until the pause is there or the test releases it, then ends as its 3 s bound would.
-          const heldWait = sourceBoundWait
-          if (heldWait && description === 'source-bound CDP stop') {
-            for (;;) {
-              signal?.throwIfAborted()
-              const value = await read()
-              if (value) return value
-              if (heldWait.released)
-                return waitUntil(read, description, 0, signal)
-              await new Promise<void>((resolve) => {
-                setImmediate(resolve)
-              })
-            }
-          }
+          if (sourceBoundWait.holds(description))
+            return sourceBoundWait.wait(read, description, signal)
           return waitUntil(read, description, timeoutMs, signal)
+        },
+      },
+      './utils/pausePlace': {
+        pausePlace: (...placeArguments: Parameters<typeof pausePlace>) => {
+          if (pausePlaceFailure) throw new Error(pausePlaceFailure)
+          return pausePlace(...placeArguments)
         },
       },
       './utils/readDevelopmentBundle': {
@@ -689,14 +720,10 @@ export async function nativeParticipantsHarness(
     },
     options.manualClock
       ? {
-          setTimeout: (callback: () => void, delay: number) => {
-            const id = ++manualTimerId
-            manualTimers.set(id, { at: manualClockMs + delay, callback })
-            return id
-          },
-          clearTimeout: (id: number): void => {
-            manualTimers.delete(id)
-          },
+          setTimeout: manualClock.setTimeout,
+          clearTimeout: manualClock.clearTimeout,
+          // The run measures how long it held a pause on this clock.
+          performance: { now: manualClock.now },
         }
       : {},
   )
@@ -738,6 +765,22 @@ export async function nativeParticipantsHarness(
     satisfyAfterBeforeInput(): void {
       afterReadyBeforeInput = true
     },
+    /** Makes the after conditions hold or not after the input, so a test can change the page's answer between two reads. */
+    setAfterReady(value: boolean): void {
+      afterReadyAfterInput = value
+    },
+    /** How many times the run read the after conditions after the input. */
+    afterReads(): number {
+      return afterReadCount
+    },
+    /** Makes naming a paused place throw this failure, as a sealed map that cannot be read would at a deadline. */
+    failPausePlace(message: string): void {
+      pausePlaceFailure = message
+    },
+    /** Lets the page pause on the browser stop's declared line before the server's continue is requested; the run reads that pause when it asks the browser channel for earlier events, or else with the continue request. */
+    pauseBrowserBeforeContinueRequest(): void {
+      earlyBrowserPause = 'pending'
+    },
     failRegistration(): void {
       failedRegistration = true
     },
@@ -764,7 +807,11 @@ export async function nativeParticipantsHarness(
     emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
     },
-    /** Keeps a continuation from announcing the next declared stop, so a test can send other events first and then release the stop's two notifications in the order it needs. @example const next = harness.holdNextPause(); next.stopped(); next.paused() */
+    /** Tells whether the run has entered a bounded wait with this description, so a test can act while the run is inside that wait. @example harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION) */
+    waitEntered(description: string): boolean {
+      return enteredWaits.includes(description)
+    },
+    /** Keeps the next continuation from announcing the declared stop it reaches (that one stop only), so a test can send other events first and then release the stop's two notifications in the order it needs. @example const next = harness.holdNextPause(); next.stopped(); next.paused() */
     holdNextPause() {
       nextPauseHeld = true
       return {
@@ -773,6 +820,10 @@ export async function nativeParticipantsHarness(
         /** Announces the held stop's module and sends its runtime pause alone. */
         paused: (): void => emitDeclaredPause(stops[currentIndex]!.participant),
       }
+    },
+    /** Keeps the click from pausing at the first declared stop, as a server action that is still compiling or a line the input does not reach. */
+    holdFirstPause(): void {
+      firstPauseHeld = true
     },
     /** Keeps the input acknowledgement back after the last continuation, so a test can send events while the after conditions are still open. */
     holdInput(): void {
@@ -803,38 +854,20 @@ export async function nativeParticipantsHarness(
         columnNumber: number
         functionName: string
         hitBreakpoints: string[]
+        /** `instrumentation` for the runtime's own source-map pause; a breakpoint pause otherwise. */
+        reason?: string
       },
     ): void {
-      listeners[name].get('Debugger.paused')?.({
-        reason: 'other',
-        hitBreakpoints: place.hitBreakpoints,
-        callFrames: [
-          {
-            callFrameId: 'adapter-frame',
-            functionName: place.functionName,
-            location: {
-              scriptId: place.scriptId,
-              lineNumber: place.lineNumber,
-              columnNumber: place.columnNumber,
-            },
-          },
-        ],
-      })
+      listeners[name].get('Debugger.paused')?.(
+        debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
+      )
     },
     /** Ends the wait for an accepted stop's own pause after one look, as its 3 s bound would. */
     expireSourceBoundWait(): void {
       sourceBoundWaitExpired = true
     },
-    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example const wait = harness.holdSourceBoundWait(); wait.release() */
-    holdSourceBoundWait() {
-      const held = { released: false }
-      sourceBoundWait = held
-      return {
-        release: (): void => {
-          held.released = true
-        },
-      }
-    },
+    /** Keeps the run's wait for an accepted stop's own pause open instead of ending it after 3 s, so a test can tell a pause admitted at once from one adopted when that wait ends. @example harness.holdSourceBoundWait() */
+    holdSourceBoundWait: sourceBoundWait.hold,
     // A changed native frame must not inherit a previously captured source pause.
     movePausedFrame(line: number, column = 1): void {
       pausedLine = line
@@ -861,6 +894,28 @@ export async function nativeParticipantsHarness(
     bindAt(name: Participant, line: number, column: number): void {
       boundAt[name] = { line, column }
     },
+    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads. */
+    announceBreakpointVerified(
+      name: Participant,
+      line: number,
+      column: number,
+    ): void {
+      for (const breakpoint of breakpoints)
+        run.onEvent(sessions[name], {
+          type: 'event',
+          seq: ++sequence,
+          event: 'breakpoint',
+          body: {
+            reason: 'changed',
+            breakpoint: {
+              id: breakpoint.id.length,
+              verified: true,
+              line,
+              column,
+            },
+          },
+        })
+    },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {
       acknowledgedAt = { line, column }
@@ -874,29 +929,17 @@ export async function nativeParticipantsHarness(
       reboundPauseId = true
     },
     /** Moves a manual clock forward and fires every run timer that is due by then; it does nothing for a run on real timers. @example harness.advance(20_000) */
-    advance(milliseconds: number): void {
-      manualClockMs += milliseconds
-      for (const [id, timer] of [...manualTimers])
-        if (timer.at <= manualClockMs) {
-          manualTimers.delete(id)
-          timer.callback()
-        }
-    },
+    advance: manualClock.advance,
     emitBrowserAdapterPause(): void {
-      listeners.browser.get('Debugger.paused')?.({
-        reason: 'other',
-        hitBreakpoints: ['adapter-internal'],
-        callFrames: [
-          {
-            callFrameId: 'adapter',
-            location: {
-              scriptId: 'adapter-internal',
-              lineNumber: 0,
-              columnNumber: 0,
-            },
-          },
-        ],
-      })
+      listeners.browser.get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: 'adapter',
+          scriptId: 'adapter-internal',
+          lineNumber: 0,
+          columnNumber: 0,
+          hitBreakpoints: ['adapter-internal'],
+        }),
+      )
     },
   }
 }

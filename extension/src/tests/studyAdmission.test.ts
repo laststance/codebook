@@ -12,9 +12,13 @@ import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { StudyService } from '../service'
 import { createRecordingObserver } from '../utils/createRecordingObserver'
+import { systemTrashName } from '../utils/systemTrashName'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+
+// The product names the system Trash the way the host's operating system does; the expected texts follow it, so the suite also holds on Windows ("Recycle Bin").
+const TRASH = systemTrashName()
 
 /**
  * Starts one configured run through the real service with a study library and a recording store that share a directory and a limit; the runtime and its application are the controlled harness.
@@ -192,7 +196,7 @@ test('a run on a full study library is refused before the application receives a
   assert.equal(started.record.error?.code, 'PREREQUISITE_MISSING')
   assert.equal(
     started.record.error?.message,
-    'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Existing learning was kept.',
+    'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Only the learner can do either; an editor agent cannot. Existing learning was kept.',
   )
   assert.equal(started.record.prepared, false)
   // No runtime was acquired, so nothing was prepared and no click reached the application.
@@ -798,7 +802,7 @@ test('a start that repeats the key of an admitted run returns the same receipt, 
   }
   // Act
   const repeated = started.service.start(input)
-  started.service.excludeHistory(started.record, 'removed-by-learner')
+  started.service.excludeHistory(started.record)
   const repeatedAfterRemoval = started.service.start(input)
   // Assert
   assert.deepEqual(repeated, started.receipt)
@@ -819,23 +823,120 @@ test('the run resource of a run whose saved study the learner removed reports it
     'saved',
   )
   // Act
-  started.service.excludeHistory(started.record, 'removed-by-learner')
+  started.service.excludeHistory(started.record)
   // Assert
   const state = started.service.state(started.record)
   assert.equal(state.historyOutcome.status, 'unavailable')
   assert.equal(
     state.historyOutcome.reason,
-    'The learner moved this saved study to the Trash.',
+    `The learner moved this saved study to the ${TRASH}.`,
   )
   assert.equal(state.historyOutcome.savedSignature, undefined)
   assert.equal(state.recording.status, 'failed')
   assert.equal(
     state.recording.reason,
-    'The learner moved this saved study to the Trash.',
+    `The learner moved this saved study to the ${TRASH}.`,
   )
   assert.equal(state.recording.contextStatus, 'unavailable')
   assert.equal(
     started.service.beginHistory(started.record, state.materialSignature),
     undefined,
+  )
+})
+
+// Value: protects=a run that fails a prerequisite before its admission on a full library is never written later, so Retry storage cannot take room the learner freed and no "History not saved" line appears; fails_when=the early failure clears the exclusion and leaves the run a checkpoint candidate (0038-F10); why_new=the early-failure test arranged a library with room; seam=none
+test('a run whose repository storage is unavailable on a full study library is not offered for a history checkpoint', async (context) => {
+  // Arrange / Act: the library is full at one study; the repository store is gone when the run starts.
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ service }) => {
+      service.repository = undefined
+    },
+  )
+  const checkpoint = started.service.beginHistory(
+    started.record,
+    started.service.state(started.record).materialSignature,
+  )
+  // Assert
+  assert.equal(
+    started.record.error?.message,
+    'Repository source/book storage is unavailable in this editor.',
+  )
+  assert.equal(started.record.historyExcluded, 'refused-at-admission')
+  assert.equal(checkpoint, undefined)
+})
+
+// Value: protects=an editor agent is not told to read the history of a run that the library refused; fails_when=the refused run's next actions still list `read-history` although its history is unavailable (0038-F17b, 0038-N7-c); why_new=next actions of a refused run were not asserted; seam=none
+test('the next actions of a run refused on a full study library do not offer to read its history', async (context) => {
+  // Arrange
+  const started = await startRunWithStorage(context, 1, 'study')
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  // Act
+  const state = started.service.state(started.record)
+  // Assert
+  assert.equal(state.historyOutcome.status, 'unavailable')
+  assert.deepEqual(state.nextActions, [])
+})
+
+// Value: protects=after this editor's Trash refused a removal, a refusal of a full library names only the remedy that can work here; fails_when=the refusal keeps telling the learner to delete a saved study in an editor that cannot move one to the Trash (0038-F9); why_new=the delete remedy was named unconditionally; seam=the service's removal-availability flag that the reader clears
+test('a run refused on a full study library after the Trash refused a removal names only the limit setting', async (context) => {
+  // Arrange / Act: the reader has reported that the Trash refused a removal in this session.
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ service }) => {
+      service.isStudyRemovalAvailable = false
+    },
+  )
+  // Assert
+  assert.equal(
+    started.record.error?.message,
+    `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the ${TRASH} in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.`,
+  )
+})
+
+// Value: protects=an agent that publishes a Repository Wiki revision whose link names a deleted saved study is told which study is gone; fails_when=the publish fails with the library's bare "Study archive is unavailable." (0038-F18); why_new=no publish linked a study the library no longer holds; seam=none
+test('publishing a Repository Wiki revision that links a saved study the library no longer holds is refused as an unavailable book that names that study', async (context) => {
+  // Arrange: a published article; its next revision links an observation of a study that is not in the library.
+  const started = await startRunWithStorage(context, 2, 'nothing')
+  const removedStudyId =
+    '33333333-3333-4333-8333-333333333333_44444444-4444-4444-8444-444444444444'
+  // Act
+  const publish = started.service.repository!.publish({
+    bookId: 'interface',
+    expectedRevision: 1,
+    key: 'links-removed-study',
+    document: {
+      title: 'Interface',
+      summary: 'Two citations.',
+      nodes: [
+        {
+          id: 'theme',
+          title: 'Theme',
+          sections: [{ title: 'Theme', text: 'Source-derived explanation.' }],
+          anchors: started.harness.definition.descriptor.anchors,
+          observations: [
+            {
+              studyId: removedStudyId,
+              observationId: 'browser-session:1',
+              sourceHash: 'a'.repeat(64),
+            },
+          ],
+        },
+      ],
+      edges: [],
+    },
+  })
+  // Assert
+  await assert.rejects(
+    publish,
+    (error) =>
+      error instanceof StudyError &&
+      error.code === 'BOOK_UNAVAILABLE' &&
+      error.message ===
+        `Linked saved study ${removedStudyId} is no longer in the study library; it was deleted or never saved.`,
   )
 })

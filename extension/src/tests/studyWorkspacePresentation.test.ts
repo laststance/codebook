@@ -1358,6 +1358,12 @@ test('real MCP presentation discovery and control preserve identities across res
   let client: Client | undefined
   try {
     harness = await workspaceHarness()
+    // An earlier version saved a layout that is retired now; the reader still opens in it.
+    harness.presentationPreferences.set('codebook.presentation.v1', {
+      version: 1,
+      mode: 'living-book',
+    })
+    await harness.reader.close()
     harness.useNativeLayout({ orientation: 0, groups: [{}] })
     await harness.reader.open()
     endpoint = await startServer(harness.service)
@@ -1393,7 +1399,7 @@ test('real MCP presentation discovery and control preserve identities across res
       instanceId: selected.instanceId,
       presentationId: selected.presentation.presentationId,
       expectedRevision: selected.presentation.presentationControlRevision,
-      mode: 'living-book',
+      mode: 'study-workspace',
     }
     const before = [...harness.commands]
     const wrong = await client.callTool({
@@ -1413,6 +1419,31 @@ test('real MCP presentation discovery and control preserve identities across res
       enum: ['study-workspace', 'living-book', 'guided-walkthrough'],
     })
     assert.equal(tool.inputSchema.required?.includes('action'), false)
+    // The retired layouts can no longer be selected (Cycle 0044, 0031-U7): the refusal names them and has no native effect.
+    const retiredLayout = await client.callTool({
+      name: tool.name,
+      arguments: { ...input, mode: 'guided-walkthrough' },
+    })
+    assert.match(
+      JSON.stringify(retiredLayout.structuredContent),
+      /PRESENTATION_UNAVAILABLE/,
+    )
+    assert.match(
+      JSON.stringify(retiredLayout.structuredContent),
+      /The Living book and Guided walkthrough layouts are retired\. Select study-workspace/,
+    )
+    // The refusal may read the native layout to learn the reader's mode, but never changes it.
+    assert.equal(
+      harness.commands.filter((command) => command === 'vscode.setEditorLayout')
+        .length,
+      before.filter((command) => command === 'vscode.setEditorLayout').length,
+    )
+    assert.equal(
+      harness.commands.filter((command) => command === 'runCommands').length,
+      before.filter((command) => command === 'runCommands').length,
+    )
+    assert.equal(harness.reader.presentationState().mode, 'living-book')
+    assert.match(tool.description ?? '', /layouts are retired/)
     const applied = await client.callTool({ name: tool.name, arguments: input })
     assert.equal(applied.isError, undefined)
     const resource = await client.readResource({
@@ -1431,7 +1462,7 @@ test('real MCP presentation discovery and control preserve identities across res
       .parse(JSON.parse(contents.text))
     assert.equal(receipt.presentationId, selected.presentation.presentationId)
     assert.equal(receipt.presentationControlRevision, 1)
-    assert.equal(receipt.mode, 'living-book')
+    assert.equal(receipt.mode, 'study-workspace')
     assert.equal(receipt.preference.status, 'saved')
     const commands = [...harness.commands]
     const stale = await client.callTool({ name: tool.name, arguments: input })
@@ -1567,7 +1598,7 @@ test('editor AI can return a saved recording to its current run without repeatin
   }
 })
 
-test('an unknown presentation preference survives opening and a cancelled picker until an explicit replacement', async () => {
+test('an unknown presentation preference survives opening until an explicit replacement', async () => {
   // Arrange
   const harness = await workspaceHarness(false)
   const stored = { version: 91, mode: 'future-mode', foreign: 'retained' }
@@ -1578,7 +1609,6 @@ test('an unknown presentation preference survives opening and a cancelled picker
   try {
     // Act
     await harness.reader.open()
-    await harness.reader.selectPresentation()
     // Assert
     let state = harness.reader.presentationState()
     assert.equal(state.mode, 'study-workspace')
@@ -1631,7 +1661,7 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
       {
         code: 'PRESENTATION_UNAVAILABLE',
         message:
-          'The preview tab "notes.txt" would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.',
+          'A destination group contains a foreign preview: "notes.txt" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
       },
     )
     assert.deepEqual(harness.commands, commands)
@@ -1643,9 +1673,10 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
       true,
     )
     assert.equal(harness.presentationPreferences.size, 0)
+    // Cycle 0044 (0041-N10-5 / 0042-R2): the refusal names the tab and the remedy; red while it said only "a foreign preview".
     assert.equal(
       harness.reader.presentationState().reason,
-      'Error: The preview tab "notes.txt" would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.',
+      'Error: A destination group contains a foreign preview: "notes.txt" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
     )
   } finally {
     await harness.close()
@@ -1855,7 +1886,7 @@ test('a presentation selection keeps the learner’s unedited file preview by pi
   }
 })
 
-// Value: protects=a preview tab the editor API cannot pin (the Welcome page) staying untouched, and the learner or agent being told which tab it is and what to do; fails_when=the refusal reads "A destination group contains a foreign preview" without the tab's name, or the selection moves panes over that tab; why_new=Cycle 0044 0036-N02 (the refusal named neither the tab nor one remedy); seam=workspace harness with the fake editor
+// Value: protects=a preview tab the editor API cannot pin (the Welcome page) staying untouched, and the learner or agent being told which tab it is and what to do; fails_when=the refusal reaches the agent as the generic "The presentation was not confirmed" or without the tab's name, or the selection moves panes over that tab; why_new=Cycle 0044 0036-N02 (the refusal named neither the tab nor a remedy; since the merge with 0041-N10-5 it is the shared foreign-preview text); seam=workspace harness with the fake editor
 test('a presentation selection refused for a preview tab that cannot be pinned names that tab and the step that keeps it', async () => {
   // Arrange: the editor's Welcome page is an unpinned preview tab beside the Application pane.
   const harness = await workspaceHarness(false)
@@ -1878,7 +1909,7 @@ test('a presentation selection refused for a preview tab that cannot be pinned n
       {
         code: 'PRESENTATION_UNAVAILABLE',
         message:
-          'The preview tab "Welcome" would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.',
+          'A destination group contains a foreign preview: "Welcome" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
       },
     )
     assert.equal(welcome.isPreview, true)

@@ -106,3 +106,21 @@ test('the confirmation names a saved study by its label, saved date, outcome and
     `Unknown scenario (legacy) · ${new Date(savedAt).toLocaleString()} · Unsupported historical format; original file preserved · abcdef01`,
   )
 })
+
+// Value: protects=after a removal on a library whose limit was lowered below its stored count, the learner reads how many more studies must go; fails_when=the line reads "holds 69 of 64 saved studies." and names no next step (0038-F16); why_new=the count sentence was only tested below the limit; seam=none
+test('the moved line of a library still at or above its limit says that it is still full and how many more studies must be deleted', () => {
+  // Arrange
+  const messages = studyRemovalMessages('Trash')
+  // Act
+  const aboveLimit = messages.moved({ count: 69, limit: 64 }, false),
+    atLimit = messages.moved({ count: 64, limit: 64 }, false)
+  // Assert
+  assert.equal(
+    aboveLimit,
+    'Saved study moved to the Trash. The library now holds 69 of 64 saved studies and is still full; delete 6 more before another study can be saved.',
+  )
+  assert.equal(
+    atLimit,
+    'Saved study moved to the Trash. The library now holds 64 of 64 saved studies and is still full; delete 1 more before another study can be saved.',
+  )
+})

@@ -519,3 +519,43 @@ test('a Node history seek made while a played stop is failing presents its own e
   assert.equal(controller.state().mode, 'paused')
   controller.dispose()
 })
+
+// Value: protects=a closed Node reader from a late publish; fails_when=a presentation that settles after dispose() still calls changed(); why_new=Cycle 0044 (0033-OCR3); seam=none
+test('a Node stop that finishes presenting after the reader closed publishes nothing', async () => {
+  // Arrange
+  let finishPresentation = (): void => {}
+  const presentationGate = new Promise<void>((resolve) => {
+    finishPresentation = resolve
+  })
+  let publishes = 0
+  const controller = new NodeHistoryPlaybackController({
+    present: async () => presentationGate,
+    changed() {
+      publishes++
+    },
+    manualTicks: true,
+  })
+  controller.open(
+    [
+      { sequence: 1, elapsedMs: 0 },
+      { sequence: 2, elapsedMs: 100 },
+    ],
+    1,
+  )
+  const seeking = controller.seek(100)
+  await waitUntil(
+    () => controller.state().loading,
+    'pending Node stop presentation',
+    1_000,
+    new AbortController().signal,
+  )
+  publishes = 0
+
+  // Act
+  controller.dispose()
+  finishPresentation()
+  await seeking
+
+  // Assert
+  assert.equal(publishes, 0)
+})

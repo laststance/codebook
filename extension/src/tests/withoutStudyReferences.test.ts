@@ -39,6 +39,7 @@ function ledgerNaming(studyId: string): LearnerProgress {
   }
 }
 
+// Value: protects=after a removal the ledger no longer names the removed study as selection or Wiki return, while the reading position survives; fails_when=a reference to a study that is gone stays in the ledger, or the reading position is dropped with it; why_new=the ledger rewrite of a removal; seam=none
 test('removing a saved study drops the ledger’s selected study and its Wiki return, and keeps what the learner was reading', () => {
   // Arrange
   const ledger = ledgerNaming(REMOVED_STUDY)
@@ -66,6 +67,7 @@ test('removing a saved study drops the ledger’s selected study and its Wiki re
   })
 })
 
+// Value: protects=a removal rewrites the ledger only when it names the removed study; fails_when=a ledger that names another study is rewritten or loses its references; why_new=the ledger rewrite of a removal; seam=none
 test('a ledger that names another study is left untouched when a saved study is removed', () => {
   // Arrange
   const ledger = ledgerNaming(OTHER_STUDY)
@@ -75,6 +77,7 @@ test('a ledger that names another study is left untouched when a saved study is 
   assert.equal(rewritten, undefined)
 })
 
+// Value: protects=the selection and the Wiki return are dropped independently; fails_when=one reference to the removed study takes the other reference, which names another study, with it; why_new=the ledger rewrite of a removal; seam=none
 test('only the reference that names the removed study leaves the ledger', () => {
   // Arrange: the selection shows another study; the Wiki return names the removed one.
   const ledger = {

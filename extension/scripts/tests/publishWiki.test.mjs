@@ -1204,6 +1204,40 @@ test('reader pages preserve authored content and build escaped chapter, outline 
   }
 })
 
+test('a page opened from disk shows the freshness label, the update button and an offline note as one group', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-offline-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert
+    const group = pages
+      .get('index.html')
+      .match(/<div data-codebook-update-group>.*?<\/div>/)?.[0]
+    assert.ok(group)
+    assert.equal(
+      group.replace(/href="[^"]+"/, 'href="…"'),
+      '<div data-codebook-update-group><p data-codebook-freshness data-status="unknown">Open from Codebook to check freshness</p><a class="wiki-update" href="…">Update LLM Wiki</a><p data-codebook-update-status>Offline copy. Update progress shows in the editor, or here when this Wiki is opened from Codebook.</p></div>',
+    )
+    assert.equal(
+      new URL(
+        group.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&'),
+      ).searchParams.get('root'),
+      root,
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 const invalidReaderCases = [
   [
     'an obsolete semantic reader version',

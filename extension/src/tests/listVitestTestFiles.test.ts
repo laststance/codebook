@@ -208,6 +208,7 @@ test('cancelling a listing keeps the reason of the run while an exited member of
   )
   const cancellation = new AbortController()
   const kill = process.kill.bind(process)
+  context.mock.property(process, 'platform', 'darwin')
   let unreapedProbes = 2
   // macOS answers EPERM to a probe of a group that holds only exited members their parent has not reaped yet.
   context.mock.method(
@@ -248,6 +249,7 @@ test('a finished listing still returns its files while an exited member of its g
     `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
   )
   const kill = process.kill.bind(process)
+  context.mock.property(process, 'platform', 'darwin')
   let unreapedAnswers = 2
   // macOS answers EPERM to every signal sent to a group that holds only exited members their parent has not reaped yet, not only to signal 0.
   context.mock.method(
@@ -277,6 +279,51 @@ test('a finished listing still returns its files while an exited member of its g
     // Assert
     assert.deepEqual(outcome, [{ file: '/repo/src/a.test.ts' }])
     assert.equal(unreapedAnswers, 0)
+  } finally {
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0044 (0041-F4): red while a release that never saw the group end threw inside `finally`, replacing the finished list, and the folder was removed anyway.
+test('a finished listing still returns its files and keeps its folder when its group never stops answering as unreaped', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
+  )
+  const kill = process.kill.bind(process)
+  context.mock.property(process, 'platform', 'darwin')
+  // macOS keeps answering EPERM for a group whose exited member its parent never reaps.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0)
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const outcome = await listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      workspace: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: new AbortController().signal,
+    }).then(
+      (files) => files,
+      (error: unknown) => error,
+    )
+    // Assert
+    assert.deepEqual(outcome, [{ file: '/repo/src/a.test.ts' }])
+    const started = await vitest.started()
+    const output = started.argv[2]!.slice('--json='.length)
+    assert.ok(
+      (await stat(dirname(output))).isDirectory(),
+      'the listing folder is kept while the group may still write it',
+    )
+    await rm(dirname(output), { recursive: true, force: true })
   } finally {
     await rm(vitest.directory, { recursive: true, force: true })
   }

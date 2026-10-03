@@ -80,6 +80,31 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+// The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
+export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<string> = new Set([
+  'layout',
+  'control',
+  'replay-control',
+  'node-history-control',
+  'reading',
+  'presentation',
+])
+// The lines of a refused pane choice that the learner's next handled choice retires: the general one and the Node test history's own, which a Node history message accepted outside browser replay retires as well.
+export const CHOICE_RETIRED_ERROR_KINDS: ReadonlySet<string> = new Set([
+  'control',
+  'node-history-control',
+])
+// The pane messages by which the learner chooses what the reader shows; one that is handled without an error retires the line of an earlier refused control.
+export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  'history',
+  'node-history',
+  'tab',
+  'select',
+])
+// How many replies to pane open requests the reader keeps while a Recording load is in flight; beyond it the oldest is posted at once.
+export const MAX_DEFERRED_OPEN_REPLIES = 32
+// The one sentence for a saved study whose archive is gone or on its way to the Trash: read by the library, the reader and the removal refusals.
+export const STUDY_ARCHIVE_UNAVAILABLE_MESSAGE = 'Study archive is unavailable.'
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
@@ -88,7 +113,7 @@ export const STUDY_REMOVAL_REFUSALS = {
   recordingOpen:
     'Choose Overview or Live to leave Recording before deleting this study.',
   studyOpening: 'Wait for the chosen saved study to open.',
-  unavailable: 'Study archive is unavailable.',
+  unavailable: STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
 } as const
 // Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
 export const AGENT_STORAGE_DIRECTORY = 'agent'
@@ -107,6 +132,15 @@ export const HORIZONTAL_EDITOR_ORIENTATION = 0
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
+/** Workspace-state key recording that Cursor's learner was offered the Move View step for the Learning summary, so the offer appears once. */
+export const SUMMARY_PLACEMENT_OFFER_KEY = 'codebook.summaryPlacementOffer.v1'
+/** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
+export const SUMMARY_PLACEMENT_OFFER =
+  'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
+/** The button of {@link SUMMARY_PLACEMENT_OFFER}; it opens the editor's own Move View list for the focused Learning summary. */
+export const SUMMARY_PLACEMENT_ACTION = 'Move Learning Summary…'
+/** How long closing the reader waits for each pending storage write (saved replay position, archive writes, library queue); a write still pending then keeps running. */
+export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
 export const PRESENTATION_READING_LIMIT_PX = 10_000_000
 export const PRESENTATION_FOCUS_INDEX_LIMIT = 32
@@ -167,12 +201,24 @@ export const PRESENTATION_FOCUS_ACTIONS = [
   'arrange',
   'enlarge-app',
   'enlarge-context',
+  'show-variables',
+] as const
+/** Native commands the reader's Show Variables control runs in order: open Run and Debug with Variables expanded and focused, then expand its first scope, which holds the recorded values. */
+export const SHOW_NATIVE_VARIABLES_COMMANDS = [
+  'workbench.debug.variablesView.focus',
+  'list.focusFirst',
+  'list.expand',
 ] as const
 export const PRESENTATION_MODE_IDS = [
   'study-workspace',
   'living-book',
   'guided-walkthrough',
 ] as const
+/** The only layout a command or agent may still select; Living book and Guided walkthrough are retired and stay only in a reader whose saved preference still names one. */
+export const SELECTABLE_PRESENTATION_MODE = 'study-workspace'
+/** What an agent reads when it asks for a retired layout through `codebook_presentation`. */
+export const RETIRED_PRESENTATION_REFUSAL =
+  'The Living book and Guided walkthrough layouts are retired. Select study-workspace; focus, restore and save-preference still accept the mode the reader reports.'
 export const STUDY_PRESENTATIONS = {
   'study-workspace': {
     title: 'Study workspace',
@@ -310,12 +356,32 @@ export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000
+/** File name of the manifest the Wiki publisher writes into an output or candidate folder. */
+export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
+/** File name of the Wiki publisher's receipt in an output or candidate folder. */
+export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
+/** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */
+export const WIKI_PUBLISH_JOURNAL_SUFFIX = '.publish-journal.json'
+/** `name` of the error a Cursor Wiki update rejects with at its bound, so the caller records `timed-out` instead of `failed`. */
+export const WIKI_UPDATE_TIMED_OUT_ERROR_NAME = 'WikiUpdateTimedOut'
+/** Milliseconds in one minute, for naming a bound in minutes in the update request. */
+export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
 export const WIKI_UPDATE_WATCH_TIMEOUT_MS = 900_000
 /** How often the extension looks for a newly published manifest while a Wiki update is watched. */
 export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 /** How often the reader page asks for the update state while a run is active. */
 export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
+/** How many conflict paths an update sentence names before "and N more". */
+export const WIKI_UPDATE_SHOWN_PATH_LIMIT = 3
+/** How many characters of a failure reason an update sentence shows before the full text moves to its disclosure; the longest sentences Codebook writes itself (another window is updating, a publish it cannot check) end with their next step and stay whole. */
+export const WIKI_UPDATE_REASON_LIMIT_CHARS = 400
+/** How long after a press of Update LLM Wiki the reader page keeps asking quickly for the run the learner still has to confirm in the editor. */
+export const WIKI_UPDATE_START_WAIT_MS = 120_000
+/** How often the reader page asks for the update state while no run is active and its tab is visible. */
+export const WIKI_UPDATE_IDLE_POLL_MS = 15_000
+/** How many failed status reads in a row the reader page lets a running update survive before it says it lost contact with the editor. */
+export const WIKI_UPDATE_STATUS_RETRY_LIMIT = 3
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536
 export const WIKI_CURSOR_PROMPT_LIMIT_BYTES = 131_072
 export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192
@@ -525,9 +591,15 @@ export const REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES = 100_000
 export const REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS = 4_194_304
 export const REPOSITORY_BINDING_HINT_EDGE_LINES = 20
 export const REPOSITORY_BINDING_HINT_NEAR_LINES = 40
+/** Begins the hint of a click target that matched no element; the page's control counts follow when it reported them. */
+export const CLICK_TARGET_MISSING_HINT =
+  ' The action selector matched no element on the page.'
+/** Ends that hint with what the agent can do without seeing the page. */
+export const CLICK_TARGET_MISSING_REMEDY_HINT =
+  " Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control."
 /** Appended to every timed-out `text` condition: the comparison rule, which the agent cannot read from the failure reason. Each hint begins with one space because it follows the reason's period. */
 export const TEXT_CONDITION_RULE_HINT =
-  " A text condition compares the element's whole text, child elements included, with whitespace collapsed."
+  " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied."
 /** Added for a before `text` condition whose element holds the expected text beside other text; a visible condition is enough when only presence matters. */
 export const TEXT_BESIDE_OTHER_TEXT_BEFORE_HINT =
   ' Here the element holds the expected text beside other text; use a visible condition, or a selector whose element holds only that text.'
@@ -555,11 +627,26 @@ export const REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS = 10_000
 export const REPOSITORY_SCRIPT_DIAGNOSTIC_LIMIT = 200
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT = 8
 export const REPOSITORY_PAUSE_BREAKPOINT_ID_LIMIT_CHARS = 512
+/** Bounds a pause's script URL in the journal and in a deadline's place sentence; a URL can be of any length, and the saved study's reason holds at most {@link MAX_UI_TEXT_CHARS}. */
+export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
+/** Bounds a paused frame's function name in the journal. */
+export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
+/** How many pauses away from the expected stop (and how many idle `continued` events) one run journals; past it only their count is kept, so a hook that pauses in a loop cannot use up the journal. */
+export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
+/** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced. */
+export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = 3_000
+/** The same bound while the participant's stop is accepted and its own pause is still awaited: the held pause may then be the announced one, which the adapter never resumes by itself. */
+export const REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS = 1_000
 /** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */
 export const UNANNOUNCED_PAUSE_UNKNOWN_PLACE = 'an unknown place'
 /** Stands in that sentence for the URL of a script the runtime never announced; the generated position follows it. */
 export const UNANNOUNCED_PAUSE_UNKNOWN_SCRIPT = 'an unknown script'
 export const REPOSITORY_STACK_FRAME_LIMIT = 10
+/** Names the bounded wait for an accepted stop's own runtime pause; its timeout text and the test harnesses' substitution of that wait both key on it. */
+export const SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION = 'source-bound CDP stop'
+/** Names the waits before and after the after capture for every pause the debugger made for itself to be resumed. */
+export const ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION =
+  'adapter pause retirement'
 
 export const REPLAY_DEBUG_TYPE = 'codebook-replay'
 export const REPLAY_DEBUG_THREAD_ID = 1
@@ -573,9 +660,16 @@ export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
-/** Ceiling on one owned replay settle: the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}) plus one capture timeout each for retiring and starting the historical session; a stall before painting still ends here. A pending startup that the retirement waits for first, the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}) and a recording renderer's (re-)handshake, which waits up to {@link ACTIVE_TIMEOUT_MS} (20 s) when the renderer is new or must be revealed again, come on top, so the slowest healthy sequence can outlast this ceiling; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
+/** Frames native Call Stack loads for a stop before the learner asks for more (VS Code: the top frame, then 19 more); it focuses the top frame when none of them has source. */
+export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
+/** What one owned replay settle allows for work that has no bound of its own before painting: reading the recording and the recording renderer's handshake. */
+export const PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS = 2_000
+/** Ceiling on one owned replay settle, covering the slowest healthy sequence: a pending historical-session startup the retirement waits for, the retirement and the next startup (one capture timeout each), the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}), the recording load and renderer handshake ({@link PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS}) and the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}). A stall before painting still ends here. Only a recording renderer's (re-)handshake that needs more than that allowance can outlast the ceiling: it waits up to {@link ACTIVE_TIMEOUT_MS} (20 s) when the renderer is new or must be revealed again. The settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
 export const PRESENTATION_SETTLE_CEILING_MS =
-  PRESENTATION_READY_TIMEOUT_MS + 2 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS
+  PRESENTATION_READY_TIMEOUT_MS +
+  3 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS +
+  REPLAY_DEBUG_INSPECTION_GRACE_MS +
+  PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64
@@ -585,3 +679,20 @@ export const REPOSITORY_INPUT_LIMIT = 16
 
 /** Maximum UTF-8 payload per explicitly paged evidence read. */
 export const RESOURCE_JSON_PAGE_BYTES = 4096
+
+/** Google Chrome's executable inside its macOS application bundle; checked when `codebook.chromeExecutable` is unset on macOS. */
+export const CHROME_MACOS_EXECUTABLE_PATH =
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+/** Chrome and Chromium command names searched on PATH, in this order, when `codebook.chromeExecutable` is unset on Linux (including WSL). */
+export const CHROME_LINUX_EXECUTABLE_NAMES = [
+  'google-chrome',
+  'google-chrome-stable',
+  'chromium',
+  'chromium-browser',
+] as const
+/** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
+export const WSL_REMOTE_NAME = 'wsl'
+/** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
+export const RECORDING_WINDOW_FOCUS_WAIT_MS = 10_000
+/** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
+export const PLAYBACK_SEEK_STOP_SNAP_MS = 1

@@ -1430,3 +1430,54 @@ for (const dirty of [false, true])
       await harness.close()
     }
   })
+
+// Value: protects=closing the reader while learning storage holds a lock; fails_when=close() awaits the library queue without a bound and never finishes; why_new=Cycle 0044 (0033-O4); seam=LearningLibrary.flush held by the test
+test('closing the reader finishes after the storage bound while a library write is still held, and that write still lands', async (context) => {
+  // Arrange: an opened reader whose library queue holds a write that does not return.
+  const harness = await workspaceHarness()
+  let releaseWrite = (): void => {},
+    writeLanded = false
+  try {
+    await harness.reader.open()
+    const library = harness.reader['library']
+    assert.ok(library)
+    const heldWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    }).then(() => {
+      writeLanded = true
+    })
+    library.flush = (): Promise<void> => heldWrite
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    let closed = false
+
+    // Act: time advances in 1 s steps until the reader has closed (at most 10 s).
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    let elapsedMs = 0
+    while (!closed && elapsedMs < 10_000) {
+      for (let turn = 0; turn < 20; turn++)
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      if (closed) break
+      context.mock.timers.tick(1_000)
+      elapsedMs += 1_000
+    }
+    const closedWhileWriteHeld = closed
+    context.mock.timers.reset()
+    const landedWhenClosed = writeLanded
+    releaseWrite()
+    await heldWrite
+    await closing
+
+    // Assert
+    assert.equal(closedWhileWriteHeld, true)
+    assert.equal(elapsedMs, 5_000)
+    assert.equal(landedWhenClosed, false)
+    assert.equal(writeLanded, true)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    context.mock.timers.reset()
+    releaseWrite()
+    await harness.close()
+  }
+})

@@ -1,61 +1,22 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rm, utimes, writeFile } from 'node:fs/promises'
 import { test } from 'node:test'
-import { runInNewContext } from 'node:vm'
 
-import { startDeepWikiReader } from '../deepWikiReader'
-import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
-
-/** Publishes a minimal Wiki and serves it with the given update state provider. */
-async function serveWiki(readUpdateStatus?: () => WikiUpdateStatus) {
-  const projectDirectory = await mkdtemp(
-    join(tmpdir(), 'codebook-wiki-status-'),
-  )
-  const projectRoot = await realpath(projectDirectory)
-  const output = join(projectRoot, '.codebook', 'wiki')
-  await mkdir(output, { recursive: true })
-  await writeFile(
-    join(output, 'index.html'),
-    '<!doctype html><body>Wiki</body>',
-  )
-  const manifestPath = join(output, 'codebook-wiki.json')
-  await writeFile(
-    manifestPath,
-    JSON.stringify({
-      schemaVersion: 1,
-      repositoryRoot: projectRoot,
-      pages: [],
-      assets: [],
-      includedSources: [],
-    }),
-  )
-  const reader = await startDeepWikiReader(
-    output,
-    projectRoot,
-    async () => ({ handoff: 'unused' }),
-    'vscode',
-    readUpdateStatus,
-  )
-  return {
-    reader,
-    manifestPath,
-    async close(): Promise<void> {
-      await reader.close()
-      await rm(projectDirectory, { recursive: true, force: true })
-    },
-  }
-}
+import { serveMinimalWiki } from './utils/serveMinimalWiki'
 
 test('the Wiki reader answers the current update state at api/update-status', async () => {
   // Arrange
-  const wiki = await serveWiki(() => ({
+  const wiki = await serveMinimalWiki(() => ({
     state: 'failed',
+    host: 'cursor',
     finishedAt: '2026-10-03T12:10:00.000Z',
     reason: 'Cursor Agent exited with code 1.',
+    site: 'kept',
     outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
   }))
+  const publishedAt = new Date('2026-10-03T11:50:00.000Z')
+  await utimes(wiki.manifestPath, publishedAt, publishedAt)
   try {
     // Act
     const response = await fetch(new URL('api/update-status', wiki.reader.url))
@@ -64,9 +25,13 @@ test('the Wiki reader answers the current update state at api/update-status', as
     assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), {
       state: 'failed',
+      host: 'cursor',
       finishedAt: '2026-10-03T12:10:00.000Z',
       reason: 'Cursor Agent exited with code 1.',
+      site: 'kept',
       outputDirectory: '/repo/.codebook/wiki',
+      outputLabel: '.codebook/wiki',
+      sitePublishedAt: '2026-10-03T11:50:00.000Z',
     })
   } finally {
     await wiki.close()
@@ -75,32 +40,111 @@ test('the Wiki reader answers the current update state at api/update-status', as
 
 test('the Wiki reader reports idle when no editor update state is connected', async () => {
   // Arrange
-  const wiki = await serveWiki()
+  const wiki = await serveMinimalWiki()
+  const publishedAt = new Date('2026-10-03T11:50:00.000Z')
+  await utimes(wiki.manifestPath, publishedAt, publishedAt)
   try {
     // Act
     const response = await fetch(new URL('api/update-status', wiki.reader.url))
 
     // Assert
+    assert.deepEqual(await response.json(), {
+      state: 'idle',
+      sitePublishedAt: '2026-10-03T11:50:00.000Z',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('the update state names no publish time while the publisher has taken the manifest away', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  await rm(wiki.manifestPath)
+  try {
+    // Act
+    const response = await fetch(new URL('api/update-status', wiki.reader.url))
+
+    // Assert
+    assert.equal(response.status, 200)
     assert.deepEqual(await response.json(), { state: 'idle' })
   } finally {
     await wiki.close()
   }
 })
 
-test('the Wiki reader refuses to start an update through api/update-status', async () => {
+test('the Wiki reader refuses to start an update through api/update-status and names the method that works', async () => {
   // Arrange
-  const wiki = await serveWiki()
+  const wiki = await serveMinimalWiki()
   try {
     // Act
     const response = await fetch(
       new URL('api/update-status', wiki.reader.url),
-      {
-        method: 'POST',
-      },
+      { method: 'POST' },
     )
 
     // Assert
     assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
+    assert.deepEqual(await response.json(), {
+      error: 'This Wiki route only answers GET.',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('the freshness route refuses a write and names the method that works', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    // Act
+    const response = await fetch(new URL('api/freshness', wiki.reader.url), {
+      method: 'PUT',
+    })
+
+    // Assert
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
+    assert.deepEqual(await response.json(), {
+      error: 'This Wiki route only answers GET.',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a published page refuses a write and names the method that works', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    // Act
+    const response = await fetch(wiki.reader.url, { method: 'DELETE' })
+
+    // Assert
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
+    assert.deepEqual(await response.json(), {
+      error: 'This Wiki route only answers GET.',
+    })
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a HEAD request for the update state stays refused', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  try {
+    // Act
+    const response = await fetch(
+      new URL('api/update-status', wiki.reader.url),
+      { method: 'HEAD' },
+    )
+
+    // Assert
+    assert.equal(response.status, 405)
+    assert.equal(response.headers.get('allow'), 'GET')
   } finally {
     await wiki.close()
   }
@@ -108,11 +152,14 @@ test('the Wiki reader refuses to start an update through api/update-status', asy
 
 test('the update state is served while a publish has left the manifest unreadable', async () => {
   // Arrange
-  const wiki = await serveWiki(() => ({
+  const wiki = await serveMinimalWiki(() => ({
     state: 'running',
     host: 'vscode',
     startedAt: '2026-10-03T12:03:00.000Z',
+    timeoutMs: 900_000,
+    candidateStaged: false,
     outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
   }))
   await writeFile(wiki.manifestPath, '{ not json')
   try {
@@ -127,36 +174,27 @@ test('the update state is served while a publish has left the manifest unreadabl
   }
 })
 
-test('the reader page script carries working code that words every update state for the learner', async () => {
+test('a page the last update removed sends the browser to the overview of the same reader', async () => {
   // Arrange
-  const wiki = await serveWiki()
+  const wiki = await serveMinimalWiki()
   try {
-    const script = await (
-      await fetch(new URL('codebook-qa.js', wiki.reader.url))
-    ).text()
-    const start = script.indexOf('var describeUpdate = (')
-    const end = script.indexOf(');\n  async function refreshUpdateStatus')
+    const removedPage = new URL('pages/removed.html', wiki.reader.url)
 
     // Act
-    assert.ok(
-      start >= 0 && end > start,
-      'the page script embeds the update wording',
-    )
-    const describe: (status: WikiUpdateStatus) => string = runInNewContext(
-      `(${script.slice(start + 'var describeUpdate = ('.length, end)})`,
-    )
-    const text = describe({
-      state: 'cancelled',
-      finishedAt: '2026-10-03T12:10:00.000Z',
-      outputDirectory: '.codebook/wiki',
-    })
+    const redirect = await fetch(removedPage, { redirect: 'manual' })
+    const followed = await fetch(removedPage)
+    const otherFile = await fetch(new URL('pages/removed.css', wiki.reader.url))
 
     // Assert
+    assert.equal(redirect.status, 302)
     assert.equal(
-      text,
-      'Update cancelled. The last usable site is kept. Output: .codebook/wiki',
+      redirect.headers.get('location'),
+      new URL(wiki.reader.url).pathname,
     )
-    assert.match(script, /api\/update-status/)
+    assert.equal(followed.status, 200)
+    assert.equal(followed.url, wiki.reader.url)
+    assert.match(await followed.text(), /Wiki/)
+    assert.equal(otherFile.status, 404)
   } finally {
     await wiki.close()
   }

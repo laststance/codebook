@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 
 import type { NodeTestHistoryEntry } from '../nodeTestHistorySchemas'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import * as sha256Module from '../runtimeSupport/utils/sha256'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { nodeStopSourceMatches } from '../utils/nodeStopSourceMatches'
 
@@ -116,6 +117,24 @@ test('a Node stop recorded without captured source is unavailable', async () => 
     // Assert
     assert.equal(matches, false)
   } finally {
+    await cleanup()
+  }
+})
+
+// Value: protects=reader publishes from re-hashing the selected Node stop's captured source; fails_when=every publish hashes the captured text again; why_new=Cycle 0044 (0033-OCR2); seam=sha256 module export
+test('the captured source of the selected Node stop is hashed once however often the reader publishes it', async () => {
+  // Arrange
+  const { stop, cleanup } = await savedStop()
+  const hashing = mock.method(sha256Module, 'sha256')
+  try {
+    // Act: five reader publishes of the same selected stop.
+    const verdicts = [1, 2, 3, 4, 5].map(() => nodeStopSourceMatches(stop))
+
+    // Assert
+    assert.deepEqual(verdicts, [true, true, true, true, true])
+    assert.equal(hashing.mock.callCount(), 1)
+  } finally {
+    hashing.mock.restore()
     await cleanup()
   }
 })

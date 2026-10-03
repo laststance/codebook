@@ -1,7 +1,11 @@
 import type { DebugProtocol } from '@vscode/debugprotocol'
 import { z } from 'zod'
 
-import { REPLAY_DEBUG_THREAD_ID, STUDY_SOURCE_SCHEME } from './constants'
+import {
+  REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES,
+  REPLAY_DEBUG_THREAD_ID,
+  STUDY_SOURCE_SCHEME,
+} from './constants'
 import {
   replayDebugSnapshotSchema,
   type ReplayDebugSnapshot,
@@ -49,6 +53,8 @@ export class ReplayDebugAdapter {
   private closed = false
   private selectionValid = false
   private inspectedStack = false
+  /** How many frames from the top native Call Stack has received for the current selection. */
+  private servedFrameCount = 0
   private inspectedScopes = false
   private inspectedVariables = false
   private reportedInspection = false
@@ -143,12 +149,26 @@ export class ReplayDebugAdapter {
 
   /**
    * Identifies the frame whose retrieval {@link inspectionReady} requires: native Call Stack focuses the first frame with source, so a library frame on top cannot hold the stop.
-   * @returns The first frame with recorded source, else the top frame, or `undefined` for missing history.
+   *
+   * Native Call Stack only focuses among the frames it loaded: once its first page ({@link REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES}) holds no frame with source, it focuses the top frame.
+   *
+   * @returns The first frame with recorded source, else the top frame (also when that source frame lies beyond the loaded first page), or `undefined` for missing history.
    * @example this.inspectionFrameId // => 1001
    */
   private get inspectionFrameId(): number | undefined {
-    for (const [frameId, frame] of this.frames) if (frame.source) return frameId
-    return this.frames.keys().next().value
+    const topFrameId: number | undefined = this.frames.keys().next().value
+    let index = 0
+    for (const [frameId, frame] of this.frames) {
+      // A source frame native Call Stack has not loaded yet cannot be focused once its first page is complete.
+      if (
+        index >= this.servedFrameCount &&
+        this.servedFrameCount >= REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES
+      )
+        return topFrameId
+      if (frame.source) return frameId
+      index++
+    }
+    return topFrameId
   }
 
   /** Replaces every handle on committed moment changes; an invalid snapshot first clears previous state. @example adapter.select(undefined, 'Not recorded at this moment') */
@@ -175,6 +195,7 @@ export class ReplayDebugAdapter {
     this.sourceDocument = undefined
     this.selectionValid = false
     this.inspectedStack = false
+    this.servedFrameCount = 0
     this.inspectedScopes = false
     this.inspectedVariables = false
     this.reportedInspection = false
@@ -307,10 +328,23 @@ export class ReplayDebugAdapter {
             arguments_.levels ? start + arguments_.levels : undefined,
           )
           respond({ stackFrames: selectedFrames, totalFrames: frames.length })
-          // A page without the inspection frame cannot confirm that the native client inspected the selected stop.
+          // Only a page that continues the loaded frames extends what native Call Stack can focus.
+          if (start <= this.servedFrameCount)
+            this.servedFrameCount = Math.max(
+              this.servedFrameCount,
+              start + selectedFrames.length,
+            )
+          // Frames loaded without the inspection frame cannot confirm that the native client inspected the selected stop.
+          const inspectionFrameIndex = frames.findIndex(
+            (frame) => frame.id === this.inspectionFrameId,
+          )
           if (
             !frames.length ||
-            selectedFrames.some((frame) => frame.id === this.inspectionFrameId)
+            selectedFrames.some(
+              (frame) => frame.id === this.inspectionFrameId,
+            ) ||
+            (inspectionFrameIndex >= 0 &&
+              inspectionFrameIndex < this.servedFrameCount)
           )
             this.inspectedStack = true
           this.reportInspection()

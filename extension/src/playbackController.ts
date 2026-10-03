@@ -4,6 +4,7 @@ import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
+import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
 import { untilAborted } from './utils/untilAborted'
 
 /** Refusal of a seek or play while the replay reader's panes do not exist; it names the only remedy, an explicit open. */
@@ -173,7 +174,13 @@ export class PlaybackController {
       this.stopTimer()
       this.queue({
         studyId: input.studyId,
-        positionMs: input.positionMs,
+        // Recorded stops sit at fractional receipt times; a seek rounded down to whole milliseconds still presents the stop.
+        positionMs: snapSeekToRecordedStop(
+          input.positionMs,
+          (this.data.context?.study.observations ?? [])
+            .map((observation) => observation.elapsedMs)
+            .filter((stopMs) => stopMs <= range.endMs),
+        ),
         save: true,
       })
       return this.state()

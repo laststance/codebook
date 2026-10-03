@@ -209,6 +209,85 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
   }
 })
 
+// Value: protects=the retired presentation picker staying out of the Command Palette; fails_when=the manifest contributes or activation registers `codebook.selectPresentation`, which offered the removed Living book and Guided walkthrough layouts; why_new=Cycle 0044 (0031-U7); seam=vscode.commands.registerCommand stub
+test('the retired Select Presentation command is neither contributed to the Command Palette nor registered at activation', async () => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-retired-command-')),
+  )
+  const registered: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string) {
+            registered.push(name)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '.codebook/wiki' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        env: { openExternal: async () => true },
+        Uri: {
+          parse: (value: string) => ({ value }),
+          file: (fsPath: string) => ({ fsPath }),
+        },
+        window: { showErrorMessage: async () => undefined },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './deepWikiReader': {
+        readDeepWikiManifest: async () => undefined,
+        startDeepWikiReader: async () => ({
+          url: 'http://127.0.0.1:9/reader/index.html',
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  const manifest: {
+    contributes: { commands: Array<{ command: string; title: string }> }
+  } = JSON.parse(
+    await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: resolve(__dirname, '../..'),
+      globalStorageUri: { fsPath: projectRoot },
+      subscriptions: [],
+      workspaceState: { get: () => undefined, update: async () => {} },
+    })
+
+    // Assert
+    assert.equal(registered.includes('codebook.openStudyWorkspace'), true)
+    assert.equal(registered.includes('codebook.selectPresentation'), false)
+    assert.deepEqual(
+      manifest.contributes.commands.filter(
+        (entry) =>
+          entry.command === 'codebook.selectPresentation' ||
+          entry.title === 'Codebook: Select Presentation',
+      ),
+      [],
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
 test('a Wiki question opens a source-cited editor chat draft when VS Code exposes no reader model', async () => {
   // Arrange
   const projectRoot = await realpath(
@@ -678,7 +757,7 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     await commands.get('codebook.updateDeepWiki')!()
     assert.equal(submissions.length, 1)
     assert.deepEqual(notices, [
-      'Codebook is already updating this project’s LLM Wiki.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
     ])
   } finally {
     await boundary.deactivate()
@@ -850,6 +929,18 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string, prompt: string) => {
           agentRuns.push({ root, prompt })
+          // The agent publishes: the manifest file changes, and it now matches the source.
+          await writeFile(
+            join(outputDirectory, 'codebook-wiki.json'),
+            JSON.stringify({
+              schemaVersion: 1,
+              repositoryRoot: projectRoot,
+              pages: [],
+              assets: [],
+              includedSources: [],
+              excludedPaths: ['scratch'],
+            }),
+          )
           publishedWikiIsCurrent = true
           return 'Updated'
         },
@@ -881,7 +972,10 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
     assert.equal(agentRuns[0]?.root, projectRoot)
     assert.match(agentRuns[0]?.prompt ?? '', /\/codebook Update LLM Wiki/)
     assert.deepEqual(chatCommands, [])
-    assert.match(messages[0] ?? '', /updated this project/)
+    assert.match(
+      messages[0] ?? '',
+      /^Updated at \d{1,2}:\d{2}(?:\s?[AP]M)? \(index [0-9a-f]{8}; no Git revision recorded\)\. Reload the browser reader to read the new pages\.$/,
+    )
   } finally {
     await boundary.deactivate()
     await rm(projectDirectory, { recursive: true, force: true })
@@ -1428,6 +1522,18 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string) => {
           agentRuns.push(root)
+          // The agent publishes a new site, but the source no longer matches it.
+          await writeFile(
+            join(outputDirectory, 'codebook-wiki.json'),
+            JSON.stringify({
+              schemaVersion: 1,
+              repositoryRoot: projectRoot,
+              pages: [],
+              assets: [],
+              includedSources: [],
+              excludedPaths: ['scratch'],
+            }),
+          )
           return 'Updated'
         },
       },
@@ -1460,7 +1566,7 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
     assert.equal(messages.length, 1)
     assert.match(
       messages[0]!,
-      /could not start the Wiki update: Error: Cursor Agent finished, but the published Wiki is not verified current/,
+      /^Update needs another run \(\d{1,2}:\d{2}(?:\s?[AP]M)?\): Cursor Agent published a new Wiki, but 1 source file changed while it worked \(first: source\.ts\)\. Press Update LLM Wiki again\. This run replaced the site on disk\.$/,
     )
   } finally {
     await boundary.deactivate()

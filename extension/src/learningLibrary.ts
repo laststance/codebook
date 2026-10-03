@@ -1,5 +1,5 @@
-import { chmod, lstat, mkdir, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, lstat, mkdir, readdir, rmdir, unlink } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { configuredStudyMetadataSchema } from './configuredStudySchemas'
@@ -8,7 +8,6 @@ import {
   LEARNING_SCHEMA_VERSION_V3,
   LEARNING_SCHEMA_VERSION_V4,
   MAX_LEARNER_DECISIONS,
-  MAX_SAVED_STUDIES,
   MAX_STUDY_ARCHIVE_BYTES,
   PLAYBACK_PREFERENCE_FILE,
   PLAYBACK_PREFERENCE_LIMIT_BYTES,
@@ -19,6 +18,7 @@ import {
   PROGRESS_V4_FILE,
   PROGRESS_REPOSITORY_FILE,
   RECORDING_STORAGE_FORMATS,
+  STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
   STUDY_STORAGE_FORMATS,
   STUDY_METADATA_LIMIT_BYTES,
 } from './constants'
@@ -50,6 +50,7 @@ import { projectHistoricalProgress } from './utils/projectHistoricalProgress'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { removalAfterLockFailure } from './utils/removalAfterLockFailure'
 import { savedStudyLimit } from './utils/savedStudyLimit'
+import { systemErrorCode } from './utils/systemErrorCode'
 import { thrownMessage } from './utils/thrownMessage'
 import { withoutStudyReferences } from './utils/withoutStudyReferences'
 import { withStorageLock } from './utils/withStorageLock'
@@ -71,8 +72,8 @@ export type StudyRemoval =
 type StudyRemovalChanges = {
   /** Paths that went to the system Trash. */
   movedPathCount: number
-  /** The ledger's bytes before this removal rewrote it; absent while the ledger is untouched. */
-  ledgerBytesBefore?: string | Buffer
+  /** The ledger's bytes before this removal rewrote it; absent while the ledger is untouched, `null` when the rewrite created the repository ledger file (it was projected from a historical file). */
+  ledgerBytesBefore?: Buffer | null
 }
 
 /** Retains learner choices and bounded sealed studies across editor restarts without restoring runtime authority. @example const library = new LearningLibrary(directory, workspaceKey) */
@@ -92,9 +93,17 @@ export class LearningLibrary {
   /** Lists bounded sidecars without reading image blobs; incomplete catalog writes remain visible. @example await library.list() */
   async list(): Promise<StudyCatalogEntry[]> {
     const entries = await this.entries()
+    // An archive moved to the Trash between the directory read and its stat is no longer listed.
+    const present = (
+      await Promise.all(
+        entries.map(async (entry) => ({
+          entry,
+          stat: await this.archiveStatIfPresent(entry.path),
+        })),
+      )
+    ).flatMap(({ entry, stat }) => (stat ? [{ entry, stat }] : []))
     const catalog = await Promise.all(
-      entries.map(async (entry) => {
-        const stat = await this.archiveStat(entry.path)
+      present.map(async ({ entry, stat }) => {
         if (entry.format !== 'v3' && entry.format !== 'v4')
           return {
             id: entry.id,
@@ -170,7 +179,7 @@ export class LearningLibrary {
         throw new Error('Archive filename differs from its study identity.')
       return { study, storage, path }
     }
-    throw new Error('Study archive is unavailable.')
+    throw new Error(STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
   }
 
   /** Qualifies selected history against its exact sidecar while preserving readable partial archives for {@link StudyWorkspace}. @example (await library.readCheckpoint(id)).status // 'saved' */
@@ -410,10 +419,10 @@ export class LearningLibrary {
   /**
    * Moves every file of one saved study to the system Trash as one unit under the storage lock; called by {@link StudyWorkspace} after the learner confirmed the removal.
    * Order, each step skipping a path that does not exist:
-   * 1. the recording directories of every recording format,
-   * 2. the raw evidence directory of the study's run, when the caller names one and it is a real directory,
+   * 1. the recording directories of every recording format whose root is a real directory,
+   * 2. the raw evidence directory of the study's run, when the caller names one and it is a real directory, and its instance directory when that is left empty,
    * 3. the playback position file when it names this study (a file that cannot be parsed is left alone),
-   * 4. the ledger, rewritten only when its selection or repository return names this study,
+   * 4. the ledger, rewritten only when it can be read and its selection or repository return names this study,
    * 5. the catalog sidecars of every study format,
    * 6. the archives from the lowest format to the highest.
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
@@ -441,15 +450,11 @@ export class LearningLibrary {
           (storage) => `${identity}${storage.archiveSuffix}`,
         ),
       )
-      if (!archives.length) throw new Error('Study archive is unavailable.')
-      // The ledger is read before the first move, so an unreadable ledger changes nothing.
-      const progress = await this.readProgress(),
-        ledger = withoutStudyReferences(progress, identity)
-      const recordings = await this.existingPaths(
-        RECORDING_STORAGE_FORMATS.map((storage) =>
-          join(storage.directory, identity),
-        ),
-      )
+      if (!archives.length) throw new Error(STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
+      // An unreadable ledger is left as it is: it cannot name the study to anyone, and it must not keep a full library from making room.
+      const progress = await this.readProgress().catch(() => undefined),
+        ledger = progress && withoutStudyReferences(progress, identity)
+      const recordings = await this.recordingPaths(identity)
       const sidecars = await this.existingPaths(
         STUDY_STORAGE_FORMATS.flatMap((storage) =>
           storage.metadataSuffix
@@ -459,16 +464,24 @@ export class LearningLibrary {
       )
       const changes: StudyRemovalChanges = { movedPathCount: 0 }
       const trash = (path: string) => async (): Promise<void> => {
-        await moveToTrash(path)
+        try {
+          await moveToTrash(path)
+        } catch (error) {
+          // A mover that rejects after the path left the library still moved it.
+          if (!(await this.isGone(path))) throw error
+        }
         changes.movedPathCount += 1
       }
       const steps: (() => Promise<void>)[] = [
         ...recordings.map(trash),
-        ...(await this.realDirectories(evidenceDirectory)).map(trash),
+        // The evidence is inspected at its turn: one that cannot be inspected stops the removal there, so a second removal retries it.
+        ...(evidenceDirectory
+          ? [(): Promise<void> => this.trashEvidence(evidenceDirectory, trash)]
+          : []),
         ...(await this.playbackPathsNaming(identity)).map(trash),
         // Learner decisions name no study; only the two navigation references to the removed study are dropped.
         ...(ledger
-          ? [(): Promise<void> => this.rewriteLedger(ledger, progress, changes)]
+          ? [(): Promise<void> => this.rewriteLedger(ledger, changes)]
           : []),
         ...sidecars.map(trash),
         ...archives.map(trash),
@@ -499,32 +512,60 @@ export class LearningLibrary {
     }
   }
 
-  /** Gives {@link removeStudy} the evidence directory only when it is a real directory: an absent path, a file, a symbolic link or a path that cannot be inspected is left alone and is no error. @example await this.realDirectories('/…/agent/instance/run') // => ['/…/agent/instance/run'] */
-  private async realDirectories(path: string | undefined): Promise<string[]> {
-    if (!path) return []
-    const isRealDirectory = await lstat(path).then(
-      (stat) => stat.isDirectory(),
-      () => false,
-    )
-    return isRealDirectory ? [path] : []
+  /**
+   * Moves the raw evidence directory of the removed study's run when it is a real directory, then removes its instance directory when that is left empty; a step of {@link removeStudy}.
+   * An absent path, a file or a symbolic link is left alone and is no error.
+   * @param path - The evidence directory the caller named.
+   * @param trash - Builds the counted move of one path.
+   * @throws When the path cannot be inspected, so the removal stops at this step and a second removal retries it.
+   * @example await this.trashEvidence('/…/agent/instance/run', trash)
+   */
+  private async trashEvidence(
+    path: string,
+    trash: (path: string) => () => Promise<void>,
+  ): Promise<void> {
+    const stat = await this.optionalStat(path)
+    if (!stat?.isDirectory()) return
+    await trash(path)()
+    // The agent server creates an instance directory again with its next run, so an empty one is not left behind.
+    await rmdir(dirname(path)).catch(() => undefined)
+  }
+
+  /** Lists the recording directories of a study in every recording format whose root is a real directory; a root replaced by a symbolic link is never followed. @example await this.recordingPaths(study.id) // => ['/…/recordings.v2/<id>'] */
+  private async recordingPaths(identity: string): Promise<string[]> {
+    const paths: string[] = []
+    for (const storage of RECORDING_STORAGE_FORMATS) {
+      const root = await this.optionalStat(
+        join(this.directory, storage.directory),
+      )
+      if (!root?.isDirectory()) continue
+      paths.push(
+        ...(await this.existingPaths([join(storage.directory, identity)])),
+      )
+    }
+    return paths
+  }
+
+  /** Says whether a path no longer exists, read after a mover rejected; a path that cannot be inspected counts as still there. @example await this.isGone(path) // => true once the path is in the Trash */
+  private async isGone(path: string): Promise<boolean> {
+    return (await this.optionalStat(path).catch(() => true)) === undefined
   }
 
   /**
    * Rewrites the ledger without the removed study's references and remembers its bytes from before, so {@link failedRemoval} can write them back when no path moved.
    * @param ledger - The ledger without the references.
-   * @param before - The ledger as it was read; its text is what is written back when the repository ledger file did not exist yet (it was projected from a historical file).
    * @param changes - Receives the bytes once the rewrite succeeded.
-   * @example await this.rewriteLedger(ledger, progress, changes)
+   * @example await this.rewriteLedger(ledger, changes)
    */
   private async rewriteLedger(
     ledger: LearnerProgress,
-    before: LearnerProgress,
     changes: StudyRemovalChanges,
   ): Promise<void> {
     const path = join(this.directory, PROGRESS_REPOSITORY_FILE)
+    // A ledger projected from a historical file has no repository file to write back; the write-back removes the one this rewrite creates.
     const bytesBefore = (await this.optionalStat(path))
       ? await readBoundedFile(path, PROGRESS_LIMIT_BYTES)
-      : JSON.stringify(before)
+      : null
     await atomicPrivateWrite(path, ledger, PROGRESS_LIMIT_BYTES)
     changes.ledgerBytesBefore = bytesBefore
   }
@@ -546,10 +587,7 @@ export class LearningLibrary {
     if (changes.ledgerBytesBefore === undefined)
       return { outcome: 'nothing-moved', cause }
     try {
-      await atomicPrivateBytes(
-        join(this.directory, PROGRESS_REPOSITORY_FILE),
-        changes.ledgerBytesBefore,
-      )
+      await this.restoreLedger(changes.ledgerBytesBefore)
       return { outcome: 'nothing-moved', cause }
     } catch (error) {
       // No file of the study left the library, so the study is whole; only the ledger lost its two references to it.
@@ -558,6 +596,14 @@ export class LearningLibrary {
         cause: `${cause}; the learner ledger could not be written back: ${thrownMessage(error)}`,
       }
     }
+  }
+
+  /** Puts the repository ledger file back as it was before {@link rewriteLedger}: its bytes, or no file when the rewrite created it. @example await this.restoreLedger(changes.ledgerBytesBefore) */
+  private restoreLedger(bytesBefore: Buffer | null): Promise<void> {
+    const path = join(this.directory, PROGRESS_REPOSITORY_FILE)
+    return bytesBefore === null
+      ? unlink(path)
+      : atomicPrivateBytes(path, bytesBefore)
   }
 
   /** Keeps the paths under the library directory that exist, in the given order, so {@link removeStudy} skips what a study never had or an earlier removal already moved. @example await this.existingPaths(['a.study.v3.json']) // => ['/…/a.study.v3.json'] */
@@ -616,6 +662,16 @@ export class LearningLibrary {
     })
   }
 
+  /** Gives {@link list} the stat of an archive, or nothing when the archive left the library since the directory was read; any other failure is the archive's own. @example await this.archiveStatIfPresent(path) */
+  private archiveStatIfPresent(
+    path: string,
+  ): Promise<Awaited<ReturnType<LearningLibrary['archiveStat']>> | undefined> {
+    return this.archiveStat(path).catch((error: unknown) => {
+      if (systemErrorCode(error) === 'ENOENT') return undefined
+      throw error
+    })
+  }
+
   /** Bounds archives and rejects links/non-files before bytes enter the reader. @example await this.archiveStat(path) */
   private async archiveStat(path: string) {
     const stat = await lstat(path)
@@ -653,10 +709,7 @@ export class LearningLibrary {
           storage,
         })
     }
-    if (entries.size > MAX_SAVED_STUDIES)
-      throw new Error(
-        'Study library exceeds its retained-study limit. No history was deleted.',
-      )
+    // More archives than the maximum (a study restored from the Trash into a full library) stay listed, so the learner can delete them; admission refuses new studies until the count is below the limit.
     return [...entries.values()]
   }
 

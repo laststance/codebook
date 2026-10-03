@@ -11,40 +11,50 @@ interface MappedStop {
 }
 
 /**
- * Finds the first declared stop whose line has no mapped position in its sealed module, for the refusal {@link ConfiguredBrowserRun} raises at preparation, before any application effect.
- * Stops of one module share one scan of its map over the lines they declare; a scan that stopped at its size limit proves nothing, so arming decides for those stops.
+ * Finds the first declared stop that can never bind: its line has no mapped position in its sealed module and the caller's rule finds no other way for it to bind. {@link ConfiguredBrowserRun} refuses it at preparation, before any application effect.
+ * Stops of one module share one scan of its map over the lines they declare.
  * @param stops - The prepared stops in their declared order.
+ * @param canBindWithoutMappedLine - Asked only for a stop the scan found no position for on its declared line; `scanComplete` is `false` when the scan stopped at its size limit, so the missing position proves nothing by itself. Returning `true` leaves the stop to arming.
  * @returns
- * - The first stop, in declared order, whose line a complete scan found unmapped
- * - `undefined` when every line is mapped or no scan was complete
+ * - The first stop, in declared order, whose line the scan found unmapped and that the rule does not let through
+ * - `undefined` when every other stop's line is mapped
  * @example
- * findUnmappedDeclaredStop([stopOnMappedLine, stopOnBlankLine]) // => stopOnBlankLine
- * findUnmappedDeclaredStop([stopOnMappedLine])                  // => undefined
+ * findUnmappedDeclaredStop([stopOnMappedLine, stopOnBlankLine], () => false) // => stopOnBlankLine
+ * findUnmappedDeclaredStop([stopOnMappedLine], () => false)                  // => undefined
+ * findUnmappedDeclaredStop([stopOnBlankLineAboveItsStatement], () => true)   // => undefined
  */
 export function findUnmappedDeclaredStop<Stop extends MappedStop>(
   stops: readonly Stop[],
+  canBindWithoutMappedLine: (stop: Stop, scanComplete: boolean) => boolean,
 ): Stop | undefined {
-  const mappedLinesByModule = new Map<string, Set<number> | undefined>()
+  const scansByModule = new Map<
+    string,
+    { mappedLines: Set<number>; complete: boolean }
+  >()
   for (const stop of stops) {
     const moduleKey = sealedModuleKey(stop)
+    let scan = scansByModule.get(moduleKey)
     // One scan covers every line the stops of this module declare.
-    if (!mappedLinesByModule.has(moduleKey)) {
+    if (!scan) {
       const declaredLines = stops
           .filter((other) => sealedModuleKey(other) === moduleKey)
           .map((other) => other.source.line),
-        scan = stop.verifier.mappedPositions(
+        mapped = stop.verifier.mappedPositions(
           Math.min(...declaredLines),
           Math.max(...declaredLines),
         )
-      mappedLinesByModule.set(
-        moduleKey,
-        scan.complete
-          ? new Set(scan.positions.map((position) => position.line))
-          : undefined,
-      )
+      scan = {
+        mappedLines: new Set(mapped.positions.map((position) => position.line)),
+        complete: mapped.complete,
+      }
+      scansByModule.set(moduleKey, scan)
     }
-    const mappedLines = mappedLinesByModule.get(moduleKey)
-    if (mappedLines && !mappedLines.has(stop.source.line)) return stop
+    // A position the scan found is a position, also when the scan stopped early; without one the caller's rule decides.
+    if (
+      !scan.mappedLines.has(stop.source.line) &&
+      !canBindWithoutMappedLine(stop, scan.complete)
+    )
+      return stop
   }
   return undefined
 }

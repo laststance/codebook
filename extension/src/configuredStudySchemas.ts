@@ -53,7 +53,8 @@ export const configuredFactValueSchema = z.union([
   z.number().finite(),
   z.boolean(),
   z.null(),
-  z.strictObject({ type: z.literal('undefined') }),
+  // Markers for a value that is not a bounded primitive: undefined itself, and an object or function whose members are not captured.
+  z.strictObject({ type: z.enum(['undefined', 'object', 'function']) }),
 ])
 export const configuredDescriptorSchema = z.strictObject({
   itemId: repositoryItemSchema,
@@ -83,6 +84,14 @@ export const configuredObservationSchema = z.strictObject({
       line: z.number().int().nonnegative(),
       column: z.number().int().nonnegative(),
     }),
+    // The run's receipt that its binding rule held when it committed the stop: the sealed map had no position on a line between the two. A saved study has no sealed map to repeat that check with; studies saved by 0.2.27 and older carry none.
+    binding: z
+      .strictObject({
+        declaredLine: z.number().int().positive(),
+        boundLine: z.number().int().positive(),
+        mappedLinesBetween: z.literal(0),
+      })
+      .optional(),
   }),
   values: z.record(configuredFactPathSchema, configuredFactValueSchema),
   debugger: replayDebugSnapshotSchema.optional(),

@@ -23,7 +23,7 @@ export const playbackToolSchema = z
     positionMs: positionMs
       .optional()
       .describe(
-        'Required only for seek; use a position within the returned recording range. Omit for open, play and pause.',
+        'Required only for seek; use a position within the returned recording range. A position less than 1 ms before a recorded stop presents that stop. Omit for open, play and pause.',
       ),
   })
   .superRefine((input, context) => {
