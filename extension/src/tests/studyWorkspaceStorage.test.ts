@@ -1351,3 +1351,114 @@ test('an MCP source reveal rejects a host rendering failure instead of recording
     await harness.close()
   }
 })
+
+// Value: protects=an agent's source reveal succeeding while the reader is already displaying that observation for another request; fails_when=the reveal whose display is superseded by a newer one answers EVIDENCE_UNAVAILABLE "Matching captured source is not displayed" although the source appears a moment later; why_new=Cycle 0044 0036-N06 (the existing reveal tests issue one reveal at a time); seam=workspace harness, held native source open
+test('a source reveal whose display is superseded by another reveal of the same observation waits for that display and succeeds', async () => {
+  // Arrange: a paused run whose observation the reader shows; the first reveal's source open is held by the editor.
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'reveal-superseded',
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: receipt.runId,
+      action: 'repository-click',
+      key: 'one',
+    })
+    await harness.reader.open()
+    const snapshot = harness.service.snapshot(
+      record,
+      harness.service.state(record).participants.browser.snapshotUri!,
+    )
+    const held = harness.holdNextSource()
+    release = held.release
+    const first = harness.reader.presentation.revealSource(
+      snapshot,
+      'server.mts',
+    )
+    await held.started
+    const heldRevision =
+      harness.reader.presentationState().reader.contentRevision
+    // Act: a second reveal of the same observation starts a newer display before the first one's source opens.
+    const second = harness.reader.presentation.revealSource(
+      snapshot,
+      'server.mts',
+    )
+    await waitUntil(
+      () =>
+        harness.reader.presentationState().reader.contentRevision >
+        heldRevision,
+      'the second reveal to start its display',
+      2_000,
+    )
+    held.release()
+    // Assert
+    assert.equal(await first, true)
+    assert.equal(await second, true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+    assert.equal(
+      harness.reader.inspect().view!.model.observation?.id,
+      snapshot.id,
+    )
+    assert.match(harness.reader.inspect().sourceUri!, /^codebook-source:/)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's source reveal succeeding when it arrives while the reader is still reading the run as it was before the observation was committed; fails_when=the reveal joins that earlier read and answers BUSY "Learner is reading another observation" although the learner follows the current run; why_new=Cycle 0044 0036-N06 (the existing reveal tests reveal only after the reader has settled); seam=workspace harness, held native source open
+test('a source reveal that arrives while the reader is still reading the run from before the observation shows that observation', async () => {
+  // Arrange: the reader is opening and its first source display is held; the run pauses only after that read began.
+  const harness = await workspaceHarness()
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'reveal-during-read',
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    const held = harness.holdNextSource()
+    release = held.release
+    const opening = harness.reader.open()
+    await held.started
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: receipt.runId,
+      action: 'repository-click',
+      key: 'one',
+    })
+    const snapshot = harness.service.snapshot(
+      record,
+      harness.service.state(record).participants.browser.snapshotUri!,
+    )
+    // Act
+    const revealing = harness.reader.presentation.revealSource(
+      snapshot,
+      'server.mts',
+    )
+    held.release()
+    // Assert
+    assert.equal(await revealing, true)
+    await opening
+    assert.equal(
+      harness.reader.inspect().view!.model.observation?.id,
+      snapshot.id,
+    )
+    assert.equal(harness.reader.inspect().view!.model.matching, true)
+    assert.match(harness.reader.inspect().sourceUri!, /^codebook-source:/)
+  } finally {
+    release()
+    await harness.close()
+  }
+})

@@ -1628,7 +1628,11 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
         mode: 'living-book',
         action: 'select',
       }),
-      /not confirmed/,
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'The preview tab "notes.txt" would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.',
+      },
     )
     assert.deepEqual(harness.commands, commands)
     assert.deepEqual(harness.panelReveals(), reveals)
@@ -1639,9 +1643,9 @@ test('a foreign preview is preserved without Keep Editor or relocation when sele
       true,
     )
     assert.equal(harness.presentationPreferences.size, 0)
-    assert.match(
-      harness.reader.presentationState().reason ?? '',
-      /foreign preview/,
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Error: The preview tab "notes.txt" would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.',
     )
   } finally {
     await harness.close()
@@ -1781,7 +1785,11 @@ test('a foreign preview opened during the layout read survives without relocatio
       mode: 'living-book',
       action: 'select',
     })
-    const rejected = assert.rejects(transfer, /not confirmed/)
+    const rejected = assert.rejects(transfer, {
+      code: 'PRESENTATION_UNAVAILABLE',
+      message:
+        'The preview tab "learner-preview.txt" was opened while the Codebook panes were being arranged and was left as it is. Change the presentation again.',
+    })
     await held.started
     // Act: preserve global Context focus while a learner preview opens in the later destination.
     const preview = harness.addTextPreview(
@@ -1803,15 +1811,131 @@ test('a foreign preview opened during the layout read survives without relocatio
     assert.deepEqual(harness.commands, commands)
     assert.equal(harness.presentationPreferences.size, 0)
     assert.equal(harness.reader.presentationState().mode, 'study-workspace')
-    assert.match(
-      harness.reader.presentationState().reason ?? '',
-      /foreign preview/,
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Error: The preview tab "learner-preview.txt" was opened while the Codebook panes were being arranged and was left as it is. Change the presentation again.',
     )
   } finally {
     release()
     await harness.close()
   }
 })
+
+// Value: protects=a presentation change while the learner has a file open as a preview (a single click in the Explorer), with that file kept; fails_when=any preview tab Codebook did not open refuses the selection, so an agent's first select fails until the learner keeps or closes the tab; why_new=Cycle 0044 0036-N02 (the existing preview tests cover only an edited preview and one opened during the move); seam=workspace harness with the fake editor
+test('a presentation selection keeps the learner’s unedited file preview by pinning it in place and is confirmed', async () => {
+  // Arrange: the learner single-clicked a workspace file, which the editor shows as a preview tab in the second column.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const path = join(harness.directory, 'login-form.tsx')
+    await writeFile(path, 'export const form = 1\n')
+    const preview = harness.addTextPreview(path, 2)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(selected.mode, 'living-book')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(
+      harness.groups.filter((group) => group.tabs.includes(preview)).length,
+      1,
+    )
+    assert.equal(preview.isPreview, false)
+    assert.equal(preview.isDirty, false)
+    assert.equal(await readFile(path, 'utf8'), 'export const form = 1\n')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a preview tab the editor API cannot pin (the Welcome page) staying untouched, and the learner or agent being told which tab it is and what to do; fails_when=the refusal reads "A destination group contains a foreign preview" without the tab's name, or the selection moves panes over that tab; why_new=Cycle 0044 0036-N02 (the refusal named neither the tab nor one remedy); seam=workspace harness with the fake editor
+test('a presentation selection refused for a preview tab that cannot be pinned names that tab and the step that keeps it', async () => {
+  // Arrange: the editor's Welcome page is an unpinned preview tab beside the Application pane.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const welcome = harness.addOpaqueTab('Welcome', 1)
+    welcome.isPreview = true
+    const state = harness.reader.presentationState(),
+      commands = [...harness.commands],
+      reveals = harness.panelReveals()
+    // Act / Assert
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'living-book',
+        action: 'select',
+      }),
+      {
+        code: 'PRESENTATION_UNAVAILABLE',
+        message:
+          'The preview tab "Welcome" would be replaced when the Codebook panes move, and Codebook cannot keep it open itself. Double-click its tab title to keep it open, then change the presentation again.',
+      },
+    )
+    assert.equal(welcome.isPreview, true)
+    assert.equal(
+      harness.groups.find((group) => group.viewColumn === 1)!.tabs[0],
+      welcome,
+    )
+    assert.deepEqual(harness.commands, commands)
+    assert.deepEqual(harness.panelReveals(), reveals)
+    assert.equal(harness.reader.presentationState().mode, 'study-workspace')
+    assert.equal(harness.presentationPreferences.size, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const reader of ['closed', 'open'] as const)
+  // Value: protects=the first presentation selection answering a confirmed layout while the learner's own file is the focused tab of the source column; fails_when=the focus given back after the placement fronts the learner's file over the captured source, so the answer reads layoutConfirmed false ("The current captured source is not ready in its native pane") until a second call; why_new=Cycle 0044 0037-I3 (the existing selection tests keep the learner's draft in another column); seam=workspace harness with the fake editor
+  test(`the first presentation selection on ${reader === 'closed' ? 'a closed' : 'an open'} reader is confirmed when the learner’s focused file is in the source column, and that file stays open behind the captured source`, async () => {
+    // Arrange: the learner is typing in a file of the second column, where Study workspace shows the captured source.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    try {
+      if (reader === 'open') await harness.reader.open()
+      else await harness.reader.attach(harness.service)
+      const draft = harness.focusMutableDraft('login-form.tsx', 2)
+      const state = harness.reader.presentationState()
+      // Act
+      const selected = await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      // Assert
+      const sourceGroup = harness.groups.find(
+        (group) => group.viewColumn === 2,
+      )!
+      assert.equal(selected.state, 'open')
+      assert.equal(selected.layoutConfirmed, true)
+      assert.equal(selected.reason, undefined)
+      assert.equal(selected.panes.appColumn, 1)
+      assert.equal(selected.panes.sourceColumn, 2)
+      assert.equal(selected.panes.contextColumn, 3)
+      assert.match(
+        String(Reflect.get(sourceGroup.activeTab!.input, 'uri')),
+        /^codebook-source:\/\//,
+      )
+      assert.equal(sourceGroup.tabs.includes(draft.tab), true)
+      assert.equal(draft.tab.isDirty, true)
+      assert.equal(draft.document.getText(), 'Original learner draft.\n')
+      // The keyboard focus stays in the learner's group, on the captured source, not on a Codebook pane.
+      assert.equal(harness.focusedPanel(), undefined)
+    } finally {
+      await harness.close()
+    }
+  })
 
 test('restoring layout during a late replay image retains the current frame and lets the requested seek finish', async () => {
   // Arrange
