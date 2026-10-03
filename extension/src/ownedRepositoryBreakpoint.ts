@@ -232,6 +232,12 @@ export class OwnedRepositoryBreakpoint {
       : undefined
   }
 
+  /** Gives {@link onResponse} the receipt's `movedTo` entry for an acknowledged reply; the key is absent unless the breakpoint moved, so every other receipt keeps its shape. @example this.movedPlaceOf({ verified: true, line: 20, column: 5 }) // {} for an owner declared on line 20 */
+  private movedPlaceOf(binding: unknown): { movedTo?: VerifiedPlace } {
+    const movedTo = this.movedPlace(binding)
+    return movedTo ? { movedTo } : {}
+  }
+
   /** Accepts only a successful matching setBreakpoints response on the declared line, or on a later line the owner's rule accepts, at whichever column the adapter bound unless the owner asked for the declared column; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
   onResponse(
     session: vscode.DebugSession,
@@ -282,17 +288,14 @@ export class OwnedRepositoryBreakpoint {
               : null,
           },
         )}`
-      } else {
-        const movedTo = this.movedPlace(binding)
+      } else
         registration.receipt = {
           sessionId: session.id,
           requestSequence: response.request_seq,
           breakpointId: binding.id,
           status: binding.verified ? 'bound' : 'pending',
-          // The key is absent unless the breakpoint moved, so every other receipt keeps its shape.
-          ...(movedTo && { movedTo }),
+          ...this.movedPlaceOf(binding),
         }
-      }
     }
     const retirement = this.retirement
     if (
