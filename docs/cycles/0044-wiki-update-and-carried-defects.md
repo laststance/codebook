@@ -309,6 +309,12 @@ Merged from `codex/cycle-0044-nf`; the per-row causes, tests and red proofs are 
 | A learner's tab hides the Application pane after a cold open | not fixed | A fix contradicts an existing test of the focus return to the learner's file; it needs the owner's choice between "focus returns to the learner's file" and "Application pane in front". Next cycle. |
 | No control leads from a paused live run to its Recording | not fixed | It needs a new control. Next cycle. |
 
+### Native check N13: Part 2 rows in Cursor, 2026-10-04
+
+Delegated agent, Cursor 3.23.12 for Linux, candidate 3, one chat request (Composer 2.5, Fast off), otherwise the driver; evidence in `/home/murakami/codebook-qa/n13p2c/`. PASS: 0041-N10-4 (typed `/codebook` is offered in the slash list, the skill is attached and the first tool call is `codebook_status`; the agent then answered from source and started no live run), 0033-N2c, R19, AC-ENTRY-1, 0031-V1, 0032-N1c / 0033-N2d, 0033-L1. PARTIAL: 0031-U4 (focus stays in the summary view). FAIL on candidate 3, as in VS Code: 0038-N7-e, 0039-N8-b / 0040-N9-img (fixed since in `f29acca`; native re-run pending).
+
+New findings in Cursor: the **Show Variables** button does nothing and leaves "Error: command 'workbench.debug.variablesView.focus' not found" (Cursor 3.23.12 has no such command; this reopens row 0031-U1 for Cursor and is fixed before the cycle closes); "Arrange Study Workspace" and "Open Study Workspace" did not repair the collapsed Application group; one first click on the transport did not act in six; opening a recording while another window has the desktop focus fails with a reason only the playback resource shows; the image blanks for about 0.6 s at 99.90 s during Play; `/tmp/codebook-browser-*` profile folders stay after runs.
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
