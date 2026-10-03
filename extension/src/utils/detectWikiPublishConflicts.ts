@@ -3,6 +3,8 @@ import { basename, dirname, join } from 'node:path'
 
 import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
+import { systemErrorCode } from './systemErrorCode'
+
 /** Lists regular files below a directory as `/`-separated relative paths; links and special files are skipped like the publisher does. */
 async function listRegularFiles(
   directory: string,
@@ -79,12 +81,22 @@ export async function detectWikiPublishConflicts(
   for (const name of await readdir(parent)) {
     if (!name.startsWith(stagePrefix)) continue
     const stageDirectory = join(parent, name)
-    if ((await stat(stageDirectory)).mtimeMs < notBeforeMs) continue
+    // A candidate that vanished between the listing and this look is no finding.
+    const stageStat = await stat(stageDirectory).catch(() => undefined)
+    if (!stageStat || stageStat.mtimeMs < notBeforeMs) continue
     const owned = await readOwnedPaths(join(stageDirectory, WIKI_MANIFEST_FILE))
     if (owned) candidates.push(owned)
   }
   if (!candidates.length) return []
-  const manual = (await listRegularFiles(outputDirectory)).filter(
+  // An output folder that is being swapped right now cannot be listed; that is no finding this look.
+  const outputFiles = await listRegularFiles(outputDirectory).catch(
+    (error: unknown) => {
+      if (systemErrorCode(error) === 'ENOENT') return undefined
+      throw error
+    },
+  )
+  if (!outputFiles) return []
+  const manual = outputFiles.filter(
     (path) =>
       path !== WIKI_MANIFEST_FILE &&
       path !== WIKI_PUBLICATION_RECEIPT_FILE &&

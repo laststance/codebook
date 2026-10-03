@@ -33,7 +33,7 @@ function sleepUntilAborted(
  * @param options.startToken - Publish token ({@link readWikiPublishToken}) before the update; undefined when the manifest was unreadable.
  * @param options.readToken - Reads the publish token now; undefined while the manifest is missing or mid-replacement.
  * @param options.readPublished - Reads what the caller needs from the newly published manifest; undefined while it is invalid, which keeps the watch going.
- * @param options.findBlockingFiles - Names learner-owned files that make the publisher refuse the candidate; optional.
+ * @param options.findBlockingFiles - Names learner-owned files that make the publisher refuse the candidate; optional. Its answer counts only when the publish token is still the same after it; a rejection is "no finding this look".
  * @param options.signal - Aborts the watch (learner cancel, extension shutdown).
  * @param options.timeoutMs - Bound on the whole watch.
  * @param options.pollMs - Delay between looks.
@@ -75,8 +75,18 @@ export async function waitForWikiPublish<Published>(options: {
         return { outcome: 'published', token, published }
     } else {
       // A refused candidate never publishes, so waiting out the bound would hide the reason.
-      const blocking = (await options.findBlockingFiles?.()) ?? []
-      if (blocking.length) return { outcome: 'blocked', paths: blocking }
+      let blocking: string[] = []
+      try {
+        blocking = (await options.findBlockingFiles?.()) ?? []
+      } catch {
+        // A look that failed (a folder vanished under it) found nothing this time; it never ends the run.
+      }
+      if (blocking.length) {
+        // A publish that landed while the probe ran makes its new pages look like learner files in the way.
+        if ((await options.readToken()) === token)
+          return { outcome: 'blocked', paths: blocking }
+        continue
+      }
     }
     if (now() >= deadline) return { outcome: 'timed-out' }
     await sleep(options.pollMs, options.signal)

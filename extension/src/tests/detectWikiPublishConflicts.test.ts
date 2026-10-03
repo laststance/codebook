@@ -4,6 +4,7 @@ import {
   mkdtemp,
   realpath,
   rm,
+  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -153,5 +154,22 @@ test('a Wiki folder without a readable manifest reports no conflict', async () =
     assert.deepEqual(conflicts, [])
   } finally {
     await rm(parent, { recursive: true, force: true })
+  }
+})
+
+test('a candidate folder that vanished before it could be read is no finding, not an error', async () => {
+  // Arrange
+  const wiki = await publishedWiki()
+  await writeFile(join(wiki.output, 'pages', 'overview.html'), 'mine')
+  // The name is still listed, but nothing is behind it any more.
+  await symlink(join(wiki.parent, 'gone'), `${wiki.output}.stage-gone`)
+  try {
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.output, Date.now())
+
+    // Assert
+    assert.deepEqual(conflicts, [])
+  } finally {
+    await wiki.cleanup()
   }
 })

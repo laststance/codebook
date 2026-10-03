@@ -214,3 +214,63 @@ test('a learner file that blocks the publisher ends the watch as blocked with it
   })
   assert.equal(clock.now(), 0)
 })
+
+test('a publish that lands while the conflict probe runs ends the watch as published, not as a conflict over its new pages', async () => {
+  // Arrange
+  const clock = manualClock()
+  // The first look reads the old site; the swap happens before the probe has listed the folder.
+  const tokens = ['old@1', 'new@2', 'new@2']
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => tokens.shift(),
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    findBlockingFiles: async () => ['pages/new.html'],
+    signal: new AbortController().signal,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+})
+
+test('a conflict probe that fails because a folder vanished does not end the watch', async () => {
+  // Arrange
+  const clock = manualClock()
+  const tokens = ['old@1', 'old@1', 'new@2']
+  let probes = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => tokens.shift(),
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    findBlockingFiles: async () => {
+      probes += 1
+      throw Object.assign(
+        new Error("ENOENT: no such file or directory, scandir '/repo/wiki'"),
+        { code: 'ENOENT' },
+      )
+    },
+    signal: new AbortController().signal,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.equal(probes, 2)
+  assert.equal(clock.now(), 4_000)
+})
