@@ -9114,10 +9114,7 @@ export class StudyWorkspace {
    * @returns Whether the capture was dropped; its history receipt is forgotten with it.
    * @example if (this.discardsCapture(id, record)) return
    */
-  private discardsCapture(
-    studyId: string,
-    record: Parameters<StudyService['beginHistory']>[0],
-  ): boolean {
+  private discardsCapture(studyId: string, record: StudyRecord): boolean {
     if (this.movingStudyId() !== studyId && !record.historyExcluded)
       return false
     this.historyReceipts.delete(studyId)
@@ -9423,6 +9420,12 @@ export class StudyWorkspace {
               recursive: true,
               useTrash: true,
             }),
+          ).then(
+            () => this.rememberTrashWorks(true),
+            (error: unknown) => {
+              this.rememberTrashWorks(false)
+              throw error
+            },
           ),
         evidenceDirectory,
       )
@@ -9431,6 +9434,11 @@ export class StudyWorkspace {
     return service && record
       ? service.withEvidenceHeld(record, remove)
       : remove()
+  }
+
+  /** Tells the service whether this editor's Trash took the last path a removal gave it, so a full-library refusal names a removal only while one can work here. @example this.rememberTrashWorks(false) */
+  private rememberTrashWorks(works: boolean): void {
+    if (this.service) this.service.isStudyRemovalAvailable = works
   }
 
   /** Waits for this window's writes of a study that were accepted before its removal was confirmed, so they settle before the first move: a checkpoint write, a Save learning replay and a playback position save. @example await this.settleStudyWrites(studyId) */
@@ -9463,7 +9471,7 @@ export class StudyWorkspace {
   /** Excludes this window's run of a removed study from history, so the service stops reporting saved material for it and stops serving its evidence. @example this.excludeRemovedRun(studyId) */
   private excludeRemovedRun(studyId: string): void {
     const record = this.recordOfStudy(studyId)
-    if (record) this.service?.excludeHistory(record, 'removed-by-learner')
+    if (record) this.service?.excludeHistory(record)
   }
 
   /** Makes this window forget a study of which something went to the Trash: it is never written again, its run is excluded from history, and the list is read again. @example await this.forgetRemovedStudy(studyId) */

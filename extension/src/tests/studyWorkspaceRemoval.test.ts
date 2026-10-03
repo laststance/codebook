@@ -32,7 +32,7 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy'
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
 const FULL_LIBRARY_REFUSAL =
-  'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Existing learning was kept.'
+  'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, or delete a saved study from Saved studies in the Study workspace, before starting another run. Only the learner can do either; an editor agent cannot. Existing learning was kept.'
 
 /**
  * Saves one configured study into the reader's library as an earlier explained run left it, and lets the reader list it.
@@ -1356,7 +1356,7 @@ test('the refusal line stays after a removal that leaves the library full or the
     // Assert
     assert.equal(
       stillFull.studyRemoval?.text,
-      'Saved study moved to the Trash. The library now holds 1 of 1 saved studies.',
+      'Saved study moved to the Trash. The library now holds 1 of 1 saved studies and is still full; delete 1 more before another study can be saved.',
     )
     assert.equal(
       stillFull.runRefusal,
@@ -3822,6 +3822,29 @@ test('a removed study restored from the Trash and listed again by Retry storage 
         ? playback.studyId
         : undefined,
       harness.studyId,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=after the editor's Trash refused a removal, the next refusal of a full library tells the learner the remedy that works in this editor; fails_when=a refused removal leaves the refusal naming a deletion that cannot work here (0038-F9); why_new=the delete remedy was named whatever the Trash did; seam=the editor's Trash, stubbed at the vscode boundary, which refuses every move
+test('after the Trash refused a removal, a run refused on the full library names only the limit setting', async () => {
+  // Arrange: a library full at one study whose removal the Trash refuses.
+  const harness = await workspaceHarness()
+  try {
+    harness.setSavedStudyCapacity(1)
+    const earlier = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    harness.rejectTrashMoves(() => true)
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    await requestRemoval(harness, earlier.id)
+    // Act
+    const refused = await startRun(harness)
+    // Assert
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'failed')
+    assert.equal(
+      refused.record.error?.message,
+      'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the Trash in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.',
     )
   } finally {
     await harness.close()
