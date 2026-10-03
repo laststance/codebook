@@ -21,6 +21,7 @@ import type {
 import { describeWikiUpdate } from './utils/describeWikiUpdate'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { installShortcutHelp } from './utils/installShortcutHelp'
+import { installWikiUpdateStatus } from './utils/installWikiUpdateStatus'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
@@ -50,50 +51,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  var freshness = document.querySelector('[data-codebook-freshness]');
-  async function refreshFreshness() {
-    if (!freshness) return;
-    try {
-      var response = await fetch(prefix + 'api/freshness');
-      if (!response.ok) throw new Error('Freshness check unavailable');
-      var result = await response.json();
-      freshness.textContent = result.status === 'current' ? 'Wiki source current' : result.status === 'changed' ? 'Source changed — update LLM Wiki' : 'Wiki freshness unknown';
-      freshness.setAttribute('data-status', result.status);
-      if (result.reason) freshness.title = result.reason;
-    } catch { freshness.textContent = 'Wiki freshness unknown'; freshness.setAttribute('data-status', 'unknown'); }
-  }
-  var updateLink = document.querySelector('.wiki-update');
-  var updateStatus = document.createElement('p');
-  updateStatus.setAttribute('data-codebook-update-status', ''); updateStatus.setAttribute('role', 'status'); updateStatus.setAttribute('aria-live', 'polite'); updateStatus.hidden = true;
-  if (freshness && freshness.parentNode) freshness.parentNode.insertBefore(updateStatus, freshness.nextSibling);
-  var lastUpdateState = '';
-  var updatePoll = 0;
-  var describeUpdate = (${describeWikiUpdate.toString()});
-  async function refreshUpdateStatus() {
-    window.clearTimeout(updatePoll);
-    try {
-      var response = await fetch(prefix + 'api/update-status');
-      if (!response.ok) throw new Error('Update state unavailable');
-      var result = await response.json();
-      var described = describeUpdate(result, { formatTime: function (isoTimestamp) { return new Date(isoTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, pageLoadedAtMs: performance.timeOrigin });
-      var text = described ? described.lead + described.rest + ' ' + described.output : '';
-      updateStatus.textContent = text; updateStatus.hidden = !text;
-      updateStatus.setAttribute('data-state', result.state);
-      if (updateLink) { if (result.state === 'running') updateLink.setAttribute('aria-disabled', 'true'); else updateLink.removeAttribute('aria-disabled'); }
-      // A finished run changes what the freshness label should say.
-      if (lastUpdateState === 'running' && result.state !== 'running') void refreshFreshness();
-      lastUpdateState = result.state;
-      if (result.state === 'running') updatePoll = window.setTimeout(function () { void refreshUpdateStatus(); }, ${WIKI_UPDATE_STATUS_POLL_MS});
-    } catch { updateStatus.hidden = true; }
-  }
-  if (updateLink) updateLink.addEventListener('click', function (event) {
-    if (updateLink.getAttribute('aria-disabled') === 'true') { event.preventDefault(); return; }
-    // The editor asks for confirmation first; look for the run it starts.
-    window.clearTimeout(updatePoll); updatePoll = window.setTimeout(function () { void refreshUpdateStatus(); }, ${WIKI_UPDATE_STATUS_POLL_MS});
-  });
-  void refreshFreshness();
-  void refreshUpdateStatus();
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) { void refreshFreshness(); void refreshUpdateStatus(); } });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
