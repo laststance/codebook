@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -1902,6 +1903,37 @@ test('a Learning Outline click places the panes after closing the dead Applicati
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     assert.equal(harness.panelColumn('codebook.studyContext'), 3)
     assert.equal(harness.reader.inspect().view!.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a live entry from the Study layout in a window the learner has not split; fails_when=the arrangement counts the Study pane's group while the editor has not yet closed the disposed pane's tab, and reports "Existing editor groups were preserved" with the layout left unconfirmed; why_new=native run of 2026-10-04 (live entry of run 92c27590, a16-panel-scroll.png); seam=workspace harness closing a disposed panel's tab one task later
+test('a live entry from the Study layout arranges the application above the source when the editor closes the retired Study pane a moment after its disposal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    await harness.reader.open()
+    const groupsOfStudyLayout = harness.groups.length
+    harness.closeDisposedPanelTabsLater()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    assert.equal(groupsOfStudyLayout, 3)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.groups.length, 2)
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
   } finally {
     await harness.close()
   }

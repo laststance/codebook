@@ -131,6 +131,7 @@ import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import {
   editorLayoutSchema,
   isProportionalEditorLayout,
@@ -529,6 +530,11 @@ export class StudyWorkspace {
     openRequest: PaneOpenRequest['openRequest']
   }[] = []
   private rendering: Promise<void> = Promise.resolve()
+  /** The saved study the learner chose while the editor area was hidden (a maximized bottom panel): its panes are shown once the area is back, so the choice itself leaves the panel as it is. `arrange` is set when a live or summary composition was up, which the study replaces through {@link open}. */
+  private studyAwaitingEditorArea?: {
+    selectionRevision: number
+    arrange: boolean
+  }
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
   private lastActiveRegion: 'app' | 'context' | 'source' = 'context'
@@ -693,6 +699,8 @@ export class StudyWorkspace {
     if (!state.layoutConfirmed || this.presentationTransition || !receipt)
       return state
     const layout = await this.readPassivePresentationLayout()
+    // A hidden editor area (the bottom panel is maximized) reports its groups at their minimum heights: nothing was rearranged, and the editor gives the groups their sizes back with the area.
+    if (isCollapsedEditorLayout(layout)) return this.presentationState()
     if (
       !this.presentationTransition &&
       state.presentationId === this.presentationId &&
@@ -4563,6 +4571,7 @@ export class StudyWorkspace {
     this.revision++
     this.lifetime++
     this.pendingHistory = undefined
+    this.studyAwaitingEditorArea = undefined
     this.lastRendered = undefined
     this.presentationTransition?.cancellation.abort(
       new Error('Presentation reader closed.'),
@@ -4877,7 +4886,9 @@ export class StudyWorkspace {
         !this.closing &&
         !this.recordingActive &&
         this.repositoryNavigation === undefined &&
-        !this.presentationTransition
+        !this.presentationTransition &&
+        // A saved study chosen with the editor area hidden is shown by showStudyAwaitingEditorArea once the area is back.
+        !this.studyAwaitsEditorArea()
       )
         await this.renderSelection(true, false, signal)
     })()
@@ -4887,6 +4898,7 @@ export class StudyWorkspace {
     } finally {
       if (this.refreshing === attempt) this.refreshing = undefined
     }
+    await this.showStudyAwaitingEditorArea(signal)
     const current = this.currentRecord()
     // Ordinary chat may never request source reveal; enter live once per run after releasing the refresh lock.
     if (
@@ -5332,7 +5344,16 @@ export class StudyWorkspace {
     signal.throwIfAborted()
     this.recordingActive = true
     this.pendingHistory = undefined
-    this.selection = { ...this.selection, studyId, follow: false }
+    // A study this window still holds (a run of this session) is selected with its own item: paired with the item shown before, every reader update until the recording is read failed with "Selected item belongs to another configured article.", and that line stayed.
+    const heldStudy =
+      studyId === this.activeArchive?.id
+        ? this.activeArchive
+        : this.selectedArchive?.id === studyId
+          ? this.selectedArchive
+          : undefined
+    this.selection = heldStudy
+      ? selectStudy(heldStudy, this.selection)
+      : { ...this.selection, studyId, follow: false }
     this.showRecordingLoadingOnLiveViewport()
     const index = await this.recordings!.read(studyId)
     signal.throwIfAborted()
@@ -6355,6 +6376,8 @@ export class StudyWorkspace {
       this.pendingHistory !== undefined
     )
       return Promise.resolve()
+    // An explicit entry, selection or placement shows the panes now; a study that waited for the editor area waits no longer.
+    this.studyAwaitingEditorArea = undefined
     const lifetime = this.lifetime
     await this.refreshCitations()
     // Citation I/O can outlive Close or a later Open; it cannot create a new rendering revision afterward.
@@ -6491,12 +6514,18 @@ export class StudyWorkspace {
           group?.viewColumn ??
           STUDY_PRESENTATIONS[this.presentationMode].sourceColumn
         const position = new vscode.Position(source.line - 1, 0)
+        const confirmedLayout = await this.confirmedLayoutBehindHiddenArea(
+          Boolean(placement),
+        )
+        if (this.closing || lifetime !== this.lifetime) return
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
           preserveFocus,
           preview: false,
           selection: new vscode.Range(position, position),
         })
+        if (this.closing || lifetime !== this.lifetime) return
+        if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
         this.sourceGroup =
@@ -6586,6 +6615,53 @@ export class StudyWorkspace {
       this.report('reader', error)
     })
     return this.rendering
+  }
+
+  /**
+   * Finds the confirmed Study layout that a source reveal is about to distort because the editor area is hidden; called by {@link renderSelection} just before it shows the source.
+   *
+   * A recorded seek, a Recording press or an agent's selection made while the bottom panel is maximized still has to show its
+   * source. The editor then brings the area back and, because the revealed group sat at its minimum height, expands that group:
+   * the Application group stays a strip of its tab row and the Study pane shrinks to its minimum width, with the layout left unconfirmed.
+   *
+   * @param isPlacement - Whether a presentation placement or an arrangement owns the layout; it measures and confirms the grid itself.
+   * @returns The confirmed layout receipt to apply again after the reveal, or `undefined` when the area is visible or no confirmed Study layout exists.
+   * @example const confirmedLayout = await this.confirmedLayoutBehindHiddenArea(Boolean(placement))
+   */
+  private async confirmedLayoutBehindHiddenArea(
+    isPlacement: boolean,
+  ): Promise<StudyWorkspace['layoutReceipt']> {
+    const receipt = this.layoutReceipt
+    if (
+      isPlacement ||
+      this.arranging ||
+      !this.presentationConfirmed ||
+      receipt?.mode !== 'study'
+    )
+      return undefined
+    return (await this.editorAreaHidden()) ? receipt : undefined
+  }
+
+  /**
+   * Gives the Study panes the sizes of the confirmed layout back after a source reveal into a hidden editor area; called by {@link renderSelection}.
+   * The measured grid is applied as it was confirmed, as Restore does after Enlarge; panes or groups that changed meanwhile are left alone.
+   * @param receipt - The layout that was confirmed before the reveal.
+   * @example if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
+   */
+  private async reapplyConfirmedLayout(
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+  ): Promise<void> {
+    if (
+      receipt !== this.layoutReceipt ||
+      this.arranging ||
+      !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) ||
+      !this.sameStudyPanePositions(receipt.panes)
+    )
+      return
+    await vscode.commands.executeCommand(
+      'vscode.setEditorLayout',
+      JSON.parse(receipt.signature),
+    )
   }
 
   /** Confirms the selected immutable source reached an active native tab before control or MCP reveal succeeds. @example this.sourceReady() */
@@ -8331,12 +8407,23 @@ export class StudyWorkspace {
           return
         }
       }
-      const grid = await this.readMainEditorGrid(
+      let grid = await this.readMainEditorGrid(
         signal,
         assertCurrent,
         focus?.acquireSourceFocus,
         beforeScopeFocus,
       )
+      // The editor closes a disposed pane's tab a moment after dispose(); a grid it measured before that still counts the retired Study group as occupied.
+      if (retiredContextGroup && this.hasRetiredStudyPaneTab()) {
+        await this.retiredStudyPaneClosed(signal)
+        assertCurrent()
+        grid = await this.readMainEditorGrid(
+          signal,
+          assertCurrent,
+          focus?.acquireSourceFocus,
+          beforeScopeFocus,
+        )
+      }
       const groupCount = this.studyGroupCount()
       // Only the just-retired, now-empty owned summary group can disappear during live entry.
       const canRetireContext =
@@ -8416,6 +8503,49 @@ export class StudyWorkspace {
       }
       this.errors.delete('layout')
       this.publish()
+    })
+  }
+
+  /**
+   * Says whether the tab of a Study pane this reader disposed is still in the editor's tab model; called by {@link arrange} on a live or recording entry.
+   * This host has one Study pane at most, so while it holds none, a Study pane tab that is not an earlier host's leftover is the disposed one.
+   * @returns `true` until the editor has closed the disposed pane's tab.
+   * @example if (retiredContextGroup && this.hasRetiredStudyPaneTab()) await this.retiredStudyPaneClosed(signal)
+   */
+  private hasRetiredStudyPaneTab(): boolean {
+    return (
+      !this.contextPanel &&
+      vscode.window.tabGroups.all.some((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof vscode.TabInputWebview &&
+            isCodebookPaneViewType(
+              tab.input.viewType,
+              'codebook.studyContext',
+            ) &&
+            !this.inheritedPaneTabs.has(tab),
+        ),
+      )
+    )
+  }
+
+  /**
+   * Waits until the editor has closed the tab of the Study pane a live or recording entry disposed, so {@link arrange} measures the groups that remain.
+   * VS Code closes a disposed editor from a worker that runs after the calls already queued for its window, and then removes the group the tab left empty; a grid read answered before that named three groups in a window that holds only Codebook's panes ("Existing editor groups were preserved").
+   * @param signal - The entry's cancellation.
+   * @returns Once the tab is gone, or after {@link PRESENTATION_READY_TIMEOUT_MS}: the arrangement then judges the groups as they are.
+   * @throws The signal's reason once it aborts.
+   * @example await this.retiredStudyPaneClosed(signal)
+   */
+  private async retiredStudyPaneClosed(signal?: AbortSignal): Promise<void> {
+    await waitUntil(
+      () => !this.hasRetiredStudyPaneTab(),
+      'the retired Study pane to close',
+      PRESENTATION_READY_TIMEOUT_MS,
+      signal,
+    ).catch(() => {
+      // A pane the editor keeps is no reason to end the entry; only the caller's own cancellation is.
+      signal?.throwIfAborted()
     })
   }
 
@@ -10131,12 +10261,79 @@ export class StudyWorkspace {
     // The archive is held here, not only by the caller: a removal that settled since the caller read it may have dropped what was held.
     this.selectedArchive = archive
     this.selectArchive(archive)
+    this.studyAwaitingEditorArea = undefined
+    // With the bottom panel maximized the editor area is hidden; showing the study's panes now would bring the area back and take the panel, where the learner is choosing, out of its maximized state.
+    if (this.opened && !this.closing && (await this.editorAreaHidden())) {
+      this.studyAwaitingEditorArea = {
+        selectionRevision: this.readerSelectionRevision,
+        arrange: this.needsReaderArrangement(),
+      }
+      this.errors.delete('reading')
+      this.loading = false
+      this.publish()
+      await this.saveSelection()
+      return
+    }
     // A live or summary composition is arranged for what it showed; a saved study needs the reader's own arrangement.
     if (this.needsReaderArrangement()) await this.open()
     // The reason an earlier study could not be arranged or read does not outlive the study that is shown now.
     this.errors.delete('reading')
     await render()
     await this.saveSelection()
+  }
+
+  /**
+   * Says whether the editor area is hidden, as it is while the bottom panel is maximized; called before the reader shows or reveals a pane.
+   * @returns `true` when the editor reports its stacked groups without height (see {@link isCollapsedEditorLayout}); `false` for a visible area, a layout without stacked groups, or a host that reports no pixels.
+   * @example if (await this.editorAreaHidden()) return
+   */
+  private async editorAreaHidden(): Promise<boolean> {
+    return isCollapsedEditorLayout(
+      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+    )
+  }
+
+  /** Says whether the selected saved study still waits for the editor area the learner hid before choosing it; the reader's timer then leaves the panes as they are, while an explicit entry, selection or placement shows them. @example if (!this.studyAwaitsEditorArea()) await this.renderSelection(true, false, signal) */
+  private studyAwaitsEditorArea(): boolean {
+    return (
+      !this.recordingActive &&
+      this.studyAwaitingEditorArea?.selectionRevision ===
+        this.readerSelectionRevision
+    )
+  }
+
+  /**
+   * Shows the saved study that was chosen while the editor area was hidden, once the area is back; called by every {@link refresh} after it released its lock.
+   * A study that is no longer the selection, or a recording opened meanwhile, ends the wait without showing anything.
+   * @param signal - The refresh's cancellation.
+   * @example await this.showStudyAwaitingEditorArea(signal)
+   */
+  private async showStudyAwaitingEditorArea(
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const awaited = this.studyAwaitingEditorArea
+    if (!awaited) return
+    if (!this.studyAwaitsEditorArea() || !this.opened || this.closing) {
+      this.studyAwaitingEditorArea = undefined
+      return
+    }
+    if (
+      this.presentationTransition ||
+      this.repositoryNavigation !== undefined ||
+      (await this.editorAreaHidden())
+    )
+      return
+    // A newer choice or a close during the read owns the reader now.
+    if (this.studyAwaitingEditorArea !== awaited || this.closing) return
+    this.studyAwaitingEditorArea = undefined
+    try {
+      if (awaited.arrange && this.needsReaderArrangement())
+        await this.open(signal)
+      await this.renderSelection(true, true, signal)
+    } catch (error) {
+      signal?.throwIfAborted()
+      this.report('reading', error)
+    }
   }
 
   /** Says whether an open reader still shows a live or summary composition, which a saved study replaces through {@link open}. @example if (this.needsReaderArrangement()) await this.open() */

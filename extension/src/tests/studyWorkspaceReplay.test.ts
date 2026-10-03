@@ -14,6 +14,7 @@ import {
   workspaceHarness,
   recordedReaderHarness,
   configuredWorkspaceHarness,
+  readerSeams,
 } from './studyWorkspaceHarness'
 import {
   advanceClock,
@@ -3878,6 +3879,60 @@ test('a replay control refused on a closed reader is no longer shown in the Lear
     assert.equal(harness.runtimes.at(-1)!.dispatches, 1)
     assert.equal(panelErrors(harness).includes(CLOSED_READER_REFUSAL), false)
   } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the summary and transport of a recording of this session's own run showing no foreign error line; fails_when=the recording's study is selected before its item, so a reader update during the load pairs the study with the item shown before and reports "Selected item belongs to another configured article.", which nothing retires; why_new=native run of 2026-10-04 (the line stayed for as long as the recording was open, r-l1.json); seam=RecordingStore.read held, reader seams
+test('opening the recording of this session’s own run while no study is selected shows no "another configured article" error during or after the load', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true),
+    seams = readerSeams(harness),
+    read = RecordingStore.prototype.read
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let releaseRead = (): void => {},
+    readEntered = (): void => {}
+  const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    }),
+    readStarted = new Promise<void>((resolve) => {
+      readEntered = resolve
+    })
+  RecordingStore.prototype.read = async function (
+    this: RecordingStore,
+    studyId,
+  ) {
+    readEntered()
+    await readHeld
+    return read.call(this, studyId)
+  }
+  try {
+    seams.selectNoStudy()
+    await harness.reader.openRecording(harness.studyId)
+    await readStarted
+
+    // Act: the reader updates its panes while the recording is still being read, as its timer and its panes' messages do.
+    const updateFailures: string[] = []
+    try {
+      seams.reportPlaybackChange()
+    } catch (error) {
+      updateFailures.push(String(error))
+    }
+    await seams.refresh().catch((error: unknown) => {
+      updateFailures.push(String(error))
+    })
+    const linesDuringLoad = seams.errorLines()
+    releaseRead()
+    await harness.controller.settle()
+
+    // Assert
+    assert.deepEqual(updateFailures, [])
+    assert.deepEqual(linesDuringLoad, [])
+    assert.deepEqual(seams.errorLines(), [])
+    assert.equal(harness.controller.state().readiness, 'ready')
+  } finally {
+    RecordingStore.prototype.read = read
+    releaseRead()
     await harness.close()
   }
 })

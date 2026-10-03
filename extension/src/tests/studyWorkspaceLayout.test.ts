@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -14,7 +15,9 @@ import {
   openRetainedStudy,
   recordedReaderHarness,
   articleRecordingLayoutHarness,
+  readerSeams,
 } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
   advanceClock,
   advanceClockUntilSettled,
@@ -3572,6 +3575,135 @@ test('an evidence navigation cancelled while its frame paints ends with the canc
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
     neverPainted.release()
+    await harness.close()
+  }
+})
+
+/**
+ * Opens the Study layout on one saved study and saves a second one, so a test can choose it in Saved studies.
+ * @returns The reader harness with the first study shown and the second study, which the Saved studies list holds.
+ * @example const { harness, second } = await studyLayoutWithSecondSavedStudy()
+ */
+async function studyLayoutWithSecondSavedStudy() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  await openRetainedStudy(harness)
+  const library = await harness.reader.learningStorage(),
+    second = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of second.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      second.runId,
+      runId,
+    )
+  second.workspaceKey = library.workspaceKey
+  second.runId = runId
+  second.id = `${second.instanceId}_${runId}`
+  second.savedAt = '2026-09-20T00:00:01.000Z'
+  await library.saveStudy(second)
+  // Retry storage / refresh reloads the catalog the reader shows.
+  await harness.reader.action('retry')
+  return { harness, second }
+}
+
+// Value: protects=the maximized bottom panel of a learner who works through Saved studies (0038-N7-e); fails_when=a choice shows the study's source at once, which brings the hidden editor area back and takes the panel out of its maximized state, so the Saved studies section leaves the view; why_new=native run of 2026-10-04 (two choices, c05-chosen-7s.png, c08-chosen2.png); seam=workspace harness with a maximized bottom panel
+test('choosing another saved study while the bottom panel is maximized leaves the panel maximized and shows the chosen study in it', async () => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+
+    // Act: the learner chooses the other entry in the panel's Saved studies list, and the reader's timer runs once.
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    await readerSeams(harness).refresh()
+
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(harness.isPanelMaximized(), true)
+    assert.equal(view.model.selection.studyId, second.id)
+    assert.equal(view.loading, false)
+    assert.equal(view.errors.join(' | '), '')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height and the confirmed layout after a Saved studies choice made with the bottom panel maximized (0039-N8-b / 0040-N9-img); fails_when=the choice reveals the source into the hidden editor area, where the editor expands the source group: the Application group stays a 70 px strip and the layout is unconfirmed after the panel is restored; why_new=native run of 2026-10-04 (c08-chosen2.png, c09-crop.png: strip, layoutConfirmed false); seam=workspace harness with a maximized bottom panel
+test('after a saved study was chosen with the bottom panel maximized, restoring the panel shows that study with the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    const applicationHeightBefore = harness.groupHeightPx(1)
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const confirmedWhileMaximized = (
+      await harness.reader.readPresentationState()
+    ).layoutConfirmed
+
+    // Act: the learner restores the panel, and the reader's timer runs once.
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedWhileMaximized, true)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+    assert.equal(harness.reader.inspect().sourceUri!.includes(second.id), true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized (0039-N8-b / 0040-N9-img, second occurrence); fails_when=the seek reveals its source into the hidden editor area, the editor expands the source group and brings the area back, and nothing gives the Application group its height back: it stays a 70 px strip with the layout unconfirmed until Restore; why_new=native run of 2026-10-04 (u18-max-seek.png, repaired only by Restore, u25-restored.png); seam=workspace harness with a maximized bottom panel
+test('a recorded seek made while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const applicationHeightBefore = harness.groupHeightPx(1),
+      confirmedBefore = (await harness.reader.readPresentationState())
+        .layoutConfirmed
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedBefore, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    // The editor itself brings the hidden editor area back for the recorded source.
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+  } finally {
     await harness.close()
   }
 })

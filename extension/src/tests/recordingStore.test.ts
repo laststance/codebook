@@ -558,3 +558,57 @@ test('the store keeps a recording’s writer only while it is being written: sea
     [[sealed.binding.studyId, 'finalized']],
   )
 })
+
+// Value: protects=the load phase of a Recording press on a paused live run's own recording (0035-O01); fails_when=opening an in-progress recording reads and hashes again every frame this session's writer just wrote, so the load grows by about 0.6 ms a frame (1.0 s at 130 s of film); why_new=native run of 2026-10-04 measured 1.2 s at 94 s and 1.5 to 1.6 s at 130 s; seam=RecordingStore.readFrame
+test('an in-progress recording of this session opens without reading back the frames its own writer wrote', async (context) => {
+  // Arrange
+  const { store, binding } = await recordingHarness(context),
+    writer = await store.start(binding, 0)
+  writer.frame({
+    bytes: png,
+    elapsedMs: 0,
+    kind: 'phase',
+    phase: 'paused-browser',
+  })
+  writer.frame({ bytes: png, elapsedMs: 100, kind: 'stream' })
+  await writer.flush()
+  const readFrame = context.mock.method(store, 'readFrame')
+
+  // Act
+  const index = await store.read(binding.studyId)
+
+  // Assert
+  assert.equal(readFrame.mock.callCount(), 0)
+  assert.equal(index.status, 'recording')
+  assert.deepEqual(
+    index.entries.map((entry) => [entry.type, entry.elapsedMs]),
+    [
+      ['frame', 0],
+      ['frame', 100],
+    ],
+  )
+  assert.equal(index.lastVerifiedMs, 100)
+})
+
+// Value: protects=the verified prefix of a recording another session left behind; fails_when=the frames of a recording this session did not write are trusted without their bytes being read; why_new=control for the own-writer shortcut of 0035-O01; seam=RecordingStore.readFrame
+test('a recording an earlier session left unfinished still has every frame read and hashed when it opens', async (context) => {
+  // Arrange
+  const { directory, store, binding } = await recordingHarness(context),
+    writer = await store.start(binding, 0)
+  writer.frame({
+    bytes: png,
+    elapsedMs: 0,
+    kind: 'phase',
+    phase: 'paused-browser',
+  })
+  await writer.flush()
+  const laterSession = new RecordingStore(directory, workspaceKey)
+  const readFrame = context.mock.method(laterSession, 'readFrame')
+
+  // Act
+  const index = await laterSession.read(binding.studyId)
+
+  // Assert
+  assert.equal(readFrame.mock.callCount(), 1)
+  assert.equal(index.entries.length, 1)
+})

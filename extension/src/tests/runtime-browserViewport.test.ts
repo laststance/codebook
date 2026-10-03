@@ -49,9 +49,12 @@ function viewportPanel() {
     disposal = new Set<() => void>()
   const posted = new Set<(message: Record<string, unknown>) => void>()
   let panelDisposals = 0
+  const reveals: { preserveFocus: boolean | undefined }[] = []
   const panel = {
     visible: true,
-    reveal(): void {
+    viewColumn: 1,
+    reveal(_column?: number, preserveFocus?: boolean): void {
+      reveals.push({ preserveFocus })
       panel.visible = true
       for (const callback of visibility) callback()
     },
@@ -96,6 +99,8 @@ function viewportPanel() {
   return {
     panel,
     messages,
+    /** How each reveal of the panel treated the keyboard focus, in order. */
+    reveals,
     disposals: () => panelDisposals,
     callbacks: () => ({
       receivers: [...receivers],
@@ -134,6 +139,9 @@ function viewportPanel() {
   }
 }
 
+/** Stands for the editor's `TabInputText` of the file the debugger opened at a pause; only its class identity is read. */
+class PausedFileTab {}
+
 /** Drives actual {@link BrowserViewport} through editor lifecycle boundaries without pretending to verify native paint. @example await viewportHarness('normal') */
 async function viewportHarness(
   scenario: Scenario,
@@ -141,6 +149,8 @@ async function viewportHarness(
   observer?: ViewportModule.ViewportRecordingObserver,
   mode: 'live' | 'recording' = 'live',
   renderer = viewportPanel(),
+  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. */
+  pausedFile?: { focusEditorOnBreak: boolean },
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -156,8 +166,29 @@ async function viewportHarness(
       require: (name: string) =>
         name === 'vscode'
           ? {
-              window: { createWebviewPanel: () => panel },
+              window: {
+                createWebviewPanel: () => panel,
+                state: { focused: true },
+                tabGroups: {
+                  activeTabGroup: {
+                    viewColumn: 1,
+                    activeTab: { input: new PausedFileTab() },
+                  },
+                },
+                activeTextEditor: { viewColumn: 1 },
+              },
               ViewColumn: { One: 1 },
+              TabInputText: PausedFileTab,
+              debug: {
+                activeStackItem: pausedFile
+                  ? { session: { id: 'live-next-server' }, threadId: 1 }
+                  : undefined,
+              },
+              workspace: {
+                getConfiguration: () => ({
+                  get: () => pausedFile?.focusEditorOnBreak,
+                }),
+              },
             }
           : nativeRequire(name),
     },
@@ -1763,3 +1794,58 @@ test('disposing the recording panel promptly rejects a hidden recorded gap witho
     renderer.viewport.close()
   }
 })
+
+// Value: protects=the keyboard focus after each captured pause of a live run (0037-F6); fails_when=the Application pane is revealed over the paused file the debugger focused while preserving focus, which hides the focused editor and leaves document.activeElement on body until a click; why_new=native run of 2026-10-04 (a57.focuslog.txt: body 5.5 s after each stop); seam=fake editor with a paused debug session
+test('the Application pane takes the keyboard focus when it is revealed over the file the debugger focused at a pause', async () => {
+  // Arrange: the debugger opened the paused file in the Application pane's group and focused it.
+  const harness = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    viewportPanel(),
+    { focusEditorOnBreak: true },
+  )
+  harness.hide()
+  const signal = new AbortController().signal
+
+  // Act
+  const revealed = harness.viewport.reveal(signal)
+  harness.ready('11111111-1111-1111-1111-111111111111')
+  await revealed
+
+  // Assert
+  assert.deepEqual(harness.reveals, [{ preserveFocus: false }])
+  harness.viewport.close()
+})
+
+for (const [situation, pausedFile] of [
+  ['no debug session is paused', undefined],
+  [
+    'the learner turned off debug.focusEditorOnBreak',
+    { focusEditorOnBreak: false },
+  ],
+] as const)
+  // Value: protects=the keyboard focus of a learner who types in the chat or another pane while the Application pane is brought back; fails_when=the Application pane takes the focus although the editor it covers was not focused by a pause; why_new=control for the 0037-F6 fix; seam=fake editor
+  test(`the Application pane leaves the keyboard focus where it is when it is revealed while ${situation}`, async () => {
+    // Arrange
+    const harness = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'live',
+      viewportPanel(),
+      pausedFile,
+    )
+    harness.hide()
+    const signal = new AbortController().signal
+
+    // Act
+    const revealed = harness.viewport.reveal(signal)
+    harness.ready('11111111-1111-1111-1111-111111111111')
+    await revealed
+
+    // Assert
+    assert.deepEqual(harness.reveals, [{ preserveFocus: true }])
+    harness.viewport.close()
+  })
