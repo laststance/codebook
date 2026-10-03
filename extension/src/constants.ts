@@ -577,9 +577,14 @@ export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
 /** Frames native Call Stack loads for a stop before the learner asks for more (VS Code: the top frame, then 19 more); it focuses the top frame when none of them has source. */
 export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
-/** Ceiling on one owned replay settle: the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}) plus one capture timeout each for retiring and starting the historical session; a stall before painting still ends here. A pending startup that the retirement waits for first and the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}) come on top, so the slowest healthy sequence can outlast this ceiling; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
+/** What one owned replay settle allows for work that has no bound of its own before painting: reading the recording and the recording renderer's handshake. */
+export const PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS = 2_000
+/** Ceiling on one owned replay settle, covering the slowest healthy sequence: a pending historical-session startup the retirement waits for, the retirement and the next startup (one capture timeout each), the inspection grace ({@link REPLAY_DEBUG_INSPECTION_GRACE_MS}), the recording load and renderer handshake ({@link PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS}) and the paint bound ({@link PRESENTATION_READY_TIMEOUT_MS}). A stall before painting still ends here; the settle then retires the pending frame it still owns and reports `PRESENTATION_UNAVAILABLE`, and the confirmed moment stays for the next reveal. */
 export const PRESENTATION_SETTLE_CEILING_MS =
-  PRESENTATION_READY_TIMEOUT_MS + 2 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS
+  PRESENTATION_READY_TIMEOUT_MS +
+  3 * REPLAY_DEBUG_CAPTURE_TIMEOUT_MS +
+  REPLAY_DEBUG_INSPECTION_GRACE_MS +
+  PRESENTATION_SETTLE_LOCAL_ALLOWANCE_MS
 export const NODE_REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 1_500
 export const NODE_REPLAY_DEBUG_MAX_FRAMES = 8
 export const NODE_REPLAY_DEBUG_MAX_VARIABLES = 64

@@ -15,6 +15,13 @@ import {
   recordedReaderHarness,
   configuredWorkspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClock,
+  advanceClockUntil,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 // Value: protects=a moment committed without native values names where to load them, and the hint leaves once they load; fails_when=the Study message never flags the moment, or keeps the hint after Run and Debug loads values until another seek; why_new=the soft inspection gate commits such moments; seam=TestReplayDebugger models the native load notification
 test('a replay moment whose recorded values Run and Debug has not loaded tells the learner where to load them until they load', async () => {
   // Arrange: Variables stays hidden, so native Run and Debug does not load the recorded values within the grace.
@@ -632,7 +639,7 @@ for (const initial of [
   { mainGroups: 1, separatePart: true, globalGroups: 2 },
   { mainGroups: 2, separatePart: true, globalGroups: 3 },
 ])
-  test(`failed initial pane reservation with ${initial.mainGroups} main panes and ${initial.separatePart ? 'a separate part' : 'one part'} cannot create Context before an explicit retry`, async () => {
+  test(`failed initial pane reservation with ${initial.mainGroups} main panes and ${initial.separatePart ? 'a separate part' : 'one part'} cannot create Context before an explicit retry`, async (context) => {
     // Arrange
     const harness = await workspaceHarness(false)
     harness.useNativeLayout({
@@ -646,12 +653,18 @@ for (const initial of [
     const original = harness.editorLayout()
     harness.failNextCommand('vscode.setEditorLayout')
     try {
-      // Act
-      await assert.rejects(
+      // Act: the layout waits pass on a faked clock.
+      enableFakeClock(context)
+      const refused = assert.rejects(
         harness.reader.open(),
         /could not reserve separate Codebook panes/,
       )
-      await harness.reader['refresh']()
+      await advanceClockUntilSettled(context, refused, 10_000)
+      await refused
+      const refreshing = harness.reader['refresh']()
+      await advanceClockUntilSettled(context, refreshing, 10_000)
+      await refreshing
+      resetFakeClock(context)
 
       // Assert
       assert.equal(
@@ -1997,15 +2010,16 @@ test(
       await neverPainted.started
 
       // Act
+      let stillClosing: ReturnType<typeof setTimeout> | undefined
       const outcome = await Promise.race([
         harness.reader.close().then(
           () => 'closed',
           (error: unknown) => String(error),
         ),
-        new Promise<string>((resolve) =>
-          setTimeout(() => resolve('still closing'), 7_000),
-        ),
-      ])
+        new Promise<string>((resolve) => {
+          stillClosing = setTimeout(() => resolve('still closing'), 7_000)
+        }),
+      ]).finally(() => clearTimeout(stillClosing))
 
       // Assert
       assert.equal(outcome, 'closed')
@@ -2036,15 +2050,16 @@ test(
       await stuckDebugger.started
 
       // Act
+      let stillClosing: ReturnType<typeof setTimeout> | undefined
       const outcome = await Promise.race([
         harness.reader.close().then(
           () => 'closed',
           (error: unknown) => String(error),
         ),
-        new Promise<string>((resolve) =>
-          setTimeout(() => resolve('still closing'), 7_000),
-        ),
-      ])
+        new Promise<string>((resolve) => {
+          stillClosing = setTimeout(() => resolve('still closing'), 7_000)
+        }),
+      ]).finally(() => clearTimeout(stillClosing))
 
       // Assert
       assert.equal(outcome, 'closed')
@@ -2097,13 +2112,16 @@ test(
       await saveStarted
 
       // Act
+      enableFakeClock(context)
       const closing = harness.reader.close().then(() => {
         order.push('closed')
       })
-      await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+      await advanceClock(context, 2_000)
       const whileStorageHeld = [...order]
       releaseSave()
+      await advanceClockUntilSettled(context, closing, 2_000)
       await closing
+      resetFakeClock(context)
 
       // Assert: the seek's save and the one close() queues when it hides the frame both finish before the reader is closed.
       assert.deepEqual(whileStorageHeld, [])
@@ -2471,7 +2489,7 @@ test('a recording opened again while its first recorded-application reveal is st
 test(
   'a recording opened again after an abandoned first reader entry that never returns reports busy after the presentation bound',
   { timeout: 30_000 },
-  async () => {
+  async (context) => {
     // Arrange
     const harness = await recordedReaderHarness(true, true)
     let releaseEntry = (): void => {}
@@ -2487,26 +2505,27 @@ test(
         expectedRevision: harness.controller.state().revision,
       })
 
-      // Act
-      const reopenedAt = performance.now()
+      // Act: the 5 s presentation bound passes on a faked clock.
+      enableFakeClock(context)
       await harness.reader.openRecording(harness.studyId)
-      await waitUntil(
+      await advanceClock(context, 4_750)
+      const readinessBeforeBound = harness.controller.state().readiness
+      const gaveUpAfterMs = await advanceClockUntil(
+        context,
         () => harness.controller.state().readiness === 'failed',
-        'the successor gives up on the abandoned entry',
-        10_000,
+        2_000,
       )
-      const waitedMs = performance.now() - reopenedAt
+      resetFakeClock(context)
 
       // Assert
+      assert.equal(readinessBeforeBound, 'loading')
+      assert.notEqual(gaveUpAfterMs, undefined)
       assert.match(
         harness.controller.state().reason ?? '',
         /Study workspace is opening/,
       )
-      assert.ok(
-        waitedMs >= 4_750 && waitedMs <= 6_000,
-        `waited ${Math.round(waitedMs)} ms`,
-      )
     } finally {
+      resetFakeClock(context)
       releaseEntry()
       await harness.close()
     }
