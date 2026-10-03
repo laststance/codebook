@@ -1409,7 +1409,10 @@ test('publication rejects an output containing the project even when its folder 
         outputDirectory: output,
         stageDirectory: stage,
       }),
-      /outside the project root itself/,
+      {
+        message:
+          'The Wiki output cannot be the project root or a folder that contains it. A folder inside the project, such as .codebook/wiki, is accepted.',
+      },
     )
     assert.equal(
       await readFile(join(root, 'source.ts'), 'utf8'),

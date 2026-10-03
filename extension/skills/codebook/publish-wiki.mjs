@@ -50,7 +50,8 @@ async function locations(projectRoot, outputDirectory, stageDirectory, createPar
   if (createParent) await mkdir(dirname(requested), { recursive: true });
   const output = join(await realpath(dirname(requested)), basename(requested));
   const within = relative(output, root);
-  if (!isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep)) throw new Error('The Wiki output must be outside the project root itself.');
+  // An output inside the project (the default .codebook/wiki) is accepted; only the project root itself, or a folder that contains it, is refused.
+  if (!isAbsolute(within) && within !== '..' && !within.startsWith('..' + sep)) throw new Error('The Wiki output cannot be the project root or a folder that contains it. A folder inside the project, such as .codebook/wiki, is accepted.');
   const stage = stageDirectory === undefined ? undefined : join(await realpath(dirname(resolve(stageDirectory))), basename(resolve(stageDirectory)));
   if (stage !== undefined && (dirname(stage) !== dirname(output) || stage === output)) throw new Error('The Wiki stage must be a distinct sibling of its output.');
   for (const path of [output, stage].filter(Boolean)) {
