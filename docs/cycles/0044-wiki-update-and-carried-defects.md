@@ -203,6 +203,48 @@ Remaining differences from region 3 of the approved PNG, by decision of the desi
 
 Full suite on the merged tree `3644cd5` (this branch with Groups 1 to 3 and both sides of Part 1): 2,236 of 2,236 reported, ten of them from compiled files of test sources this cycle deleted (`continuationReceipts`, `isBindingLineAccepted`) that were still in `dist`; the count that closes the cycle is taken from a clean build.
 
+### Native check N13: frozen before execution, 2026-10-03
+
+Host and identities. Windows 11 with WSL2; a VS Code 1.140.0 for Linux and a Cursor 3.23.12 for Linux shown through WSLg, each with its own profile in the private QA folder `/home/murakami/codebook-qa`; one host at a time. VS Code chat: Copilot Chat Auto (the Codex Extension only after observed credit exhaustion). Cursor: Agent with Composer 2.5, Fast off. The candidate is one VSIX built from the final tree of this branch and installed in both profiles; its hash is recorded with the results. Evidence: desktop stills through Windows-MCP (the full still kept beside each crop), the run journals, and desktop video (ffmpeg `gdigrab`, 30 frames per second, frames extracted and looked at) where a transition is what is checked.
+
+Targets. Live and replay checks use the owner-designated dashboard `/home/murakami/laststance/nextjs-dashboard` (`1936e41`, clean; its PostgreSQL in the QA folder). The Wiki update checks need a changed source, and the Wiki contract asks for an isolated owned copy for a mutation control: they use a clone of the same repository at the same revision in the QA folder (`dashboard-wiki`); the owner's checkout is not written to.
+
+Browser. The Wiki is read in the QA folder's Chrome for Testing (Linux, its own profile). The portable editors register no URL scheme with a desktop, so a QA `xdg-open` stand-in hands `vscode://` links to the QA VS Code (`--open-url`), `cursor://` links to the QA Cursor and loopback pages to that Chrome. This stands in for the desktop's scheme registration; Chrome's own "Open xdg-open?" prompt is answered by the driver and counted.
+
+Part 1, criterion 9 (expected results; a step that needs a driver action beyond the learner's own is counted):
+
+| Check | Procedure | Expected |
+| --- | --- | --- |
+| N13-a VS Code, success | In `dashboard-wiki`: the chat generates the Wiki (`/codebook` request); "Codebook: Open DeepWiki in Browser"; add one comment line to a source file; press **Update LLM Wiki** on the page; confirm the editor's dialog | The label reads "Source changed · Update available" once the page has the focus again. At the press: "Confirm the update in your editor to start it." After the confirmation, within two looks: "Updating LLM Wiki… The request went to the VS Code chat at HH:MM. …", the button reads "Updating…" with a dashed border, and the editor shows the watch notification. When the chat has published: "Updated at HH:MM to revision … (index …)." without a reload, the label "Wiki source current", the reload button, and an information notification with the same sentence. The page never shows two results. |
+| N13-b VS Code, cancel | Change the source again, press the button, confirm, then press Cancel on the watch notification before the chat publishes, and stop the chat | "Stopped watching at HH:MM. The VS Code chat may still be working and can still publish; …"; the button is usable again; the Wiki folder's hash over every file is the one taken before the press |
+| N13-c VS Code, refused start | Edit `index.html` of the published Wiki by hand, press the button, confirm | "Update not started (HH:MM): a generated page was edited by hand (index.html), …"; a warning in the editor; no chat request; the edited file unchanged. Restore the page afterwards. |
+| N13-d VS Code, second start | While N13-a runs, press the held-back button and run the command from the palette | The click does nothing on the page; the command answers that Codebook is already updating this project's LLM Wiki; one run |
+| N13-e Cursor | The same site opened from Cursor ("Open DeepWiki in Browser"), source changed, press, confirm | "Updating LLM Wiki… Cursor Agent started at HH:MM and may take up to 15 minutes. …" and then one result. The Cursor Agent CLI (`cursor-agent`) is not installed on this host and its sign-in is the owner's: if it cannot run, the expected result is the failure sentence that names it, with the site kept and the folder hash unchanged, and the success leg in Cursor is NOT RUN with that reason. |
+| N13-f Cursor, cancel | Only if the agent runs: press Cancel on "Updating LLM Wiki with Cursor Agent" | "Update cancelled at HH:MM. Cursor Agent was stopped. The last usable site is kept."; folder hash unchanged |
+| N13-g image | Stills of the right rail at default zoom, ordinary window, light and dark, in the states the checks above pass through, beside region 3 of the approved PNG | Label, button, status in that order inside one panel; the differences are the ones listed above and no other |
+| N13-h reload and lost contact | After N13-a press **Reload to read the new pages**; later close the editor window with the page open | The page reloads and offers no reload again; after the editor is gone the page says "Lost contact with the editor, …" at its next looks and the button is usable |
+
+Part 2 rows that only a native run can close (each closes by its recorded observation; if the observation shows the defect, it is fixed with a test before the cycle closes):
+
+| Row | Observation frozen |
+| --- | --- |
+| R19 | VS Code and Cursor: a learner's breakpoint on `login-form.tsx` line 23, a run whose browser stop is declared at 22:3 and binds at 23:5; after the stop is retired and after one more breakpoint change the learner's breakpoint is still listed |
+| 0042-N11d | VS Code, prompt P2 of Cycle 0042 with the dashboard's database stopped: the journal holds a `cdp.pause-observed` at an `eval-*.cdp` URL followed by `cdp.adapter-pause-retired` with its `pausedForMs`, and the run goes on or ends on the missing database, not on that pause |
+| 0041-N10-4 | Cursor Agent: `/codebook` typed in the input (not a prefilled link) is offered and loaded as the skill before the first `codebook_status` call |
+| 0038-N7-e, 0039-N8-b / 0040-N9-img | Bottom panel maximized, another Saved studies entry chosen: the panel stays maximized and the section stays in view; after restoring the panel the Application group has its normal height |
+| 0038-N7-f | The "Moving…" line, a refused or partly moved removal, an entry that cannot be opened and the limit of 256, as far as each can be produced on this host; the Windows wording needs a win32 editor and stays a recorded limit |
+| 0033-L1 | A saved browser recording with a not-recorded interval: seek into the gap, Restore layout; whether "The editor did not retain the requested Codebook layout" appears and which cause it names |
+| 0031-U4, AC-ENTRY-1, 0037-F6 | A freshly opened single-group window: the first click on a Study control acts; Show Learning Summary from a Study control and from the palette, where the focus is afterwards; no "Existing editor groups were preserved" line; where the focus is after a cold open |
+| 0031-U8 | A continuous Play take with the Application panel occluded and then hidden behind another tab; what Recording error details lists |
+| 0031-V1 | Video of Next, Previous, a second Previous and a gap crossing in both hosts; no frame pairs a new application image with the previous stop's Variables |
+| 0032-N1c / 0033-N2d | Another debug session paused, a recording opened: the hint names the Codebook session; selecting it in Call Stack loads Variables and the hint leaves |
+| 0033-N2c | Cursor with a saved Node test history: after Stop Debugging the label keeps "Debugger stop N" and Inspect is offered again |
+| 0035-O01 | VS Code, a live run paused: Recording pressed on that run's own recording recovers within 2.0 s |
+| 0037-N6d | A frame of the `codebook` panel view while the panes are arranged during a live run: its title on one line or clipped, never one character per line |
+| 0038-T11 / 0040-D12a | The DOM check as a CI job: closed by the workflow's first run on the pull request |
+
+The three rows that name findings written only in review logs on the Mac (0031-R1, 0038-Q5, 0039-F17e) are not native checks: they are derived again from the repository at those cycles' commits and from the delivered pull requests.
+
 ### Part 2
 
 Five groups were closed in parallel in five worktrees branched from `908e3f4`, one per section of [the carried-defects file](0044-carried-defects.md), each row by a fix with a test that is red without it or by evidence read against the current source. Their results are merged into this branch and recorded in that file's **Closed** column.
