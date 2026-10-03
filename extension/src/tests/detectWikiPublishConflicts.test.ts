@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   symlink,
@@ -9,10 +11,12 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { detectWikiPublishConflicts } from '../utils/detectWikiPublishConflicts'
+
+import { publishedWikiFixture } from './utils/publishedWikiFixture'
 
 /** Builds `<project>/wiki` with one owned page and returns its paths. */
 async function publishedWiki(): Promise<{
@@ -38,22 +42,43 @@ async function publishedWiki(): Promise<{
   }
 }
 
-/** Adds a sibling candidate folder that will own the given pages. */
+/** Adds a sibling candidate folder that will own the given pages, bound to the output by a receipt the way the publisher's `--prepare` binds it. */
 async function candidate(
   output: string,
   pages: string[],
-  modified: Date,
-): Promise<void> {
-  const stage = `${output}.stage-abc`
+  written: Date,
+  binding: { folder?: string; output?: string; baselineSha256?: string } = {},
+): Promise<string> {
+  const stage = join(dirname(output), binding.folder ?? 'wiki.stage-abc')
   await mkdir(stage)
+  const receipt = join(stage, 'codebook-publication.json')
+  const manifest = join(stage, 'codebook-wiki.json')
   await writeFile(
-    join(stage, 'codebook-wiki.json'),
+    receipt,
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: 'candidate',
+      output: binding.output ?? output,
+      baseline: {
+        manifestSha256:
+          binding.baselineSha256 ??
+          createHash('sha256')
+            .update(await readFile(join(output, 'codebook-wiki.json')))
+            .digest('hex'),
+      },
+    }),
+  )
+  await writeFile(
+    manifest,
     JSON.stringify({ pages: pages.map((path) => ({ path })), assets: [] }),
   )
-  await utimes(stage, modified, modified)
+  await utimes(receipt, written, written)
+  await utimes(manifest, written, written)
+  return stage
 }
 
 const later = () => new Date(Date.now() + 60_000)
+const anHourAgo = () => new Date(Date.now() - 3_600_000)
 
 test('a learner file at a path the candidate would own is named as a conflict', async () => {
   // Arrange
@@ -106,21 +131,104 @@ test('learner files that no candidate page collides with are not conflicts', asy
   }
 })
 
-test('an abandoned candidate from before the update started is not blamed', async () => {
+test('an abandoned candidate of an earlier run is not blamed, even when its folder was touched since', async () => {
   // Arrange
   const wiki = await publishedWiki()
   await writeFile(join(wiki.output, 'pages', 'overview.html'), 'mine')
-  await candidate(
+  const stage = await candidate(
     wiki.output,
     ['pages/overview.html'],
-    new Date(Date.now() - 3_600_000),
+    anHourAgo(),
   )
+  // Something else changed the folder itself later (a listing tool, a backup); its manifest and receipt are still old.
+  await utimes(stage, later(), later())
   try {
     // Act
     const conflicts = await detectWikiPublishConflicts(wiki.output, Date.now())
 
     // Assert
     assert.deepEqual(conflicts, [])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a candidate whose folder is older than the update but whose manifest was written during it is blamed', async () => {
+  // Arrange
+  const wiki = await publishedWiki()
+  await writeFile(join(wiki.output, 'pages', 'overview.html'), 'mine')
+  const stage = await candidate(wiki.output, ['pages/overview.html'], later())
+  await utimes(stage, anHourAgo(), anHourAgo())
+  try {
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.output, Date.now())
+
+    // Assert
+    assert.deepEqual(conflicts, ['pages/overview.html'])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a candidate prepared from an older generation of the Wiki is ignored without looking at any clock', async () => {
+  // Arrange
+  const wiki = await publishedWiki()
+  await writeFile(join(wiki.output, 'pages', 'overview.html'), 'mine')
+  await candidate(wiki.output, ['pages/overview.html'], later(), {
+    baselineSha256: '0'.repeat(64),
+  })
+  try {
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.output, 0)
+
+    // Assert
+    assert.deepEqual(conflicts, [])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a candidate that belongs to another Wiki folder beside this one is ignored', async () => {
+  // Arrange
+  const wiki = await publishedWiki()
+  await writeFile(join(wiki.output, 'pages', 'overview.html'), 'mine')
+  await candidate(wiki.output, ['pages/overview.html'], later(), {
+    output: join(wiki.parent, 'other-wiki'),
+  })
+  try {
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.output, 0)
+
+    // Assert
+    assert.deepEqual(conflicts, [])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a candidate the real publisher prepared in a folder of the agent’s own name is found, and the publisher refuses the same file', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  await mkdir(join(wiki.outputDirectory, 'pages'))
+  await writeFile(join(wiki.outputDirectory, 'pages', 'notes.html'), 'mine')
+  try {
+    const stage = await wiki.prepare(
+      join(dirname(wiki.outputDirectory), 'wiki-next'),
+    )
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/notes.html'],
+    })
+
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.outputDirectory, 0)
+
+    // Assert
+    assert.deepEqual(conflicts, ['pages/notes.html'])
+    await assert.rejects(
+      wiki.publish(stage),
+      /A manual Wiki file conflicts with the update: pages\/notes\.html/,
+    )
   } finally {
     await wiki.cleanup()
   }

@@ -51,7 +51,10 @@ import {
 } from './utils/classifyWikiUpdateEnd'
 import { describeUpdateFailure } from './utils/describeUpdateFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
+import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
+import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import { listWikiCandidates } from './utils/listWikiCandidates'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import {
   captureOwnedCursorMcpCatalogGeneration,
@@ -63,6 +66,7 @@ import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
+import { selectActiveWikiCandidate } from './utils/selectActiveWikiCandidate'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
@@ -113,6 +117,8 @@ export function activate(
   // One update run per window, shared by the command, the `/update` link and the browser button.
   const wikiUpdateRun = new WikiUpdateRun()
   let wikiWatch: AbortController | undefined
+  // When this window's last run ended; a candidate written before it is this window's own leftover.
+  let lastWikiRunEndedAtMs: number | undefined
   /** What one Wiki update run carries from its start to its end. */
   type WikiRun = {
     projectRoot: string
@@ -618,6 +624,20 @@ export function activate(
     else if (end.state === 'cancelled') wikiUpdateRun.cancel(end.site)
     else if (end.state === 'timed-out') wikiUpdateRun.timeOut(end.site)
     else wikiUpdateRun.conflict(end.paths, end.cause, end.site)
+    lastWikiRunEndedAtMs = Date.now()
+  }
+  /** Looks at this run's candidates: notes on the run state that the agent staged one, and names the learner files it would overwrite. @example await probeWikiCandidates(run) // => ['pages/notes.html'] */
+  const probeWikiCandidates = async (run: WikiRun): Promise<string[]> => {
+    const candidates = await listWikiCandidates(run.outputDirectory)
+    if (
+      candidates.some((candidate) => candidate.writtenAtMs >= run.startedAtMs)
+    )
+      wikiUpdateRun.markCandidateStaged()
+    return detectWikiPublishConflicts(
+      run.outputDirectory,
+      run.startedAtMs,
+      candidates,
+    )
   }
   /** Watches for the editor agent's publish after VS Code's chat opened, then records the run's result for the reader. @example watchVsCodeWikiUpdate({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', host: 'vscode', tokenAtStart: 'dc9d…@18', startedAtMs: 1_790_000_000_000 }) */
   const watchVsCodeWikiUpdate = (run: WikiRun): void => {
@@ -631,8 +651,7 @@ export function activate(
           readToken: () => readWikiPublishToken(run.outputDirectory),
           readPublished: () =>
             inspectPublishedWiki(run.projectRoot, run.outputDirectory),
-          findBlockingFiles: () =>
-            detectWikiPublishConflicts(run.outputDirectory, run.startedAtMs),
+          findBlockingFiles: () => probeWikiCandidates(run),
           signal: controller.signal,
           timeoutMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
           pollMs: WIKI_UPDATE_WATCH_POLL_MS,
@@ -688,10 +707,36 @@ export function activate(
         )
         return
       }
+      const host: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
+      // The publisher refuses both cases before it stages anything, so no agent could succeed: say why at once.
+      const startBlock = await findWikiUpdateStartBlock(outputDirectory)
+      if (startBlock) {
+        wikiUpdateRun.refuseStart(host, wikiOutput, {
+          kind: 'conflict',
+          ...startBlock,
+        })
+        return
+      }
+      // Each window holds its own run state; a freshly written candidate is the trace of somebody else's update.
+      const activeCandidate = selectActiveWikiCandidate(
+        await listWikiCandidates(outputDirectory),
+        {
+          nowMs: Date.now(),
+          activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
+          lastRunEndedAtMs: lastWikiRunEndedAtMs,
+        },
+      )
+      if (activeCandidate) {
+        wikiUpdateRun.refuseStart(host, wikiOutput, {
+          kind: 'failed',
+          reason: `Another editor window or an earlier chat appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs)}). Wait for it to finish, or delete that folder, then press Update LLM Wiki again.`,
+        })
+        return
+      }
       const run: WikiRun = {
         projectRoot,
         outputDirectory,
-        host: isCursorHost ? 'cursor' : 'vscode',
+        host,
         tokenAtStart: await readWikiPublishToken(outputDirectory),
         startedAtMs: Date.now(),
       }
@@ -731,6 +776,11 @@ export function activate(
       }
       let agentError: unknown
       let didAgentFail = false
+      // The CLI reports nothing until it exits, so the staged candidate is looked for beside it.
+      const stagedLook = setInterval(() => {
+        void probeWikiCandidates(run).catch(() => [])
+      }, WIKI_UPDATE_WATCH_POLL_MS)
+      stagedLook.unref()
       try {
         await (vscode.window.withProgress
           ? vscode.window.withProgress(
@@ -745,6 +795,8 @@ export function activate(
       } catch (error) {
         agentError = error
         didAgentFail = true
+      } finally {
+        clearInterval(stagedLook)
       }
       await finishWikiUpdate(run, {
         cancelled: cursorToken?.isCancellationRequested ?? false,
@@ -754,10 +806,7 @@ export function activate(
           'name' in agentError &&
           agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
         // A refused candidate is the learner's file in the way, not a failed agent.
-        blockingPaths: await detectWikiPublishConflicts(
-          outputDirectory,
-          run.startedAtMs,
-        ).catch(() => []),
+        blockingPaths: await probeWikiCandidates(run).catch(() => []),
         failure: didAgentFail ? describeUpdateFailure(agentError) : undefined,
       })
       if (wikiUpdateRun.status().state === 'succeeded')

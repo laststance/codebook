@@ -5,7 +5,6 @@ import {
   readFile,
   realpath,
   rm,
-  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -173,46 +172,6 @@ test('a chat that cannot open ends the update as failed with its reason instead 
       'Chat is unavailable',
     )
     assert.equal(wiki.errors.length, 1)
-  } finally {
-    await wiki.close()
-  }
-})
-
-test('a learner file the update candidate would overwrite ends the run as a conflict naming that file', async () => {
-  // Arrange
-  const wiki = await openWikiWindow()
-  await mkdir(join(wiki.outputDirectory, 'pages'), { recursive: true })
-  await writeFile(join(wiki.outputDirectory, 'pages', 'overview.html'), 'mine')
-  const stage = `${wiki.outputDirectory}.stage-1`
-  await mkdir(stage)
-  await writeFile(
-    join(stage, 'codebook-wiki.json'),
-    JSON.stringify({
-      schemaVersion: 1,
-      pages: [{ path: 'pages/overview.html' }],
-      assets: [],
-    }),
-  )
-  // The candidate counts only when it was prepared after the click; its folder is dated ahead of it.
-  const future = new Date(Date.now() + 60_000)
-  await utimes(stage, future, future)
-  try {
-    // Act
-    await wiki.clickUpdate()
-    const ended = await waitForEnd(wiki.status)
-
-    // Assert
-    assert.equal(ended.state, 'conflict')
-    assert.deepEqual(ended.state === 'conflict' ? ended.paths : [], [
-      'pages/overview.html',
-    ])
-    assert.equal(
-      await readFile(
-        join(wiki.outputDirectory, 'pages', 'overview.html'),
-        'utf8',
-      ),
-      'mine',
-    )
   } finally {
     await wiki.close()
   }

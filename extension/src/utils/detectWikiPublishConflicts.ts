@@ -1,8 +1,10 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { readdir } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
+import { listWikiCandidates, type WikiCandidate } from './listWikiCandidates'
+import { readWikiOwnedPaths } from './readWikiOwnedPaths'
 import { systemErrorCode } from './systemErrorCode'
 
 /** Lists regular files below a directory as `/`-separated relative paths; links and special files are skipped like the publisher does. */
@@ -22,44 +24,16 @@ async function listRegularFiles(
   return files
 }
 
-/** Reads the paths a manifest owns (index, pages, assets); undefined when it is missing or not a manifest. */
-async function readOwnedPaths(
-  manifestPath: string,
-): Promise<Set<string> | undefined> {
-  try {
-    const manifest: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
-    if (typeof manifest !== 'object' || manifest === null) return undefined
-    const pages =
-      'pages' in manifest && Array.isArray(manifest.pages) ? manifest.pages : []
-    const assets =
-      'assets' in manifest && Array.isArray(manifest.assets)
-        ? manifest.assets
-        : []
-    const paths = new Set<string>(['index.html'])
-    for (const page of pages)
-      if (
-        typeof page === 'object' &&
-        page !== null &&
-        'path' in page &&
-        typeof page.path === 'string'
-      )
-        paths.add(page.path)
-    for (const asset of assets) if (typeof asset === 'string') paths.add(asset)
-    return paths
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * Names the learner-owned files in a published Wiki folder that a prepared update candidate would overwrite.
  *
  * Why: the publisher refuses such a candidate and keeps everything, but only the agent sees that refusal; the extension must tell the learner why no update appeared.
- * Trigger: the extension asks while it watches a VS Code update and after a failed Cursor update.
+ * Trigger: the extension asks on each look while it watches a VS Code update and after a Cursor update ended.
  *
  * @param outputDirectory - Resolved Wiki output folder.
- * @param notBeforeMs - Only candidate folders touched at or after this time count, so an abandoned old candidate is not blamed.
- * @returns Output-relative paths of manual files that collide with a candidate's pages or assets; empty when none.
+ * @param notBeforeMs - Only candidates whose manifest or receipt was written at or after this time count, so an abandoned candidate of an earlier run with the same baseline is not blamed.
+ * @param listedCandidates - Candidates the caller already listed with {@link listWikiCandidates} in the same look; listed here when omitted.
+ * @returns Output-relative paths of manual files that collide with a candidate's pages or assets, sorted; empty when none, and when the folder cannot be read this look.
  *
  * @example
  * ```ts
@@ -69,24 +43,15 @@ async function readOwnedPaths(
 export async function detectWikiPublishConflicts(
   outputDirectory: string,
   notBeforeMs: number,
+  listedCandidates?: WikiCandidate[],
 ): Promise<string[]> {
-  const published = await readOwnedPaths(
+  const published = await readWikiOwnedPaths(
     join(outputDirectory, WIKI_MANIFEST_FILE),
   )
   if (!published) return []
-  // Candidate folders are siblings named `<output>.stage-<id>`; the publisher refuses any other stage layout.
-  const parent = dirname(outputDirectory)
-  const stagePrefix = `${basename(outputDirectory)}.stage-`
-  const candidates: Set<string>[] = []
-  for (const name of await readdir(parent)) {
-    if (!name.startsWith(stagePrefix)) continue
-    const stageDirectory = join(parent, name)
-    // A candidate that vanished between the listing and this look is no finding.
-    const stageStat = await stat(stageDirectory).catch(() => undefined)
-    if (!stageStat || stageStat.mtimeMs < notBeforeMs) continue
-    const owned = await readOwnedPaths(join(stageDirectory, WIKI_MANIFEST_FILE))
-    if (owned) candidates.push(owned)
-  }
+  const candidates = (
+    listedCandidates ?? (await listWikiCandidates(outputDirectory))
+  ).filter((candidate) => candidate.writtenAtMs >= notBeforeMs)
   if (!candidates.length) return []
   // An output folder that is being swapped right now cannot be listed; that is no finding this look.
   const outputFiles = await listRegularFiles(outputDirectory).catch(
@@ -103,9 +68,10 @@ export async function detectWikiPublishConflicts(
       !published.has(path),
   )
   const colliding = new Set<string>()
+  // The publisher's own rule: a manual file collides with an owned path that equals it, lies below it or lies above it.
   for (const path of manual)
-    for (const owned of candidates)
-      for (const ownedPath of owned)
+    for (const candidate of candidates)
+      for (const ownedPath of candidate.ownedPaths)
         if (
           ownedPath === path ||
           ownedPath.startsWith(`${path}/`) ||
