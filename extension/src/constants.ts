@@ -585,3 +585,16 @@ export const REPOSITORY_INPUT_LIMIT = 16
 
 /** Maximum UTF-8 payload per explicitly paged evidence read. */
 export const RESOURCE_JSON_PAGE_BYTES = 4096
+
+/** Google Chrome's executable inside its macOS application bundle; checked when `codebook.chromeExecutable` is unset on macOS. */
+export const CHROME_MACOS_EXECUTABLE_PATH =
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+/** Chrome and Chromium command names searched on PATH, in this order, when `codebook.chromeExecutable` is unset on Linux (including WSL). */
+export const CHROME_LINUX_EXECUTABLE_NAMES = [
+  'google-chrome',
+  'google-chrome-stable',
+  'chromium',
+  'chromium-browser',
+] as const
+/** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
+export const WSL_REMOTE_NAME = 'wsl'
