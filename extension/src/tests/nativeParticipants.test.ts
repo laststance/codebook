@@ -1915,3 +1915,53 @@ test('an accepted server stop whose own pause never arrives fails waiting for it
   )
   assert.equal(harness.run.view().snapshots.length, 1)
 })
+
+for (const moment of [
+  'while the continue response is outstanding',
+  'after the continuation',
+] as const)
+  // Value: protects=the causal order a run certifies: a declared stop is captured only from a pause that came after the continuation that armed it; fails_when=a browser pause on the next stop's declared line, made while that stop is being armed and before its continuation is requested, is adopted as the stop once the debugger announces it, so the run commits that stop and can end demonstrated; why_new=a pause while no stop is expected is held instead of failing at once (Cycle 0042 ER1), and the end of an accepted stop's wait adopted any pause held in its module (ER4), found by the delivery's adversarial review and red team; seam=the adapter's binding lookup, held by the test, and the 3 s bound of the wait for the stop's own pause, ended after one look
+  test(`a browser pause on the next stop’s line that comes while that stop is being armed is never captured as that stop, when the debugger announces it ${moment}`, async (context) => {
+    // Arrange: the server stop is captured, and the continuation is still arming the browser stop when the page runs its line.
+    const harness = await nativeParticipantsHarness(context, [
+      'server',
+      'browser',
+    ])
+    await harness.run.prepare()
+    const nextStop = harness.holdNextPause()
+    harness.expireSourceBoundWait()
+    harness.run.action('once', 'repository-click')
+    const server = await pauseReady(harness, 'server')
+    const lookup = harness.holdBindingLookup()
+    if (moment === 'while the continue response is outstanding')
+      harness.holdContinueResponse()
+    const continuation = harness.run.continue('server', server.pause)
+    await lookup.started
+    // Act: the page pauses on the browser stop's declared line before the continuation is requested; the debugger announces that pause later.
+    harness.emitUnannouncedPause('browser', {
+      scriptId: 'browser',
+      lineNumber: 0,
+      columnNumber: 0,
+      functionName: 'toggleTheme',
+      hitBreakpoints: ['native'],
+    })
+    lookup.release()
+    if (moment === 'after the continuation') await continuation
+    else await serverContinueRequested(harness)
+    nextStop.stopped()
+    harness.releaseContinueResponse()
+    // A continuation the run cancelled is reported below through the run's own failure text.
+    await continuation.catch(() => undefined)
+    await waitUntil(() => {
+      const view = harness.run.view()
+      return view.status === 'failed' || view.participants.browser?.snapshot
+    }, 'the announced browser stop judged')
+    await harness.run.stop()
+    // Assert
+    assert.equal(
+      harness.run.view().failures[0],
+      'Error: Timed out waiting for source-bound CDP stop',
+    )
+    assert.equal(harness.run.view().snapshots.length, 1)
+    assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+  })

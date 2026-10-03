@@ -110,8 +110,11 @@ type DebugParticipant = {
   cdp?: Cdp
   /** The pause of the expected declared stop: on its declared line in its module, or adopted after an announced pause stayed elsewhere in that module. `generation` is set once {@link ConfiguredBrowserRun.inspect} binds it to an accepted stop. */
   stopped?: { event: Protocol.Debugger.PausedEvent; generation?: number }
-  /** A pause away from the expected declared stop that no debugger stop was accepted for. The debug adapter makes such pauses for itself and resumes them; the resume retires it, and a deadline that expires meanwhile names it. */
-  unannouncedPause?: { event: Protocol.Debugger.PausedEvent }
+  /** A pause away from the expected declared stop that no debugger stop was accepted for, with the stop that was expected when it arrived (none between a snapshot and its continuation). The debug adapter makes such pauses for itself and resumes them; the resume retires it, and a deadline that expires meanwhile names it. */
+  unannouncedPause?: {
+    event: Protocol.Debugger.PausedEvent
+    expectedStop: PreparedStop | undefined
+  }
   /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
   scriptUrls: Map<string, string>
   /** The journal clock when the last pause was observed; cleared by its resume. */
@@ -768,9 +771,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * at the expected stop (its module, its declared line)
    *     continuation in flight ──► pendingCdpStop, replayed by beginAfter
    *     otherwise              ──► participant.stopped, bound by inspect
-   * anywhere else              ──► participant.unannouncedPause
+   * anywhere else              ──► participant.unannouncedPause, with the stop expected then
    *                                  resumed   → retireUnannouncedPause
-   *                                  announced → onEvent fails or inspect judges it
+   *                                  announced → onEvent fails, or inspect judges it when it was held for that stop
    *                                  stays     → the progress deadline names it
    * ```
    * @param name - The participant whose runtime paused.
@@ -789,8 +792,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.fail(`Additional ${name} stop invalidated the declared operation`)
       return
     }
-    if (!isPauseAtStop(event, this.expectedStop(name))) {
-      this.participants[name].unannouncedPause = { event }
+    const expectedStop = this.expectedStop(name)
+    if (!isPauseAtStop(event, expectedStop)) {
+      // The stop expected now is kept, so a pause that came before a stop's turn never becomes that stop's pause later.
+      this.participants[name].unannouncedPause = { event, expectedStop }
       return
     }
     // The expected stop's pause becomes current only after the preceding continuation has all its receipts.
@@ -1511,7 +1516,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * The pause may be read after its `stopped`, so the wait is bounded; it takes only a pause on the stop's declared line, which {@link admitPause} stored.
    * @param stop - The declared stop whose `stopped` was accepted.
    * @returns The stop's pause, not yet bound to a generation.
-   * @throws The wait's timeout when no pause arrives on the declared line and none stayed elsewhere in the stop's module.
+   * @throws The wait's timeout when no pause arrives on the declared line and no pause held while the stop was expected stayed elsewhere in its module.
    * @example
    * ```ts
    * const stopped = await this.pauseOfAcceptedStop(stop)
@@ -1537,7 +1542,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.abort.signal,
       )
     } catch (error) {
-      // An announced pause that stayed elsewhere in the stop's module is judged by the binding and frame checks, which say what is wrong.
+      // An announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
       const held = this.adoptPauseHeldInModule(stop)
       if (!held) throw error
       return held
@@ -1546,7 +1551,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Adopts a pause that stayed elsewhere in an accepted stop's module as that stop's pause, called by {@link pauseOfAcceptedStop} after its wait ended.
-   * The adapter resumes its own pauses within milliseconds, so a pause that outlasted the wait in the stop's own module is the announced one: a binding on another line, or another breakpoint in that file. A pause in any other script is left alone.
+   * The adapter resumes its own pauses within milliseconds, so a pause that outlasted the wait in the stop's own module, held while that stop was the expected one, is the announced one: a binding on another line, or another breakpoint in that file. A pause in any other script, or one held before the stop's turn, is left alone (see {@link pauseHeldForStop}).
    * @param stop - The declared stop whose `stopped` was accepted.
    * @returns The adopted pause, or `undefined` when the run was cancelled or no such pause is held.
    * @example
@@ -1558,16 +1563,33 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): DebugParticipant['stopped'] {
     const participant = this.participants[stop.participant],
-      held = participant.unannouncedPause
-    if (
-      this.abort.signal.aborted ||
-      !held ||
-      !isPauseInScript(held.event, stop.script)
-    )
-      return undefined
+      held = this.pauseHeldForStop(stop)
+    if (this.abort.signal.aborted || !held) return undefined
     participant.unannouncedPause = undefined
     participant.stopped = { event: held.event }
     return participant.stopped
+  }
+
+  /**
+   * Finds the held pause that {@link adoptPauseHeldInModule} may take as an accepted stop's pause: one that arrived in the stop's module while that stop was the expected one.
+   * A pause held before the stop's turn (the other participant running the line while the next stop is armed, before its continuation is requested) can be on the declared line itself; adopting it would report an observation made before the continuation as one made after it.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @returns
+   * - The held pause, when it was held for this stop and is in its module
+   * - `undefined` otherwise, including a pause held before the stop's turn
+   * @example
+   * ```ts
+   * this.pauseHeldForStop(stop) // undefined for a pause held between the previous snapshot and its continuation
+   * ```
+   */
+  private pauseHeldForStop(
+    stop: PreparedStop,
+  ): DebugParticipant['unannouncedPause'] {
+    const held = this.participants[stop.participant].unannouncedPause
+    return held?.expectedStop === stop &&
+      isPauseInScript(held.event, stop.script)
+      ? held
+      : undefined
   }
 
   /** Seals actual configured values and renderer pixels only while the exact source-bound pause remains current. @example await this.inspect(pause) */
