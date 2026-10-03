@@ -662,3 +662,82 @@ test('a symlinked Cursor skill directory cannot redirect installation to unrelat
   )
   assert.deepEqual(await readFile(paths.sourcePath, 'utf8'), INITIAL_SKILL)
 })
+
+const PUBLISHER_SKILL =
+  '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nPublish with node {{CODEBOOK_PUBLISHER_PATH}}.\n'
+
+/** Creates one installed extension directory with the bundled skill and its Wiki publisher, as an update leaves a new versioned directory. @example await installExtension(directory, 'laststance.codebook-0.2.27') */
+async function installExtension(
+  directory: string,
+  name: string,
+): Promise<string> {
+  const extensionPath = join(directory, name),
+    skillDirectory = join(extensionPath, 'skills', 'codebook')
+  await mkdir(skillDirectory, { recursive: true })
+  await writeFile(join(skillDirectory, 'SKILL.md'), PUBLISHER_SKILL)
+  await writeFile(join(skillDirectory, 'publish-wiki.mjs'), '// publisher\n')
+  return extensionPath
+}
+
+// Cycle 0044 (0041-N10-2, 0041-N10-3): red while a reconnect after an update answered "missing, changed or outdated" and left the deployed skill naming the previous installation's publisher.
+test('reconnecting after an update that moved the extension directory updates Codebook’s own unedited Cursor skill to the running installation’s publisher, without another setup', async (context) => {
+  // Arrange: the skill was set up from the 0.2.26 directory; the editor now runs 0.2.27 from another directory.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.26',
+    ),
+    runningExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    )
+  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  // Act
+  const reconnected = await verifyManagedCursorSkill(
+    runningExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const verifiedAgain = await verifyManagedCursorSkill(
+    runningExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  // Assert
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    `---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nPublish with node ${join(runningExtension, 'skills', 'codebook', 'publish-wiki.mjs')}.\n`,
+  )
+  assert.equal(reconnected.status, 'updated')
+  assert.equal(verifiedAgain.status, 'current')
+})
+
+// Cycle 0044 (0041-N10-2): the automatic update never touches a skill someone edited.
+test('reconnecting after an update leaves a Cursor skill that was edited since setup as it is and asks for setup', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.26',
+    ),
+    runningExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    )
+  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  await writeFile(paths.targetPath, 'An edit made by the learner.\n')
+  // Act
+  const reconnecting = verifyManagedCursorSkill(
+    runningExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  // Assert
+  await assert.rejects(reconnecting, /missing, changed or outdated/)
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    'An edit made by the learner.\n',
+  )
+})

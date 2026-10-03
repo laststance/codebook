@@ -687,7 +687,7 @@ export async function deployCursorSkill(
   })
 }
 
-/** Checks a prior Cursor setup before reconnecting on editor restart; no file is repaired implicitly. @example await verifyManagedCursorSkill('/ext', '/private', '/home') */
+/** Checks a prior Cursor setup before reconnecting on editor restart. A skill that is missing, replaced or edited is never repaired implicitly; the receipted, unedited skill of an earlier installation is updated to this installation's bytes through {@link deployCursorSkill}. @example await verifyManagedCursorSkill('/ext', '/private', '/home') */
 export async function verifyManagedCursorSkill(
   extensionPath: string,
   storageRoot: string,
@@ -707,13 +707,15 @@ export async function verifyManagedCursorSkill(
     !current ||
     !currentStatus ||
     currentStatus.ino !== receipt.inode ||
-    sha256(current) !== receipt.skillSha256 ||
-    receipt.skillSha256 !== packaged.sha256
+    sha256(current) !== receipt.skillSha256
   ) {
     throw new Error(
       'Cursor skill is missing, changed or outdated. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
     )
   }
+  // The deployed file is still the receipted one, unedited, but this installation packages other bytes (an update moved the extension directory the skill names, or changed the skill): the owned file is updated without another manual setup.
+  if (receipt.skillSha256 !== packaged.sha256)
+    return deployCursorSkill(extensionPath, storageRoot, homeRoot)
   return {
     status: 'current',
     path: targetPath,
