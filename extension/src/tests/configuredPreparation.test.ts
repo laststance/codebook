@@ -166,6 +166,49 @@ test('an out-of-citation source line column or anchor index is rejected before a
   assert.equal(acquisitions, 0)
 })
 
+// Value: protects=an agent that counted anchors over the wrong list and must correct anchorIndex; fails_when=the refusal names only the rule, not the node's valid range and the index whose citation covers the source line; why_new=the out-of-citation test checked the code only (Cycle 0044 row N-8); seam=none
+test('a start whose anchor index selects a citation without its source line names the valid range and the covering index', async (context) => {
+  // Arrange: node "theme" cites src/theme.ts:1-1 (index 0) and src/mode.ts:1-1 (index 1).
+  const { books, configuration, control } = await preparationHarness(context)
+  // Act / Assert
+  await assert.rejects(
+    prepareRepositoryStudy(
+      { ...configuration, book: { ...configuration.book, anchorIndex: 1 } },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.book.anchorIndex 1 selects citation src/mode.ts:1-1, which does not contain configuration.source src/theme.ts:1. Node "theme" has citations 0..1; index 0 (src/theme.ts:1-1) covers src/theme.ts:1.',
+    },
+  )
+  await assert.rejects(
+    prepareRepositoryStudy(
+      { ...configuration, book: { ...configuration.book, anchorIndex: 2 } },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.book.anchorIndex 2 is outside the selected node\'s citations. Node "theme" has citations 0..1; index 0 (src/theme.ts:1-1) covers src/theme.ts:1.',
+    },
+  )
+  await assert.rejects(
+    prepareRepositoryStudy(
+      { ...configuration, source: { ...configuration.source, line: 2 } },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.book.anchorIndex 0 selects citation src/theme.ts:1-1, which does not contain configuration.source src/theme.ts:2. Node "theme" has citations 0..1; no citation covers src/theme.ts:2; publish a revision that cites it or choose a cited line.',
+    },
+  )
+})
+
 test('a secondary citation edit rejects preparation even when the selected breakpoint file has not changed', async (context) => {
   // Arrange
   const { books, configuration, control, directory, library } =
