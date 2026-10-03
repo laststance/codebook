@@ -261,7 +261,7 @@ export async function readResource(
   const suffix = match[2]
   if (!suffix) return json(service.state(record))
   // Everything below a run reads its raw evidence, which went to the Trash with a removed study.
-  service.assertEvidenceAvailable(record)
+  service.assertEvidenceReadable(record)
   const manifestPage = /^manifest\/pages\/([a-f0-9]{64})\/(0|[1-9]\d*)$/.exec(
     suffix,
   )

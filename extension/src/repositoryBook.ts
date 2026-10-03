@@ -11,6 +11,7 @@ import {
   BOOK_SCHEMA_VERSION_V2,
   BOOK_STORAGE_FORMATS,
   PRIVATE_DIRECTORY_MODE,
+  STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
 } from './constants'
 import { StudyError } from './errors'
 import type { LearningLibrary } from './learningLibrary'
@@ -31,6 +32,7 @@ import { bookIntentDigest } from './utils/bookIntentDigest'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { projectRecording } from './utils/projectRecording'
 import { readBoundedFile } from './utils/readBoundedFile'
+import { thrownMessage } from './utils/thrownMessage'
 import { validateRepositoryBook } from './utils/validateRepositoryBook'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -323,7 +325,7 @@ export class RepositoryBookStore {
         this.assertActive(deadlineAt, signal)
         let checkpoint = checkpoints.get(link.studyId)
         if (!checkpoint) {
-          checkpoint = await this.library.readCheckpoint(link.studyId)
+          checkpoint = await this.readLinkedCheckpoint(link.studyId)
           checkpoints.set(link.studyId, checkpoint)
         }
         const observation = checkpoint.study.observations.find(
@@ -367,6 +369,27 @@ export class RepositoryBookStore {
     return bindings
   }
 
+  /**
+   * Reads the saved checkpoint a book link names; called when a revision's links are bound and by {@link verifyBinding}.
+   * @param studyId - The saved study the link names.
+   * @returns The study's checkpoint.
+   * @throws A `BOOK_UNAVAILABLE` {@link StudyError} naming the study when the library no longer holds it (the learner deleted it), instead of the library's bare sentence; any other read failure as it is.
+   * @example await this.readLinkedCheckpoint(link.studyId)
+   */
+  private readLinkedCheckpoint(
+    studyId: string,
+  ): ReturnType<LearningLibrary['readCheckpoint']> {
+    return this.library.readCheckpoint(studyId).catch((error: unknown) => {
+      if (thrownMessage(error) !== STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
+        throw error
+      throw new StudyError(
+        'BOOK_UNAVAILABLE',
+        `Linked saved study ${studyId} is no longer in the study library; it was deleted or never saved.`,
+        'Remove or replace the links to this study; no replacement observation was selected.',
+      )
+    })
+  }
+
   /** Revalidates captured facts against the independent saved checkpoint on commit and every public read. @example await this.verifyBinding(binding) */
   private async verifyBinding(
     binding: BookObservationBinding,
@@ -377,7 +400,7 @@ export class RepositoryBookStore {
   ): Promise<void> {
     let pending = checkpoints.get(binding.studyId)
     if (!pending) {
-      pending = this.library.readCheckpoint(binding.studyId)
+      pending = this.readLinkedCheckpoint(binding.studyId)
       checkpoints.set(binding.studyId, pending)
     }
     const checkpoint = await pending,

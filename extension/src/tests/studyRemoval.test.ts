@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import {
+import fsPromises, {
   lstat,
   mkdir,
   mkdtemp,
@@ -11,7 +12,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { basename, join, relative } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -19,6 +20,7 @@ import { LearningLibrary, type StudyMover } from '../learningLibrary'
 import { RecordingStore } from '../recordingStore'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { createCrossRuntimeStudy } from './utils/createCrossRuntimeStudy'
 
 /**
  * Creates a private learning directory with a study library and a recording store that share it and one limit, plus a Trash outside it.
@@ -134,6 +136,13 @@ async function filesBelow(directory: string): Promise<[string, string][]> {
       (await readFile(path)).toString('base64'),
     ]),
   )
+}
+
+/** Puts a directory in the place of the storage lock file while the lock is held, so the lock cannot be released and stays, as a lock does whose file the editor may not delete. @example await blockLockRelease(storage.directory) */
+async function blockLockRelease(directory: string): Promise<void> {
+  const lockPath = join(directory, 'writer.lock')
+  await rm(lockPath)
+  await mkdir(join(lockPath, 'kept'), { recursive: true })
 }
 
 // Value: protects=a removal moves exactly the study's files, the recording first and the archive last, and makes room in a full library; fails_when=a step is dropped, reordered or touches another study; why_new=no removal existed; seam=the injected mover, which keeps the library free of the editor API
@@ -430,8 +439,8 @@ test('a removal of a study the library does not hold moves nothing and says the 
   assert.deepEqual(storage.moved, [])
 })
 
-// Value: protects=a learner ledger that cannot be read stops a removal before its first move, so no recording leaves while the ledger may still name the study; fails_when=the ledger is read only when its rewrite step is reached, after the recording already went to the Trash; why_new=every removal test arranges a ledger that is readable or absent; seam=none
-test('a removal on a library whose learner ledger cannot be read moves nothing and keeps the study with its recording', async (context) => {
+// Value: protects=a learner ledger that cannot be read does not keep a full library from making room, and the removal leaves that ledger byte-identical; fails_when=an unreadable ledger ends every removal as "Nothing was deleted" (0038-F11), or the removal rewrites a ledger it could not read; why_new=every removal test arranged a ledger that is readable or absent; seam=none
+test('a removal on a library whose learner ledger cannot be read moves the study with its recording and leaves the ledger byte-identical', async (context) => {
   // Arrange: a saved study with a recording; the ledger file holds a version the library does not read.
   const storage = await removalStorage(context, 4)
   const study = await saveStudyWithRecording(storage)
@@ -439,23 +448,25 @@ test('a removal on a library whose learner ledger cannot be read moves nothing a
     join(storage.directory, 'progress.repository.v4.json'),
     '{"version":3}',
   )
-  const filesBefore = await filesBelow(storage.directory)
   // Act
   const removal = await storage.library.removeStudy(
     study.id,
     storage.moveToTrash,
   )
   // Assert
-  assert.deepEqual(removal, {
-    outcome: 'nothing-moved',
-    cause: 'Version 4 progress has an incompatible schema.',
-  })
-  assert.deepEqual(storage.moved, [])
-  assert.deepEqual(await filesBelow(storage.directory), filesBefore)
-  assert.deepEqual(
-    (await storage.recordings.list()).map((entry) => entry.studyId),
-    [study.id],
-  )
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v2', study.id),
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  assert.deepEqual(await filesBelow(storage.directory), [
+    [
+      'progress.repository.v4.json',
+      Buffer.from('{"version":3}').toString('base64'),
+    ],
+  ])
+  assert.deepEqual(await storage.recordings.list(), [])
 })
 
 // Value: protects=a removal takes its turn among the other writers of the learning directory instead of deadlocking or overtaking them; fails_when=the removal takes the storage lock more than once or outside the writers' queue; why_new=the removal is the first writer that touches the study, the ledger and the playback file in one step; seam=the injected mover
@@ -570,13 +581,13 @@ test('a removal that moved nothing and cannot write the ledger back says that no
 
 // Value: protects=a removal that moved every file is reported as moved even when its storage lock cannot be released afterwards; fails_when=the lock's rejection is read as "nothing moved"; why_new=no test made the release fail after the steps ran; seam=the injected mover, which removes the lock file with its last move
 test('a removal whose storage lock cannot be released after every file moved is reported as moved and names the lock failure', async (context) => {
-  // Arrange: the Trash takes every file and the lock file disappears with the last one, so the release fails.
+  // Arrange: the Trash takes every file and a directory takes the lock file's place with the last one, so the release fails.
   const storage = await removalStorage(context, 4)
   const study = await saveStudyWithRecording(storage)
   const moverThatLosesTheLock: StudyMover = async (path) => {
     await storage.moveToTrash(path)
     if (path.endsWith('.study.v3.json'))
-      await rm(join(storage.directory, 'writer.lock'))
+      await blockLockRelease(storage.directory)
   }
   // Act
   const removal = await storage.library.removeStudy(
@@ -586,7 +597,7 @@ test('a removal whose storage lock cannot be released after every file moved is 
   // Assert
   assert.match(
     JSON.stringify(removal),
-    /^\{"outcome":"moved","unreleasedLock":"ENOENT: no such file or directory, unlink /,
+    /^\{"outcome":"moved","unreleasedLock":"(EISDIR|EPERM): [^"]*, unlink /,
   )
   assert.deepEqual(storage.moved, [
     join('recordings.v2', study.id),
@@ -603,7 +614,7 @@ test('a removal that stopped at a refused sidecar and then cannot release its st
   const study = await saveStudyWithRecording(storage)
   const moverThatLosesTheLock: StudyMover = async (path) => {
     if (!path.endsWith('.study.meta.v3.json')) return storage.moveToTrash(path)
-    await rm(join(storage.directory, 'writer.lock'))
+    await blockLockRelease(storage.directory)
     throw new Error('Trash refused the sidecar')
   }
   // Act
@@ -614,7 +625,7 @@ test('a removal that stopped at a refused sidecar and then cannot release its st
   // Assert
   assert.match(
     JSON.stringify(removal),
-    /^\{"outcome":"partly-moved","cause":"Trash refused the sidecar; the storage lock could not be released: ENOENT: no such file or directory, unlink /,
+    /^\{"outcome":"partly-moved","cause":"Trash refused the sidecar; the storage lock could not be released: (EISDIR|EPERM): [^"]*, unlink /,
   )
   assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
   assert.deepEqual(
@@ -629,7 +640,7 @@ test('a removal the Trash refused at its first file and that cannot release its 
   const storage = await removalStorage(context, 4)
   const study = await saveStudy(storage)
   const moverThatLosesTheLock: StudyMover = async () => {
-    await rm(join(storage.directory, 'writer.lock'))
+    await blockLockRelease(storage.directory)
     throw new Error('Trash refused the sidecar')
   }
   // Act
@@ -640,7 +651,7 @@ test('a removal the Trash refused at its first file and that cannot release its 
   // Assert
   assert.match(
     JSON.stringify(removal),
-    /^\{"outcome":"nothing-moved","cause":"Trash refused the sidecar; the storage lock could not be released: ENOENT: no such file or directory, unlink /,
+    /^\{"outcome":"nothing-moved","cause":"Trash refused the sidecar; the storage lock could not be released: (EISDIR|EPERM): [^"]*, unlink /,
   )
   assert.deepEqual(
     (await storage.library.list()).map((entry) => [entry.id, entry.metadata]),
@@ -648,8 +659,8 @@ test('a removal the Trash refused at its first file and that cannot release its 
   )
 })
 
-// Value: protects=a ledger that so far existed only as a historical file reads the same after a removal that moved nothing; fails_when=the write-back needs the repository ledger file to have existed, or leaves the ledger without the selection of a study that is still there; why_new=the write-back has a second source for its bytes when the repository ledger file is created by the removal itself; seam=the injected mover
-test('a removal that moved nothing leaves a ledger read from a historical file with the same selection and the historical file untouched', async (context) => {
+// Value: protects=a ledger that so far existed only as a historical file reads the same after a removal that moved nothing, and the learning directory holds the same files; fails_when=the write-back needs the repository ledger file to have existed, leaves the ledger without the selection of a study that is still there, or leaves the repository ledger file the removal created (0039-F4); why_new=the write-back has a second source for its bytes when the repository ledger file is created by the removal itself; seam=the injected mover
+test('a removal that moved nothing leaves a ledger read from a historical file with the same selection, the historical file untouched and no repository ledger file', async (context) => {
   // Arrange: the only ledger file is a historical one whose selection names the study.
   const storage = await removalStorage(context, 4)
   const study = await saveStudy(storage)
@@ -682,6 +693,10 @@ test('a removal that moved nothing leaves a ledger read from a historical file w
   assert.deepEqual(await storage.library.readProgress(), progressBefore)
   assert.equal(progressBefore.selection?.studyId, study.id)
   assert.equal(await readFile(historicalPath, 'utf8'), historicalLedger)
+  await assert.rejects(
+    lstat(join(storage.directory, 'progress.repository.v4.json')),
+    { code: 'ENOENT' },
+  )
 })
 
 // Value: protects=deleting a saved study also takes the raw evidence of its run (screenshots, sealed source, events) out of the extension's storage; fails_when=the evidence directory stays behind, or moves after the study so that a failure leaves it orphaned; why_new=the removal did not know the evidence directory; seam=the injected mover
@@ -878,4 +893,356 @@ test('the library reports how many studies it keeps and its limit, and only the 
   // Assert
   assert.deepEqual(usage, { count: 1, limit: 3 })
   assert.deepEqual(usageUnderInvalidLimit, { count: 1 })
+})
+
+/** Writes an archive file under a fresh study id, as a study restored from the Trash appears in the library; its sidecar is absent, so the list shows it as unavailable. @example await placeArchive(storage.directory) */
+async function placeArchive(directory: string): Promise<string> {
+  const studyId = `${randomUUID()}_${randomUUID()}`
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, `${studyId}.study.v3.json`), '{}')
+  return studyId
+}
+
+/** Gives the id of a process that has already exited on this machine, as the editor that left a lock or a connection descriptor behind. @example const pid = exitedProcessId() */
+function exitedProcessId(): number {
+  const exited = spawnSync(process.execPath, ['-e', ''])
+  assert.equal(typeof exited.pid, 'number')
+  return exited.pid
+}
+
+// Value: protects=a library holding more saved studies than its maximum (a study restored from the Trash into a full library) can still be listed, counted and emptied; fails_when=the library refuses every list, usage, admission and save above the maximum (0038-F8), so the learner cannot delete anything; why_new=no test placed more than 256 archives; seam=none
+test('a library holding 257 saved studies after one was restored from the Trash lists and counts them all, refuses a new study and lets one be removed', async (context) => {
+  // Arrange: 257 archives at the maximum limit of 256.
+  const storage = await removalStorage(context, 256)
+  const studyIds: string[] = []
+  for (let placed = 0; placed < 257; placed++)
+    studyIds.push(await placeArchive(storage.directory))
+  // Act
+  const listed = await storage.library.list()
+  const usage = await storage.library.usage()
+  const admitsNewStudy = await storage.library.admitsStudy(
+    `${randomUUID()}_${randomUUID()}`,
+  )
+  const admitsKeptStudy = await storage.library.admitsStudy(studyIds[0]!)
+  const removal = await storage.library.removeStudy(
+    studyIds[0]!,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.equal(listed.length, 257)
+  assert.deepEqual(usage, { count: 257, limit: 256 })
+  assert.equal(admitsNewStudy, false)
+  assert.equal(admitsKeptStudy, true)
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(await storage.library.usage(), { count: 256, limit: 256 })
+})
+
+// Value: protects=an archive moved to the Trash by another window while the list is read leaves the listing of the others intact; fails_when=the stat of a vanished archive rejects the whole listing (0038-F12), so a concurrent checkpoint reports "History not saved"; why_new=no test removed an archive between the directory read and its stat; seam=the directory read, which names one archive that is already gone
+test('a saved study that leaves the library while the list is read is left out and the other saved studies are listed', async (context) => {
+  // Arrange: one saved study; the directory read also names an archive that is gone by the time it is inspected.
+  const storage = await removalStorage(context, 4)
+  const kept = await saveStudy(storage)
+  const vanishedName = `${randomUUID()}_${randomUUID()}.study.v3.json`
+  const readdirBefore = fsPromises.readdir
+  context.mock.method(
+    fsPromises,
+    'readdir',
+    async (...input: Parameters<typeof readdirBefore>) => {
+      const names = await readdirBefore(...input)
+      return input[0] === storage.directory ? [...names, vanishedName] : names
+    },
+  )
+  // Act
+  const listed = await storage.library.list()
+  context.mock.restoreAll()
+  // Assert
+  assert.deepEqual(
+    listed.map((entry) => [entry.id, entry.metadata]),
+    [[kept.id, 'validated']],
+  )
+})
+
+// Value: protects=a removal never moves anything outside the learning directory through a recording root that was replaced by a link; fails_when=the recording step follows `recordings.v2` to a directory elsewhere and moves the directory named after the study (0038-F14); why_new=every removal test used a real recording root; seam=the injected mover
+test('a recording root replaced by a symbolic link is not followed: the removal moves only the study files inside the library', async (context) => {
+  // Arrange: `recordings.v2` links to a directory outside the library that holds a directory named after the study.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const outside = join(storage.directory, '..', 'outside')
+  await mkdir(join(outside, study.id), { recursive: true })
+  await writeFile(join(outside, study.id, 'keep.txt'), 'outside the library')
+  await symlink(outside, join(storage.directory, 'recordings.v2'))
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  assert.equal(
+    await readFile(join(outside, study.id, 'keep.txt'), 'utf8'),
+    'outside the library',
+  )
+})
+
+// Value: protects=evidence that cannot be inspected is not silently left behind while the removal reports success; fails_when=an evidence directory whose inspection fails is skipped and the outcome is `moved` (0039-F16), so it stays without a retry; why_new=the evidence tests used paths that exist or are absent; seam=the inspection of the evidence path, which is refused
+test('a removal whose evidence directory cannot be inspected stops there as partly moved, and the study stays listed for a second removal', async (context) => {
+  // Arrange: a study with a recording; inspecting its evidence path is refused.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  const evidenceDirectory = join(
+    storage.directory,
+    '..',
+    'agent',
+    study.instanceId,
+    study.runId,
+  )
+  await mkdir(evidenceDirectory, { recursive: true })
+  const lstatBefore = fsPromises.lstat
+  context.mock.method(
+    fsPromises,
+    'lstat',
+    async (...input: Parameters<typeof lstatBefore>) => {
+      if (input[0] === evidenceDirectory)
+        throw Object.assign(new Error('EACCES: permission denied, lstat'), {
+          code: 'EACCES',
+        })
+      return lstatBefore(...input)
+    },
+  )
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+    evidenceDirectory,
+  )
+  context.mock.restoreAll()
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'partly-moved',
+    cause: 'EACCES: permission denied, lstat',
+  })
+  assert.deepEqual(storage.moved, [join('recordings.v2', study.id)])
+  assert.deepEqual(
+    (await storage.library.list()).map((entry) => entry.id),
+    [study.id],
+  )
+})
+
+// Value: protects=a path the Trash took is counted as moved even when the editor's call rejects afterwards; fails_when=a mover that rejects after moving is read as "not moved" (0039-F16), so the study is reported as whole although its files are gone; why_new=every refusing mover refused before moving; seam=the injected mover
+test('a Trash move that rejects after the file already left the library is counted as moved and the removal completes', async (context) => {
+  // Arrange: the Trash moves the catalog sidecar and then rejects the call.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const moverThatRejectsAfterMoving: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path.endsWith('.study.meta.v3.json'))
+      throw new Error('Trash answered late')
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverThatRejectsAfterMoving,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    `${study.id}.study.meta.v3.json`,
+    `${study.id}.study.v3.json`,
+  ])
+  assert.deepEqual(await storage.library.list(), [])
+})
+
+// Value: protects=moving the last run's evidence leaves no empty instance directory in the agent storage; fails_when=the instance directory stays behind after its only run's evidence went to the Trash (0040-N9-5); why_new=the evidence test asserted only the run directory; seam=the injected mover
+test('moving the evidence of an instance’s only run also removes the instance directory that is left empty, and keeps one that still holds another run', async (context) => {
+  // Arrange: two studies; the first instance has one run, the second instance has two.
+  const storage = await removalStorage(context, 4)
+  const lonely = await saveStudy(storage),
+    shared = await saveStudy(storage)
+  const agent = join(storage.directory, '..', 'agent')
+  const lonelyEvidence = join(agent, 'lonely-instance', lonely.runId),
+    sharedEvidence = join(agent, 'shared-instance', shared.runId)
+  await mkdir(lonelyEvidence, { recursive: true })
+  await mkdir(sharedEvidence, { recursive: true })
+  await mkdir(join(agent, 'shared-instance', 'other-run'))
+  // Act
+  await storage.library.removeStudy(
+    lonely.id,
+    storage.moveToTrash,
+    lonelyEvidence,
+  )
+  await storage.library.removeStudy(
+    shared.id,
+    storage.moveToTrash,
+    sharedEvidence,
+  )
+  // Assert
+  assert.deepEqual((await readdir(agent)).sort(), ['shared-instance'])
+  assert.deepEqual(await readdir(join(agent, 'shared-instance')), ['other-run'])
+})
+
+// Value: protects=an interrupted reservation's recording directory, which has no study, is not moved by asking to remove that id; fails_when=a removal without an archive moves the recording (the recording would be orphaned from nothing, or a later study's recording lost); why_new=the unknown-id test used an id without any files (0038-T4); seam=the injected mover
+test('a recording directory without a saved study stays in place when that id is asked to be removed, and nothing moves', async (context) => {
+  // Arrange: a recording directory under an id the library holds no archive for.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  await rm(join(storage.directory, `${study.id}.study.meta.v3.json`))
+  await rm(join(storage.directory, `${study.id}.study.v3.json`))
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause: 'Study archive is unavailable.',
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.equal(
+    (
+      await lstat(join(storage.directory, 'recordings.v2', study.id))
+    ).isDirectory(),
+    true,
+  )
+})
+
+// Value: protects=only a study identity can name what a removal moves; fails_when=a path-like id reaches the steps (0038-T5); why_new=no negative identity test existed; seam=the injected mover
+test('removing an id that is not a study identity is refused before anything is inspected or moved', async (context) => {
+  // Arrange
+  const storage = await removalStorage(context, 4)
+  await saveStudy(storage)
+  // Act / Assert
+  assert.throws(() => storage.library.removeStudy('../x', storage.moveToTrash))
+  assert.deepEqual(storage.moved, [])
+})
+
+// Value: protects=the current archive format and recording format are removed as one unit in order; fails_when=the v4 archive, its sidecar or the `recordings.v3` directory is skipped or reordered (0038-T6); why_new=removal tests used only the v3 archive and `recordings.v2`; seam=the injected mover
+test('removing a cross-runtime study moves its recordings.v3 directory, its v4 sidecar and its v4 archive in that order', async (context) => {
+  // Arrange: a v4 study with a cross-runtime recording.
+  const storage = await removalStorage(context, 4)
+  const study = createCrossRuntimeStudy()
+  await storage.library.saveStudy(study)
+  const recording = await storage.recordings.start(
+    {
+      workspaceKey: study.workspaceKey,
+      studyId: study.id,
+      instanceId: study.instanceId,
+      runId: study.runId,
+      runtimeId: randomUUID(),
+      profile: study.profile,
+      sourceBuild: {
+        revision: 'removal-test',
+        dirty: false,
+        sourceHash: '1'.repeat(64),
+      },
+    },
+    0,
+    3,
+  )
+  await recording.finish(1)
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.deepEqual(storage.moved, [
+    join('recordings.v3', study.id),
+    `${study.id}.study.meta.v4.json`,
+    `${study.id}.study.v4.json`,
+  ])
+  assert.deepEqual(await storage.library.list(), [])
+})
+
+// Value: protects=a storage lock left by an editor that was killed mid-removal does not refuse every later write until it is removed by hand; fails_when=a lock whose process no longer exists on this machine is treated like a live writer's lock (0038-F13); why_new=the lock tests used a lock of a live process; seam=a real exited process
+test('a storage lock left by an exited editor process on this machine is taken over and the removal completes', async (context) => {
+  // Arrange: the lock file names a process of this machine that has exited.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await writeFile(
+    join(storage.directory, 'writer.lock'),
+    JSON.stringify({ pid: exitedProcessId(), hostname: hostname() }),
+  )
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+  assert.equal(
+    (await readdir(storage.directory)).includes('writer.lock'),
+    false,
+  )
+})
+
+// Value: protects=a lock of a process that still runs is never taken over; fails_when=the stale-lock recovery takes a live writer's lock; why_new=the recovery is new; seam=none
+test('a storage lock of a process that still runs on this machine keeps refusing the removal with the lock sentence', async (context) => {
+  // Arrange: the lock names this test process.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  await writeFile(
+    join(storage.directory, 'writer.lock'),
+    JSON.stringify({ pid: process.pid, hostname: hostname() }),
+  )
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause:
+      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+  })
+  assert.deepEqual(storage.moved, [])
+})
+
+// Value: protects=a lock file that is already gone when the removal releases it is no failure; fails_when=the release's ENOENT is reported as an unreleased lock (0040-D8); why_new=the release reported every unlink failure; seam=the injected mover, which removes the lock file with the last move
+test('a removal whose storage lock file is already gone at its release is reported as moved without a lock failure', async (context) => {
+  // Arrange
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudy(storage)
+  const moverThatRemovesTheLock: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path.endsWith('.study.v3.json'))
+      await rm(join(storage.directory, 'writer.lock'))
+  }
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    moverThatRemovesTheLock,
+  )
+  // Assert
+  assert.deepEqual(removal, { outcome: 'moved' })
+})
+
+// Value: protects=a lock that a removal could not release keeps refusing later writes with the lock sentence, as the reader's storage line says; fails_when=a later write ignores the lock that stayed; why_new=every unreleased-lock test deleted the lock file (0040-D12c); seam=the injected mover, which puts a directory in the lock file's place
+test('after a removal could not release its storage lock and the lock stayed, a later study save is refused with the lock sentence', async (context) => {
+  // Arrange: the removal completes while the lock cannot be released.
+  const storage = await removalStorage(context, 4)
+  const removed = await saveStudy(storage)
+  const moverThatKeepsTheLock: StudyMover = async (path) => {
+    await storage.moveToTrash(path)
+    if (path.endsWith('.study.v3.json'))
+      await blockLockRelease(storage.directory)
+  }
+  const removal = await storage.library.removeStudy(
+    removed.id,
+    moverThatKeepsTheLock,
+  )
+  // Act
+  const save = storage.library.saveStudy(createConfiguredStudy())
+  // Assert
+  assert.equal(removal.outcome, 'moved')
+  await assert.rejects(save, {
+    message:
+      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+  })
 })

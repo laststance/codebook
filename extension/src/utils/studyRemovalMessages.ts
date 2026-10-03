@@ -1,6 +1,21 @@
 import { systemTrashName, type SystemTrashName } from './systemTrashName'
 
 /**
+ * Words the room the library has after a removal; a library still at or above its limit (the limit was lowered below the stored count) says how many more studies must go before another can be saved.
+ * @param usage - The library's count and its limit; the limit is absent while the setting is invalid.
+ * @returns A sentence with a leading space, or `''` without a valid limit.
+ * @example
+ * libraryRoomSentence({ count: 63, limit: 64 }) // => ' The library now holds 63 of 64 saved studies.'
+ * libraryRoomSentence({ count: 69, limit: 64 }) // => ' The library now holds 69 of 64 saved studies and is still full; delete 6 more before another study can be saved.'
+ */
+function libraryRoomSentence(usage: { count: number; limit?: number }): string {
+  if (usage.limit === undefined) return ''
+  const holds = ` The library now holds ${usage.count} of ${usage.limit} saved studies`
+  if (usage.count < usage.limit) return `${holds}.`
+  return `${holds} and is still full; delete ${usage.count - usage.limit + 1} more before another study can be saved.`
+}
+
+/**
  * Words every learner-facing text of a saved study's removal with the host's word for the system Trash, so the dialog, the status line and the failures agree; called by {@link StudyWorkspace} when it confirms a removal and reports its outcome.
  * @param trashName - The host's word for the system Trash.
  * @returns The dialog's title, button and detail, the in-progress line, builders for the three outcomes, and the storage line for a lock that could not be released.
@@ -26,11 +41,7 @@ export function studyRemovalMessages(
       refusedRunCanStart: boolean,
       isEvidenceLeftInPlace = false,
     ): string =>
-      `Saved study moved to the ${trashName}.${
-        usage.limit === undefined
-          ? ''
-          : ` The library now holds ${usage.count} of ${usage.limit} saved studies.`
-      }${refusedRunCanStart ? ' Ask your editor agent to start the run again.' : ''}${
+      `Saved study moved to the ${trashName}.${libraryRoomSentence(usage)}${refusedRunCanStart ? ' Ask your editor agent to start the run again.' : ''}${
         isEvidenceLeftInPlace
           ? " The run's raw evidence was left in place because its Codebook window may still be open."
           : ''
