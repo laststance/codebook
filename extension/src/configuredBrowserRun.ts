@@ -1244,18 +1244,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Gives {@link retireUnannouncedPause} the longest a pause may have lasted for its resume to be the debug adapter's own.
-   * While the participant's stop is accepted and its own pause is still awaited, the held pause may be the announced one (bound elsewhere), which the adapter never resumes by itself, so the bound is the short one.
+   * While the participant's stop is accepted and its own pause is still awaited ({@link awaitsOwnPause}), the held pause may be the announced one (bound elsewhere), which the adapter never resumes by itself, so the bound is the short one. Once that stop is captured, also after its continuation and through the after phase of the last stop, a held pause is the adapter's own again.
    * @param name - The participant whose runtime resumed.
    * @returns The bound in milliseconds.
    * @example
    * ```ts
-   * this.adapterPauseLimitMs('server') // 3000 while no server stop is accepted
+   * this.adapterPauseLimitMs('server') // 3000 while no server stop is accepted, and again once the accepted one is captured
    * ```
    */
   private adapterPauseLimitMs(name: Participant): number {
-    return this.acceptedStop &&
-      this.stops[this.stopIndex]?.participant === name &&
-      !this.participants[name].stopped
+    return this.awaitsOwnPause(name)
       ? REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS
       : REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
   }
@@ -1821,7 +1819,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
 
-  /** Tells {@link onEvent} whether this participant's accepted stop has no pause of its own yet: {@link inspect} is still waiting for it, or took a pause held elsewhere in the stop's module and is about to judge its binding. @example this.awaitsOwnPause('server') // true during the wait of pauseOfAcceptedStop */
+  /** Tells {@link onEvent} and {@link adapterPauseLimitMs} whether this participant's accepted stop has no pause of its own yet: {@link inspect} is still waiting for it, or took a pause held elsewhere in the stop's module and is about to judge its binding. @example this.awaitsOwnPause('server') // true during the wait of pauseOfAcceptedStop */
   private awaitsOwnPause(name: Participant): boolean {
     const stopped = this.participants[name].stopped
     return (
