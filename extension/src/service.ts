@@ -2110,7 +2110,7 @@ export class StudyService {
       // A failure before the admission answered is saved as an ordinary preparation failure only where the library has room for it.
       if (record.historyExcluded === 'awaiting-admission')
         record.historyExcluded = await this.exclusionAfterEarlyFailure(record)
-      record.error = domainError(error)
+      record.error = this.preparationError(record, error)
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
     }
@@ -2121,6 +2121,25 @@ export class StudyService {
           record.error = domainError(error)
         })
       })
+  }
+
+  /**
+   * Names why a run's preparation failed, for {@link StudyService.prepare}'s catch.
+   * A runtime that ends itself during preparation (a pause it did not declare, such as a learner's breakpoint on a line the page load runs) closes its own transport, and the preparation then rejects with that closure ("CDP disconnected"). The reason the runtime recorded first is the one an agent can act on, so it becomes the message and the cause.
+   * @param record - The run whose preparation rejected.
+   * @param error - What the preparation rejected with.
+   * @returns The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, or {@link domainError} of `error` when the runtime recorded none or `error` already is a {@link StudyError}.
+   * @example
+   * this.preparationError(record, new Error('CDP disconnected')).message
+   * // => 'Unexpected or additional server stop invalidated the declared operation'
+   */
+  private preparationError(record: StudyRecord, error: unknown): StudyError {
+    const runtimeFailure = record.runtime
+      ?.view()
+      .failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
+    return runtimeFailure && !(error instanceof StudyError)
+      ? new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
+      : domainError(error)
   }
 
   /**

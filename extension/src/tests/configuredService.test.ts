@@ -587,6 +587,60 @@ test('a run that fails inside its runtime gives its resource an error whose caus
   })
 })
 
+// Value: protects=the reason an agent reads for a run a learner's breakpoint ended during preparation; fails_when=the run resource names the closed transport ("The study operation failed." / "Error: CDP disconnected") instead of the runtime's own reason; why_new=native run of 2026-10-04, run 4f46d9c6; seam=runtime.prepare
+test('a run its runtime ends during preparation gives its resource the runtime’s reason, not the closed transport', async (context) => {
+  // Arrange
+  const { service, configuration, environment, runtimes } =
+      await configuredServiceHarness(context),
+    create = environment.createRuntime
+  environment.createRuntime = async (...arguments_) => {
+    const runtime = await create(...arguments_)
+    runtime.prepare = async () => {
+      // A pause the run did not declare ends the runtime, whose cleanup closes the browser transport under the pending preparation.
+      runtimes[0]!.failures.push(
+        'Unexpected or additional server stop invalidated the declared operation',
+      )
+      runtimes[0]!.status = 'failed'
+      throw new Error('CDP disconnected')
+    }
+    return runtime
+  }
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'learner-breakpoint',
+    configuration,
+  })
+  await service.record(receipt).preparation
+
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const state = z
+    .object({
+      terminalReason: z.string(),
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  assert.equal(
+    state.terminalReason,
+    'Unexpected or additional server stop invalidated the declared operation',
+  )
+  assert.deepEqual(state.error, {
+    code: 'RUNTIME_FAILED',
+    message:
+      'Unexpected or additional server stop invalidated the declared operation',
+    cause:
+      'Unexpected or additional server stop invalidated the declared operation',
+  })
+})
+
 // Cycle 0044 (0042-SR3): red while terminalReason carried a runtime failure of any length, which the saved study's 8,192-character reason refuses.
 test('a runtime failure longer than the saved reason limit is cut to that limit in the run resource', async (context) => {
   // Arrange
