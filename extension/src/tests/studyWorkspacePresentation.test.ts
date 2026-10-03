@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -2845,7 +2845,7 @@ test('a dead Codebook pane the editor refuses to close stays in its group while 
       {
         code: 'PRESENTATION_UNAVAILABLE',
         message:
-          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.',
+          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.',
         causeDetail: 'A leftover Codebook pane could not be closed.',
       },
     )
@@ -3252,7 +3252,7 @@ test('a selection on a reader that opened beside a dead pane the editor kept nam
       {
         code: 'PRESENTATION_UNAVAILABLE',
         message:
-          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application and Study tabs, then select the presentation again.',
+          'A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.',
         causeDetail: 'A leftover Codebook pane could not be closed.',
       },
     )
@@ -3593,4 +3593,18 @@ test('the first presentation selection places its panes after closing the dead A
   } finally {
     await harness.close()
   }
+})
+
+// Value: protects=the extension README tells a learner and an agent the dead-pane refusal and its causes in the words the reader uses; fails_when=the README does not describe the close of an earlier session's tabs, or its texts drift from the refusal a selection gives; why_new=Cycle 0044 0037-DOC1: the README named neither the close nor the refusal; seam=none
+test('the extension README gives the refusal for a dead pane that stays open and both causes word for word', async () => {
+  // Arrange
+  const readme = await readFile(resolve(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const documented = [
+    '`A Codebook pane left by an earlier extension session is still open. Close the leftover Application, Study and Repository Wiki tabs, then select the presentation again.`',
+    '`A leftover Codebook pane could not be closed.`',
+    '`A leftover captured source tab could not be closed.`',
+  ].map((text) => readme.includes(text))
+  // Assert
+  assert.deepEqual(documented, [true, true, true])
 })
