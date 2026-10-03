@@ -732,9 +732,20 @@ test('the evidence resources of a run whose saved study the learner removed answ
     )
     const run = await readResource(service, service.uri(record.id))
     assert.ok('text' in run)
+    const answeredRun = JSON.parse(run.text)
     assert.deepEqual(
-      JSON.parse(run.text),
-      JSON.parse(JSON.stringify(service.state(record))),
+      [
+        answeredRun.runId,
+        answeredRun.state,
+        answeredRun.historyOutcome?.status,
+        answeredRun.historyOutcome?.reason,
+      ],
+      [
+        record.id,
+        'stopped',
+        'unavailable',
+        `The learner moved this saved study to the ${TRASH}.`,
+      ],
     )
     assert.equal(
       service.state(record).historyOutcome.reason,

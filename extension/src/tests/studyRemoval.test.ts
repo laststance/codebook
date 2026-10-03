@@ -277,11 +277,11 @@ test('removing a saved study forgets the remembered selection, repository return
 
 // Value: protects=a Trash that refuses the first move leaves the study exactly as it was; fails_when=the removal goes on after a failed move or reports a partial removal; why_new=no removal existed; seam=the injected mover
 test('a removal whose first move the Trash refuses moves nothing and leaves the study listed and readable', async (context) => {
-  // Arrange
+  // Arrange: the Trash refuses the first move, the recording, and would take the sidecar and the archive, so a removal that went on would leave them in storage.moved.
   const storage = await removalStorage(context, 4)
   const study = await saveStudyWithRecording(storage)
   const filesBefore = await filesBelow(storage.directory)
-  storage.rejectMovesOf(() => true)
+  storage.rejectMovesOf((path) => path === join('recordings.v2', study.id))
   // Act
   const removal = await storage.library.removeStudy(
     study.id,
