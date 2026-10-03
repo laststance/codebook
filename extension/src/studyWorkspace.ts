@@ -19,6 +19,9 @@ import {
   PRESENTATION_SETTLE_CEILING_MS,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   SHOW_NATIVE_VARIABLES_COMMANDS,
+  SUMMARY_PLACEMENT_ACTION,
+  SUMMARY_PLACEMENT_OFFER,
+  SUMMARY_PLACEMENT_OFFER_KEY,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
@@ -6778,9 +6781,41 @@ export class StudyWorkspace {
       this.lastActiveRegion = 'context'
       this.lastPublished = undefined
       this.publish()
+      this.offerSummaryPlacement()
     } finally {
       focusSubscription.dispose()
     }
+  }
+
+  /**
+   * Offers Cursor's learner the editor's own Move View step once per workspace, after {@link showLearningSummary} showed the summary.
+   *
+   * Cursor rejects the `secondarySidebar` container this extension contributes, so the summary lands in the primary side bar
+   * there, and its own chat containers refuse added views: no command of this extension can place the summary on the right.
+   * VS Code registers the container, so nothing is offered there.
+   *
+   * @example this.offerSummaryPlacement()
+   */
+  private offerSummaryPlacement(): void {
+    if (!vscode.env?.appName?.toLowerCase().includes('cursor')) return
+    if (this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_OFFER_KEY))
+      return
+    void (async (): Promise<void> => {
+      await this.context.workspaceState.update(
+        SUMMARY_PLACEMENT_OFFER_KEY,
+        true,
+      )
+      const choice = await vscode.window.showInformationMessage(
+        SUMMARY_PLACEMENT_OFFER,
+        SUMMARY_PLACEMENT_ACTION,
+      )
+      // The editor's Move View list opens for the summary itself; the learner picks its destination there.
+      if (choice === SUMMARY_PLACEMENT_ACTION)
+        await vscode.commands.executeCommand(
+          'workbench.action.moveFocusedView',
+          'codebook.learningSummary',
+        )
+    })().catch((error: unknown) => this.report('layout', error))
   }
 
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */

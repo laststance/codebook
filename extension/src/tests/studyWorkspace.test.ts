@@ -2651,6 +2651,63 @@ test('a window round trip during summary opening cannot confirm an obsolete focu
   }
 })
 
+// Value: protects=Cursor's learner being told how to keep the Learning summary on the right; fails_when=the reader shows the summary where Cursor put it (the primary side bar) and never says so, or offers the move again on every replay; why_new=Cycle 0044 (0031-U2: Cursor rejects the secondarySidebar container and its chat containers refuse added views); seam=vscode.env.appName, showInformationMessage and executeCommand stubs
+test('in Cursor the first shown Learning summary offers the Move View step once, and choosing it opens the move list for the summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    harness.useHostAppName('Cursor')
+    harness.answerInformationMessages(async ([move]) => move)
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act
+    await harness.reader.showLearningSummary()
+    await waitUntil(
+      () => harness.commands.includes('workbench.action.moveFocusedView'),
+      'the Move View list for the Learning summary',
+      1_000,
+    )
+    await harness.reader.showLearningSummary()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(harness.informationMessages, [
+      {
+        message:
+          'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.',
+        items: ['Move Learning Summary…'],
+      },
+    ])
+    assert.equal(
+      harness.commands.filter(
+        (command) => command === 'workbench.action.moveFocusedView',
+      ).length,
+      1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('in VS Code, which accepts the secondary side bar container, showing the Learning summary offers no move', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act
+    await harness.reader.showLearningSummary()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
 test('closing replay rejects late summary controls and leaves saved learning unchanged', async () => {
   // Arrange
   const harness = await recordedReaderHarness()

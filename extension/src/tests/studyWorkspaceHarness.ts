@@ -51,6 +51,11 @@ export async function workspaceHarness(
   let answerWarningDialog: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  const informationMessages: { message: string; items: string[] }[] = []
+  let answerInformationMessage: (
+    items: string[],
+  ) => Promise<string | undefined> = async () => undefined
+  let hostAppName = 'Visual Studio Code'
   const trashMoves: { path: string; options: unknown }[] = []
   let rejectsTrashMove: (path: string) => boolean = () => false
   let beforeTrashMove: (path: string) => Promise<void> = async () => {}
@@ -1270,6 +1275,11 @@ export async function workspaceHarness(
       TextEditorRevealType: { Default: 0, AtTop: 3 },
       ThemeColor: class {},
       RelativePattern,
+      env: {
+        get appName(): string {
+          return hostAppName
+        },
+      },
       commands: {
         async executeCommand(name: string, layout?: unknown): Promise<unknown> {
           if (name === 'codebook.observedMoments.focus') {
@@ -1566,6 +1576,10 @@ export async function workspaceHarness(
         ) => {
           warningDialogs.push({ title, options, items })
           return answerWarningDialog(items)
+        },
+        showInformationMessage: (message: string, ...items: string[]) => {
+          informationMessages.push({ message, items })
+          return answerInformationMessage(items)
         },
         createTextEditorDecorationType: disposable,
         createTreeView: (
@@ -1919,6 +1933,18 @@ export async function workspaceHarness(
     },
     /** Every native warning dialog the reader opened, with its title, options and buttons. @example harness.warningDialogs[0].title */
     warningDialogs,
+    /** Every native information message the reader showed, with its buttons. @example harness.informationMessages[0].message */
+    informationMessages,
+    /** Decides how the learner answers the reader's next information messages; unanswered ones are dismissed. @example harness.answerInformationMessages(async ([move]) => move) */
+    answerInformationMessages(
+      answer: (items: string[]) => Promise<string | undefined>,
+    ): void {
+      answerInformationMessage = answer
+    },
+    /** Names the editor the reader runs in, as `vscode.env.appName` reports it. @example harness.useHostAppName('Cursor') */
+    useHostAppName(name: string): void {
+      hostAppName = name
+    },
     /** Decides how the learner answers the reader's next native warning dialogs; unanswered dialogs are dismissed. @example harness.answerWarningDialogs(async ([confirm]) => confirm) */
     answerWarningDialogs(
       answer: (items: string[]) => Promise<string | undefined>,
