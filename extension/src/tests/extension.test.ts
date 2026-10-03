@@ -678,7 +678,7 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
     await commands.get('codebook.updateDeepWiki')!()
     assert.equal(submissions.length, 1)
     assert.deepEqual(notices, [
-      'Codebook is already updating this project’s LLM Wiki.',
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
     ])
   } finally {
     await boundary.deactivate()
@@ -850,6 +850,18 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string, prompt: string) => {
           agentRuns.push({ root, prompt })
+          // The agent publishes: the manifest file changes, and it now matches the source.
+          await writeFile(
+            join(outputDirectory, 'codebook-wiki.json'),
+            JSON.stringify({
+              schemaVersion: 1,
+              repositoryRoot: projectRoot,
+              pages: [],
+              assets: [],
+              includedSources: [],
+              excludedPaths: ['scratch'],
+            }),
+          )
           publishedWikiIsCurrent = true
           return 'Updated'
         },
@@ -881,7 +893,10 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
     assert.equal(agentRuns[0]?.root, projectRoot)
     assert.match(agentRuns[0]?.prompt ?? '', /\/codebook Update LLM Wiki/)
     assert.deepEqual(chatCommands, [])
-    assert.match(messages[0] ?? '', /updated this project/)
+    assert.match(
+      messages[0] ?? '',
+      /^Updated at \d{1,2}:\d{2}(?:\s?[AP]M)? \(index [0-9a-f]{8}; no Git revision recorded\)\. Reload the browser reader to read the new pages\.$/,
+    )
   } finally {
     await boundary.deactivate()
     await rm(projectDirectory, { recursive: true, force: true })
@@ -1428,6 +1443,18 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
       './utils/runCursorWikiUpdate': {
         runCursorWikiUpdate: async (root: string) => {
           agentRuns.push(root)
+          // The agent publishes a new site, but the source no longer matches it.
+          await writeFile(
+            join(outputDirectory, 'codebook-wiki.json'),
+            JSON.stringify({
+              schemaVersion: 1,
+              repositoryRoot: projectRoot,
+              pages: [],
+              assets: [],
+              includedSources: [],
+              excludedPaths: ['scratch'],
+            }),
+          )
           return 'Updated'
         },
       },
@@ -1460,7 +1487,7 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
     assert.equal(messages.length, 1)
     assert.match(
       messages[0]!,
-      /could not start the Wiki update: Error: Cursor Agent finished, but the published Wiki is not verified current/,
+      /^Update needs another run \(\d{1,2}:\d{2}(?:\s?[AP]M)?\): Cursor Agent published a new Wiki, but 1 source file changed while it worked \(first: source\.ts\)\. Press Update LLM Wiki again\. This run replaced the site on disk\.$/,
     )
   } finally {
     await boundary.deactivate()
