@@ -3280,7 +3280,8 @@ test('repository evidence whose recorded frame never paints fails within its bou
     })
     await advanceClock(context, PRESENTATION_READY_TIMEOUT_MS - 100)
     const beforeBound = outcomeBeforeBound
-    await advanceClockUntilSettled(context, navigation, 3_000)
+    // The navigation must have failed 6,000 ms after its paint began (the bound Cycle 0034 T2 decided); the helper fails the test otherwise.
+    await advanceClockUntilSettled(context, navigation, 1_100)
     const outcome = await navigation
     resetFakeClock(context)
     // A navigation that still waits leaves playback busy; stop here instead of hanging the recovery open.
@@ -3288,7 +3289,7 @@ test('repository evidence whose recorded frame never paints fails within its bou
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
-    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4): still painting 100 ms before it, failed soon after.
+    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4): still painting 100 ms before it, failed by 6,000 ms.
     assert.equal(beforeBound, 'still painting')
     assert.equal(harness.controller.state().readiness, 'ready')
     assert.equal(harness.controller.bundle()?.studyId, harness.studyId)
