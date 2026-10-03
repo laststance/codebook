@@ -25,7 +25,7 @@ const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
  * link.matches('.wiki-update') // => true
  * ```
  */
-export class PageElement {
+class PageElement {
   readonly attributes = new Map<string, string>()
   readonly listeners = new Map<string, PageListener[]>()
   childNodes: PageNode[] = []

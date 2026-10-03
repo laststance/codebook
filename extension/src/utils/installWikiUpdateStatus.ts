@@ -320,6 +320,45 @@ export function installWikiUpdateStatus(
     } else detailBox.replaceChildren(summary, ...entries)
     detailBox.removeAttribute('open')
   }
+  /** Writes the sentence into the region and puts what belongs beside it after it: disclosure, reload button, output line. */
+  const writeStatus = (shown: Shown | undefined): void => {
+    detailBox.remove()
+    reloadButton.remove()
+    outputLine.remove()
+    if (!shown) {
+      statusRegion.replaceChildren()
+      statusRegion.removeAttribute('data-state')
+      return
+    }
+    const lead = document.createElement('strong')
+    lead.textContent = shown.lead
+    statusRegion.replaceChildren(lead, shown.rest)
+    statusRegion.setAttribute('data-state', shown.state)
+    const besideTheRegion: HTMLElement[] = []
+    if (shown.detail.length > 0) {
+      fillDetail(shown)
+      besideTheRegion.push(detailBox)
+    }
+    if (shown.offerReload) besideTheRegion.push(reloadButton)
+    if (shown.output) {
+      outputLine.textContent = shown.output
+      besideTheRegion.push(outputLine)
+    }
+    statusRegion.after(...besideTheRegion)
+  }
+  /** Holds the update link back while a run is active; it stays a focusable link, and its label and the status line say why. */
+  const showUpdateLink = (isRunning: boolean): void => {
+    if (!updateLink) return
+    const label = isRunning ? 'Updating…' : updateLinkLabel
+    if (updateLink.textContent !== label) updateLink.textContent = label
+    if (isRunning) {
+      updateLink.setAttribute('aria-disabled', 'true')
+      updateLink.setAttribute('aria-describedby', statusRegion.id)
+      return
+    }
+    updateLink.removeAttribute('aria-disabled')
+    updateLink.removeAttribute('aria-describedby')
+  }
   /** Puts the current sentence and the state of the update link on the page. */
   const show = (): void => {
     const shown = describeShown()
@@ -327,42 +366,9 @@ export function installWikiUpdateStatus(
     // An unchanged look writes nothing: a rewritten live region may be announced again on every poll.
     if (signature !== shownSignature) {
       shownSignature = signature
-      detailBox.remove()
-      reloadButton.remove()
-      outputLine.remove()
-      if (shown) {
-        const lead = document.createElement('strong')
-        lead.textContent = shown.lead
-        statusRegion.replaceChildren(lead, shown.rest)
-        statusRegion.setAttribute('data-state', shown.state)
-        const besideTheRegion: HTMLElement[] = []
-        if (shown.detail.length > 0) {
-          fillDetail(shown)
-          besideTheRegion.push(detailBox)
-        }
-        if (shown.offerReload) besideTheRegion.push(reloadButton)
-        if (shown.output) {
-          outputLine.textContent = shown.output
-          besideTheRegion.push(outputLine)
-        }
-        statusRegion.after(...besideTheRegion)
-      } else {
-        statusRegion.replaceChildren()
-        statusRegion.removeAttribute('data-state')
-      }
+      writeStatus(shown)
     }
-    if (!updateLink) return
-    // The link stays a focusable link while it is held back; its label and the status line say why.
-    const isRunning = shown?.state === 'running'
-    const label = isRunning ? 'Updating…' : updateLinkLabel
-    if (updateLink.textContent !== label) updateLink.textContent = label
-    if (isRunning) {
-      updateLink.setAttribute('aria-disabled', 'true')
-      updateLink.setAttribute('aria-describedby', statusRegion.id)
-    } else {
-      updateLink.removeAttribute('aria-disabled')
-      updateLink.removeAttribute('aria-describedby')
-    }
+    showUpdateLink(shown?.state === 'running')
   }
 
   const scheduleNextLook = (): void => {
