@@ -3552,21 +3552,31 @@ export class StudyWorkspace {
         await this.open()
       }
       if (!this.opened) return false
+      const displaysObservation = (): boolean =>
+        this.message().model.observation?.id === snapshot.id &&
+        this.message().model.matching
+      const joinedRefresh = this.refreshing
       await this.refresh()
-      if (
-        this.message().model.observation?.id !== snapshot.id ||
-        !this.message().model.matching
-      )
+      // A refresh that was already reading the run may have started before this observation was committed; read once more before calling the reader busy.
+      if (joinedRefresh && !displaysObservation()) await this.refresh()
+      if (!displaysObservation())
         throw new StudyError(
           'BUSY',
           'Learner is reading another observation. Read the captured source resource or return the reader to the current pause.',
         )
       await this.renderSelection(true, true)
-      if (
-        !this.sourceReady() ||
-        this.message().model.observation?.id !== snapshot.id ||
-        !this.message().model.matching
-      )
+      // A newer render of the same observation supersedes this one before it displays anything; wait, within the placement bound, for the render that replaced it.
+      await awaitResponse(
+        (async (): Promise<void> => {
+          let settled: Promise<void> | undefined
+          while (this.loading && settled !== this.rendering)
+            await (settled = this.rendering)
+        })(),
+        'the captured source display',
+        undefined,
+        PRESENTATION_READY_TIMEOUT_MS,
+      ).catch(() => undefined)
+      if (!this.sourceReady() || !displaysObservation())
         throw new StudyError(
           'EVIDENCE_UNAVAILABLE',
           'Matching captured source is not displayed. Inspect the reader error and retry explicitly.',
