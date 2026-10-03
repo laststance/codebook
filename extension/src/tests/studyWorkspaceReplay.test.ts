@@ -1937,6 +1937,73 @@ test('a replay settle that starts while a frame is already painting fails 5 s af
   }
 })
 
+// Value: protects=a newer navigation's own bounds when the frame it superseded is still waiting to paint (queued behind a native placement hold, which ignores cancellation); fails_when=the superseded frame's paint phase keeps counting, so a settle fails 5 s after that old paint began although the newer frame has not started painting; why_new=Cycle 0044 (0033-P1, Codex claim never probed); seam=the replay viewport's first present, replaced by one that never answers, and node:test setTimeout mock
+test('a superseded frame that is still waiting to paint does not count against the newer frame, which settles once its own debugger wait and paint finish', async (context) => {
+  // Arrange: frame A has been waiting to paint for 3 s behind a hold that ignores cancellation.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDebugger = (): void => {}
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const viewport = harness.reader['replayViewport']
+    assert.ok(viewport)
+    const present = viewport.present.bind(viewport)
+    let paintsRequested = 0
+    viewport.present = (image, label) => {
+      paintsRequested++
+      // Only frame A's paint never answers; later frames paint normally.
+      return paintsRequested === 1
+        ? new Promise(() => {})
+        : present(image, label)
+    }
+    enableFakeClock(context)
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await advanceClockUntil(context, () => paintsRequested === 1, 2_000)
+    await advanceClock(context, 3_000)
+    const slowDebugger = harness.holdHistoricalDebugPresentation()
+    releaseDebugger = slowDebugger.release
+
+    // Act: the learner seeks again; frame B's native debugger takes 2.5 s, so A's paint would be 5.5 s old.
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 500,
+    })
+    await advanceClockUntilSettled(context, slowDebugger.started, 2_000)
+    let outcome = 'still settling'
+    const settling = harness.reader['settleOwnedPlayback']().then(
+      () => {
+        outcome = 'settled'
+      },
+      (error: unknown) => {
+        outcome =
+          error instanceof Error && 'code' in error
+            ? String(error.code)
+            : String(error)
+      },
+    )
+    await advanceClock(context, 2_500)
+    const whileNewerFrameWaitsForDebugger = outcome
+    slowDebugger.release()
+    await advanceClockUntilSettled(context, settling, 2_000)
+
+    // Assert
+    assert.equal(whileNewerFrameWaitsForDebugger, 'still settling')
+    assert.equal(outcome, 'settled')
+    assert.equal(harness.controller.state().presentedMs, 500)
+  } finally {
+    resetFakeClock(context)
+    releaseDebugger()
+    await harness.close()
+  }
+})
+
 // Value: protects=the recording renderer handshake after abandoned reveals; fails_when=the pending reveal is cleared before it completes, so after two aborted reveals a later presentation gets the viewport without its handshake; why_new=Cycle 0044 (0034-C4); seam=the reused recording viewport's reveal, replaced to observe each handshake
 test('after two abandoned recording reveals the next presentation still waits for the renderer handshake', async () => {
   // Arrange: a reused recording viewport whose reveal is still owed, and a reveal that finishes only after its caller left.

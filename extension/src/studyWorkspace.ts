@@ -5356,6 +5356,9 @@ export class StudyWorkspace {
       inspection === 'uninspected' ? bundle.projection.debugger : undefined
     // From here the moment is painting; settleOwnedPlayback bounds only this phase by PRESENTATION_READY_TIMEOUT_MS.
     const paint = this.beginReplayPaint()
+    // A superseded frame may still wait behind a native placement hold that ignores cancellation; its paint phase must not count against the newer frame's settle.
+    const endSupersededPaint = (): void => this.endReplayPaint(paint)
+    signal.addEventListener('abort', endSupersededPaint, { once: true })
     try {
       if (bundle.image) {
         const image = bundle.image.toString('base64'),
@@ -5417,6 +5420,7 @@ export class StudyWorkspace {
       )
       signal.throwIfAborted()
     } finally {
+      signal.removeEventListener('abort', endSupersededPaint)
       this.endReplayPaint(paint)
     }
   }
