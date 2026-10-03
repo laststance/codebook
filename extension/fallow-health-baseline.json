@@ -149,7 +149,7 @@
         "count": 9
       },
       "crap_moderate": {
-        "count": 17
+        "count": 16
       }
     },
     "src/cursorMcpBridge.ts": {
@@ -407,7 +407,7 @@
         "count": 3
       },
       "crap_high": {
-        "count": 2
+        "count": 3
       },
       "crap_moderate": {
         "count": 8
@@ -516,16 +516,16 @@
     },
     "src/studyWorkspace.ts": {
       "complexity_critical": {
-        "count": 27
+        "count": 28
       },
       "crap_critical": {
-        "count": 55
+        "count": 56
       },
       "crap_high": {
-        "count": 39
+        "count": 40
       },
       "crap_moderate": {
-        "count": 37
+        "count": 40
       }
     },
     "src/ui/repositoryHtml.ts": {
@@ -804,6 +804,11 @@
       },
       "crap_moderate": {
         "count": 5
+      }
+    },
+    "src/utils/isCollapsedEditorLayout.ts": {
+      "crap_high": {
+        "count": 1
       }
     },
     "src/utils/isCommentAt.ts": {
