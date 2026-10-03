@@ -587,3 +587,76 @@ test('the Cursor update request carries the same contract but asks for no report
     await wiki.close()
   }
 })
+
+test('closing the window while a VS Code update is watched stops the watch and shows no notification to a window that is gone', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  await wiki.clickUpdate()
+  const whileWatched = wiki.status()
+
+  // Act
+  await wiki.close()
+
+  // Assert
+  assert.equal(whileWatched.state, 'running')
+  assert.equal(wiki.status().state, 'cancelled')
+  assert.deepEqual(wiki.notices, [])
+})
+
+test('closing the window stops the Cursor agent and waits until its process has closed', async () => {
+  // Arrange
+  const agent = { sawAbort: false, hasClosed: false }
+  const wiki = await openWikiWindow({
+    cursor: true,
+    // This agent ends only when its run is aborted, and then needs a moment to close, like a real process.
+    cursorAgent: (_root, _prompt, signal) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          agent.sawAbort = true
+          setTimeout(() => {
+            agent.hasClosed = true
+            reject(new Error('The Wiki update was cancelled.'))
+          }, 100)
+        })
+      }),
+  })
+  const click = wiki.clickUpdate()
+  await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+  const whileRunning = wiki.status()
+
+  // Act
+  await wiki.close()
+
+  // Assert
+  assert.equal(whileRunning.state, 'running')
+  assert.deepEqual(agent, { sawAbort: true, hasClosed: true })
+  assert.equal(wiki.status().state, 'cancelled')
+  assert.deepEqual(wiki.notices, [])
+  await click
+})
+
+test(
+  'a Cursor agent that does not stop is not waited for longer than the termination grace when the window closes',
+  { timeout: 5_000 },
+  async () => {
+    // Arrange
+    const wiki = await openWikiWindow({
+      cursor: true,
+      terminationGraceMs: 100,
+      cursorAgent: () => new Promise(() => {}),
+    })
+    void wiki.clickUpdate()
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+    const closeStartedAtMs = Date.now()
+
+    // Act
+    await wiki.close()
+
+    // Assert
+    const waitedMs = Date.now() - closeStartedAtMs
+    assert.ok(
+      waitedMs >= 90 && waitedMs < 2_000,
+      `the window waited ${waitedMs} ms for a grace of 100 ms`,
+    )
+  },
+)

@@ -17,6 +17,7 @@ import {
   EXTENSION_VERSION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
+  WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_MANIFEST_FILE,
   WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
@@ -118,7 +119,9 @@ export function activate(
   let wikiUpdate: Promise<void> | undefined
   // One update run per window, shared by the command, the `/update` link and the browser button.
   const wikiUpdateRun = new WikiUpdateRun()
-  let wikiWatch: AbortController | undefined
+  // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped.
+  let activeWikiRun:
+    { controller: AbortController; settled: Promise<void> } | undefined
   // When this window's last run ended; a candidate written before it is this window's own leftover.
   let lastWikiRunEndedAtMs: number | undefined
   // A window that is closing has nobody to notify of the run its shutdown stops.
@@ -131,6 +134,8 @@ export function activate(
     /** Publish token of the site the run started from; the end compares against it to say kept or replaced. */
     tokenAtStart: string | undefined
     startedAtMs: number
+    /** Stops the run: the learner's Cancel and the closing window both abort it. */
+    controller: AbortController
   }
   const workspace = (): StudyWorkspace =>
     (reader ??= new StudyWorkspace(context, {
@@ -539,13 +544,33 @@ export function activate(
   // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
   stopExtension = async (): Promise<void> => {
     isExtensionStopping = true
-    wikiWatch?.abort()
+    // A closing window must not leave a watch or an unattended agent behind.
+    const stoppedWikiRun = activeWikiRun
+    stoppedWikiRun?.controller.abort()
     try {
       await stop()
       await repositoryReader?.dispose()
       await reader?.dispose()
     } finally {
-      await deepWikiReader?.close()
+      try {
+        // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer.
+        if (stoppedWikiRun) {
+          let graceTimer: NodeJS.Timeout | undefined
+          await Promise.race([
+            // How the run ended is recorded by the run itself; shutdown only waits for it.
+            stoppedWikiRun.settled.catch(() => undefined),
+            new Promise<void>((resolveGrace) => {
+              graceTimer = setTimeout(
+                resolveGrace,
+                WIKI_CURSOR_TERMINATION_GRACE_MS,
+              )
+            }),
+          ])
+          clearTimeout(graceTimer)
+        }
+      } finally {
+        await deepWikiReader?.close()
+      }
     }
   }
   /** Resolves the opened project and the Wiki folder its setting names, without reading the folder. @example await wikiLocation() // => { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' } */
@@ -672,12 +697,10 @@ export function activate(
       candidates,
     )
   }
-  /** Watches for the editor agent's publish after VS Code's chat opened, then records the run's result for the reader. @example watchVsCodeWikiUpdate({ projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki', host: 'vscode', tokenAtStart: 'dc9d…@18', startedAtMs: 1_790_000_000_000 }) */
-  const watchVsCodeWikiUpdate = (run: WikiRun): void => {
-    const controller = new AbortController()
-    wikiWatch = controller
+  /** Watches for the editor agent's publish after VS Code's chat opened, then records the run's result for the reader; settles when the watch has stopped. @example await watchVsCodeWikiUpdate(run) */
+  const watchVsCodeWikiUpdate = async (run: WikiRun): Promise<void> => {
     const watch = async (token?: vscode.CancellationToken): Promise<void> => {
-      token?.onCancellationRequested(() => controller.abort())
+      token?.onCancellationRequested(() => run.controller.abort())
       try {
         const result = await waitForWikiPublish({
           startToken: run.tokenAtStart,
@@ -685,7 +708,7 @@ export function activate(
           readPublished: () =>
             inspectPublishedWiki(run.projectRoot, run.outputDirectory),
           findBlockingFiles: () => probeWikiCandidates(run),
-          signal: controller.signal,
+          signal: run.controller.signal,
           timeoutMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
           pollMs: WIKI_UPDATE_WATCH_POLL_MS,
         })
@@ -697,11 +720,9 @@ export function activate(
         })
       } catch (error) {
         await finishWikiUpdate(run, { failure: describeUpdateFailure(error) })
-      } finally {
-        if (wikiWatch === controller) wikiWatch = undefined
       }
     }
-    void (vscode.window.withProgress
+    await (vscode.window.withProgress
       ? vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
@@ -712,6 +733,56 @@ export function activate(
           async (_, token) => watch(token),
         )
       : watch())
+  }
+  /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
+  const runCursorWikiAgent = async (
+    run: WikiRun,
+    query: string,
+  ): Promise<void> => {
+    const update = async (token?: vscode.CancellationToken): Promise<void> => {
+      token?.onCancellationRequested(() => run.controller.abort())
+      await runCursorWikiUpdate(run.projectRoot, query, run.controller.signal)
+      // A successful CLI exit alone does not prove that the correct project's site is readable.
+      if ((await realpath(requireWorkspace())) !== run.projectRoot)
+        throw new Error(
+          'The opened repository changed during the Wiki update. Reopen its Wiki to see the result.',
+        )
+    }
+    let agentError: unknown
+    let didAgentFail = false
+    // The CLI reports nothing until it exits, so the staged candidate is looked for beside it.
+    const stagedLook = setInterval(() => {
+      void probeWikiCandidates(run).catch(() => [])
+    }, WIKI_UPDATE_WATCH_POLL_MS)
+    stagedLook.unref()
+    try {
+      await (vscode.window.withProgress
+        ? vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: 'Updating LLM Wiki with Cursor Agent',
+              cancellable: true,
+            },
+            async (_, token) => update(token),
+          )
+        : update())
+    } catch (error) {
+      agentError = error
+      didAgentFail = true
+    } finally {
+      clearInterval(stagedLook)
+    }
+    await finishWikiUpdate(run, {
+      cancelled: run.controller.signal.aborted,
+      timedOut:
+        typeof agentError === 'object' &&
+        agentError !== null &&
+        'name' in agentError &&
+        agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
+      // A refused candidate is the learner's file in the way, not a failed agent.
+      blockingPaths: await probeWikiCandidates(run).catch(() => []),
+      failure: didAgentFail ? describeUpdateFailure(agentError) : undefined,
+    })
   }
   /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @example await updateDeepWiki() */
   const updateDeepWiki = async (): Promise<void> => {
@@ -777,6 +848,15 @@ export function activate(
         host,
         tokenAtStart,
         startedAtMs: Date.now(),
+        controller: new AbortController(),
+      }
+      /** Makes the run reachable for the closing window until its watch or agent has stopped. */
+      const track = (settled: Promise<void>): Promise<void> => {
+        const tracked = { controller: run.controller, settled }
+        activeWikiRun = tracked
+        return settled.finally(() => {
+          if (activeWikiRun === tracked) activeWikiRun = undefined
+        })
       }
       const timeoutMs = isCursorHost
         ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
@@ -800,57 +880,11 @@ export function activate(
           })
           return
         }
-        // The chat API reports no result, so the extension watches for the publish itself.
-        watchVsCodeWikiUpdate(run)
+        // The chat API reports no result, so the extension watches for the publish itself; the watch outlives this call.
+        void track(watchVsCodeWikiUpdate(run))
         return
       }
-      let cursorToken: vscode.CancellationToken | undefined
-      const update = async (
-        token?: vscode.CancellationToken,
-      ): Promise<void> => {
-        cursorToken = token
-        await runCursorWikiUpdate(projectRoot, query, token)
-        // A successful CLI exit alone does not prove that the correct project's site is readable.
-        if ((await realpath(requireWorkspace())) !== projectRoot)
-          throw new Error(
-            'The opened repository changed during the Wiki update. Reopen its Wiki to see the result.',
-          )
-      }
-      let agentError: unknown
-      let didAgentFail = false
-      // The CLI reports nothing until it exits, so the staged candidate is looked for beside it.
-      const stagedLook = setInterval(() => {
-        void probeWikiCandidates(run).catch(() => [])
-      }, WIKI_UPDATE_WATCH_POLL_MS)
-      stagedLook.unref()
-      try {
-        await (vscode.window.withProgress
-          ? vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Notification,
-                title: 'Updating LLM Wiki with Cursor Agent',
-                cancellable: true,
-              },
-              async (_, token) => update(token),
-            )
-          : update())
-      } catch (error) {
-        agentError = error
-        didAgentFail = true
-      } finally {
-        clearInterval(stagedLook)
-      }
-      await finishWikiUpdate(run, {
-        cancelled: cursorToken?.isCancellationRequested ?? false,
-        timedOut:
-          typeof agentError === 'object' &&
-          agentError !== null &&
-          'name' in agentError &&
-          agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
-        // A refused candidate is the learner's file in the way, not a failed agent.
-        blockingPaths: await probeWikiCandidates(run).catch(() => []),
-        failure: didAgentFail ? describeUpdateFailure(agentError) : undefined,
-      })
+      await track(runCursorWikiAgent(run, query))
     })()
     wikiUpdate = attempt
     try {

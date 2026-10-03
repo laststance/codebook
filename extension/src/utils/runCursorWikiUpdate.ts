@@ -1,7 +1,5 @@
 import { spawn } from 'node:child_process'
 
-import type * as vscode from 'vscode'
-
 import {
   WIKI_CURSOR_PROMPT_LIMIT_BYTES,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
@@ -43,20 +41,16 @@ export function parseCursorWikiUpdateResult(output: string): string {
   return envelope.result
 }
 
-/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param cancellationToken - User cancellation from the editor progress UI. @param timeoutMs - Bound after which the agent is stopped. @returns The agent's reply. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel, a failed start, a non-zero exit or an unusable reply. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', token) */
+/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window. @param timeoutMs - Bound after which the agent is stopped. @returns The agent's reply, once the agent process has closed. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel, a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal) */
 export async function runCursorWikiUpdate(
   projectRoot: string,
   prompt: string,
-  cancellationToken?: Pick<
-    vscode.CancellationToken,
-    'isCancellationRequested' | 'onCancellationRequested'
-  >,
+  signal?: AbortSignal,
   timeoutMs: number = WIKI_CURSOR_UPDATE_TIMEOUT_MS,
 ): Promise<string> {
   if (Buffer.byteLength(prompt, 'utf8') > WIKI_CURSOR_PROMPT_LIMIT_BYTES)
     throw new Error('The Wiki update request is too large.')
-  if (cancellationToken?.isCancellationRequested)
-    throw new Error('The Wiki update was cancelled.')
+  if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
   const executable = await resolveCursorAgentExecutable()
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn(
@@ -104,9 +98,10 @@ export async function runCursorWikiUpdate(
       timedOut.name = WIKI_UPDATE_TIMED_OUT_ERROR_NAME
       stop(timedOut)
     }, timeoutMs)
-    const cancellation = cancellationToken?.onCancellationRequested(() =>
-      stop(new Error('The Wiki update was cancelled.')),
-    )
+    const cancel = (): void => stop(new Error('The Wiki update was cancelled.'))
+    signal?.addEventListener('abort', cancel, { once: true })
+    // An abort that arrived while the executable was being resolved has no listener to fire.
+    if (signal?.aborted) cancel()
     child.stdout.on('data', (chunk: Buffer) => {
       outputBytes += chunk.length
       if (outputBytes > WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES) {
@@ -135,10 +130,10 @@ export async function runCursorWikiUpdate(
               'Cursor Agent could not start the Wiki update. Check its installation and retry.',
             )
     })
-    child.on('close', (code, signal) => {
+    child.on('close', (code, exitSignal) => {
       clearTimeout(timeout)
       if (killTimer) clearTimeout(killTimer)
-      cancellation?.dispose()
+      signal?.removeEventListener('abort', cancel)
       if (failure) {
         reject(failure)
         return
@@ -147,7 +142,7 @@ export async function runCursorWikiUpdate(
         // A reason says what happened and what to do; the page alone says what was kept.
         reject(
           new Error(
-            `Cursor Agent stopped ${code === null ? `on signal ${signal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
+            `Cursor Agent stopped ${code === null ? `on signal ${exitSignal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
           ),
         )
         return

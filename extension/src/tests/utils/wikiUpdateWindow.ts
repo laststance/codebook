@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 
+import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
 import type { WikiFreshness } from '../../utils/inspectDeepWikiFreshness'
@@ -30,6 +31,7 @@ type UriHandler = (uri: { path: string; query: string }) => Promise<void>
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
+ * @param options.terminationGraceMs - Replaces the grace a closing window gives the Cursor agent, so a test need not wait five seconds.
  * @returns What the window showed (chat requests, notifications by severity, confirmations, progress titles), the two update entries, the state snapshot and `close`.
  *
  * @example
@@ -57,6 +59,7 @@ export async function openWikiUpdateWindow(options: {
     sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
   }
   openReader?: boolean
+  terminationGraceMs?: number
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   notices: string[]
@@ -173,6 +176,14 @@ export async function openWikiUpdateWindow(options: {
         },
       },
       './environment': { requireWorkspace: () => projectRoot },
+      ...(options.terminationGraceMs === undefined
+        ? {}
+        : {
+            './constants': {
+              ...constants,
+              WIKI_CURSOR_TERMINATION_GRACE_MS: options.terminationGraceMs,
+            },
+          }),
       './deepWikiReader': {
         readDeepWikiManifest,
         startDeepWikiReader: async (

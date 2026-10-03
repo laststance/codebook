@@ -161,3 +161,59 @@ setInterval(() => {}, 1000);
     await rm(privateHome, { recursive: true, force: true })
   }
 })
+
+test(
+  'aborting the run stops the Cursor agent process and the run ends as cancelled only after it has closed',
+  { timeout: 10_000 },
+  async () => {
+    // Arrange
+    const privateHome = await mkdtemp(
+      join(tmpdir(), 'codebook-cursor-update-abort-'),
+    )
+    const projectRoot = join(privateHome, 'project')
+    const binaryDirectory = join(privateHome, '.local', 'bin')
+    await mkdir(projectRoot)
+    await mkdir(binaryDirectory, { recursive: true })
+    // This agent records its process id and then works until it is stopped.
+    await writeFile(
+      join(binaryDirectory, 'cursor-agent'),
+      `#!${process.execPath}
+require('node:fs').writeFileSync(require('node:path').join(process.cwd(), 'agent.pid'), String(process.pid));
+setInterval(() => {}, 1000);
+`,
+      { mode: 0o755 },
+    )
+    const previousHome = process.env.HOME
+    process.env.HOME = privateHome
+    const controller = new AbortController()
+    try {
+      const run = runCursorWikiUpdate(
+        projectRoot,
+        '/codebook Update LLM Wiki for this opened repository.',
+        controller.signal,
+        // Should the abort be ignored, this bound stops the agent, so a failing test leaves no process behind.
+        3_000,
+      ).catch((error: unknown) => error)
+      let agentPid = 0
+      while (!agentPid)
+        agentPid = Number(
+          await readFile(join(projectRoot, 'agent.pid'), 'utf8').catch(
+            () => '',
+          ),
+        )
+
+      // Act
+      controller.abort()
+      const failure: unknown = await run
+
+      // Assert
+      assert.ok(failure instanceof Error)
+      assert.equal(failure.message, 'The Wiki update was cancelled.')
+      assert.throws(() => process.kill(agentPid, 0), { code: 'ESRCH' })
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
+      await rm(privateHome, { recursive: true, force: true })
+    }
+  },
+)
