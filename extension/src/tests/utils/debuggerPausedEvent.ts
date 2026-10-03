@@ -1,5 +1,5 @@
 /** Where a test's runtime pause is and what the debugger reports about it. */
-export interface TestPausePlace {
+interface TestPausePlace {
   callFrameId: string
   scriptId: string
   lineNumber: number

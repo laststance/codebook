@@ -17,7 +17,7 @@ const resumedDetailSchema = z.object({
 })
 
 /** The committed stop whose paused interval is asked for: when it was committed and which pause it holds. */
-export interface PausedObservation {
+interface PausedObservation {
   elapsedMs: number
   participant?: string
   pause: { generation: number }

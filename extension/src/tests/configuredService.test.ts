@@ -560,9 +560,10 @@ test('a run that fails inside its runtime gives its resource an error whose caus
   await record.preparation
   service.action({ ...receipt, key: 'click', action: 'repository-click' })
   // Act
-  runtimes[0]!.failInRuntime(
+  runtimes[0]!.failures.push(
     'Selected server resumed outside its owned continuation',
   )
+  runtimes[0]!.status = 'failed'
   const resource = await readResource(service, receipt.runUri)
   // Assert
   assert.ok('text' in resource)
@@ -598,7 +599,8 @@ test('a runtime failure longer than the saved reason limit is cut to that limit 
   service.action({ ...receipt, key: 'click', action: 'repository-click' })
   const longFailure = `The browser is paused at ${'u'.repeat(9_000)} without a debugger stop.`
   // Act
-  runtimes[0]!.failInRuntime(longFailure)
+  runtimes[0]!.failures.push(longFailure)
+  runtimes[0]!.status = 'failed'
   const state = service.state(record)
   // Assert
   assert.equal(state.terminalReason, longFailure.slice(0, 8_192))

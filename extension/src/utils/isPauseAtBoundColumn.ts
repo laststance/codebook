@@ -3,7 +3,7 @@ import type { Protocol } from 'devtools-protocol'
 import type { createBundleVerifier } from './createBundleVerifier'
 
 /** A declared stop as far as its bound column is compared: the sealed map's column reader and, once known, where the debugger bound the stop. */
-export interface BoundColumnTarget {
+interface BoundColumnTarget {
   verifier: Pick<ReturnType<typeof createBundleVerifier>, 'originalColumn'>
   /** The position the debugger verified the stop's breakpoint at; absent until that binding is known. */
   bound?: { column: number }
