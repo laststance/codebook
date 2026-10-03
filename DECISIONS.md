@@ -417,3 +417,11 @@ Source: on 2026-10-02 Raphtalia paused the work during Cycle 0038's reviews ("�
 Decision: the pause is lifted. D043 and D044 apply again without change: continue toward the complete product one bounded cycle at a time, each planned through `/spec`, strengthened by the plan reviews its scope needs, reviewed with local CodeRabbit CLI and `open-code-review-delegate`, delivered through `/ship`, merged after required CI and the separate exact-HEAD gate, and followed by the next gap-derived cycle. D040's VS Code chat order is unchanged. Because the owner cannot answer, every decision point takes the recommended option and the cycle record names it.
 
 Boundary: a pause the owner directs still stops the work at once, and only the owner's explicit message lifts it. The owner's statement that Codex automatic review is off stays in force: a delivery has no Codex cloud step. Both hosts, native evidence, the nine-project stages, owner acceptance and Goal Issue #1 are unchanged. Purchases, subscriptions, credentials, permanent deletion and security settings remain outside authorization.
+
+## D046 — Pause once the next cycle's Issue is written, 2026-10-03
+
+Source: Raphtalia's message during Cycle 0042's second `/ship` invocation, about 12:07 JST on 2026-10-03: "お疲れ様です😀次のサイクルのIssueを書き上げた時点で作業を中断してください".
+
+Decision: finish Cycle 0042 as D045 describes. That is its `/ship` pull request, CI, the separate exact-HEAD gate, the merge in its own step, CI on `main`, Issue #78 closed by hand and the closure records. Then derive the next cycle from the goal and the gap ledger and write its Issue through `/spec`. Record that Issue and this pause in the local records, then stop. The next cycle's plan reviews, implementation, native trials and any later cycle wait for the owner's explicit message.
+
+Boundary: this is a conditional pause, not an immediate one. Until the Issue is written, D045 applies unchanged, including the recommended option at every decision point. After it, only the owner's explicit message resumes the work. The pause changes no accepted product outcome, evidence rule or acceptance gate.
