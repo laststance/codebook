@@ -677,7 +677,10 @@ test('configured browser checks identify absent condition and click elements sep
   })
   assert.deepEqual(clickResult, {
     ready: false,
-    failure: { reason: 'click-target-missing' },
+    failure: {
+      reason: 'click-target-missing',
+      candidates: { button: 0, link: 0, field: 0 },
+    },
   })
 })
 
@@ -875,4 +878,35 @@ test('an attribute condition is compared exactly, so a value that differs only i
     ready: false,
     failure: { conditionIndex: 0, reason: 'attribute-mismatch' },
   })
+})
+
+// Cycle 0044 (0042-N11-2): red while a missing click target was reported with no word about the page.
+test('a click target that matches no element is reported with counts of the page’s buttons, links and form fields, never their text', () => {
+  // Arrange: the page has two buttons, one link and three form fields; the action selector matches none of them.
+  const countBySelector: Record<string, number> = {
+    'button,[role="button"],input[type="submit"],input[type="button"]': 2,
+    'a[href]': 1,
+    'input,select,textarea': 3,
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        Array.from({ length: countBySelector[selector] ?? 0 }, () => ({
+          textContent: 'Secret label',
+        })),
+    },
+  }
+  // Act
+  const serialized = JSON.stringify(
+    runInNewContext(configuredDomExpression([], '#missing'), environment),
+  )
+  // Assert
+  assert.deepEqual(JSON.parse(serialized), {
+    ready: false,
+    failure: {
+      reason: 'click-target-missing',
+      candidates: { button: 2, link: 1, field: 3 },
+    },
+  })
+  assert.equal(serialized.includes('Secret'), false)
 })

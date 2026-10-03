@@ -161,3 +161,25 @@ test('a page failure that carries a text relation on another reason than a text 
   assert.equal(attributeResult.success, false)
   assert.deepEqual(textResult.data, relationOnText)
 })
+
+// Cycle 0044 (0042-N11-2): red while a missing click target got no hint.
+test('a click target that matched nothing tells the agent so, with the page’s control counts when the page reported them', () => {
+  // Arrange
+  const withCounts = {
+    reason: 'click-target-missing',
+    candidates: { button: 0, link: 1, field: 2 },
+  } as const
+  const withoutCounts = { reason: 'click-target-missing' } as const
+  // Act
+  const counted = configuredConditionHint('before', undefined, withCounts)
+  const uncounted = configuredConditionHint('before', undefined, withoutCounts)
+  // Assert
+  assert.equal(
+    counted,
+    " The action selector matched no element on the page. The page holds 0 button, 1 link and 2 form field elements. Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control.",
+  )
+  assert.equal(
+    uncounted,
+    " The action selector matched no element on the page. Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control.",
+  )
+})

@@ -525,6 +525,12 @@ export const REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES = 100_000
 export const REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS = 4_194_304
 export const REPOSITORY_BINDING_HINT_EDGE_LINES = 20
 export const REPOSITORY_BINDING_HINT_NEAR_LINES = 40
+/** Begins the hint of a click target that matched no element; the page's control counts follow when it reported them. */
+export const CLICK_TARGET_MISSING_HINT =
+  ' The action selector matched no element on the page.'
+/** Ends that hint with what the agent can do without seeing the page. */
+export const CLICK_TARGET_MISSING_REMEDY_HINT =
+  " Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control."
 /** Appended to every timed-out `text` condition: the comparison rule, which the agent cannot read from the failure reason. Each hint begins with one space because it follows the reason's period. */
 export const TEXT_CONDITION_RULE_HINT =
   " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied."

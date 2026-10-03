@@ -95,8 +95,21 @@ function inspectDom(
     element = elements?.[0]
   if (!elements)
     return { ready: false, failure: { reason: 'invalid-selector' } }
+  // The selector matched nothing: say how many controls the page has, as counts only, so the agent learns whether the page is the expected one.
   if (elements.length === 0)
-    return { ready: false, failure: { reason: 'click-target-missing' } }
+    return {
+      ready: false,
+      failure: {
+        reason: 'click-target-missing',
+        candidates: {
+          button: document.querySelectorAll(
+            'button,[role="button"],input[type="submit"],input[type="button"]',
+          ).length,
+          link: document.querySelectorAll('a[href]').length,
+          field: document.querySelectorAll('input,select,textarea').length,
+        },
+      },
+    }
   if (elements.length !== 1 || !element)
     return { ready: false, failure: { reason: 'click-target-not-unique' } }
   if (!visible(element))

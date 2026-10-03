@@ -27,6 +27,8 @@ interface BeforeFailure {
   conditionIndex?: number
   reason: string
   textDifference?: string
+  /** The page's control counts, sent with a missing click target. */
+  candidates?: { button: number; link: number; field: number }
 }
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */

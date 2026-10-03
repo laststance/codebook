@@ -1,6 +1,8 @@
 import {
   ATTRIBUTE_ENTIRE_VALUE_HINT,
   ATTRIBUTE_VALUE_BEFORE_INPUT_HINT,
+  CLICK_TARGET_MISSING_HINT,
+  CLICK_TARGET_MISSING_REMEDY_HINT,
   TEXT_BESIDE_OTHER_TEXT_AFTER_HINT,
   TEXT_BESIDE_OTHER_TEXT_BEFORE_HINT,
   TEXT_CONDITION_RULE_HINT,
@@ -26,6 +28,7 @@ type TextDifference = Extract<
  * @returns
  * - `text-mismatch`: the text rule, followed for `surrounding-text` by the fix that fits the phase
  * - `attribute-mismatch` on a declared attribute condition: the before-input sentence for a before `value`, the entire-value sentence otherwise
+ * - `click-target-missing`: that the action selector matched nothing, how many controls the page holds when the page reported it, and what to read
  * - Every other failure: `''`
  * @example
  * configuredConditionHint('before', { kind: 'text', selector: 'button', equals: 'Log in' }, { reason: 'text-mismatch' })
@@ -41,6 +44,8 @@ export function configuredConditionHint(
     return textConditionHint(phase, failure.textDifference)
   if (failure.reason === 'attribute-mismatch')
     return attributeConditionHint(phase, condition)
+  if (failure.reason === 'click-target-missing')
+    return clickTargetMissingHint(failure.candidates)
   return ''
 }
 
@@ -73,4 +78,17 @@ function attributeConditionHint(
   return condition.attribute === 'value'
     ? VALUE_ATTRIBUTE_HINT_BY_PHASE[phase]
     : ATTRIBUTE_ENTIRE_VALUE_HINT
+}
+
+/** Says that the action selector matched nothing and, when the page counted them, how many controls it holds, so the agent can tell a wrong selector from a wrong page. */
+function clickTargetMissingHint(
+  candidates: Extract<
+    ConfiguredDomFailure,
+    { reason: 'click-target-missing' }
+  >['candidates'],
+): string {
+  const counts = candidates
+    ? ` The page holds ${candidates.button} button, ${candidates.link} link and ${candidates.field} form field elements.`
+    : ''
+  return CLICK_TARGET_MISSING_HINT + counts + CLICK_TARGET_MISSING_REMEDY_HINT
 }

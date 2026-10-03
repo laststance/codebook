@@ -90,6 +90,7 @@ import { pausePlace } from './utils/pausePlace'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { sameScriptUrl } from './utils/sameScriptUrl'
+import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { thrownMessage } from './utils/thrownMessage'
 import {
   withUnannouncedPauses,
@@ -456,7 +457,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         stop.source.line,
       )
       // A scan that stopped at its size limit proves nothing about the line; arming decides instead.
-      if (mapped.complete && !mapped.positions.length)
+      if (!mapped.complete || mapped.positions.length) continue
+      // The debugger binds a line it cannot pause on at the first place after it, which the stop's rule accepts within its citation; only a stop with no such place can never bind.
+      const later = stop.verifier.mappedPositions(
+        stop.source.line + 1,
+        this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
+      )
+      if (later.complete && !later.positions.length)
         throw this.bindingFailure(
           stop,
           `Declared stop ${this.declaredAt(stop)} has no mapped position on that line in the sealed module`,
@@ -2039,7 +2046,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       if (missing)
         throw new Error(
-          `Required inspection ${missing.mode}:${missing.path} is unavailable; captured facts remain readable.`,
+          `Required inspection ${missing.mode}:${missing.path} is unavailable; captured facts remain readable.${selfDeclaredInspectionHint(stop.bundle.source, frame.line, missing.path)}`,
         )
       await this.capture(phase, current, pause)
       current()
@@ -2696,6 +2703,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.failures.push(...failures)
     this.resourcesReleased = failures.length === 0
     this.cleaned = this.resourcesReleased
+    // A released run names no further pause; its script maps can be as large as the application.
+    if (this.cleaned)
+      for (const participant of Object.values(this.participants))
+        participant.scriptUrls.clear()
     if (failures.length) this.status = 'failed'
     this.evidence.record('cleanup.completed', {
       released: this.resourcesReleased,

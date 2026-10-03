@@ -1943,3 +1943,77 @@ test('a browser stop the debugger moves to another line after it was armed fails
   )
   assert.equal(run.view().snapshots.length, 0)
 })
+
+// Cycle 0044 (0041-N10-1b): red while a stop declared on a line the sealed map has no position on was refused before input, so the agent's first declaration was lost although the debugger binds it on the next statement.
+test('a stop declared on a line the sealed map has no position on is armed where the debugger binds it on the next mapped line of its citation, pauses there and commits at the bound line', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both and the debugger verifies the binding at 2:1.
+  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: ';AACA',
+      fixture: {
+        source: '// toggles the theme\nconst nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    },
+  )
+  bindFirstStopAt(2, 1)
+  // Act
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the bound line')
+  await run.stop()
+  // Assert
+  assert.equal(snapshot.source.line, 2)
+  assert.equal(snapshot.source.column, 1)
+  assert.equal(mouse.length, 2)
+})
+
+// Cycle 0044 (0042-N11-2): red while a click target that matches nothing timed out with "click target click-target-missing." and no hint.
+test('a click target that matches no element ends preparation saying so, with the page’s control counts and what to read', async (context) => {
+  // Arrange
+  const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(context)
+  failBeforeWith({
+    reason: 'click-target-missing',
+    candidates: { button: 2, link: 5, field: 3 },
+  })
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  assert.equal(
+    thrownMessage(failure),
+    "Timed out waiting for configured before conditions: click target click-target-missing. The action selector matched no element on the page. The page holds 2 button, 5 link and 3 form field elements. Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control.",
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Cycle 0044 (0042-N11-3): red while a required value that the stopped line itself declares ended the run with "is unavailable" and no word about why.
+test('a required value that the stopped line itself declares fails saying that the line declares it and where to declare the stop instead', async (context) => {
+  // Arrange: the stop is on `const nextTheme = "dark";` and requires value:nextTheme, which has no value before that line runs.
+  const { run, requireUnavailableValue } =
+    await configuredRuntimeHarness(context)
+  requireUnavailableValue()
+  await run.prepare()
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().status === 'failed',
+    'required value missing',
+  )
+  await run.stop()
+  // Assert
+  assert.equal(
+    run.view().failures[0],
+    'Error: Required inspection value:nextTheme is unavailable; captured facts remain readable. Line 1 declares nextTheme, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+  )
+})
