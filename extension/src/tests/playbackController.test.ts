@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import {
   PlaybackController,
   type PlaybackBundle,
   type PlaybackData,
   type PlaybackDependencies,
 } from '../playbackController'
+import type * as PlaybackSchemasModule from '../playbackSchemas'
 import type {
   RecordingContext,
   RecordingFrame,
@@ -16,6 +19,7 @@ import type {
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
 
 /** Supplies deterministic recorded identities to control-concurrency tests, without live browser/debugger effects. @example const data = playbackFixture() */
 function playbackFixture(): PlaybackData {
@@ -1302,4 +1306,22 @@ test('once the recording has arrived and before its first frame is presented, a 
   assert.equal(player.controller.state().readiness, 'ready')
   assert.equal(player.controller.state().presentedMs, 100)
   await player.controller.dispose()
+})
+
+// Value: protects=an agent reading in the seek description the snap distance the seek really applies; fails_when=the description states the distance as a literal beside PLAYBACK_SEEK_STOP_SNAP_MS, so a changed constant leaves the published sentence wrong; why_new=Cycle 0045 SM-5; seam=the schema module is loaded with a constants module whose snap distance is 5 ms
+test('the seek description names the snap distance the seek applies', async () => {
+  // Arrange
+  const schemas = await loadModule<typeof PlaybackSchemasModule>(
+    resolve(__dirname, '../playbackSchemas.js'),
+    { './constants': { ...constants, PLAYBACK_SEEK_STOP_SNAP_MS: 5 } },
+  )
+
+  // Act
+  const description = schemas.playbackToolSchema.shape.positionMs.description
+
+  // Assert
+  assert.equal(
+    description,
+    'Required only for seek; use a position within the returned recording range. A position less than 5 ms before a recorded stop presents that stop. Omit for open, play and pause.',
+  )
 })
