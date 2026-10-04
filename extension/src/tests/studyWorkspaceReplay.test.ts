@@ -3545,14 +3545,30 @@ test('pressing Recording after the editor closed the Application panel of an att
   }
 })
 
-// Value: protects=a live run's held pause while the learner reads a replay; fails_when=presenting replay moments never renews the attached run's pause hold, so it is released after five minutes of reading; why_new=Cycle 0035 O3; seam=renewPauseHold spy on the attached runtime
-test('reading a recording while a live run is attached renews the live pause hold for each presented moment', async () => {
-  // Arrange
+// Value: protects=the held pause of a live run while the learner reads a replay; fails_when=presenting replay moments does not renew the pause hold of the run that is paused now, so that pause is released after five minutes of reading; why_new=Cycle 0035 O3, rewritten in Cycle 0045 (finding X7-E3.2: the count was taken on the stopped run of the recording itself, whose real renewal does nothing, so the test did not show that a paused run is held); seam=renewPauseHold spy on the paused run's runtime
+test('reading a recording while a live run is paused renews that run’s pause hold for each presented moment', async () => {
+  // Arrange: a saved recording of a stopped run, and a second run that is paused at its stop.
   const harness = await recordedReaderHarness(true, true)
   let renewals = 0
   try {
-    harness.record.runtime!.renewPauseHold = (): void => {
+    harness.service.environment.build.sourceHash = sha256('paused-live-build')
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'paused-live-run',
+    })
+    const pausedRun = [...harness.service.records.values()].at(-1)!
+    await pausedRun.preparation
+    harness.clock(1_100)
+    await harness.reader.action('click')
+    pausedRun.runtime!.renewPauseHold = (): void => {
       renewals++
+    }
+    const pausedRunBeforeReading = {
+      isAnotherRunThanTheRecording: pausedRun !== harness.record,
+      stopped: pausedRun.stopped,
+      status: pausedRun.runtime!.view().status,
     }
 
     // Act
@@ -3568,8 +3584,14 @@ test('reading a recording while a live run is attached renews the live pause hol
     await harness.controller.settle()
 
     // Assert
+    assert.deepEqual(pausedRunBeforeReading, {
+      isAnotherRunThanTheRecording: true,
+      stopped: false,
+      status: 'paused-browser',
+    })
     assert.equal(renewalsAfterOpen, 1)
     assert.equal(renewals, 2)
+    assert.equal(pausedRun.stopped, false)
   } finally {
     await harness.close()
   }
