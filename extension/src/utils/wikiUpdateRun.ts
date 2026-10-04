@@ -35,6 +35,7 @@ export type WikiPublishedIdentity = {
  * `isOutputOutsideProject` is set on a run whose Wiki folder lies outside the opened project, where VS Code's chat asks to approve each step.
  * `site` says whether the published site was the same when the run ended (`kept`), was replaced during it (`replaced`) or was gone (`missing`).
  * `identity` is the display text `<revision or no-revision>+<index>`; `revision` (absent when no Git revision was checked) and `index` carry the same two values as data, so no reader parses the text.
+ * `addedFilesUnchecked` is set on `already-current` when the project has no Git repository: every indexed source matches, and added files were not looked for.
  * `isCodebookSentence` marks a failure `reason` that Codebook wrote itself with its next step; a reader shows it whole and shortens only a reason an agent, the CLI or a thrown error supplied.
  * Additive fields may appear; a reader must ignore fields it does not know and treat an unknown `state` as "status unknown".
  */
@@ -57,6 +58,7 @@ export type WikiUpdateStatus =
   | ({
       state: 'already-current'
       finishedAt: string
+      addedFilesUnchecked?: true
     } & Partial<WikiPublishedIdentity> &
       WikiUpdateOutput)
   | ({
@@ -251,15 +253,17 @@ export class WikiUpdateRun {
     this.#status = endedStatus(this.#status, this.#now().toISOString(), result)
   }
 
-  /** Records that nothing needed updating; no run starts. @param output - Resolved Wiki folder and its label. @param published - What the current site is called, when known. @example run.alreadyCurrent({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }) */
+  /** Records that nothing needed updating; no run starts. @param output - Resolved Wiki folder and its label. @param published - What the current site is called, when known. @param areAddedFilesUnchecked - Whether the project has no Git repository, so "current" covers the indexed sources only; the state then says so. @example run.alreadyCurrent({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }, false) */
   alreadyCurrent(
     output: WikiUpdateOutput,
     published?: WikiPublishedIdentity,
+    areAddedFilesUnchecked = false,
   ): void {
     if (this.isRunning()) return
     this.#status = {
       state: 'already-current',
       finishedAt: this.#now().toISOString(),
+      ...(areAddedFilesUnchecked ? { addedFilesUnchecked: true } : {}),
       ...published,
       ...output,
     }

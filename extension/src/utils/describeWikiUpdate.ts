@@ -509,6 +509,26 @@ export function describeWikiUpdate(
     return describe('Update status unknown', '.')
   }
   /**
+   * Words a start that was refused because nothing needed updating; called by {@link describeEnded} for the state `already-current`.
+   * @param alreadyCurrent - The already-current state.
+   * @param at - When the check was made, as the learner's local time.
+   * @returns The description: that the Wiki matches the source; in a folder without a Git repository, that every indexed source matches, that added files are not checked and what to do for a new file.
+   * @example describeAlreadyCurrent(alreadyCurrent, '21:10').rest // => ' (checked 21:10): this Wiki matches the source, so no update started.'
+   */
+  const describeAlreadyCurrent = (
+    alreadyCurrent: WikiUpdateStatusOf<'already-current'>,
+    at: string,
+  ): WikiUpdateDescription =>
+    describe(
+      'Already current',
+      ' (checked ' +
+        at +
+        // Without a Git repository added files were not looked for, and the button cannot update the Wiki for one.
+        (alreadyCurrent.addedFilesUnchecked
+          ? '): every indexed source matches, so no update started. Added files are not checked because this folder has no Git repository; ask the editor chat to update the Wiki for a new file.'
+          : '): this Wiki matches the source, so no update started.'),
+    )
+  /**
    * Words a run that is over; called by {@link describeWikiUpdate} for every state after `running`.
    * @param ended - The state of the ended run.
    * @param at - When the run ended, as the learner's local time.
@@ -521,12 +541,7 @@ export function describeWikiUpdate(
   ): WikiUpdateDescription => {
     if (ended.state === 'succeeded') return describeSucceeded(ended, at)
     if (ended.state === 'already-current')
-      return describe(
-        'Already current',
-        ' (checked ' +
-          at +
-          '): this Wiki matches the source, so no update started.',
-      )
+      return describeAlreadyCurrent(ended, at)
     const replaced = ended.site === 'replaced'
     if (ended.state === 'failed') return describeFailed(ended, at, replaced)
     return describeStoppedRun(ended, at, replaced)

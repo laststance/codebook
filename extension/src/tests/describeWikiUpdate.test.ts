@@ -178,6 +178,26 @@ test('an already-current check says when it was made and that no update started'
   )
 })
 
+// Value: protects=the learner of a project without Git who added a source file and pressed Update; fails_when=the refusal says "this Wiki matches the source" although added files were never looked for, and names no way to get the new file into the Wiki; why_new=Cycle 0045 local review wiki-1 #4; seam=none
+test('an already-current check in a folder without a Git repository says that added files are not checked and what to do for a new file', () => {
+  // Arrange
+  const status = {
+    state: 'already-current',
+    finishedAt,
+    addedFilesUnchecked: true,
+    ...place,
+  } as const
+
+  // Act
+  const described = describeWikiUpdate(status, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Already current (checked 21:10): every indexed source matches, so no update started. Added files are not checked because this folder has no Git repository; ask the editor chat to update the Wiki for a new file.',
+  )
+})
+
 test('a failure that left the site alone says the last usable site is kept', () => {
   // Arrange
   const status = {

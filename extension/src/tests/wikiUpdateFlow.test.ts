@@ -265,6 +265,35 @@ test('a Wiki that already matches the source says so and opens no chat request',
   }
 })
 
+// Value: protects=the notice and the page of a project without Git whose Wiki matches its indexed sources; fails_when=the start is refused as "this Wiki matches the source" without the caveat the freshness label carries, so a learner who added a file is told nothing needs updating and not how to get the file in; why_new=Cycle 0045 local review wiki-1 #4; seam=none
+test('a Wiki of a project without a Git repository whose indexed sources match says that added files are not checked, and opens no chat request', async () => {
+  // Arrange: what the freshness check answers in a folder without a Git repository once every indexed source matches.
+  const wiki = await openWikiWindow()
+  wiki.setFreshness({ ...CURRENT, addedFilesUnchecked: true })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'already-current')
+    assert.equal(
+      status.state === 'already-current' ? status.addedFilesUnchecked : false,
+      true,
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.equal(wiki.notices.length, 1)
+    assert.match(
+      wiki.notices[0] ?? '',
+      new RegExp(
+        `^Already current \\(checked ${CLOCK_TIME}\\): every indexed source matches, so no update started\\. Added files are not checked because this folder has no Git repository; ask the editor chat to update the Wiki for a new file\\.$`,
+      ),
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a chat that cannot open ends the update as failed, says what to install and shows one error notice with Open LLM Wiki that does not claim the update could not start', async () => {
   // Arrange
   const wiki = await openWikiWindow({ chatFails: true })

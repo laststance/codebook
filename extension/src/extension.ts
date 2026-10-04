@@ -1016,13 +1016,18 @@ export function activate(
       await assertWikiOwner(projectRoot, outputDirectory)
       const before = await inspectPublishedWiki(projectRoot, outputDirectory)
       if (before?.freshness.status === 'current') {
-        wikiUpdateRun.alreadyCurrent(wikiOutput, {
-          identity: before.identity,
-          ...(before.revision === undefined
-            ? {}
-            : { revision: before.revision }),
-          index: before.index,
-        })
+        wikiUpdateRun.alreadyCurrent(
+          wikiOutput,
+          {
+            identity: before.identity,
+            ...(before.revision === undefined
+              ? {}
+              : { revision: before.revision }),
+            index: before.index,
+          },
+          // In a folder without Git "current" covers the indexed sources only, and the learner is told.
+          Boolean(before.freshness.addedFilesUnchecked),
+        )
         showWikiUpdateNotice()
         return undefined
       }
