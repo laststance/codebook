@@ -1730,20 +1730,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Tells {@link bindParsedScript} whether a script the runtime announced is the sealed module of a declared stop.
    * @param stop - A declared stop.
    * @param name - The participant whose runtime announced the script.
-   * @param url - The script's URL; empty for a script without one.
-   * @returns `true` for a stop of that participant whose sealed module has this URL.
+   * @param event - The announced script; its URL is read only for a stop of that participant, and is empty for a script without one.
+   * @returns `true` for a stop of that participant whose sealed module has the script's URL.
    * @example
    * ```ts
-   * this.isModuleOfStop(stop, 'server', '') // false: a script without a URL is no stop's module
+   * this.isModuleOfStop(stop, 'server', event) // false for a script without a URL: it is no stop's module
    * ```
    */
   private isModuleOfStop(
     stop: PreparedStop,
     name: Participant,
-    url: string,
+    event: Protocol.Debugger.ScriptParsedEvent,
   ): boolean {
-    if (stop.participant !== name || !url) return false
-    return sameScriptUrl(stop.bundle.scriptUrl, url)
+    if (stop.participant !== name || !event.url) return false
+    return sameScriptUrl(stop.bundle.scriptUrl, event.url)
   }
 
   /**
@@ -1761,7 +1761,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.ScriptParsedEvent,
   ): void {
     for (const stop of this.stops) {
-      if (!this.isModuleOfStop(stop, name, event.url)) continue
+      if (!this.isModuleOfStop(stop, name, event)) continue
       if (this.isSealedAsAnotherScript(stop, event)) {
         this.fail('Selected module changed after sealing')
         return
