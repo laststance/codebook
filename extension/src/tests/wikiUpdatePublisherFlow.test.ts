@@ -517,6 +517,43 @@ test(
   },
 )
 
+// Value: protects=the editor's notification appearing together with the page's result; fails_when=the run records its ending, then waits for file work (the removal of its marker file) and only then tells the learner, so the page shows the result while the editor shows nothing yet; why_new=Cycle 0045 (found on the merged tree: the timed-out watch's test read no notification once under load, because the marker's removal stood between the recorded ending and the notice); seam=none
+test(
+  'the editor shows an ended update’s notification in the same turn the page’s status changes',
+  { timeout: 30_000 },
+  async () => {
+    // Arrange: a watch whose fifteen minutes pass in as many looks, read once per event-loop turn.
+    let nowMs = 0
+    const wiki = await openPublishedWikiWindow({
+      watchClock: {
+        now: () => nowMs,
+        sleep: async (delayMs) => {
+          nowMs += delayMs
+          await new Promise((resolveTurn) => setImmediate(resolveTurn))
+        },
+      },
+    })
+    try {
+      // Act: note what the editor has shown in the first turn in which the status is no longer running.
+      await wiki.clickUpdate()
+      while (wiki.status().state === 'running')
+        await new Promise((resolveTurn) => setImmediate(resolveTurn))
+      const shownWhenStatusEnded = {
+        state: wiki.status().state,
+        errorNotices: wiki.errors.length,
+      }
+
+      // Assert
+      assert.deepEqual(shownWhenStatusEnded, {
+        state: 'timed-out',
+        errorNotices: 1,
+      })
+    } finally {
+      await wiki.close()
+    }
+  },
+)
+
 test('a publish into a configured Wiki folder is seen there, ends the run as succeeded and keeps the learner’s file', async () => {
   // Arrange
   const wiki = await openPublishedWikiWindow({ outputSetting: 'docs/my-wiki' })

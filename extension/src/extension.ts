@@ -742,7 +742,6 @@ export function activate(
       failure: observed.failure,
     })
     wikiUpdateRun.end(end)
-    await run.releaseMarker().catch(() => undefined)
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
@@ -756,7 +755,9 @@ export function activate(
       WIKI_UPDATE_LAST_RUN_STATE_KEY,
       lastWikiRun,
     )
+    // The editor tells the learner in the same turn the page's status changes; the marker's removal is file work and would put the notice a turn or more behind the page.
     showWikiUpdateNotice()
+    await run.releaseMarker().catch(() => undefined)
   }
   /** Looks at this run's candidates: notes on the run state that the agent staged one, and names the learner files it would overwrite. @example await probeWikiCandidates(run) // => ['pages/notes.html'] */
   const probeWikiCandidates = async (run: WikiRun): Promise<string[]> => {
