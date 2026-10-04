@@ -69,6 +69,7 @@ import type { RetainedStudy } from './retainedStudySchemas'
 import type {
   NodeTestRuntime,
   RuntimeSnapshot,
+  RuntimeView,
   StudyEnvironment,
   StudyRuntime,
 } from './runtime'
@@ -901,22 +902,87 @@ export class StudyService {
     // The whole-run deadline is the run's own end: apply it now, so the answer carries it.
     this.expireAtDeadline(record)
     const runtime = record.runtime?.view()
-    if (
-      record.error ||
-      runtime?.failures.length ||
-      record.runtime?.evidence.failure ||
-      runtime?.status === 'failed'
+    return (
+      this.endedRunState(record, runtime, runtime?.status) ??
+      this.nextObservationState(runtime, committedBefore)
     )
-      return 'failure'
+  }
+
+  /**
+   * Names how a continued run ended, in the order that decides between two ends that both hold; the first half of {@link StudyService.nextRunState}, asked before the next observation is looked for.
+   * @param record - The run that was continued.
+   * @param runtime - The runtime's view read at this turn; `undefined` for a run without a runtime.
+   * @param status - The status of that view; `undefined` without a runtime.
+   * @returns
+   * - `'failure'` for a failed run ({@link StudyService.hasRunFailed})
+   * - `'result'` for a completed runtime, also while the service already cleans the completed run up
+   * - `'stopped'` for a run that is being stopped or was cancelled ({@link StudyService.isRunBeingStopped})
+   * - `undefined` while the run is still on its way
+   * @example this.endedRunState(record, runtime, 'completed') // => 'result'
+   */
+  private endedRunState(
+    record: StudyRecord,
+    runtime: RuntimeView | undefined,
+    status: RuntimeView['status'] | undefined,
+  ): 'failure' | 'stopped' | 'result' | undefined {
+    if (this.hasRunFailed(record, runtime, status)) return 'failure'
     // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run.
-    if (runtime?.status === 'completed') return 'result'
-    if (
+    if (status === 'completed') return 'result'
+    return this.isRunBeingStopped(record, status) ? 'stopped' : undefined
+  }
+
+  /**
+   * Says whether a continued run failed, for the first check of {@link StudyService.endedRunState}.
+   * @param record - The run that was continued.
+   * @param runtime - The runtime's view read at this turn; `undefined` for a run without a runtime.
+   * @param status - The status of that view; `undefined` without a runtime.
+   * @returns `true` once the run has an error (the passed whole-run deadline among them), the runtime lists a failure, its evidence failed, or its status is `failed`; `false` otherwise.
+   * @example this.hasRunFailed(record, runtime, 'failed') // => true
+   */
+  private hasRunFailed(
+    record: StudyRecord,
+    runtime: RuntimeView | undefined,
+    status: RuntimeView['status'] | undefined,
+  ): boolean {
+    return (
+      Boolean(
+        record.error ||
+        runtime?.failures.length ||
+        record.runtime?.evidence.failure,
+      ) || status === 'failed'
+    )
+  }
+
+  /**
+   * Says whether a run that did not complete is being stopped, for the last check of {@link StudyService.endedRunState}.
+   * @param record - The run that was continued.
+   * @param status - The status of the runtime's view; `undefined` without a runtime.
+   * @returns `true` while the service is shutting down, while the run is being stopped or once it is stopped, and for a cancelled runtime; `false` otherwise.
+   * @example this.isRunBeingStopped(record, 'cancelled') // => true
+   */
+  private isRunBeingStopped(
+    record: StudyRecord,
+    status: RuntimeView['status'] | undefined,
+  ): boolean {
+    return (
       this.stopping ||
       record.stopping ||
       record.stopped ||
-      runtime?.status === 'cancelled'
+      status === 'cancelled'
     )
-      return 'stopped'
+  }
+
+  /**
+   * Names the next observation of a continued run that has not ended; the second half of {@link StudyService.nextRunState}.
+   * @param runtime - The runtime's view read at this turn; `undefined` for a run without a runtime.
+   * @param committedBefore - The ids of the snapshots committed before the continuation.
+   * @returns `'observation'` once a participant is paused at a snapshot committed after the continuation, otherwise `undefined`.
+   * @example this.nextObservationState(runtime, new Set(['browser-session:1'])) // => 'observation' once browser-session:2 is committed and paused
+   */
+  private nextObservationState(
+    runtime: RuntimeView | undefined,
+    committedBefore: ReadonlySet<string>,
+  ): 'observation' | undefined {
     const isAtNextObservation = Object.values(runtime?.participants ?? {}).some(
       (participant) =>
         participant.snapshot !== undefined &&
@@ -1356,13 +1422,27 @@ export class StudyService {
     return describeBoundPlace({
       declared,
       bound: { line: snapshot.source.line, column: snapshot.source.column },
-      ...(readsJournal &&
-        journaledBindingOfSnapshot(
-          runtime.events,
-          runtime.snapshots,
-          snapshot.id,
-        )),
+      ...this.journaledBinding(runtime, snapshot.id, readsJournal),
     })
+  }
+
+  /**
+   * Reads what the run's journal says about a stop's binding, for {@link StudyService.boundPlace} to add to the places it describes; a caller that needs only the lines or the sentence has the journal left unread.
+   * @param runtime - The view of the run the snapshot belongs to.
+   * @param snapshotId - The committed snapshot of the stop.
+   * @param readsJournal - Whether the journal is read at all.
+   * @returns What {@link journaledBindingOfSnapshot} gives (the requested place and the time the binding became known, as far as journaled); `false` when the journal is not read.
+   * @example this.journaledBinding(runtime, 'browser-session:1', false) // => false
+   */
+  private journaledBinding(
+    runtime: RuntimeView,
+    snapshotId: string,
+    readsJournal: boolean,
+  ) {
+    return (
+      readsJournal &&
+      journaledBindingOfSnapshot(runtime.events, runtime.snapshots, snapshotId)
+    )
   }
 
   /** Reserves a monotonic reader checkpoint before I/O so even same-material retries cannot accept an older completion. @example const revision = service.beginHistory(record, signature) */
@@ -2044,6 +2124,15 @@ export class StudyService {
       'Study wall deadline expired; history only.',
     )
     record.runtime?.fail(record.error.message)
+    this.failUnfinishedNodePhase(record)
+  }
+
+  /**
+   * Marks the Node test of a run that passed its whole-run deadline as failed, unless the test already completed; the last step of {@link StudyService.expireAtDeadline}.
+   * @param record - The run whose deadline passed; a run of another profile has no Node phase and is left as it is.
+   * @example this.failUnfinishedNodePhase(record) // record.nodePhase: 'paused' becomes 'failed', 'completed' stays
+   */
+  private failUnfinishedNodePhase(record: StudyRecord): void {
     if (record.nodePhase && record.nodePhase !== 'completed')
       record.nodePhase = 'failed'
   }
