@@ -23,6 +23,60 @@ async function listRegularFiles(directory: string): Promise<string[]> {
 }
 
 /**
+ * Applies the publisher's own collision rule to one manual file and one path a candidate owns; called by {@link listCollidingManualFiles} for each pair until one collides.
+ * @param ownedPath - An output-relative path a candidate's manifest owns.
+ * @param manualPath - An output-relative path of a file the published manifest does not own.
+ * @returns `true` when the owned path equals the manual file, lies below it or lies above it.
+ * @example
+ * isCollidingPath('pages/overview.html', 'pages/overview.html') // => true
+ * isCollidingPath('pages/a/b.html', 'pages/a')                  // => true
+ * isCollidingPath('pages/a.html', 'notes/mine.md')              // => false
+ */
+function isCollidingPath(ownedPath: string, manualPath: string): boolean {
+  return (
+    ownedPath === manualPath ||
+    ownedPath.startsWith(`${manualPath}/`) ||
+    manualPath.startsWith(`${ownedPath}/`)
+  )
+}
+
+/**
+ * Picks the learner's own files a candidate would overwrite out of one listing of the Wiki folder; called by {@link detectWikiPublishConflicts} once the published manifest, the candidates and the listing were read.
+ * @param outputFiles - The regular files of the Wiki folder as `/`-separated relative paths; `undefined` when the folder could not be listed this look.
+ * @param published - The paths the published manifest owns; every other file except the manifest and the receipt is the learner's.
+ * @param candidates - The candidates that count for this run.
+ * @returns The manual files that collide with a path one of the candidates owns, sorted; empty when none, and for a folder that could not be listed.
+ * @example
+ * listCollidingManualFiles(['index.html', 'pages/notes.html'], new Set(['index.html']), [{ name: 'wiki.stage-1', writtenAtMs: 1, ownedPaths: ['pages/notes.html'] }])
+ * // => ['pages/notes.html']
+ */
+function listCollidingManualFiles(
+  outputFiles: string[] | undefined,
+  published: Set<string>,
+  candidates: WikiCandidate[],
+): string[] {
+  if (!outputFiles) return []
+  const manual = outputFiles.filter(
+    (path) =>
+      path !== WIKI_MANIFEST_FILE &&
+      path !== WIKI_PUBLICATION_RECEIPT_FILE &&
+      !published.has(path),
+  )
+  const colliding = new Set<string>()
+  // The publisher's own rule: a manual file collides with an owned path that equals it, lies below it or lies above it.
+  for (const path of manual)
+    if (
+      candidates.some((candidate) =>
+        candidate.ownedPaths.some((ownedPath) =>
+          isCollidingPath(ownedPath, path),
+        ),
+      )
+    )
+      colliding.add(path)
+  return [...colliding].sort()
+}
+
+/**
  * Names the learner-owned files in a published Wiki folder that a prepared update candidate would overwrite.
  *
  * Why: the publisher refuses such a candidate and keeps everything, but only the agent sees that refusal; the extension must tell the learner why no update appeared.
@@ -58,23 +112,5 @@ export async function detectWikiPublishConflicts(
       throw error
     },
   )
-  if (!outputFiles) return []
-  const manual = outputFiles.filter(
-    (path) =>
-      path !== WIKI_MANIFEST_FILE &&
-      path !== WIKI_PUBLICATION_RECEIPT_FILE &&
-      !published.has(path),
-  )
-  const colliding = new Set<string>()
-  // The publisher's own rule: a manual file collides with an owned path that equals it, lies below it or lies above it.
-  for (const path of manual)
-    for (const candidate of candidates)
-      for (const ownedPath of candidate.ownedPaths)
-        if (
-          ownedPath === path ||
-          ownedPath.startsWith(`${path}/`) ||
-          path.startsWith(`${ownedPath}/`)
-        )
-          colliding.add(path)
-  return [...colliding].sort()
+  return listCollidingManualFiles(outputFiles, published, candidates)
 }
