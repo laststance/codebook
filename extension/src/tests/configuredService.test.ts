@@ -2283,6 +2283,231 @@ test('configured help and the continue tool tell an agent that a continuation se
   )
 })
 
+/** The text of a tool result an MCP client received, as an agent reads it. @example toolText(await client.callTool({ name: 'codebook_start', arguments })) */
+const toolText = (result: unknown): string =>
+  z
+    .object({ content: z.array(z.object({ text: z.string() })).min(1) })
+    .parse(result).content[0]!.text
+
+// Value: protects=an agent whose first stop declares an object by type only learning which stop is refused, what it declared and what to add; fails_when=the refusal is "At least one required value inspection is needed. at configuration.inspections", which the Cursor agent of the baseline round met twice in one start; why_new=Cycle 0045 cause 4 (DX-1 c, after PC-4.2 kept the rule); seam=none
+test('a start whose first stop declares only type inspections is refused naming that stop, the inspections it declares and what to add', async (context) => {
+  // Arrange: the first stop declares one inspection, of mode type.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'type-only-first-stop',
+      configuration: {
+        ...configuration,
+        inspections: [{ path: 'setTheme', mode: 'type', required: true }],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: configuration.inspections: this stop declares only type inspections (type:setTheme). Add one required value inspection of a primitive the stop can read, for example a member of one of these objects; type inspections may stay beside it. at configuration.inspections',
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
+// Value: protects=the refusal of a type-only later stop naming that stop's own configuration path and all its inspections; fails_when=a later stop is named by the first stop's path, or the list drops an inspection; why_new=Cycle 0045 cause 4 (the Cursor run's second refused stop was additionalStops[2]); seam=none
+test('a start whose later stop declares only type inspections is refused naming that later stop and every inspection it declares', async (context) => {
+  // Arrange: a cross-runtime configuration whose first stop is valid and whose later stop declares two inspections, both of mode type.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'type-only-later-stop',
+      configuration: {
+        ...configuration,
+        version: 2,
+        participant: 'browser',
+        additionalStops: [
+          {
+            participant: 'browser',
+            source: { ...configuration.source, column: 7 },
+            anchorIndex: 0,
+            inspections: [
+              { path: 'nextTheme', mode: 'type', required: true },
+              { path: 'setTheme', mode: 'type', required: false },
+            ],
+          },
+        ],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: configuration.additionalStops[0].inspections: this stop declares only type inspections (type:nextTheme, type:setTheme). Add one required value inspection of a primitive the stop can read, for example a member of one of these objects; type inspections may stay beside it. at configuration.additionalStops[0].inspections',
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
+// The other way to break the rule keeps its own sentence, with the stop's path: a value inspection is declared, but none is required.
+test('a start whose stop declares a value inspection but requires none is refused with the sentence that one required value inspection is needed', async (context) => {
+  // Arrange: the first stop declares one optional value inspection.
+  const { service, configuration } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'no-required-inspection',
+      configuration: {
+        ...configuration,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: false }],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: At least one required value inspection is needed. at configuration.inspections',
+  )
+})
+
+// Value: protects=the Node test profile refusing a type-only stop with the same sentence; fails_when=the twin rule in the Node test configuration keeps the bare sentence; why_new=Cycle 0045 cause 4 (the twin at nodeTestConfigSchemas.ts); seam=none
+test('a Node test start whose stop declares only type inspections is refused naming that stop and what to add', async (context) => {
+  // Arrange: a Node test configuration whose one stop declares one inspection, of mode type.
+  const { service, configuration } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'node-test',
+      key: 'type-only-node-stop',
+      configuration: {
+        version: 1,
+        adapter: 'vitest-node',
+        book: configuration.book,
+        testFile: 'src/theme.test.ts',
+        testHash: 'a'.repeat(64),
+        testTitles: ['theme', 'selects dark'],
+        source: configuration.source,
+        inspections: [{ path: 'nextTheme', mode: 'type', required: true }],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: configuration.inspections: this stop declares only type inspections (type:nextTheme). Add one required value inspection of a primitive the stop can read, for example a member of one of these objects; type inspections may stay beside it. at configuration.inspections',
+  )
+})
+
+// Value: protects=the rule standing where the agent reads last before it declares a run: the tool's input schema; fails_when=the schema of inspections carries no description (the Cursor agent read it directly before its refused start); why_new=Cycle 0045 cause 4 (DX-1 b); seam=none
+test('the input schema of codebook_start states the inspection rule for the first stop and for later stops of both profiles', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const tools = await client.listTools()
+
+  // Assert
+  const variantSchema = z.object({
+    properties: z.object({
+      adapter: z.object({ const: z.string() }),
+      version: z.object({ const: z.number() }),
+      inspections: z.object({ description: z.string() }),
+      additionalStops: z.object({
+        items: z.object({
+          properties: z.object({
+            inspections: z.object({ description: z.string() }),
+          }),
+        }),
+      }),
+    }),
+  })
+  const [repositoryVariants, nodeTestVariant] = z
+    .object({
+      properties: z.object({
+        configuration: z.object({
+          anyOf: z.tuple([
+            z.object({ anyOf: z.array(variantSchema) }),
+            variantSchema,
+          ]),
+        }),
+      }),
+    })
+    .parse(
+      tools.tools.find((tool) => tool.name === 'codebook_start')?.inputSchema,
+    ).properties.configuration.anyOf
+  const described = [...repositoryVariants.anyOf, nodeTestVariant].map(
+    (variant) => [
+      `${variant.properties.adapter.const} ${variant.properties.version.const}`,
+      variant.properties.inspections.description,
+      variant.properties.additionalStops.items.properties.inspections
+        .description,
+    ],
+  )
+  const rule =
+    'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
+  assert.deepEqual(described, [
+    ['next-dev-webpack 1', rule, rule],
+    ['next-dev-webpack 2', rule, rule],
+    ['vitest-node 1', rule, rule],
+  ])
+})
+
+// Value: protects=the help an agent reads before its first start leading it to a primitive member for an object; fails_when=the help offers "declare type:<path>" as a way to capture an object, which the Cursor agent followed into a refused start; why_new=Cycle 0045 cause 4 (DX-1 b); seam=none
+test('configured help says that every stop needs a required value inspection of a primitive and, for an object, to declare a primitive member with type beside it', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+
+  // Assert
+  assert.ok('text' in help)
+  const inspections = z
+    .object({ inspections: z.string() })
+    .parse(JSON.parse(help.text)).inspections
+  assert.equal(
+    inspections.startsWith(
+      'Declare unique value:<path> or type:<path> inspections; every stop needs at least one required value inspection of a primitive it can read, and a stop cannot consist of type inspections only. Paths contain one to four ASCII identifier segments',
+    ),
+    true,
+  )
+  assert.equal(
+    inspections.includes(
+      'A value that is an object or a function is captured as the marker {type:"object"} or {type:"function"} and the run goes on: objects are not bounded, so its members are not captured facts; for an object declare a primitive member such as value:credentials.email as the stop\'s required value inspection, add type:<path> beside it when the object\'s type is what you want to show, and read the members in the native debugger state of the observation.',
+    ),
+    true,
+  )
+  assert.doesNotMatch(inspections, /declare type:<path> or a primitive member/)
+})
+
 // Value: protects=an agent that sends codebook_reveal and codebook_continue for the same stop together; fails_when=the reveal answers EVIDENCE_UNAVAILABLE ("Matching captured source is not displayed") because the continuation retired the pause the reader presents; why_new=reveal tests never ran beside a continuation (Cycle 0044 row N-13, native N12-a); seam=the synthetic runtime's reveal, which fails like the reader once the pause is gone
 for (const order of ['reveal first', 'continue first'] as const)
   test(`a reveal and a continuation of the same stop issued together, ${order}, never answer an evidence failure`, async (context) => {
