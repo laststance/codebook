@@ -89,7 +89,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # The job starts rarely, so it installs the dependencies each time instead of keeping a second cache for Windows.
+      # The job starts rarely, so it keeps no cache of extension/node_modules as the Test workflow does: each run links
+      # the dependencies again, from the pnpm store that setup-node caches per operating system (a Windows store of its own).
       - name: Prepare environment
         uses: ./.github/actions/prepare
 
