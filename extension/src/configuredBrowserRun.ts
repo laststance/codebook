@@ -136,6 +136,10 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   /** Names the condition that refuses a line as this stop's place, for the failure an agent reads; `undefined` for an accepted line. */
   bindingRefusal: (line: number) => string | undefined
 }
+/** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on. */
+type RegistrationStatus =
+  | { status: 'pending' | 'bound' | 'unknown' }
+  | { status: 'refused'; reason: string }
 type DebugParticipant = {
   gate: PauseGate
   selected?: vscode.DebugSession
@@ -1169,8 +1173,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (moved)
       return `${opening}: declared stop ${this.declaredAt(stop)} ${this.boundAt(moved)} ${notHit}; the bound line, not the declared one, must execute after the input`
     if (stop.participant === 'server') {
-      const requested = this.requestedElsewhere(stop)
-      return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${this.registrationStatus(stop)}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
+      const requested = this.requestedElsewhere(stop),
+        registration = this.registrationStatus(stop)
+      // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop, so its line is not the reason.
+      if (
+        registration.status === 'refused' ||
+        registration.status === 'unknown'
+      )
+        return `${opening}: declared server stop ${this.declaredAt(stop)}${requested ? ` (${requested})` : ''} ${notHit}; ${this.unacknowledgedText(registration)}`
+      return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${registration.status}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
     }
     return `${opening}: declared stop ${this.declaredAt(stop)} ${notHit}; its line must execute after the input`
   }
@@ -1191,17 +1202,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       : undefined
   }
 
-  /** Names a server stop's registration for the two deadline texts without throwing, so neither claims more than the adapter said: `pending` until its module loads, `bound` once verified, `refused` when the adapter refused it or the breakpoint is gone, `unknown` when no current receipt can be read (a newer registration request is unanswered, or no session is selected). @example this.registrationStatus(stop) // 'pending' */
-  private registrationStatus(
-    stop: PreparedStop,
-  ): 'pending' | 'bound' | 'refused' | 'unknown' {
+  /**
+   * Reads a server stop's registration for the two deadline texts without throwing, so neither claims more than the adapter said; {@link unreachedFirstStopReason} and {@link unreachedNextStopReason} call it when their deadline expires.
+   * @param stop - The declared server stop that was not reached.
+   * @returns
+   * - `pending` until the stop's module loads, `bound` once the adapter verified it
+   * - `refused` with the reason the registration read threw, when the adapter refused or revoked it, moved it to a refused place, or the breakpoint is gone
+   * - `unknown` when no current receipt can be read: a newer registration request is unanswered, or no session is selected
+   * @example
+   * ```ts
+   * this.registrationStatus(stop) // { status: 'refused', reason: 'Owned breakpoint was removed before registration' }
+   * ```
+   */
+  private registrationStatus(stop: PreparedStop): RegistrationStatus {
     const session = this.participants[stop.participant].selected
-    if (!session || !stop.breakpoint) return 'unknown'
+    if (!session || !stop.breakpoint) return { status: 'unknown' }
     try {
-      return stop.breakpoint.registration(session)?.status ?? 'unknown'
-    } catch {
-      return 'refused'
+      const receipt = stop.breakpoint.registration(session)
+      return receipt ? { status: receipt.status } : { status: 'unknown' }
+    } catch (error) {
+      return { status: 'refused', reason: thrownMessage(error) }
     }
+  }
+
+  /** Words what both deadline texts say for a server stop whose breakpoint the adapter does not hold acknowledged: what was read, and that only a new run helps, because no other declaration would. @example this.unacknowledgedText({ status: 'unknown' }) // 'the debugger no longer acknowledged its breakpoint (no current registration receipt could be read), so the stop could not pause. Stop this run and start a new one.' */
+  private unacknowledgedText(registration: RegistrationStatus): string {
+    const read =
+      registration.status === 'refused'
+        ? registration.reason
+        : 'no current registration receipt could be read'
+    return `the debugger no longer acknowledged its breakpoint (${read}), so the stop could not pause. Stop this run and start a new one.`
   }
 
   /**
@@ -1231,11 +1261,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       requested = this.requestedElsewhere(stop),
       // A server stop that was requested at another place than declared says so, because that place is where its breakpoint waits.
       serverOpening = requested ? `${opening} (${requested})` : opening
-    if (registration === 'pending')
-      return `${serverOpening} ${within}; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation`
+    if (registration?.status === 'pending')
+      return `${serverOpening} ${within}; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.`
     // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop.
-    if (registration === 'refused' || registration === 'unknown')
-      return `${serverOpening} ${within}; the debugger no longer acknowledged its breakpoint, so the stop could not pause`
+    if (
+      registration?.status === 'refused' ||
+      registration?.status === 'unknown'
+    )
+      return `${serverOpening} ${within}; ${this.unacknowledgedText(registration)}`
     return `${opening} ${within}; its line must execute after the preceding continuation`
   }
 

@@ -2965,9 +2965,102 @@ test('a later server stop whose registration is still pending when its deadline 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.',
   )
   assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-4): red while the deadline dropped the reason the registration read gave and named no next step ("the debugger no longer acknowledged its breakpoint, so the stop could not pause").
+test('a later server stop whose breakpoint was removed after its continuation ends the run at the deadline saying the debugger no longer acknowledged it', async (context) => {
+  // Arrange: the first stop is captured and continued, which arms the second; its owned breakpoint is then removed from the editor and no pause arrives.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+  harness.breakpoints.splice(0, harness.breakpoints.length)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'server stop without its breakpoint not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; the debugger no longer acknowledged its breakpoint (Owned breakpoint was removed before registration), so the stop could not pause. Stop this run and start a new one.',
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-4): the same deadline when no current receipt can be read; red while the text gave no reason and no next step.
+test('a later server stop whose newer registration request the adapter left unanswered ends the run at the deadline saying no current receipt could be read', async (context) => {
+  // Arrange: the second stop is armed inside the continuation; the editor then sends its breakpoint list again and the adapter does not answer.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+  harness.leaveRegistrationUnansweredAtColumn(1)
+  harness.resendServerRegistration()
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'server stop without a current receipt not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; the debugger no longer acknowledged its breakpoint (no current registration receipt could be read), so the stop could not pause. Stop this run and start a new one.',
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-4): the first stop's deadline said "registration refused" and then that the request may still be running; red while a removed breakpoint was explained by the action.
+test('a first server stop whose breakpoint was removed after the input ends the run at the deadline saying the debugger no longer acknowledged it', async (context) => {
+  // Arrange: the input is sent and the stop's pause is held back; the owned breakpoint is then removed from the editor.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  harness.breakpoints.splice(0, harness.breakpoints.length)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'first server stop without its breakpoint not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository input reached no verified pause: declared server stop src/mode.ts:1 was not hit within 20 s of the accepted action; the debugger no longer acknowledged its breakpoint (Owned breakpoint was removed before registration), so the stop could not pause. Stop this run and start a new one.',
+  )
 })
 
 // Cycle 0045 (NF-29 b): the later stop's twin of the first stop's deadline text; red while only the declared place was named.
@@ -3000,7 +3093,7 @@ test('the deadline text of a later server stop requested after its declared line
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) (requested at 2:1) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) (requested at 2:1) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.',
   )
 })
 
@@ -3157,7 +3250,7 @@ test('a continuation that reaches no next stop while the server stays paused at 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. The server is paused at src/mode.ts:2 without a debugger stop.',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop. The server is paused at src/mode.ts:2 without a debugger stop.',
   )
   assert.equal(harness.run.view().snapshots.length, 1)
 })
@@ -3384,7 +3477,7 @@ test('a deadline whose paused place cannot be read still fails the run with its 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation (where a participant is paused could not be read: sealed map unreadable)',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop. (where a participant is paused could not be read: sealed map unreadable)',
   )
 })
 

@@ -869,6 +869,10 @@ export async function nativeParticipantsHarness(
     bindForeignSource(): void {
       foreignBinding = true
     },
+    /** Sends the editor's breakpoint list of the server stop's source once more, as the editor does when any breakpoint of that file changes. @example harness.leaveRegistrationUnansweredAtColumn(1); harness.resendServerRegistration() */
+    resendServerRegistration(): void {
+      acknowledge(bundle('server').sourcePath)
+    },
     revokeServerRegistration(): void {
       failedRegistration = true
       acknowledge(bundle('server').sourcePath)
