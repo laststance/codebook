@@ -1124,7 +1124,16 @@ test(
       // Act
       await assert.rejects(
         commands.get('codebook.openRepositoryWiki')!(),
-        (error) => error === refusal,
+        (error: unknown) => {
+          // A command rejects with its failure's plain message; the thrown value itself stays reachable as the cause.
+          assert.ok(error instanceof Error)
+          assert.equal(
+            error.message,
+            'Timed out waiting for identifiable primary editor focus',
+          )
+          assert.equal(error.cause, refusal)
+          return true
+        },
       )
       // Assert
       assert.deepEqual(messages, [

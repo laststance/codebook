@@ -50,6 +50,33 @@ export default defineConfig([
     },
   },
   {
+    // The editor turns `[label](command:…)` in a notification into a link that runs a command, and it shows a rejected
+    // command's message in a notification of its own. Both texts can quote outside text (a path, a setting, an error),
+    // so only the two helpers reach the editor; a modal confirmation renders no link and stays a direct call.
+    files: ['src/**/*.ts'],
+    ignores: [
+      'src/tests/**',
+      'src/utils/showPlainNotice.ts',
+      'src/utils/registerPlainCommand.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'CallExpression[callee.property.name=/^show(Information|Warning|Error)Message$/]:not(:has(Property[key.name="modal"][value.value=true]))',
+          message:
+            'Show a notification through showNotice(severity, message, ...actions) inside activate() of extension.ts, or through showPlainNotice(vscode.window, severity, message, ...actions) elsewhere: it takes link syntax out of the message. Only a modal confirmation ({ modal: true }) calls the editor directly.',
+        },
+        {
+          selector: 'CallExpression[callee.property.name="registerCommand"]',
+          message:
+            'Register a command through registerCommand(command, handler) inside activate() of extension.ts (registerPlainCommand): a failed command then rejects with a message the editor cannot turn into a link.',
+        },
+      ],
+    },
+  },
+  {
     // Package and native-QA scripts deliberately load the compiled extension from dist after `pnpm build`.
     files: ['scripts/**/*.mjs'],
     rules: {

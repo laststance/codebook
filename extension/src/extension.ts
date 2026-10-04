@@ -58,7 +58,6 @@ import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from './utils/listWikiCandidates'
-import { plainNotificationText } from './utils/plainNotificationText'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
 import {
@@ -66,12 +65,14 @@ import {
   refreshCursorMcpCatalog,
   removeOwnedCursorMcpCatalog,
 } from './utils/refreshCursorMcpCatalog'
+import { registerPlainCommand } from './utils/registerPlainCommand'
 import { requestCursorWikiText } from './utils/requestCursorWikiText'
 import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import { selectActiveWikiCandidate } from './utils/selectActiveWikiCandidate'
+import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
@@ -103,6 +104,19 @@ export function activate(
     cursorRemoval: Promise<void> | undefined,
     cursorRemoving = false
   let notifyMcpDefinitions: () => void = () => {}
+  /** Shows every non-modal notification of this window through {@link showPlainNotice}, so no outside text in it becomes a link; `actions` are its buttons and the pressed one is returned. @example void showNotice('error', `Codebook could not open DeepWiki: ${String(error)}`) */
+  const showNotice = <Action extends string>(
+    severity: NoticeSeverity,
+    message: string,
+    ...actions: Action[]
+  ): Thenable<Action | undefined> =>
+    showPlainNotice(vscode.window, severity, message, ...actions)
+  /** Registers every command of this window through {@link registerPlainCommand}, so a failed command rejects with a message the editor cannot turn into a link. @example registerCommand('codebook.stopAgentServer', stop) */
+  const registerCommand = (
+    command: string,
+    handler: Parameters<typeof registerPlainCommand>[2],
+  ): vscode.Disposable =>
+    registerPlainCommand(vscode.commands, command, handler)
   const isCursorHost =
     vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
   const setupMatchesCurrentWorkspace = () => {
@@ -241,10 +255,9 @@ export function activate(
           await registerCursorConnection()
         } catch (error) {
           if (!stopping && !cursorRemoving && running === server)
-            void vscode.window.showWarningMessage(
-              plainNotificationText(
-                `Codebook agent server started, but Cursor MCP registration failed: ${String(error)}. Run Codebook: Set Up AI Chat to repair the connection.`,
-              ),
+            void showNotice(
+              'warning',
+              `Codebook agent server started, but Cursor MCP registration failed: ${String(error)}. Run Codebook: Set Up AI Chat to repair the connection.`,
             )
         }
       }
@@ -313,7 +326,8 @@ export function activate(
         2,
       ),
     )
-    void vscode.window.showInformationMessage(
+    void showNotice(
+      'information',
       'Codebook connection copied. This credential grants access to the selected workspace; recopy after restart.',
     )
   }
@@ -487,7 +501,7 @@ export function activate(
       }
     }
     notifyMcpDefinitions()
-    void vscode.window.showInformationMessage(aiChatReadyMessage(isCursorHost))
+    void showNotice('information', aiChatReadyMessage(isCursorHost))
   }
   /** Coalesces overlapping Cursor setup commands so removal can await the whole deployment and saved state. @example await setupAiChat() */
   const setupAiChat = (): Promise<void> => {
@@ -641,15 +655,12 @@ export function activate(
     if (isExtensionStopping) return
     const notice = wikiUpdateNotice(wikiUpdateRun.status())
     if (!notice) return
-    if (notice.severity === 'information')
-      void vscode.window.showInformationMessage(notice.message)
-    else if (notice.severity === 'warning')
-      void vscode.window.showWarningMessage(notice.message)
-    else void vscode.window.showErrorMessage(notice.message)
+    void showNotice(notice.severity, notice.message)
   }
   /** Tells the learner that a second start was refused and where the first run's progress is. @example showWikiUpdateRunning() */
   const showWikiUpdateRunning = (): void => {
-    void vscode.window.showInformationMessage(
+    void showNotice(
+      'information',
       'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
     )
   }
@@ -816,10 +827,9 @@ export function activate(
       const tokenAtStart = await readWikiPublishToken(outputDirectory)
       // Without a manifest there is nothing to update; the learner needs the generate step, not a file-system error.
       if (tokenAtStart === undefined) {
-        void vscode.window.showErrorMessage(
-          plainNotificationText(
-            `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`,
-          ),
+        void showNotice(
+          'error',
+          `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`,
         )
         return
       }
@@ -991,7 +1001,8 @@ export function activate(
               selection: new vscode.Range(position, position),
             })
             if (changed)
-              void vscode.window.showWarningMessage(
+              void showNotice(
+                'warning',
                 'This Wiki citation has no matching source hash or its source has changed. The editor opened the current file; verify the cited revision before relying on it.',
               )
           } catch (error) {
@@ -1002,119 +1013,101 @@ export function activate(
                   ? 'start the Wiki update'
                   : 'open the Wiki citation'
             // An update that failed before any state was recorded reads without the `Error:` prefix.
-            void vscode.window.showErrorMessage(
-              plainNotificationText(
-                `Codebook could not ${action}: ${incomingUri.path === '/update' ? describeUpdateFailure(error) : String(error)}`,
-              ),
+            void showNotice(
+              'error',
+              `Codebook could not ${action}: ${incomingUri.path === '/update' ? describeUpdateFailure(error) : String(error)}`,
             )
           }
         },
       }),
     )
   context.subscriptions.push(
-    vscode.commands.registerCommand('codebook.startAgentServer', start),
-    vscode.commands.registerCommand('codebook.stopAgentServer', stop),
-    vscode.commands.registerCommand('codebook.copyAgentConnection', connect),
-    vscode.commands.registerCommand('codebook.setupAiChat', setupAiChat),
-    vscode.commands.registerCommand(
-      'codebook.removeManagedCursorSkill',
-      async () => {
-        if (!isCursorHost)
-          throw new Error('This command is available in Cursor only.')
-        if (cursorRemoval) return cursorRemoval
-        const choice = await vscode.window.showWarningMessage(
-          'Remove the Codebook-owned user skill and its unchanged empty MCP catalog config from Cursor? Other Cursor windows share this skill.',
-          { modal: true },
-          'Remove managed skill',
-        )
-        if (choice !== 'Remove managed skill') return
-        if (cursorRemoval) return cursorRemoval
-        const attempt = (async () => {
-          cursorRemoving = true
-          try {
-            // Setup and auto reconnect must finish before removing their shared skill, registration, and catalog.
-            await cursorSetup?.catch(() => {})
-            await cursorRegistration?.attempt.catch(() => {})
-            const ownedCatalogGeneration =
-              await captureOwnedCursorMcpCatalogGeneration(
-                context.globalStorageUri.fsPath,
-              )
-            await removeManagedCursorSkill(context.globalStorageUri.fsPath)
-            await context.workspaceState.update(
-              'codebook.aiChatSetup',
-              undefined,
+    registerCommand('codebook.startAgentServer', start),
+    registerCommand('codebook.stopAgentServer', stop),
+    registerCommand('codebook.copyAgentConnection', connect),
+    registerCommand('codebook.setupAiChat', setupAiChat),
+    registerCommand('codebook.removeManagedCursorSkill', async () => {
+      if (!isCursorHost)
+        throw new Error('This command is available in Cursor only.')
+      if (cursorRemoval) return cursorRemoval
+      const choice = await vscode.window.showWarningMessage(
+        'Remove the Codebook-owned user skill and its unchanged empty MCP catalog config from Cursor? Other Cursor windows share this skill.',
+        { modal: true },
+        'Remove managed skill',
+      )
+      if (choice !== 'Remove managed skill') return
+      if (cursorRemoval) return cursorRemoval
+      const attempt = (async () => {
+        cursorRemoving = true
+        try {
+          // Setup and auto reconnect must finish before removing their shared skill, registration, and catalog.
+          await cursorSetup?.catch(() => {})
+          await cursorRegistration?.attempt.catch(() => {})
+          const ownedCatalogGeneration =
+            await captureOwnedCursorMcpCatalogGeneration(
+              context.globalStorageUri.fsPath,
             )
-            if (registeredCursorServer) {
-              vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
-              registeredCursorServer = undefined
-            }
-            try {
-              const catalogCleanup = ownedCatalogGeneration
-                ? await removeOwnedCursorMcpCatalog(
-                    context.globalStorageUri.fsPath,
-                    undefined,
-                    ownedCatalogGeneration,
-                  )
-                : 'not-owned'
-              void vscode.window.showInformationMessage(
-                catalogCleanup === 'removed'
-                  ? 'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.'
-                  : 'Managed Cursor skill removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
-              )
-            } catch (error) {
-              void vscode.window.showWarningMessage(
-                plainNotificationText(
-                  `Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: ${String(error)}. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.`,
-                ),
-              )
-            }
-          } finally {
-            cursorRemoving = false
+          await removeManagedCursorSkill(context.globalStorageUri.fsPath)
+          await context.workspaceState.update('codebook.aiChatSetup', undefined)
+          if (registeredCursorServer) {
+            vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
+            registeredCursorServer = undefined
           }
-        })()
-        cursorRemoval = attempt
-        try {
-          await attempt
+          try {
+            const catalogCleanup = ownedCatalogGeneration
+              ? await removeOwnedCursorMcpCatalog(
+                  context.globalStorageUri.fsPath,
+                  undefined,
+                  ownedCatalogGeneration,
+                )
+              : 'not-owned'
+            void showNotice(
+              'information',
+              catalogCleanup === 'removed'
+                ? 'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.'
+                : 'Managed Cursor skill removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+            )
+          } catch (error) {
+            void showNotice(
+              'warning',
+              `Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: ${String(error)}. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.`,
+            )
+          }
         } finally {
-          if (cursorRemoval === attempt) cursorRemoval = undefined
+          cursorRemoving = false
         }
-      },
-    ),
-    vscode.commands.registerCommand(
-      'codebook.restoreManagedCursorSkill',
-      async () => {
-        if (!isCursorHost)
-          throw new Error('This command is available in Cursor only.')
-        await setupAiChat()
-      },
-    ),
-    vscode.commands.registerCommand('codebook.openStudyWorkspace', () =>
-      workspace().open(),
-    ),
-    vscode.commands.registerCommand('codebook.closeStudyWorkspace', () =>
-      reader?.close(),
-    ),
-    vscode.commands.registerCommand(
-      'codebook.openRepositoryWiki',
-      async (input?: unknown) => {
-        try {
-          await repository().open(
-            input === undefined
-              ? undefined
-              : repositorySelectionSchema.parse(input),
-          )
-        } catch (error) {
-          // Cold failures have no Wiki panel; report them without waiting for notification dismissal or swallowing rejection.
-          void vscode.window.showErrorMessage(
-            plainNotificationText(
-              `Codebook could not open Repository Wiki: ${String(error)}`,
-            ),
-          )
-          throw error
-        }
-      },
-    ),
-    vscode.commands.registerCommand('codebook.openDeepWiki', async () => {
+      })()
+      cursorRemoval = attempt
+      try {
+        await attempt
+      } finally {
+        if (cursorRemoval === attempt) cursorRemoval = undefined
+      }
+    }),
+    registerCommand('codebook.restoreManagedCursorSkill', async () => {
+      if (!isCursorHost)
+        throw new Error('This command is available in Cursor only.')
+      await setupAiChat()
+    }),
+    registerCommand('codebook.openStudyWorkspace', () => workspace().open()),
+    registerCommand('codebook.closeStudyWorkspace', () => reader?.close()),
+    registerCommand('codebook.openRepositoryWiki', async (input?: unknown) => {
+      try {
+        await repository().open(
+          input === undefined
+            ? undefined
+            : repositorySelectionSchema.parse(input),
+        )
+      } catch (error) {
+        // Cold failures have no Wiki panel; report them without waiting for notification dismissal or swallowing rejection.
+        void showNotice(
+          'error',
+          `Codebook could not open Repository Wiki: ${String(error)}`,
+        )
+        throw error
+      }
+    }),
+    registerCommand('codebook.openDeepWiki', async () => {
       try {
         const { projectRoot, outputDirectory } = await currentDeepWiki()
         await deepWikiReader?.close()
@@ -1207,75 +1200,60 @@ export function activate(
       } catch (error) {
         await deepWikiReader?.close()
         deepWikiReader = undefined
-        void vscode.window.showErrorMessage(
-          plainNotificationText(
-            `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
-          ),
+        void showNotice(
+          'error',
+          `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
         )
         throw error
       }
     }),
-    vscode.commands.registerCommand('codebook.updateDeepWiki', async () => {
+    registerCommand('codebook.updateDeepWiki', async () => {
       try {
         await updateDeepWiki()
       } catch (error) {
-        void vscode.window.showErrorMessage(
-          plainNotificationText(
-            `Codebook could not start the Wiki update: ${describeUpdateFailure(error)}`,
-          ),
+        void showNotice(
+          'error',
+          `Codebook could not start the Wiki update: ${describeUpdateFailure(error)}`,
         )
         throw error
       }
     }),
-    vscode.commands.registerCommand(
-      'codebook.saveLearningReplay',
-      async (studyId?: string) => {
-        try {
-          await workspace().saveLearningReplay(studyId)
-        } catch (error) {
-          void vscode.window.showErrorMessage(
-            plainNotificationText(
-              `Codebook could not save learning: ${String(error)}`,
-            ),
-          )
-          throw error
-        }
-      },
-    ),
-    vscode.commands.registerCommand('codebook.showLearningSummary', () =>
+    registerCommand('codebook.saveLearningReplay', async (studyId?: string) => {
+      try {
+        await workspace().saveLearningReplay(studyId)
+      } catch (error) {
+        void showNotice(
+          'error',
+          `Codebook could not save learning: ${String(error)}`,
+        )
+        throw error
+      }
+    }),
+    registerCommand('codebook.showLearningSummary', () =>
       workspace().showLearningSummary(),
     ),
-    vscode.commands.registerCommand(
-      'codebook.openLearningReplay',
-      (studyId: string) => workspace().openRecording(studyId),
+    registerCommand('codebook.openLearningReplay', (studyId: string) =>
+      workspace().openRecording(studyId),
     ),
-    vscode.commands.registerCommand('codebook.closeRepositoryWiki', () =>
+    registerCommand('codebook.closeRepositoryWiki', () =>
       repositoryReader?.close(),
     ),
-    vscode.commands.registerCommand(
-      'codebook.repository.action',
-      (action: unknown) =>
-        repository().action(repositoryActionSchema.parse(action)),
+    registerCommand('codebook.repository.action', (action: unknown) =>
+      repository().action(repositoryActionSchema.parse(action)),
     ),
-    vscode.commands.registerCommand(
-      'codebook.repository.understand',
-      (understood: unknown) => {
-        if (typeof understood !== 'boolean')
-          throw new Error('Understanding requires a boolean learner choice.')
-        return repository().understand(understood)
-      },
-    ),
-    vscode.commands.registerCommand('codebook.selectLearningItem', (itemId) =>
+    registerCommand('codebook.repository.understand', (understood: unknown) => {
+      if (typeof understood !== 'boolean')
+        throw new Error('Understanding requires a boolean learner choice.')
+      return repository().understand(understood)
+    }),
+    registerCommand('codebook.selectLearningItem', (itemId) =>
       workspace().select(learningItemSchema.parse(itemId)),
     ),
-    vscode.commands.registerCommand(
-      'codebook.markUnderstanding',
-      (understood) => {
-        if (understood !== undefined && typeof understood !== 'boolean')
-          throw new Error('Understanding requires a boolean learner choice.')
-        return workspace().understand(understood)
-      },
-    ),
+    registerCommand('codebook.markUnderstanding', (understood) => {
+      if (understood !== undefined && typeof understood !== 'boolean')
+        throw new Error('Understanding requires a boolean learner choice.')
+      return workspace().understand(understood)
+    }),
     ...(
       [
         'run',
@@ -1296,7 +1274,7 @@ export function activate(
         'retry',
       ] as const
     ).map((action) =>
-      vscode.commands.registerCommand(`codebook.study.${action}`, () =>
+      registerCommand(`codebook.study.${action}`, () =>
         workspace().action(action),
       ),
     ),
@@ -1319,11 +1297,7 @@ export function activate(
           }
         }
       })().catch((error) =>
-        vscode.window.showErrorMessage(
-          plainNotificationText(
-            `Codebook cleanup incomplete: ${String(error)}`,
-          ),
-        ),
+        showNotice('error', `Codebook cleanup incomplete: ${String(error)}`),
       )
     }),
   )
@@ -1344,10 +1318,9 @@ export function activate(
       await start()
       notifyMcpDefinitions()
     })().catch((error) => {
-      void vscode.window.showWarningMessage(
-        plainNotificationText(
-          `Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`,
-        ),
+      void showNotice(
+        'warning',
+        `Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`,
       )
     })
   }
