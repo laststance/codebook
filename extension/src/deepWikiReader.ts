@@ -223,6 +223,22 @@ export async function startDeepWikiReader(
     }
     return manifest
   }
+  /**
+   * Says whether a changed file is one the freshness check weighs, against what the manifest last read covers; asked by `noteSourceChange` of the returned reader for every reported change, before it arms the burst timer.
+   * @param projectPath - The changed file relative to the project, with forward slashes; it begins with `../` for a file outside the project.
+   * @returns `true` for an indexed source, and for a file of the project the freshness check would count as added; `false` for a file outside the project, in the Wiki folder or excluded.
+   * @example
+   * isWeighedByFreshness('src/new.ts')      // => true
+   * isWeighedByFreshness('../other/app.ts') // => false
+   */
+  const isWeighedByFreshness = (projectPath: string): boolean =>
+    coveredSource.indexedPaths.has(projectPath) ||
+    (!projectPath.startsWith('../') &&
+      isWikiSourceCandidate(
+        projectPath,
+        relative(projectRoot, outputDirectory).split(sep).join('/'),
+        coveredSource.excludedPaths,
+      ))
   await readManifest()
   const canonicalOutput = await realpath(outputDirectory)
   /** Rises once per burst of file changes that can change the Wiki's freshness; the page reads freshness again when its update state answers a higher one. */
@@ -453,16 +469,7 @@ export async function startDeepWikiReader(
       noteSourceChange(path: string): void {
         const projectPath = relative(projectRoot, path).split(sep).join('/')
         // Only a file the freshness check weighs can change the label: an indexed source, or a file of the project it would count as added.
-        if (
-          !coveredSource.indexedPaths.has(projectPath) &&
-          (projectPath.startsWith('../') ||
-            !isWikiSourceCandidate(
-              projectPath,
-              relative(projectRoot, outputDirectory).split(sep).join('/'),
-              coveredSource.excludedPaths,
-            ))
-        )
-          return
+        if (!isWeighedByFreshness(projectPath)) return
         // The first change of a burst arms the timer and the rest of the burst is gathered into its one rise, so steady writing cannot hold the stamp back.
         sourceChangeTimer ??= setTimeout(() => {
           sourceChangeTimer = undefined
