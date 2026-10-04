@@ -1938,3 +1938,46 @@ test('a live entry from the Study layout arranges the application above the sour
     await harness.close()
   }
 })
+
+// Value: protects=the layout confirmation of a live run surviving Cursor's habit of giving every editor group a new object with each tab change; fails_when=a replaced group object without a known tab (the Agent chat's group) or without any tab counts as another group, so the receipt the entry took no longer matches and the run reaches ready with "The native editor layout receipt no longer matches the Study panes."; why_new=Cycle 0045 NF-6 (observed on candidate 13 in Cursor 3.23.12: five such events during one entry, no receipt at ready); seam=workspace harness with a separate editor part and the fake editor's group object replacement
+test('a live entry in Cursor stays confirmed when the editor rebuilds the source group as its placeholder source tab closes', async () => {
+  // Arrange: Cursor: the Agent chat is a tab of its own editor part, and every tab that opens, closes or comes to the front gives all editor groups new objects. The reader shows the confirmed Study layout.
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    await harness.reader.open()
+    const before = harness.reader.inspect().presentation,
+      sourceGroupBefore = harness.groups.find((group) => group.viewColumn === 2)
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    const ready = harness.reader.inspect().presentation,
+      sourceGroup = harness.groups.find((group) => group.viewColumn === 2)
+    assert.equal(before.layoutConfirmed, true)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(ready.layoutConfirmed, true)
+    assert.equal(ready.reason, undefined)
+    assert.equal(ready.panes.appColumn, 1)
+    assert.equal(ready.panes.sourceColumn, 2)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    // The editor rebuilt the source group: it is another object in the same column, and the chat keeps its tab in the group behind the two panes.
+    assert.notEqual(sourceGroup, sourceGroupBefore)
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(chat.tab))?.viewColumn,
+      3,
+    )
+  } finally {
+    await harness.close()
+  }
+})
