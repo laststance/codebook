@@ -11,6 +11,10 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import {
+  createFakeFileWatching,
+  FakeRelativePattern,
+} from './utils/fakeFileWatching'
 import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
@@ -266,6 +270,58 @@ test("the fake Wiki page's clock moves exactly the time asked for: a timer due a
     firedAfterMs: null,
   })
   assert.equal(page.body.getAttribute('data-fired-after-ms'), '1500')
+})
+
+// Value: protects=a test of the product's file watching failing when the product keeps reacting to a listener it disposed; fails_when=the fake watcher's listener registration cannot be disposed, so a product that disposes its listener and keeps the watcher still gets every event; why_new=review of Cycle 0045, tests-1 #10 (`dispose()` of a listener did nothing); seam=none
+test('a file listener whose registration was disposed gets no further event from the fake watcher, while the watcher and its other listeners live on', () => {
+  // Arrange: one watcher with two change listeners.
+  const files = createFakeFileWatching()
+  const watcher = files.createFileSystemWatcher(
+    new FakeRelativePattern('/repo', '**'),
+  )
+  const heard: string[] = []
+  const firstListener = watcher.onDidChange((file) =>
+    heard.push(`first: ${file.fsPath}`),
+  )
+  watcher.onDidChange((file) => heard.push(`second: ${file.fsPath}`))
+  files.report('change', '/repo/src/a.ts')
+
+  // Act: the first listener is disposed; the watcher is not.
+  firstListener.dispose()
+  files.report('change', '/repo/src/b.ts')
+
+  // Assert
+  assert.deepEqual(heard, [
+    'first: /repo/src/a.ts',
+    'second: /repo/src/a.ts',
+    'second: /repo/src/b.ts',
+  ])
+  assert.equal(files.liveWatcherCount(), 1)
+})
+
+// Value: protects=a test that reports a file outside the watched project showing that the product does not hear of it; fails_when=the fake delivers a report to every live watcher whatever folder it watches, so a file of another project reaches the product; why_new=review of Cycle 0045, tests-1 #10; seam=none
+test('the fake watcher reports a file only to the watchers whose folder contains it', () => {
+  // Arrange: one watcher on a project, one on a folder beside it whose name starts alike.
+  const files = createFakeFileWatching()
+  const heard: string[] = []
+  files
+    .createFileSystemWatcher(new FakeRelativePattern('/repo', '**'))
+    .onDidCreate((file) => heard.push(`repo: ${file.fsPath}`))
+  files
+    .createFileSystemWatcher(new FakeRelativePattern('/repository', '**'))
+    .onDidCreate((file) => heard.push(`repository: ${file.fsPath}`))
+
+  // Act: a file of each project, the first project's own folder, and a file above both.
+  files.report('create', '/repo/src/new.ts')
+  files.report('create', '/repository/notes.md')
+  files.report('create', '/repo')
+  files.report('create', '/elsewhere.ts')
+
+  // Assert
+  assert.deepEqual(heard, [
+    'repo: /repo/src/new.ts',
+    'repository: /repository/notes.md',
+  ])
 })
 
 // Value: protects=the machine's temporary folder staying free of Wiki projects that a failed fixture created; fails_when=the fixture rejects after it created its temporary project and leaves it there, although no caller holds its cleanup; why_new=Cycle 0045 X7-D.3; seam=TMPDIR of this test process, so the fixture's project is the only thing in a folder the test owns
