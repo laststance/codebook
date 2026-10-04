@@ -1085,7 +1085,7 @@ test('the saved-study help says that recorded facts appear from their own time, 
     const parsed: { recording: { timing: string } } = JSON.parse(help.text)
     assert.equal(
       parsed.recording.timing,
-      "Recorded facts (the application frame, the source, the debugger values and stack, the phases and their confirmations) appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after the run continued, or after the recording ended); every other explanation saved later stays under \"Later annotations\". Playback does not mark understanding.",
+      "Recorded facts (the application frame, the source, the debugger values and stack, the phases and their confirmations) appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after this pause ended, or after the recording ended); every other explanation saved later stays under \"Later annotations\". Playback does not mark understanding.",
     )
   } finally {
     await harness.close()
@@ -1099,7 +1099,7 @@ test('the extension README says in its replay step what the Study pane shows as 
 
   // Act
   const statesRule = readme.includes(
-    "Inspect the pause-associated source/values at their recorded times: recorded facts appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after the run continued, or after the recording ended); every other explanation saved later stays under **Later annotations**.",
+    "Inspect the pause-associated source/values at their recorded times: recorded facts appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after this pause ended, or after the recording ended); every other explanation saved later stays under **Later annotations**.",
   )
 
   // Assert

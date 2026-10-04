@@ -9,7 +9,7 @@ import type {
  * {@link projectRecording} sets it and the Study pane turns it into a sentence with {@link savedLaterNote}.
  */
 export type ExplanationSavedLater =
-  'while-pause-held' | 'after-run-continued' | 'after-recording-ended'
+  'while-pause-held' | 'after-pause-ended' | 'after-recording-ended'
 
 /** One saved explanation as the replay shows it at the selected time; `savedLater` is present only when it is shown before the time it was saved. */
 export type ShownInterpretation =
@@ -103,7 +103,7 @@ export function projectRecording(
     if (!interval) return undefined
     return savedAtMs <= interval.endMs
       ? 'while-pause-held'
-      : 'after-run-continued'
+      : 'after-pause-ended'
   }
   // Keep interpretation availability bound to the selected recorded source.
   const observation = currentObservation && {

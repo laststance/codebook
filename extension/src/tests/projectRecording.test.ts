@@ -184,7 +184,7 @@ test("every explanation saved before a stop's pause ended is shown at that stop"
 })
 
 // Value: protects=the explanation an agent sends together with its continuation being read at the stop it explains; fails_when=a first explanation saved just after the continuation was accepted is hidden under Later annotations (the baseline run of N14-b saved one 0.6 s after it); why_new=Cycle 0045 cause 10 (rule 2, second part); seam=none
-test("a stop's first explanation saved after the run continued is shown at the stop and says so", () => {
+test("a stop's first explanation saved after its pause ended is shown at the stop and says so", () => {
   // Arrange: the stop was committed at 2000 ms and continued at 3000 ms; its explanation was saved at 3500 ms.
   const study = createCrossRuntimeStudy(),
     context = buildRecordingContext(
@@ -210,7 +210,7 @@ test("a stop's first explanation saved after the run continued is shown at the s
       text: 'This stop captures the selected dark theme before it is applied.',
       createdAt: '2026-09-20T00:00:03.000Z',
       facts: [{ path: 'value:nextTheme', value: 'dark' }],
-      savedLater: 'after-run-continued',
+      savedLater: 'after-pause-ended',
     },
   ])
   assert.deepEqual(atStop.laterInterpretations, [])
@@ -242,7 +242,7 @@ test("a stop's first explanation saved after the recording ended is shown at the
   assert.deepEqual(atStop.laterInterpretations, [])
 })
 
-// Value: protects=the same note for an explanation the journal still recorded although the film had ended; fails_when=a receipt later than the film's end reads "saved after the run continued"; why_new=Cycle 0045 cause 10 (rule 3: the journal outlives the film while the editor session lasts); seam=none
+// Value: protects=the same note for an explanation the journal still recorded although the film had ended; fails_when=a receipt later than the film's end reads "saved after this pause ended"; why_new=Cycle 0045 cause 10 (rule 3: the journal outlives the film while the editor session lasts); seam=none
 test("a stop's first explanation whose receipt is later than the film's end says that it was saved after the recording ended", () => {
   // Arrange: the film ended at 8000 ms; the stop's explanation was saved at 9000 ms.
   const study = createCrossRuntimeStudy(),

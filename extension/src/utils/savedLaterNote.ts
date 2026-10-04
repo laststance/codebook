@@ -6,15 +6,15 @@ import type { ExplanationSavedLater } from './projectRecording'
  * @param savedLater - What {@link projectRecording} found for the explanation.
  * @returns
  * - `'while-pause-held'`: "This explanation was saved while this pause was held."
- * - `'after-run-continued'`: "This explanation was saved after the run continued."
+ * - `'after-pause-ended'`: "This explanation was saved after this pause ended."
  * - `'after-recording-ended'`: "This explanation was saved after the recording ended."
  * @example
- * savedLaterNote('after-run-continued') // => 'This explanation was saved after the run continued.'
+ * savedLaterNote('after-pause-ended') // => 'This explanation was saved after this pause ended.'
  */
 export function savedLaterNote(savedLater: ExplanationSavedLater): string {
   if (savedLater === 'while-pause-held')
     return 'This explanation was saved while this pause was held.'
-  if (savedLater === 'after-run-continued')
-    return 'This explanation was saved after the run continued.'
+  if (savedLater === 'after-pause-ended')
+    return 'This explanation was saved after this pause ended.'
   return 'This explanation was saved after the recording ended.'
 }

@@ -48,7 +48,7 @@ test('the Study pane carries the three sentences that say when an explanation sh
     true,
   )
   assert.equal(
-    readerHtml.includes('This explanation was saved after the run continued.'),
+    readerHtml.includes('This explanation was saved after this pause ended.'),
     true,
   )
   assert.equal(
