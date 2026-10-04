@@ -479,9 +479,11 @@ async function packageSkill(extensionPath: string): Promise<{
     throw new Error(
       'This Codebook installation has an invalid bundled skill. Reinstall the VSIX.',
     )
-  const publisherPath = join(extensionPath, WIKI_PUBLISHER_RELATIVE_PATH),
-    namesPublisher = canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER)
-  if (namesPublisher && !(await regularFile(publisherPath)))
+  const publisherPath = join(extensionPath, WIKI_PUBLISHER_RELATIVE_PATH)
+  if (
+    canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER) &&
+    !(await regularFile(publisherPath))
+  )
     throw new Error(
       'This Codebook installation is missing its Wiki publisher. Reinstall the VSIX.',
     )
@@ -492,9 +494,24 @@ async function packageSkill(extensionPath: string): Promise<{
     bytes,
     version,
     sha256: sha256(bytes),
-    // The receipt keeps the path the deployed bytes name, so a window of another version can tell whether that installation still exists.
-    recorded: namesPublisher ? { publisherPath } : {},
+    recorded: publisherNamedBy(canonicalText, publisherPath),
   }
+}
+
+/**
+ * Says which publisher path the receipt of a packaged skill records, so a window of another extension version can tell whether the installation that deployed the skill still exists ({@link isRecordedPublisherGone}); called by {@link packageSkill}.
+ * @param canonicalText - The bundled skill text, before the publisher path is bound into it.
+ * @param publisherPath - This installation's publisher.
+ * @returns `{ publisherPath }` for a skill that names the publisher, `{}` for one that does not.
+ * @example publisherNamedBy('Publish with node {{CODEBOOK_PUBLISHER_PATH}}.', '/extensions/laststance.codebook-0.2.29/skills/codebook/publish-wiki.mjs') // => { publisherPath: '/extensions/…/publish-wiki.mjs' }
+ */
+function publisherNamedBy(
+  canonicalText: string,
+  publisherPath: string,
+): RecordedPublisher {
+  return canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER)
+    ? { publisherPath }
+    : {}
 }
 
 /**
