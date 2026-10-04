@@ -18,6 +18,7 @@ import { studyIdSchema } from './legacyStudySchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { replayDebugSnapshotSchema } from './replayDebugSchemas'
 import { repositoryHashSchema } from './sourceSchemas'
+import { learningSummaryIssues } from './utils/learningSummaryIssues'
 
 const elapsed = z.number().finite().nonnegative()
 const base = {
@@ -173,27 +174,25 @@ export const nodeTestLearningMaterialContentSchema = z
           label: z.string().min(1).max(LEARNING_SUMMARY_LIMITS.stepLabelChars),
           explanation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
           evidence: z.enum(['observed', 'source-derived', 'unknown']),
-          reference: nodeLearningReferenceSchema.optional(),
+          reference: nodeLearningReferenceSchema
+            .optional()
+            .describe(
+              'Required for an observed or source-derived step: a stop, an output or the result of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
+            ),
         }),
       )
       .min(1)
       .max(LEARNING_SUMMARY_LIMITS.steps),
   })
-  .refine((value) => {
-    const participantIds = new Set(
-      value.participants.map((participant) => participant.id),
-    )
-    return (
-      participantIds.size === value.participants.length &&
-      new Set(value.steps.map((step) => step.id)).size === value.steps.length &&
-      value.steps.every(
-        (step) =>
-          participantIds.has(step.from) &&
-          participantIds.has(step.to) &&
-          (step.evidence === 'unknown' || step.reference),
-      )
-    )
-  }, 'Use unique participant/step IDs, declared participants and a verified Node history reference for every observed or source-derived step.')
+  .superRefine((value, context) => {
+    // Each broken rule is its own issue at the offending element, as for a configured learning summary.
+    for (const issue of learningSummaryIssues(
+      value,
+      'content',
+      'Give it the reference of a stop, an output or the result of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown.',
+    ))
+      context.addIssue({ code: 'custom', ...issue })
+  })
   .refine(
     (value) =>
       Buffer.byteLength(JSON.stringify(value), 'utf8') <=

@@ -108,6 +108,10 @@ import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { thrownMessage } from './utils/thrownMessage'
 import { waitForNextRunState } from './utils/waitForNextRunState'
 
+/** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
+const SAVE_LEARNING_SUMMARY_ADVICE =
+  "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it."
+
 export interface Explanation {
   id: string
   instanceId: string
@@ -1589,6 +1593,22 @@ export class StudyService {
       ...(nodeParticipants ?? {}),
       browser: participantView('browser'),
     }
+    const finalOutcome =
+      nodeOutcome ??
+      (terminalReason
+        ? 'not-demonstrated'
+        : (runtime?.finalOutcome ?? 'pending-teardown'))
+    // A refused or removed run has no history to read or to add to.
+    const holdsHistory =
+      historyExclusionState(record.historyExcluded) !== 'ended'
+    // A run that reached its result and saved no learning summary would be saved without a summary and a sequence: say so where the agent reads after the result.
+    const lacksLearningSummary =
+      holdsHistory &&
+      runtime?.status === 'completed' &&
+      finalOutcome === 'demonstrated' &&
+      ![...record.explanations.values()].some(
+        (explanation) => explanation.learningSummary,
+      )
     const nextActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
@@ -1596,10 +1616,8 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      // A refused or removed run has no history to read.
-      historyExclusionState(record.historyExcluded) === 'ended'
-        ? undefined
-        : 'read-history',
+      lacksLearningSummary ? 'save-learning-summary' : undefined,
+      holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     const material = {
       instanceId: this.instanceId,
@@ -1720,11 +1738,7 @@ export class StudyService {
         })) ?? [],
       runtimeOutcome: runtime?.runtimeOutcome,
       captureOutcome: runtime?.captureOutcome,
-      finalOutcome:
-        nodeOutcome ??
-        (terminalReason
-          ? 'not-demonstrated'
-          : (runtime?.finalOutcome ?? 'pending-teardown')),
+      finalOutcome,
       terminalReason,
       // A failure inside the runtime has no tool error of its own; its text becomes the cause an agent can quote.
       error:
@@ -1891,6 +1905,10 @@ export class StudyService {
           )
     return {
       ...material,
+      // Present only while nextActions names save-learning-summary; gone once an explanation with a learning summary is saved.
+      saveLearningSummary: lacksLearningSummary
+        ? SAVE_LEARNING_SUMMARY_ADVICE
+        : undefined,
       observedAt:
         observedAtMs === undefined
           ? undefined

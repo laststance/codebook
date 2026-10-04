@@ -10,6 +10,7 @@ import { z } from 'zod'
 
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
+import type { LearningSummary } from '../learningSummarySchemas'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -2589,6 +2590,194 @@ test('repository help says that a revision conflict names the current revision a
   assert.equal(
     z.object({ recovery: z.string() }).parse(JSON.parse(help.text)).recovery,
     'Source mismatch: reread the exact path and update citations explicitly. Revision conflict: the answer names the current revision; publish the complete document again with that expectedRevision to replace the book, or under another book id to keep it. Lost response: reuse identical key/input to recover the original receipt even after source changes. Missing history: discover saved studies in the library; never run application input as recovery.',
+  )
+})
+
+/** A consistent learning summary for the fixture's one stop, which each test of a broken rule changes in one place. @example learningSummaryFor(snapshotUri, sourceHash).steps[0]?.id // 'select' */
+const learningSummaryFor = (
+  snapshotUri: string,
+  sourceHash: string,
+): LearningSummary => ({
+  question: 'How does the selected theme reach the interface?',
+  title: 'Theme selection',
+  summary: 'The recorded stop holds the selected dark theme.',
+  participants: [
+    { id: 'control', label: 'Theme control' },
+    { id: 'interface', label: 'Interface' },
+  ],
+  steps: [
+    {
+      id: 'select',
+      from: 'control',
+      to: 'interface',
+      label: 'Selected theme',
+      explanation: 'The stop records nextTheme as dark.',
+      evidence: 'observed',
+      reference: { snapshotUri, sourceHash },
+    },
+    {
+      id: 'later',
+      from: 'interface',
+      to: 'interface',
+      label: 'Later rendering',
+      explanation: 'No later stop was captured.',
+      evidence: 'unknown',
+    },
+  ],
+})
+
+// Value: protects=an agent whose learning summary breaks one rule learning which element breaks it and what that element needs; fails_when=all four rules answer one sentence at the path learningSummary ("Use unique participant/step IDs, declared participants and a verified reference for every observed or source-derived step."), after which the Cursor agent of the baseline round dropped the summary from every explanation; why_new=Cycle 0045 cause 6; seam=none
+for (const [brokenRule, breakRule, expectedRefusal] of [
+  [
+    'whose source-derived step has no reference is refused naming that step and what it needs',
+    (summary: LearningSummary): void => {
+      summary.steps[0]!.evidence = 'source-derived'
+      summary.steps[0]!.reference = undefined
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.steps[0] (select) is source-derived and has no reference. Give it the reference {snapshotUri, sourceHash} of a committed observation of this run, or label it unknown. at learningSummary.steps[0].reference',
+  ],
+  [
+    'that uses a participant id twice is refused naming the second use',
+    (summary: LearningSummary): void => {
+      summary.participants.push({ id: 'control', label: 'Second control' })
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.participants[2].id "control" is used twice; participant ids are unique. at learningSummary.participants[2].id',
+  ],
+  [
+    'that uses a step id twice is refused naming the second use',
+    (summary: LearningSummary): void => {
+      summary.steps[1]!.id = 'select'
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.steps[1].id "select" is used twice; step ids are unique. at learningSummary.steps[1].id',
+  ],
+  [
+    'whose step names a participant that is not declared is refused naming that step and that participant',
+    (summary: LearningSummary): void => {
+      summary.steps[0]!.to = 'renderer'
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.steps[0] (select) names participant "renderer", which learningSummary.participants does not declare. at learningSummary.steps[0].to',
+  ],
+] as const)
+  test(`a learning summary ${brokenRule}`, async (context) => {
+    // Arrange: one stop is committed; the summary is consistent except for the one rule under test.
+    const { service, configuration, runtimes } =
+        await configuredServiceHarness(context),
+      client = await connectMcpClient(context, service)
+    const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: 'repository-browser',
+        key: 'summary-rule',
+        configuration,
+      }),
+      record = service.record(receipt)
+    await record.preparation
+    service.action({ ...receipt, action: 'repository-click', key: 'one' })
+    const snapshotUri = service.state(record).observations[0]!.snapshotUri,
+      learningSummary = learningSummaryFor(
+        snapshotUri,
+        configuration.source.hash,
+      )
+    breakRule(learningSummary)
+
+    // Act
+    const refused = await client.callTool({
+      name: 'codebook_explain',
+      arguments: {
+        instanceId: receipt.instanceId,
+        runId: receipt.runId,
+        key: 'explain-with-summary',
+        snapshotUri,
+        sourceHash: configuration.source.hash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: 'The next theme is dark.',
+        learningSummary,
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(toolText(refused), expectedRefusal)
+    assert.equal(savedExplanationEntries(runtimes[0]!).length, 0)
+  })
+
+// Value: protects=the Node test learning material answering a broken rule the same way, in its own reference kind; fails_when=the twin keeps one sentence for four rules; why_new=Cycle 0045 cause 6 (the twin at nodeTestHistorySchemas.ts); seam=none
+test('Node test learning material whose observed step has no reference is refused naming that step and the references a Node history offers', async (context) => {
+  // Arrange: learning material whose one step is observed and carries no reference.
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_explain_node_history',
+    arguments: {
+      studyId:
+        '11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222',
+      expectedRevision: 0,
+      content: {
+        question: 'Which value does the test read?',
+        title: 'Test value',
+        summary: 'The test reads the selected theme.',
+        participants: [{ id: 'test', label: 'Test' }],
+        steps: [
+          {
+            id: 'read',
+            from: 'test',
+            to: 'test',
+            label: 'Reads the theme',
+            explanation: 'The stop holds the theme.',
+            evidence: 'observed',
+          },
+        ],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain_node_history: content.steps[0] (read) is observed and has no reference. Give it the reference of a stop, an output or the result of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown. at content.steps[0].reference',
+  )
+})
+
+// Value: protects=an agent that reads the tool's input schema directly before it writes a summary learning when a step needs a reference; fails_when=the schema of reference carries no description (the Cursor agent read it and sent a source-derived step without one); why_new=Cycle 0045 cause 6 (DX-1 b); seam=none
+test('the input schemas of codebook_explain and codebook_explain_node_history say when a step needs a reference and what it holds', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const tools = await client.listTools()
+
+  // Assert
+  const summarySchema = z.object({
+    properties: z.object({
+      steps: z.object({
+        items: z.object({
+          properties: z.object({
+            reference: z.object({ description: z.string() }),
+          }),
+        }),
+      }),
+    }),
+  })
+  const referenceDescription = (
+    toolName: string,
+    summaryField: 'learningSummary' | 'content',
+  ): string =>
+    summarySchema.parse(
+      z
+        .object({ properties: z.record(z.string(), z.unknown()) })
+        .parse(tools.tools.find((tool) => tool.name === toolName)?.inputSchema)
+        .properties[summaryField],
+    ).properties.steps.items.properties.reference.description
+  assert.equal(
+    referenceDescription('codebook_explain', 'learningSummary'),
+    "Required for an observed or source-derived step: the snapshotUri and sourceHash of a committed observation of this run, or after the result the run's terminalReference; omit it only for an unknown step.",
+  )
+  assert.equal(
+    referenceDescription('codebook_explain_node_history', 'content'),
+    'Required for an observed or source-derived step: a stop, an output or the result of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
   )
 })
 
