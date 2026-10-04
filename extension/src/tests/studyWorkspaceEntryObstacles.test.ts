@@ -499,6 +499,57 @@ for (const before of [
     }
   })
 
+// Value: protects=the learner's primary side bar after a Read that was refused because the work window lost the focus while the reader measured the side bars: the bar is open as before, and the next Read measures again; fails_when=the measurement hid the primary side bar, the refusal left it hidden with no maximized group, and the reader kept the reading as begun, so the file explorer stays away until a later Restore or Close; why_new=Cycle 0045 local review study-1 #6 and coderabbit #6 (the measurement of NF-22 runs before the Read's last check that can refuse); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command, changeWindowFocus
+test('a Read refused while the reader measured the side bars leaves the primary side bar open and no maximized group', async () => {
+  // Arrange: both side bars are open; the work window loses and regains the focus while the Read's measurement hides the primary side bar.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    const measurement = harness.holdNextCommand('workbench.action.closeSidebar')
+    release = measurement.release
+
+    // Act
+    const reading = harness.reader.action('read-context')
+    await measurement.started
+    harness.changeWindowFocus(false)
+    harness.changeWindowFocus(true)
+    measurement.release()
+    await assert.rejects(reading, /work window lost focus/i)
+    const afterRefusal = {
+      ...harness.sideBars(),
+      maximized: harness.maximizedEditorGroup(),
+    }
+    await harness.reader.action('read-context')
+    const duringNextRead = harness.sideBars()
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(afterRefusal, {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+      maximized: false,
+    })
+    assert.deepEqual(duringNextRead, {
+      primary: false,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    // The next Read measured both bars as open, so its Close shows both again.
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=Restore leaving the enlarged Study pane while a tab the learner keeps covers the captured source, and saying which tab and what clears it; fails_when=the Restore finds the source not shown and enlarges the Study pane again, so the pane fills the window after every Restore and no tab is named; why_new=Cycle 0045 NF-22 with PC-1.10 (a kept tab that is no text editor is its own case, and the step the refusal names makes the next Restore possible); seam=addOpaqueTab, focusOpaqueTab, the fake editor's maximized group
 test('Restore beside a kept image tab leaves the enlarged Study pane and names the tab that keeps the panes from being arranged', async () => {
   // Arrange: the learner keeps an image open in front of the captured source and read the explanation enlarged.

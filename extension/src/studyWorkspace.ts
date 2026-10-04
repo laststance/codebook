@@ -2583,37 +2583,47 @@ export class StudyWorkspace {
    * A reading whose side bars were measured uses the editor's command that also hides both bars, and its end shows the hidden ones again. A reading without a measurement leaves the side bars as they are, because a bar hidden then could not be told from one the learner keeps closed: Expand ends an earlier maximization, and the toggle then maximizes the active group between the bars.
    * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read; asked after each step that can let it happen.
    * @returns Once the editor answered the maximize command.
-   * @throws What `assertReadFocus` throws, and a rejection of the editor's maximize command.
+   * @throws What `assertReadFocus` throws, and a rejection of the editor's maximize command; when this Read would have begun the reading, the side bar its measurement hid is shown again first.
    * @example
    * ```ts
    * await this.maximizeForRead(assertReadFocus) // three-pane columns: both side bars hidden; live or replay rows: the side bars stay
    * ```
    */
   private async maximizeForRead(assertReadFocus: () => void): Promise<void> {
-    // Which side bars are open is measured once per reading; from then on the reading is ended by Restore or Close, which show the hidden ones again.
-    if (!this.maximizedByRead) {
-      this.maximizedByRead = true
-      await this.rememberSideBarsBeforeRead()
-      assertReadFocus()
-    }
-    // A measured reading hides both side bars with the group's maximization.
-    if (this.sideBarsBeforeRead) {
+    const startsReading = !this.maximizedByRead
+    try {
+      // Which side bars are open is measured once per reading; from then on the reading is ended by Restore or Close, which show the hidden ones again.
+      if (startsReading) {
+        this.maximizedByRead = true
+        await this.rememberSideBarsBeforeRead()
+        assertReadFocus()
+      }
+      // A measured reading hides both side bars with the group's maximization.
+      if (this.sideBarsBeforeRead) {
+        await vscode.commands.executeCommand(
+          'workbench.action.maximizeEditorHideSidebar',
+        )
+        return
+      }
       await vscode.commands.executeCommand(
-        'workbench.action.maximizeEditorHideSidebar',
+        'workbench.action.minimizeOtherEditors',
       )
-      return
+      assertReadFocus()
+      await vscode.commands.executeCommand(
+        'workbench.action.toggleMaximizeEditorGroup',
+      )
+    } catch (error) {
+      // A Read refused before its maximization begins no reading: the side bar hidden for the measurement is shown again, and the next Read measures anew.
+      if (startsReading) {
+        this.maximizedByRead = false
+        await this.showSideBarsHiddenByRead()
+      }
+      throw error
     }
-    await vscode.commands.executeCommand(
-      'workbench.action.minimizeOtherEditors',
-    )
-    assertReadFocus()
-    await vscode.commands.executeCommand(
-      'workbench.action.toggleMaximizeEditorGroup',
-    )
   }
 
   /**
-   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}.
+   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}, and by {@link maximizeForRead} for a Read that was refused after its measurement.
    * Only the bars {@link sideBarShowCommands} names are shown: those that were open before the Read, and the primary one when the learner opened it during the reading. A reading without a measurement hid no bar and shows none. The editor's commands that show a bar leave an open bar as it is and give the bar the keyboard, which the active editor group gets back.
    * @returns `true` when a bar was shown and the active editor group focused again, `false` when no Read's measurement was pending or no bar is to be shown.
    * @example
