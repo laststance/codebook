@@ -1781,3 +1781,67 @@ test('a browser Wiki update link starts no Cursor Agent unless the learner confi
     await rm(projectDirectory, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the editor's own notification for a rejected command showing plain text; fails_when=a command registered by activation rejects with its raw error, whose quoted setting or path the editor renders as a command link when the command ran from a keybinding, a menu or the status bar; why_new=Cycle 0045 (SEC-3); seam=vscode.commands.registerCommand stub
+test('a failed Codebook command rejects with a message the editor cannot turn into a link', async () => {
+  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax, and no Wiki exists in the folder it names.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-command-rejection-')),
+  )
+  const commands = new Map<string, () => Promise<void>>()
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '[Open](command:x)' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: { showErrorMessage: async () => undefined },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: projectRoot },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    const rejection: unknown = await commands.get(
+      'codebook.openDeepWiki',
+    )!().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+
+    // Assert
+    assert.ok(rejection instanceof Error)
+    assert.equal(
+      rejection.message,
+      `ENOENT: no such file or directory, open '${projectRoot}/[Open] (command:x)/codebook-wiki.json'`,
+    )
+    assert.equal(rejection.message.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
