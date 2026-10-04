@@ -1,4 +1,8 @@
-import { MS_PER_MINUTE, WIKI_UPDATE_SHOWN_PATH_LIMIT } from '../constants'
+import {
+  MS_PER_MINUTE,
+  WIKI_UPDATE_RECOVERY_REQUEST,
+  WIKI_UPDATE_SHOWN_PATH_LIMIT,
+} from '../constants'
 
 import { describeWikiUpdate } from './describeWikiUpdate'
 import { formatClockTime } from './formatClockTime'
@@ -90,6 +94,7 @@ export function wikiUpdateNotice(
     // The page moves a long reason into a disclosure; a notification has none, so it keeps the whole reason and its next step.
     reasonLimitChars: Number.POSITIVE_INFINITY,
     msPerMinute: MS_PER_MINUTE,
+    recoveryRequest: WIKI_UPDATE_RECOVERY_REQUEST,
     // The editor shows no freshness label; the page's is in the browser reader.
     freshnessLabelPlace: 'in the browser reader',
   })

@@ -3,7 +3,10 @@ import { resolve } from 'node:path'
 import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
-import type { WikiFreshness } from '../../utils/inspectDeepWikiFreshness'
+import {
+  inspectDeepWikiFreshness,
+  type WikiFreshness,
+} from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
@@ -29,9 +32,12 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command, or one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
 export type HeldUpdateStep =
-  'freshness-inspection' | 'chat-open' | 'candidate-listing'
+  | 'freshness-inspection'
+  | 'chat-open'
+  | 'candidate-listing'
+  | 'publish-token-read'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -42,7 +48,7 @@ export type HeldUpdateStep =
  * @param options.projectRoot - Canonical folder the window has open.
  * @param options.outputSetting - Value of `codebook.wikiOutputDirectory`; `.codebook/wiki` when omitted.
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
- * @param options.chatFails - Makes VS Code's chat command throw.
+ * @param options.chatFails - Makes VS Code's chat command throw: "Chat is unavailable" for `true`, the given message for a text.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
  * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
@@ -52,6 +58,8 @@ export type HeldUpdateStep =
  * @param options.chooseAction - Presses a button of a notification: it gets the notification's text and its button labels and returns the label to press; no button is pressed when omitted.
  * @param options.workspaceState - The window's workspace state; two windows opened with the same map are one window before and after a reload.
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
+ * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
+ * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
  * @returns What the window showed (chat requests, notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
  *
  * @example
@@ -66,7 +74,7 @@ export async function openWikiUpdateWindow(options: {
   projectRoot: string
   outputSetting?: string
   cursor?: boolean
-  chatFails?: boolean
+  chatFails?: boolean | string
   cursorAgent?: (
     root: string,
     prompt: string,
@@ -84,6 +92,8 @@ export async function openWikiUpdateWindow(options: {
   chooseAction?: (message: string, actions: string[]) => string | undefined
   workspaceState?: Map<string, unknown>
   publishTokenReadFails?: string
+  realFreshnessCheck?: boolean
+  openWikiFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   notices: string[]
@@ -186,7 +196,17 @@ export async function openWikiUpdateWindow(options: {
             return { dispose(): void {} }
           },
           executeCommand: async (name: string, argument?: unknown) => {
-            if (options.chatFails) throw new Error('Chat is unavailable')
+            if (
+              name === 'codebook.openDeepWiki' &&
+              options.openWikiFails !== undefined
+            )
+              throw new Error(options.openWikiFails)
+            if (options.chatFails)
+              throw new Error(
+                options.chatFails === true
+                  ? 'Chat is unavailable'
+                  : options.chatFails,
+              )
             await passHold('chat-open')
             chatRequests.push({
               name,
@@ -232,7 +252,7 @@ export async function openWikiUpdateWindow(options: {
                 ...choices,
               ])
             if (!messageOptions?.modal)
-              return showNotification(warnings, message, [])
+              return showNotification(warnings, message, choices)
             confirmations.push(message)
             confirmationDetails.push(messageOptions.detail ?? '')
             return Promise.resolve(
@@ -275,6 +295,7 @@ export async function openWikiUpdateWindow(options: {
         readWikiPublishToken: async (outputDirectory: string) => {
           if (options.publishTokenReadFails !== undefined)
             throw new Error(options.publishTokenReadFails)
+          await passHold('publish-token-read')
           return readWikiPublishToken(outputDirectory)
         },
       },
@@ -318,9 +339,13 @@ export async function openWikiUpdateWindow(options: {
             : 'Updated',
       },
       './utils/inspectDeepWikiFreshness': {
-        inspectDeepWikiFreshness: async () => {
+        inspectDeepWikiFreshness: async (
+          ...checked: Parameters<typeof inspectDeepWikiFreshness>
+        ) => {
           await passHold('freshness-inspection')
-          return freshness
+          return options.realFreshnessCheck
+            ? inspectDeepWikiFreshness(...checked)
+            : freshness
         },
       },
       // The real watch runs; only its two-second wait between looks is shortened, or replaced by the test's clock.

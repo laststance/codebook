@@ -27,7 +27,6 @@ import {
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
-  WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
   WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
@@ -68,12 +67,16 @@ import {
   useEditorMachineId,
 } from './utils/currentStorageOwner'
 import { cursorRegistrationNotice } from './utils/cursorRegistrationNotice'
+import { describeWikiChatOpenFailure } from './utils/describeWikiChatOpenFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import { isWikiManifestOf } from './utils/isWikiManifestOf'
+import { isWikiUpdateTimeout } from './utils/isWikiUpdateTimeout'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
+import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
@@ -664,28 +667,6 @@ export function activate(
       outputDirectory: resolveDeepWikiDirectory(projectRoot, setting),
     }
   }
-  /**
-   * Says whether a parsed JSON object carries a field with exactly this value, for the two fields {@link isWikiManifestOf} reads.
-   * @param value - A parsed JSON object.
-   * @param key - The field's name.
-   * @param expected - The value the field must hold.
-   * @returns `true` when the field exists and holds that value; `false` when it is absent or holds another.
-   * @example holdsField({ schemaVersion: 1 }, 'schemaVersion', 1) // => true
-   */
-  const holdsField = (value: object, key: string, expected: unknown): boolean =>
-    key in value && Reflect.get(value, key) === expected
-  /**
-   * Says whether a parsed Wiki manifest is one of this schema that names the opened project, for {@link assertWikiOwner}.
-   * @param manifest - What the manifest file parsed to.
-   * @param projectRoot - Canonical opened project.
-   * @returns `true` for a JSON object with `schemaVersion` 1 and this `repositoryRoot`; `false` for anything else, a manifest of another checkout among them.
-   * @example isWikiManifestOf({ schemaVersion: 1, repositoryRoot: '/other' }, '/repo') // => false
-   */
-  const isWikiManifestOf = (manifest: unknown, projectRoot: string): boolean =>
-    typeof manifest === 'object' &&
-    manifest !== null &&
-    holdsField(manifest, 'schemaVersion', 1) &&
-    holdsField(manifest, 'repositoryRoot', projectRoot)
   /** Checks that the manifest of the Wiki folder names this opened project, before the browser entry or an update uses the folder. @throws When the manifest is no JSON object of this schema or names another checkout. @example await assertWikiOwner('/repo', '/repo/.codebook/wiki') */
   const assertWikiOwner = async (
     projectRoot: string,
@@ -739,11 +720,18 @@ export function activate(
       notice.message,
       ...(onUpdateAnyway ? [UPDATE_ANYWAY_ACTION] : []),
       ...notice.actions,
-    ).then((choice) => {
-      if (choice === UPDATE_ANYWAY_ACTION) onUpdateAnyway?.()
-      else if (choice === OPEN_WIKI_ACTION)
-        void vscode.commands.executeCommand('codebook.openDeepWiki')
-    })
+    ).then(
+      (choice) => {
+        if (choice === UPDATE_ANYWAY_ACTION) onUpdateAnyway?.()
+        else if (choice === OPEN_WIKI_ACTION)
+          // The command's own handler tells the learner why the Wiki did not open; its rejection has nobody else to go to.
+          void vscode.commands
+            .executeCommand('codebook.openDeepWiki')
+            .then(undefined, () => undefined)
+      },
+      // A notification the editor could not show has nobody to report to either.
+      () => undefined,
+    )
   }
   /** Tells the learner that a second start was refused and where the first run's progress is. @example showWikiUpdateRunning() */
   const showWikiUpdateRunning = (): void => {
@@ -758,7 +746,11 @@ export function activate(
     observed: Partial<
       Pick<
         WikiUpdateEndFacts,
-        'cancelled' | 'timedOut' | 'blockingPaths' | 'failure'
+        | 'cancelled'
+        | 'timedOut'
+        | 'blockingPaths'
+        | 'failure'
+        | 'isFailureCodebookSentence'
       >
     > & {
       publish?: { token: string; published: WikiUpdateEndFacts['published'] }
@@ -784,13 +776,16 @@ export function activate(
       uncoveredAtStart: run.uncoveredAtStart,
       blockingPaths: observed.blockingPaths ?? [],
       failure: observed.failure,
+      isFailureCodebookSentence: observed.isFailureCodebookSentence,
     })
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
-    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
-    const mayAgentStillWork =
-      run.host === 'vscode' &&
-      (end.state === 'cancelled' || end.state === 'timed-out')
+    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
+    const mayAgentStillWork = mayWikiChatStillPublish(
+      run.host,
+      end.state,
+      isExtensionStopping,
+    )
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
@@ -880,18 +875,6 @@ export function activate(
         }
       },
     )
-  /**
-   * Tells {@link runCursorWikiAgent} whether the Cursor agent run ended because its bound passed, so the run is recorded as `timed-out` and not as a failure.
-   * @param agentError - What the agent run threw; `undefined` when it threw nothing.
-   * @returns `true` only for an error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME}, which {@link runCursorWikiUpdate} throws at the bound.
-   * @example
-   * isWikiUpdateTimeout(new Error('The Wiki update was cancelled.')) // => false
-   */
-  const isWikiUpdateTimeout = (agentError: unknown): boolean =>
-    typeof agentError === 'object' &&
-    agentError !== null &&
-    'name' in agentError &&
-    agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
   const runCursorWikiAgent = async (
     run: WikiRun,
@@ -1033,13 +1016,18 @@ export function activate(
       await assertWikiOwner(projectRoot, outputDirectory)
       const before = await inspectPublishedWiki(projectRoot, outputDirectory)
       if (before?.freshness.status === 'current') {
-        wikiUpdateRun.alreadyCurrent(wikiOutput, {
-          identity: before.identity,
-          ...(before.revision === undefined
-            ? {}
-            : { revision: before.revision }),
-          index: before.index,
-        })
+        wikiUpdateRun.alreadyCurrent(
+          wikiOutput,
+          {
+            identity: before.identity,
+            ...(before.revision === undefined
+              ? {}
+              : { revision: before.revision }),
+            index: before.index,
+          },
+          // In a folder without Git "current" covers the indexed sources only, and the learner is told.
+          Boolean(before.freshness.addedFilesUnchecked),
+        )
         showWikiUpdateNotice()
         return undefined
       }
@@ -1203,43 +1191,52 @@ export function activate(
         uncoveredPaths: run.uncoveredAtStart,
       })
       if (!isCursorHost) {
-        // While the chat opens, the closing window finds this run and aborts it.
+        // While the chat opens, the closing window finds this run, aborts it and waits until its end was recorded and its marker removed.
+        let reportOpeningEnded = (): void => {}
         const opening = {
           controller: run.controller,
-          settled: Promise.resolve(),
+          settled: new Promise<void>((resolveSettled) => {
+            reportOpeningEnded = resolveSettled
+          }),
         }
         activeWikiRun = opening
-        let didChatOpen: boolean
         try {
-          // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
-          didChatOpen = await settledWithin(
-            Promise.race([
-              vscode.commands.executeCommand('workbench.action.chat.open', {
-                query,
-                isPartialQuery: false,
-              }),
-              once(run.controller.signal, 'abort'),
-            ]),
-            WIKI_CHAT_OPEN_TIMEOUT_MS,
-          )
-        } catch (error) {
-          await finishWikiUpdate(run, {
-            failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
-          })
-          return
+          let didChatOpen: boolean
+          try {
+            // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
+            didChatOpen = await settledWithin(
+              Promise.race([
+                vscode.commands.executeCommand('workbench.action.chat.open', {
+                  query,
+                  isPartialQuery: false,
+                }),
+                once(run.controller.signal, 'abort'),
+              ]),
+              WIKI_CHAT_OPEN_TIMEOUT_MS,
+            )
+          } catch (error) {
+            // Both sentences of a chat that did not open end with the next step, so the page shows them whole.
+            await finishWikiUpdate(run, {
+              failure: describeWikiChatOpenFailure(thrownMessage(error)),
+              isFailureCodebookSentence: true,
+            })
+            return
+          }
+          if (!didChatOpen) {
+            await finishWikiUpdate(run, {
+              failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
+              isFailureCodebookSentence: true,
+            })
+            return
+          }
+          // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
+          if (isExtensionStopping || run.controller.signal.aborted) {
+            await finishWikiUpdate(run, { cancelled: true })
+            return
+          }
         } finally {
           if (activeWikiRun === opening) activeWikiRun = undefined
-        }
-        if (!didChatOpen) {
-          await finishWikiUpdate(run, {
-            failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
-          })
-          return
-        }
-        // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
-        if (isExtensionStopping || run.controller.signal.aborted) {
-          await finishWikiUpdate(run, { cancelled: true })
-          return
+          reportOpeningEnded()
         }
         // The chat API reports no result, so the extension watches for the publish itself; the watch outlives this call.
         void track(watchVsCodeWikiUpdate(run))

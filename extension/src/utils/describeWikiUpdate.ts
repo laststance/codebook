@@ -24,6 +24,8 @@ export type WikiUpdateWording = {
   reasonLimitChars: number
   /** Milliseconds in one minute, for naming a bound in minutes; the function is embedded into the page and cannot import the constant. */
   msPerMinute: number
+  /** The chat request that makes the editor agent run the publisher's recovery, as the learner pastes it ({@link WIKI_UPDATE_RECOVERY_REQUEST}); the function is embedded into the page and cannot import the constant. */
+  recoveryRequest: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
   /** Whether the reading page was served from another publication than the one on disk now; omitted by the editor, which never offers a reload. */
@@ -43,17 +45,17 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param wording - Time format, the bounds of the sentence, the minute length, where the freshness label is and whether the reading page is older than the site.
+ * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, where the freshness label is and whether the reading page is older than the site.
  * @returns
  * - Idle: undefined (nothing to show)
- * - A state this version does not know: "Update status unknown."
+ * - A state this version does not know: "Update status unknown.", with the output line only when that state names an output; none of its other fields is read
  * - Otherwise: the lead words, the rest of the sentence, shortened detail and the output line
  *
  * @example
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, freshnessLabelPlace: 'above' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -63,7 +65,20 @@ export function describeWikiUpdate(
   wording: WikiUpdateWording,
 ): WikiUpdateDescription | undefined {
   if (status.state === 'idle') return undefined
-  const output = 'Output: ' + (status.outputLabel || status.outputDirectory)
+  /**
+   * Words the output line of a state; called once by {@link describeWikiUpdate}, before anything else of the state is read.
+   * @param place - The label and the folder the state names; a state of a newer extension may name neither.
+   * @returns "Output: " with the label, or with the folder when the label is empty; an empty line when the state names no output, instead of "Output: undefined".
+   * @example outputLineOf({ outputLabel: '.codebook/wiki', outputDirectory: '/repo/.codebook/wiki' }) // => 'Output: .codebook/wiki'
+   */
+  const outputLineOf = (place: {
+    outputLabel?: string
+    outputDirectory?: string
+  }): string => {
+    const shownPlace = place.outputLabel || place.outputDirectory
+    return shownPlace ? 'Output: ' + shownPlace : ''
+  }
+  const output = outputLineOf(status)
   const describe = (
     lead: string,
     rest: string,
@@ -74,9 +89,11 @@ export function describeWikiUpdate(
     const count = Math.round(durationMs / wording.msPerMinute)
     return count + (count === 1 ? ' minute' : ' minutes')
   }
-  // The chat request of the publisher's recovery, as the learner pastes it, after the first letter of "Ask" or "ask"; the function is embedded into the page and cannot import it.
+  // The step that names the publisher's recovery request, after the first letter of "Ask" or "ask"; the request is the caller's, so page, notice and failure reasons name one request.
   const recoveryStep =
-    'sk the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.'
+    'sk the editor chat "' +
+    wording.recoveryRequest +
+    '", then press Update LLM Wiki again.'
   const freshnessStep =
     'check the freshness label ' + wording.freshnessLabelPlace + '.'
   /**
@@ -491,7 +508,7 @@ export function describeWikiUpdate(
    * @param stopped - The cancelled, timed-out or conflict state.
    * @param at - When the run ended, as the learner's local time.
    * @param replaced - Whether the site on disk was replaced meanwhile.
-   * @returns The description of the state; "Update status unknown." for a state this version does not know.
+   * @returns The description of the state.
    * @example describeStoppedRun(cancelled, '21:10', false).lead // => 'Update cancelled'
    */
   const describeStoppedRun = (
@@ -503,11 +520,28 @@ export function describeWikiUpdate(
       return describeCancelled(stopped, at, replaced)
     if (stopped.state === 'timed-out')
       return describeTimedOut(stopped, at, replaced)
-    if (stopped.state === 'conflict')
-      return describeConflict(stopped, at, replaced)
-    // A newer extension may answer a state this page does not know.
-    return describe('Update status unknown', '.')
+    return describeConflict(stopped, at, replaced)
   }
+  /**
+   * Words a start that was refused because nothing needed updating; called by {@link describeEnded} for the state `already-current`.
+   * @param alreadyCurrent - The already-current state.
+   * @param at - When the check was made, as the learner's local time.
+   * @returns The description: that the Wiki matches the source; in a folder without a Git repository, that every indexed source matches, that added files are not checked and what to do for a new file.
+   * @example describeAlreadyCurrent(alreadyCurrent, '21:10').rest // => ' (checked 21:10): this Wiki matches the source, so no update started.'
+   */
+  const describeAlreadyCurrent = (
+    alreadyCurrent: WikiUpdateStatusOf<'already-current'>,
+    at: string,
+  ): WikiUpdateDescription =>
+    describe(
+      'Already current',
+      ' (checked ' +
+        at +
+        // Without a Git repository added files were not looked for, and the button cannot update the Wiki for one.
+        (alreadyCurrent.addedFilesUnchecked
+          ? '): every indexed source matches, so no update started. Added files are not checked because this folder has no Git repository; ask the editor chat to update the Wiki for a new file.'
+          : '): this Wiki matches the source, so no update started.'),
+    )
   /**
    * Words a run that is over; called by {@link describeWikiUpdate} for every state after `running`.
    * @param ended - The state of the ended run.
@@ -521,16 +555,29 @@ export function describeWikiUpdate(
   ): WikiUpdateDescription => {
     if (ended.state === 'succeeded') return describeSucceeded(ended, at)
     if (ended.state === 'already-current')
-      return describe(
-        'Already current',
-        ' (checked ' +
-          at +
-          '): this Wiki matches the source, so no update started.',
-      )
+      return describeAlreadyCurrent(ended, at)
     const replaced = ended.site === 'replaced'
     if (ended.state === 'failed') return describeFailed(ended, at, replaced)
     return describeStoppedRun(ended, at, replaced)
   }
+  /**
+   * Says whether this version knows a state as one of a run that is over; called by {@link describeWikiUpdate} before it reads the fields of such a state.
+   * @param state - The state's name as the extension answered it.
+   * @returns `true` for `succeeded`, `already-current`, `failed`, `cancelled`, `timed-out` and `conflict`; `false` for any other name, which a newer extension may answer.
+   * @example isKnownEnding('paused') // => false
+   */
+  const isKnownEnding = (state: string): boolean =>
+    [
+      'succeeded',
+      'already-current',
+      'failed',
+      'cancelled',
+      'timed-out',
+      'conflict',
+    ].indexOf(state) >= 0
   if (status.state === 'running') return describeRunning(status)
+  // A state this version does not know may carry no time either, so it is worded before its time is read.
+  if (!isKnownEnding(status.state))
+    return describe('Update status unknown', '.')
   return describeEnded(status, wording.formatTime(status.finishedAt))
 }

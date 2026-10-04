@@ -207,6 +207,29 @@ test('an update that finds the Wiki already current records that and starts no r
   assert.equal(run.isRunning(), false)
 })
 
+test('an already-current check of a project without a Git repository records that added files were not checked', () => {
+  // Arrange
+  const run = new WikiUpdateRun(fixedClock)
+
+  // Act
+  run.alreadyCurrent(
+    output,
+    { identity: 'no-revision+0f9e8d7c', index: '0f9e8d7c' },
+    true,
+  )
+
+  // Assert
+  assert.deepEqual(run.status(), {
+    state: 'already-current',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    addedFilesUnchecked: true,
+    identity: 'no-revision+0f9e8d7c',
+    index: '0f9e8d7c',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  })
+})
+
 test('an already-current note never replaces a run that is active', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)

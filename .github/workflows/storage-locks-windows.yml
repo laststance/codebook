@@ -2,13 +2,16 @@ name: Storage locks (Windows)
 
 # The storage lock is taken over with a hard link, a directory rename onto an existing directory and a process probe,
 # which Windows answers differently from Linux; the Test workflow runs on Linux only. This job runs the lock test files
-# on Windows whenever a file those tests load changes. The two constants files are left out of the filter: they change
-# with most pull requests and hold no file system behavior.
+# on Windows whenever a file those tests load, or the Node release they run on, changes. The two constants files are
+# left out of the filter although extension/src/constants.ts holds the lock's times, its path and its file modes: they
+# change with most pull requests. A change there, to the lockfile or to the build that emits the tests is seen by the
+# weekly run instead, within a week of reaching main.
 on:
   push:
     branches: [main]
     paths:
       - .github/workflows/storage-locks-windows.yml
+      - .node-version
       - extension/src/tests/currentStorageOwner.test.ts
       - extension/src/tests/isFromEarlierBoot.test.ts
       - extension/src/tests/isProcessGone.test.ts
@@ -35,6 +38,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/storage-locks-windows.yml
+      - .node-version
       - extension/src/tests/currentStorageOwner.test.ts
       - extension/src/tests/isFromEarlierBoot.test.ts
       - extension/src/tests/isProcessGone.test.ts
@@ -57,6 +61,9 @@ on:
       - extension/src/utils/removeStaleStorageLock.ts
       - extension/src/utils/systemErrorCode.ts
       - extension/src/utils/withStorageLock.ts
+  # Mondays at 05:17 UTC, on main: what the path filter leaves out (the lock's constants, the lockfile, the build).
+  schedule:
+    - cron: '17 5 * * 1'
   # A manual run, for the job's first run and for a look at Windows without a change to the files above.
   workflow_dispatch:
 
@@ -82,7 +89,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # The job starts rarely, so it installs the dependencies each time instead of keeping a second cache for Windows.
+      # The job starts rarely, so it keeps no cache of extension/node_modules as the Test workflow does: each run links
+      # the dependencies again, from the pnpm store that setup-node caches per operating system (a Windows store of its own).
       - name: Prepare environment
         uses: ./.github/actions/prepare
 

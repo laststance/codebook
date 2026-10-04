@@ -582,6 +582,67 @@ test('a publish that lands after the watch was stopped replaces the sentence and
   assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
 })
 
+// Value: protects=the learner whose chat published after the watch was stopped, while the new Wiki does not match the source (a file it neither indexes nor excludes, a source edited meanwhile); fails_when=the late publish is shown only while freshness is current, so the page keeps "Nothing has been replaced so far" over a replaced site and offers no reload; why_new=Cycle 0045 local review wiki-1 #3; seam=none
+test('a publish that lands after the watch was stopped is shown also when the new site does not match the source, with a reload and a pointer to the freshness label', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    {
+      updateStatus: {
+        state: 'cancelled',
+        host: 'vscode',
+        finishedAt: '2026-10-03T11:58:00.000Z',
+        site: 'kept',
+        ...output,
+      },
+      freshness: 'changed',
+    },
+  )
+  const status = page.find('[data-codebook-update-status]')
+
+  // Act: the chat publishes; the source still differs from the new Wiki.
+  page.reader.sitePublishedAt = '2026-10-03T12:00:10.000Z'
+  page.reader.publication = 'publication-after-the-watch'
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    status?.textContent,
+    'A new site was published after this run ended; check the freshness label above. Reload is offered below.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'late-publish')
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
+})
+
+test('a publish that lands after a watch timed out is shown also when Codebook cannot check the new site against the source', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: the page is loaded after the publish, and the freshness check cannot decide.
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'timed-out',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      timeoutMs: 900_000,
+      site: 'kept',
+      ...output,
+    },
+    sitePublishedAt: '2026-10-03T11:59:00.000Z',
+    freshness: 'unknown',
+  })
+
+  // Assert
+  const status = page.find('[data-codebook-update-status]')
+  assert.equal(
+    status?.textContent,
+    'A new site was published after this run ended; check the freshness label above.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'late-publish')
+  assert.equal(page.find('[data-codebook-reload]'), undefined)
+})
+
 test('a page loaded after the late publish says so without asking for another reload', async () => {
   // Arrange
   const script = await readServedWikiScript()
@@ -1066,6 +1127,32 @@ test('the refusal that names another window’s update is shown whole, with its 
     'Update failed at 11:58: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57 GMT+9). Codebook waits for it until 12:12 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.',
   )
   assert.equal(page.find('[data-codebook-update-detail]'), undefined)
+})
+
+// Value: protects=the recovery step on the served Wiki page, whose sentence writer gets the request from the reader instead of holding its own copy; fails_when=the reader's page script does not hand the request over, so the page asks the learner to paste "undefined"; why_new=Cycle 0045 local review wiki-1 #12; seam=none
+test('a start refused for an unfinished publish names the recovery request on the page, as the reader handed it to the page script', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      paths: ['wiki.publish-journal.json'],
+      cause: 'unfinished-publish',
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    'Update not started (11:58): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  )
 })
 
 test('each kind of update state has its own colour on the state words, with fallbacks for sites that lack the tokens', async () => {
@@ -1581,6 +1668,8 @@ test('a failed result from an earlier day is still shown', async () => {
       site: 'kept',
       ...output,
     },
+    // The site on disk is older than the failure; one published since would be shown in the failure's place.
+    sitePublishedAt: '2026-09-30T11:30:00.000Z',
     freshness: 'changed',
   })
 

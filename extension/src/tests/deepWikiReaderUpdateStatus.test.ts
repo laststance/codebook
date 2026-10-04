@@ -420,10 +420,10 @@ const sleep = (milliseconds: number): Promise<void> =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
 
 test('a source changed outside the editor raises the stamp of the update state once its burst has ended, and a file of the Wiki folder or an excluded path does not', async () => {
-  // Arrange: a reader whose bursts last 50 ms, on a Wiki that indexes src/a.ts and excludes examples.
+  // Arrange: a reader whose bursts last 300 ms, long enough for a request on a loaded machine to be answered inside one, on a Wiki that indexes src/a.ts and excludes examples.
   const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
     resolve(__dirname, '../deepWikiReader.js'),
-    { './constants': { ...constants, WIKI_SOURCE_CHANGE_DEBOUNCE_MS: 50 } },
+    { './constants': { ...constants, WIKI_SOURCE_CHANGE_DEBOUNCE_MS: 300 } },
     { URL },
   )
   const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
@@ -453,18 +453,25 @@ test('a source changed outside the editor raises the stamp of the update state o
       resolve(projectRoot, '../elsewhere/src/a.ts'),
     ])
       wiki.reader.noteSourceChange(path)
-    await sleep(120)
+    // Longer than a burst: a file that counted would have raised the stamp by now.
+    await sleep(450)
     const stampAfterFilesThatAreNoSource = await readStamp()
     // An agent's CLI rewrites the indexed file and adds a new one in one burst.
     wiki.reader.noteSourceChange(join(projectRoot, 'src/a.ts'))
     wiki.reader.noteSourceChange(join(projectRoot, 'src/new.ts'))
     const stampInsideTheBurst = await readStamp()
-    await sleep(120)
+    // The burst ends 300 ms after its last change; the stamp is asked for until it has risen, for five seconds at most.
+    const deadline = Date.now() + 5_000
+    let stampAfterTheBurst = await readStamp()
+    while (stampAfterTheBurst === 0 && Date.now() < deadline) {
+      await sleep(50)
+      stampAfterTheBurst = await readStamp()
+    }
 
     // Assert
     assert.equal(stampAfterFilesThatAreNoSource, 0)
     assert.equal(stampInsideTheBurst, 0)
-    assert.equal(await readStamp(), 1)
+    assert.equal(stampAfterTheBurst, 1)
   } finally {
     await wiki.close()
   }

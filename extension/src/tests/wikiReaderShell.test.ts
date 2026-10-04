@@ -237,3 +237,28 @@ test('the open control is printed only where the publisher puts a page’s first
     ),
   )
 })
+
+// Value: protects=the Wiki reader between 701 and 1000 px, where the right rail is a row of the update group, the outline, the open control and the output; fails_when=the open control has no rule in that layout, so it shrinks with the row and its label breaks inside a word, and it keeps the bottom margin of the column layout; why_new=Cycle 0045 local review other-1 #6 (the measured case is in the Reader DOM check); seam=none
+test('where the right rail is a row the open control keeps its own width and no column margin, and below 700 px it has its margin back', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const railRowRules =
+    /@media\(max-width:1000px\)\{(.*)\}\n@media\(max-width:700px\)/.exec(
+      shell,
+    )?.[1]
+  const columnRules = /@media\(max-width:700px\)\{(.*)\}\n/.exec(shell)?.[1]
+
+  // Assert
+  assert.ok(
+    railRowRules?.includes(
+      '.right-rail{grid-column:1/-1;max-height:10rem;display:flex;gap:1rem}.right-rail nav{flex:1}.right-rail .open-in-editor{flex:none;margin:0;align-self:flex-start}',
+    ),
+    'the open control has no rule in the row layout',
+  )
+  assert.ok(
+    columnRules?.includes(
+      '.right-rail{display:block;margin-top:1rem}.right-rail .open-in-editor{margin:0 0 1rem}',
+    ),
+    'the open control keeps the row layout’s margin in the column layout',
+  )
+})

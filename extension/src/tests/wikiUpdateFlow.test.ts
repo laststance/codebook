@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
@@ -265,6 +265,35 @@ test('a Wiki that already matches the source says so and opens no chat request',
   }
 })
 
+// Value: protects=the notice and the page of a project without Git whose Wiki matches its indexed sources; fails_when=the start is refused as "this Wiki matches the source" without the caveat the freshness label carries, so a learner who added a file is told nothing needs updating and not how to get the file in; why_new=Cycle 0045 local review wiki-1 #4; seam=none
+test('a Wiki of a project without a Git repository whose indexed sources match says that added files are not checked, and opens no chat request', async () => {
+  // Arrange: what the freshness check answers in a folder without a Git repository once every indexed source matches.
+  const wiki = await openWikiWindow()
+  wiki.setFreshness({ ...CURRENT, addedFilesUnchecked: true })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'already-current')
+    assert.equal(
+      status.state === 'already-current' ? status.addedFilesUnchecked : false,
+      true,
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.equal(wiki.notices.length, 1)
+    assert.match(
+      wiki.notices[0] ?? '',
+      new RegExp(
+        `^Already current \\(checked ${CLOCK_TIME}\\): every indexed source matches, so no update started\\. Added files are not checked because this folder has no Git repository; ask the editor chat to update the Wiki for a new file\\.$`,
+      ),
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a chat that cannot open ends the update as failed, says what to install and shows one error notice with Open LLM Wiki that does not claim the update could not start', async () => {
   // Arrange
   const wiki = await openWikiWindow({ chatFails: true })
@@ -289,6 +318,37 @@ test('a chat that cannot open ends the update as failed, says what to install an
     assert.deepEqual(wiki.offeredActions, [
       { message: wiki.errors[0], actions: ['Open LLM Wiki'] },
     ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the next step on the Wiki page when the editor's chat command fails with a long error; fails_when=the failure is recorded as an outside text, so the page cuts it at 160 characters and "Install or enable GitHub Copilot Chat…" is hidden in the disclosure, or the editor's text is quoted without a bound; why_new=Cycle 0045 local review wiki-1 #9; seam=none
+test('a chat that cannot open with a long error is recorded as Codebook’s own sentence, with the error cut and the next step kept', async () => {
+  // Arrange: the chat command throws a text of 150 characters.
+  const wiki = await openWikiWindow({
+    chatFails:
+      `No chat provider is registered for this window: ${'the extension host did not answer. '.repeat(3)}`.slice(
+        0,
+        150,
+      ),
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.deepEqual(
+      status.state === 'failed'
+        ? [status.reason, status.isCodebookSentence]
+        : [],
+      [
+        'The editor chat could not be opened (No chat provider is registered for this window: the extension host did not answer. the extension host did not answer. th…). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.',
+        true,
+      ],
+    )
   } finally {
     await wiki.close()
   }
@@ -763,6 +823,31 @@ test('the Cursor update request carries the same contract but asks for no report
   }
 })
 
+// Value: protects=the request an agent gets in a project without Git (it must not be asked for a commit hash, and must be told not to create a repository in the learner's project); fails_when=the freshness check reports the missing repository on its `current` answer only, so every run that starts is worded for a Git repository; why_new=Cycle 0045 local review wiki-1 #1 (the window's fake freshness hid it); seam=none
+test('the update request for a project without a Git repository asks for no revision and tells the chat not to create a repository', async () => {
+  // Arrange: the real freshness check runs, on a project folder that is in no Git repository and whose indexed source is gone.
+  const ceilingBefore = process.env.GIT_CEILING_DIRECTORIES
+  const wiki = await openWikiWindow({ realFreshnessCheck: true })
+  // An enclosing repository of the temporary folder, if a machine has one, must not answer for the project.
+  process.env.GIT_CEILING_DIRECTORIES = dirname(wiki.projectRoot)
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.chatRequests, [
+      {
+        name: 'workbench.action.chat.open',
+        query: `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk. This folder has no Git repository: record no revision and do not create one. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.`,
+      },
+    ])
+  } finally {
+    if (ceilingBefore === undefined) delete process.env.GIT_CEILING_DIRECTORIES
+    else process.env.GIT_CEILING_DIRECTORIES = ceilingBefore
+    await wiki.close()
+  }
+})
+
 test('closing the window while a VS Code update is watched stops the watch and shows no notification to a window that is gone', async () => {
   // Arrange
   const wiki = await openWikiWindow()
@@ -776,6 +861,34 @@ test('closing the window while a VS Code update is watched stops the watch and s
   assert.equal(whileWatched.state, 'running')
   assert.equal(wiki.status().state, 'cancelled')
   assert.deepEqual(wiki.notices, [])
+})
+
+// Value: protects=the first press after a window was reloaded during a VS Code watch; fails_when=the closing window records that its chat "may still be updating", although the chat ended with the window, so the reloaded window refuses the press for up to fifteen minutes; why_new=Cycle 0045 local review wiki-1 #8; seam=none
+test('a window that was reloaded while it watched a VS Code update starts the next update at once', async () => {
+  // Arrange: one window before and after its reload shares the workspace state.
+  const workspaceState = new Map<string, unknown>()
+  const wiki = await openWikiWindow({ workspaceState })
+  await wiki.clickUpdate()
+  const whileWatched = wiki.status().state
+  await wiki.closeWindow()
+  const reloaded = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+    workspaceState,
+  })
+  try {
+    // Act
+    await reloaded.clickUpdate()
+
+    // Assert
+    assert.equal(whileWatched, 'running')
+    assert.equal(wiki.status().state, 'cancelled')
+    assert.equal(reloaded.status().state, 'running')
+    assert.equal(reloaded.chatRequests.length, 1)
+    assert.deepEqual(reloaded.errors, [])
+  } finally {
+    await reloaded.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
 })
 
 // The bound is twice the default termination grace: an agent that is never started fails this test instead of hanging its file.
@@ -891,6 +1004,46 @@ test('closing the window while the VS Code chat is still opening ends the update
     assert.deepEqual(wiki.progressTitles, [])
     assert.equal(wiki.status().state, 'cancelled')
     assert.deepEqual(wiki.notices, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=what a window leaves beside the Wiki when it closes while the VS Code chat is still opening; fails_when=the closing window does not wait for the run it aborted there, so the run's end is recorded after the shutdown looked for a reservation, and its marker stays on disk for other windows to read; why_new=Cycle 0045 local review runtime-2 #4; seam=the read of the publish token at the run's end, which is kept open
+test('a window that closes while the VS Code chat is still opening waits until the run it stopped has ended, and leaves no marker beside the Wiki', async () => {
+  // Arrange: the chat command has not answered, and the read the run's end begins with is kept open.
+  const wiki = await openWikiWindow({ cancellable: [] })
+  try {
+    const chat = wiki.hold('chat-open')
+    const click = wiki.clickUpdate()
+    await chat.started
+    const endOfTheRun = wiki.hold('publish-token-read')
+
+    // Act: the window closes; the stopped run reaches its end and is held there for a moment.
+    let hasWindowClosed = false
+    const closing = wiki.closeWindow().then(() => {
+      hasWindowClosed = true
+    })
+    await endOfTheRun.started
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    const closedBeforeTheRunEnded = hasWindowClosed
+    endOfTheRun.release()
+    await closing
+    const stateWhenClosed = wiki.status().state
+    const markerWhenClosed = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    chat.release()
+    await click
+
+    // Assert
+    assert.equal(closedBeforeTheRunEnded, false)
+    assert.equal(stateWhenClosed, 'cancelled')
+    assert.equal(markerWhenClosed, 'gone')
+    assert.deepEqual(wiki.progressTitles, [])
   } finally {
     await wiki.close()
   }
@@ -1217,6 +1370,32 @@ test('a second window’s Update is refused while the first window’s run has s
     assert.deepEqual(secondWindow.chatRequests, [])
   } finally {
     await secondWindow.close()
+    await wiki.close()
+  }
+})
+
+// Value: protects=the Update button after an editor was killed during an update and its process id went to another process; fails_when=the start check takes the leftover marker for another window's running update for as long as that id answers, and refuses every press with a sentence that offers no "Update anyway"; why_new=Cycle 0045 local review wiki-1 #2; seam=none
+test('a marker a killed editor left seventeen minutes ago does not refuse the update, although a process has its id', async () => {
+  // Arrange: the marker of another window's run; its recorded process is this test process, which runs.
+  const wiki = await openWikiWindow()
+  await writeFile(
+    `${wiki.outputDirectory}.update-run.json`,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'a-window-that-was-killed',
+      host: 'vscode',
+      startedAtMs: Date.now() - 17 * 60_000,
+    }),
+  )
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 1)
+    assert.deepEqual(wiki.errors, [])
+  } finally {
     await wiki.close()
   }
 })
@@ -1603,6 +1782,39 @@ test('a failed, refused or timed-out update’s notification is an error notice 
     await failed.close()
     await refused.close()
     await timedOut.close()
+  }
+})
+
+// Value: protects=the extension host's log and error reporting when the learner presses "Open LLM Wiki" on an update notice and the Wiki cannot be opened; fails_when=the command's rejection, which its own handler already showed to the learner, is left unhandled by the notice that started it; why_new=Cycle 0045 local review runtime-2 #5; seam=the command that opens the Wiki, which is made to reject
+test('pressing Open LLM Wiki on an update notice leaves no unhandled rejection when the Wiki cannot be opened', async () => {
+  // Arrange: an update that fails, a learner who presses the notice's button, and a Wiki that does not open.
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  const wiki = await openWikiWindow({
+    chatFails: true,
+    openWikiFails:
+      'The DeepWiki manifest does not identify this opened project.',
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Open LLM Wiki'),
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+    // A rejection nobody handles is reported once the turn's promise jobs are done.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+
+    // Assert
+    assert.deepEqual(
+      wiki.offeredActions.map((offered) => offered.actions),
+      [['Open LLM Wiki']],
+    )
+    assert.deepEqual(unhandledRejections, [])
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await wiki.close()
   }
 })
 

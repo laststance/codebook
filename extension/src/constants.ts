@@ -478,10 +478,14 @@ export const WIKI_UPDATE_RECOVERY_REQUEST =
   '/codebook Recover the unfinished LLM Wiki publish for this project'
 /** What a running Wiki update appends to the output folder's path for its marker file, which tells other editor windows that this Wiki is being updated. */
 export const WIKI_UPDATE_RUN_MARKER_SUFFIX = '.update-run.json'
+/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows; it covers the stop of the agent and the end's own file work, and after it a marker whose process id still answers (a killed editor's, given to another process since) is nobody's run. */
+export const WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 /** How long a VS Code Wiki update waits for the editor's chat command to return before the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
+/** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
+export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
 /** Milliseconds in one second, for naming a bound in seconds. */
 export const MS_PER_SECOND = 1_000
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */

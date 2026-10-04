@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
-import { join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
@@ -34,7 +34,7 @@ export type WikiFreshness = {
   uncheckedPath?: string
   /** What kept the check from deciding, so the caller can name a remedy that fits; set only for `unknown`. */
   unknownCause?: WikiFreshnessUnknownCause
-  /** Set when the project has no Git repository: files added since the generation could not be looked for, and `current` covers the indexed sources only. */
+  /** Set on every status when the project has no Git repository: files added since the generation could not be looked for, and `current` covers the indexed sources only. */
   addedFilesUnchecked?: true
 }
 
@@ -269,6 +269,8 @@ async function findAddedSources(
           'diff',
           '--name-only',
           '--diff-filter=A',
+          // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
+          '--no-renames',
           '--relative',
           '-z',
           revision,
@@ -312,7 +314,7 @@ function isComparableSource(source: WikiIncludedSource): boolean {
 /**
  * Says whether a file's canonical place lies outside the opened folder; called by {@link checkSource} in {@link inspectDeepWikiFreshness} so that a link out of the project is never hashed.
  * @param pathWithinProject - The canonical file relative to the project root.
- * @returns `true` for the root itself, its parent and anything under the parent; `false` for a path inside the project.
+ * @returns `true` for the root itself, its parent, anything under the parent and a file on another drive (on Windows the relative path to it is absolute); `false` for a path inside the project.
  * @example
  * isOutsideProject('../other/a.ts') // => true
  * isOutsideProject('src/a.ts')      // => false
@@ -321,7 +323,9 @@ function isOutsideProject(pathWithinProject: string): boolean {
   return (
     !pathWithinProject ||
     pathWithinProject === '..' ||
-    pathWithinProject.startsWith(`..${sep}`)
+    pathWithinProject.startsWith(`..${sep}`) ||
+    // On Windows no relative path leads to another drive, so `relative` answers the absolute one.
+    isAbsolute(pathWithinProject)
   )
 }
 
@@ -370,6 +374,22 @@ function sourceCheckOfFailure(error: unknown): 'changed' | 'unchecked' {
 }
 
 /**
+ * Words, for a freshness answer, that added files could not be looked for; called by {@link inspectDeepWikiFreshness} once per check, so every status it answers in a folder without a Git repository carries the note.
+ * @param additions - What looking for added source files gave.
+ * @returns
+ * - No repository to ask: `{ addedFilesUnchecked: true }`
+ * - Otherwise: an empty object, so the answer gains no field
+ * @example
+ * noRepositoryNote({ kind: 'no-repository' })                // => { addedFilesUnchecked: true }
+ * noRepositoryNote({ kind: 'checked', addedPaths: [] })      // => {}
+ */
+function noRepositoryNote(
+  additions: AdditionCheck,
+): Pick<WikiFreshness, 'addedFilesUnchecked'> {
+  return additions.kind === 'no-repository' ? { addedFilesUnchecked: true } : {}
+}
+
+/**
  * Checks a Wiki's indexed files and the files added since its generation against the opened project, including dirty source trees.
  *
  * Why: the reader's freshness label and the result of an update both rest on it: "current" must mean that every indexed source matches and that no source file was added that the Wiki neither indexes nor excludes.
@@ -384,7 +404,8 @@ function sourceCheckOfFailure(error: unknown): 'changed' | 'unchecked' {
  * @returns
  * - `changed`: indexed sources that differ or are gone (`changedPaths`, in the manifest's order) and uncovered added files (`addedPaths`, sorted)
  * - `unknown`: an indexed source could not be compared (`uncheckedPath`, the first in the manifest's order), or the Git check did not finish; `unknownCause` says which and `reason` is its sentence
- * - `current`: everything matches; in a folder without a Git repository `addedFilesUnchecked` says that added files were not looked for
+ * - `current`: everything matches
+ * - In a folder without a Git repository every one of these answers carries `addedFilesUnchecked`: added files were not looked for
  *
  * @example
  * ```ts
@@ -448,8 +469,10 @@ export async function inspectDeepWikiFreshness(
     (_, index) => sourceChecks[index] === 'unchecked',
   )
   const addedPaths = additions.kind === 'checked' ? additions.addedPaths : []
+  // Every answer says when there was no repository to ask: the request of an update is worded by it, whatever the indexed sources gave.
+  const repositoryNote = noRepositoryNote(additions)
   if (changedPaths.length || addedPaths.length)
-    return { status: 'changed', changedPaths, addedPaths }
+    return { status: 'changed', changedPaths, addedPaths, ...repositoryNote }
   if (firstUnchecked) {
     const uncheckedPath = firstUnchecked.path || '(an entry without a path)'
     return {
@@ -459,6 +482,7 @@ export async function inspectDeepWikiFreshness(
       reason: `An indexed source could not be checked: ${uncheckedPath}.`,
       uncheckedPath,
       unknownCause: 'unchecked-source',
+      ...repositoryNote,
     }
   }
   if (additions.kind === 'unverified')
@@ -469,12 +493,5 @@ export async function inspectDeepWikiFreshness(
       reason: UNKNOWN_REASONS[additions.cause],
       unknownCause: additions.cause,
     }
-  return {
-    status: 'current',
-    changedPaths,
-    addedPaths,
-    ...(additions.kind === 'no-repository'
-      ? { addedFilesUnchecked: true }
-      : {}),
-  }
+  return { status: 'current', changedPaths, addedPaths, ...repositoryNote }
 }

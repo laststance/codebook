@@ -1169,7 +1169,7 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
         },
       },
       './utils/inspectDeepWikiFreshness': {
-        // What the real check answers for this project, which has no Git repository: current once the sources match, with added files not looked for.
+        // What the real check answers for this project, which has no Git repository: changed while a source differs and current once the sources match, each time with added files not looked for.
         inspectDeepWikiFreshness: async () => ({
           status: publishedWikiIsCurrent ? 'current' : 'changed',
           changedPaths: publishedWikiIsCurrent ? [] : ['source.ts'],
@@ -1196,6 +1196,11 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
     assert.equal(agentRuns.length, 1)
     assert.equal(agentRuns[0]?.root, projectRoot)
     assert.match(agentRuns[0]?.prompt ?? '', /\/codebook Update LLM Wiki/)
+    // The request is the one of a folder without Git: no commit hash is asked for.
+    assert.match(
+      agentRuns[0]?.prompt ?? '',
+      / every includedSources sha256 equals the file on disk\. This folder has no Git repository: record no revision and do not create one\. /,
+    )
     assert.deepEqual(chatCommands, [])
     assert.match(
       messages[0] ?? '',

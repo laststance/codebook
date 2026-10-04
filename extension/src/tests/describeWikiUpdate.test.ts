@@ -14,6 +14,8 @@ const wording = {
   pathLimit: 3,
   reasonLimitChars: 200,
   msPerMinute: 60_000,
+  recoveryRequest:
+    '/codebook Recover the unfinished LLM Wiki publish for this project',
   freshnessLabelPlace: 'above',
 }
 
@@ -175,6 +177,26 @@ test('an already-current check says when it was made and that no update started'
   assert.equal(
     sentenceOf(described),
     'Already current (checked 21:10): this Wiki matches the source, so no update started.',
+  )
+})
+
+// Value: protects=the learner of a project without Git who added a source file and pressed Update; fails_when=the refusal says "this Wiki matches the source" although added files were never looked for, and names no way to get the new file into the Wiki; why_new=Cycle 0045 local review wiki-1 #4; seam=none
+test('an already-current check in a folder without a Git repository says that added files are not checked and what to do for a new file', () => {
+  // Arrange
+  const status = {
+    state: 'already-current',
+    finishedAt,
+    addedFilesUnchecked: true,
+    ...place,
+  } as const
+
+  // Act
+  const described = describeWikiUpdate(status, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Already current (checked 21:10): every indexed source matches, so no update started. Added files are not checked because this folder has no Git repository; ask the editor chat to update the Wiki for a new file.',
   )
 })
 
@@ -503,6 +525,32 @@ test('an unfinished earlier publish is named as the reason no update started, wi
   )
 })
 
+// Value: protects=one recovery request in the page's sentences, the editor's notice and the failure reasons, which all take it from one constant; fails_when=the embedded sentence writer keeps its own copy of the request, so a change of the constant makes page and failure reason name different requests; why_new=Cycle 0045 local review wiki-1 #12; seam=none
+test('the recovery request a refused start names is the one its caller hands over', () => {
+  // Arrange
+  const status: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['wiki.publish-journal.json'],
+    cause: 'unfinished-publish',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(status, {
+    ...wording,
+    recoveryRequest: '/codebook Finish the stopped LLM Wiki publish',
+  })
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Finish the stopped LLM Wiki publish", then press Update LLM Wiki again.',
+  )
+})
+
 test('a state from a newer extension is shown as unknown instead of as nothing or as a wrong result', () => {
   // Arrange
   const fromNewerExtension = JSON.parse(
@@ -520,6 +568,32 @@ test('a state from a newer extension is shown as unknown instead of as nothing o
     output: 'Output: .codebook/wiki',
     offerReload: false,
   })
+})
+
+// Value: protects=the status line of a page that is older than its extension; fails_when=a state this version does not know, which need not carry an output or a time, is worded as "Output: undefined" or has its missing time formatted; why_new=Cycle 0045 local review wiki-1 #11; seam=none
+test('a state from a newer extension that names no output and no time is shown as unknown with an empty output line, and no time is formatted', () => {
+  // Arrange
+  const fromNewerExtension = JSON.parse('{"state":"paused"}')
+  const formattedTimes: unknown[] = []
+
+  // Act
+  const described = describeWikiUpdate(fromNewerExtension, {
+    ...wording,
+    formatTime: (isoTimestamp: string): string => {
+      formattedTimes.push(isoTimestamp)
+      return '21:10'
+    },
+  })
+
+  // Assert
+  assert.deepEqual(described, {
+    lead: 'Update status unknown',
+    rest: '.',
+    detail: [],
+    output: '',
+    offerReload: false,
+  })
+  assert.deepEqual(formattedTimes, [])
 })
 
 test('the bound a running update names is counted in the minute length its caller gives', () => {

@@ -11,6 +11,8 @@ import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
+import { runFlowKeepingCases } from './utils/runFlowKeepingCases.mjs'
+
 const [
   mode = 'verify',
   outputPath = 'artifacts/cycle-0018/bootstrap-renderer',
@@ -54,13 +56,21 @@ const message = {
   studies: [],
 }
 
-/** Records each owned CLI operation for delayed-snapshot renderer verification. @example await command(['open', 'about:blank'], 'open') */
+/** How long one call of the browser CLI may take. */
+const COMMAND_TIMEOUT_MS = 30_000
+/** How long the call that runs the whole flow may take: every case of the check, with its viewport changes and screenshots, runs inside this one call, and the job that runs it ends after ten minutes. */
+const FLOW_TIMEOUT_MS = 300_000
+
+/** Records each owned CLI operation for delayed-snapshot renderer verification; the call labelled `flow` gets the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise((resolve) =>
     execFile(
       'playwright-cli',
       [`-s=${session}`, ...arguments_],
-      { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+      {
+        timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
@@ -75,8 +85,8 @@ async function command(arguments_, label) {
   return result.stdout
 }
 
-/** Exercises initial paint and replacement without host state, then releases an actual typed product model. @example await check(page, options) */
-async function check(page, options) {
+/** Exercises initial paint and replacement without host state, then releases an actual typed product model. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. @example await check(page, options, { cases: [], errors: [] }) */
+async function check(page, options, collected) {
   /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
   const revisionAt = (step) => options.message.revision + step
   /** Waits until the pane reports that it rendered the Study message of this revision. The number enters the page as an argument, because a callback evaluated in the page cannot call {@link revisionAt}. @example await waitUntilRendered(revisionAt(2)) */
@@ -89,10 +99,10 @@ async function check(page, options) {
         ),
       revision,
     )
-  const errors = []
+  const { errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
-  const cases = [],
+  const { cases } = collected,
     publish = (message) =>
       page.evaluate(
         (message) =>
@@ -3205,7 +3215,76 @@ async function check(page, options) {
       Number.isInteger(firstRequestOfSecondDocument) &&
       firstRequestOfSecondDocument > lastRequestOfFirstDocument,
   })
-  return { cases, errors }
+  // Arrange: a page of the Wiki reader at 720 px, where its right rail is a row (701 to 1000 px) and an outline entry that cannot break leaves the row short of room.
+  await page.setViewportSize({ width: 720, height: 720 })
+  await page.goto(options.url)
+  await page.setContent(options.wikiShell)
+  // Act: the open control's label is measured line by line, the outline by its width.
+  const railRow = await page.evaluate(() => {
+    const openLink = document.querySelector('.open-in-editor a')
+    const label = document.createRange()
+    label.selectNodeContents(openLink)
+    return {
+      railDisplay: getComputedStyle(document.querySelector('.right-rail'))
+        .display,
+      // A range answers one box per line of its text.
+      openLabelLines: label.getClientRects().length,
+      openControlWidth: Math.round(openLink.getBoundingClientRect().width),
+      outlineWidth: Math.round(
+        document.querySelector('.right-rail nav').getBoundingClientRect().width,
+      ),
+    }
+  })
+  await page
+    .locator('.right-rail')
+    .screenshot({ path: `${options.output}/wiki-rail-row.png` })
+  // Assert
+  cases.push({
+    name: 'in the Wiki reader at 720 px the open control of the right rail keeps its label on one line, and the outline is no narrower than it',
+    actual: railRow,
+    passed:
+      railRow.railDisplay === 'flex' &&
+      railRow.openLabelLines === 1 &&
+      railRow.outlineWidth >= railRow.openControlWidth,
+  })
+}
+
+/**
+ * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
+ * @param shell - The text of `skills/codebook/reader-shell.html`.
+ * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control the publisher prints.
+ * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
+ * @example
+ * wikiShellPage('<title>{{TITLE}}</title>') // => '<title>Overview</title>'
+ */
+function wikiShellPage(shell) {
+  const fields = {
+    TITLE: 'Overview',
+    REPOSITORY: 'sample',
+    DATE: '5 Oct 2026',
+    REVISION: 'a1b2c3d',
+    ROOT: '/home/learner/sample',
+    FULL_REVISION: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+    INDEX_TIME: '5 Oct 2026, 12:00',
+    SOURCE_COUNT: '12',
+    EXCLUSIONS: 'none',
+    OUTPUT: '/home/learner/sample/.codebook/wiki',
+    OUTPUT_LABEL: '.codebook/wiki',
+    NAVIGATION:
+      '<ul><li><a href="index.html" aria-current="page">Overview</a></li></ul>',
+    SOURCES: '<li>src/a.ts</li>',
+    ARTICLE: '<h2 id="rendering">Rendering</h2><p>How a page is rendered.</p>',
+    UPDATE: '#update',
+    OUTLINE:
+      '<li><a href="#rendering">Rendering</a></li><li><a href="#preparation">createConfiguredBrowserRunPreparationForReplay</a></li>',
+    OPEN_SOURCE:
+      '<p class="open-in-editor"><a href="#source">Open in VS Code</a></p>',
+    SETTINGS: '#settings',
+  }
+  return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
+    assert.ok(Object.hasOwn(fields, name), `no text for the field ${field}`)
+    return fields[name]
+  })
 }
 
 const report = {
@@ -3223,18 +3302,23 @@ const server = createServer((request, response) => {
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`.
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. The check runs inside {@link runFlowKeepingCases}, whose text is written into the same file: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
 const flowPath = `${output}/flow.js`
 let recording = false
 try {
   await writeFile(
     flowPath,
-    `async (page) => (${check.toString()})(page, ${JSON.stringify({
-      html: { context: studyHtml('context'), moments: studyHtml('moments') },
-      message,
-      output,
-      url: `http://127.0.0.1:${server.address().port}/`,
-    })})\n`,
+    `async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(
+      {
+        html: { context: studyHtml('context'), moments: studyHtml('moments') },
+        wikiShell: wikiShellPage(
+          await readFile('extension/skills/codebook/reader-shell.html', 'utf8'),
+        ),
+        message,
+        output,
+        url: `http://127.0.0.1:${server.address().port}/`,
+      },
+    )})\n`,
   )
   await command(['open', 'about:blank'], 'open')
   await command(

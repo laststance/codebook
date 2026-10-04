@@ -54,7 +54,7 @@ function describeUncoveredPaths(uncoveredPaths: string[]): string[] {
  * @example
  * ```ts
  * buildWikiUpdatePrompt({ manifestPath: '/repo/.codebook/wiki/codebook-wiki.json', timeoutMs: 900_000, isReplyRead: false, hasGitRepository: true, uncoveredPaths: ['src/new.ts'] })
- * // => '/codebook Update LLM Wiki for this opened repository. Read "/repo/.codebook/wiki/codebook-wiki.json" and … within 15 minutes … every file added since that revision is indexed or covered by excludedPaths. Right now these added files are neither: src/new.ts. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.'
+ * // => '/codebook Update LLM Wiki for this opened repository. Read "/repo/.codebook/wiki/codebook-wiki.json" and … within 15 minutes … every file added since that revision is indexed or covered by excludedPaths. Right now this added file is neither indexed nor excluded: src/new.ts. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.'
  * ```
  */
 export function buildWikiUpdatePrompt(options: {

@@ -132,6 +132,8 @@ test('the packaged README names every state word the update wording can lead wit
             pathLimit: 3,
             reasonLimitChars: 200,
             msPerMinute: 60_000,
+            recoveryRequest:
+              '/codebook Recover the unfinished LLM Wiki publish for this project',
             freshnessLabelPlace: 'above',
           })?.lead,
       ),
