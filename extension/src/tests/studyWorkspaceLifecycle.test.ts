@@ -1484,14 +1484,14 @@ test('closing the reader finishes after the storage bound while a library write 
   }
 })
 
-// Value: protects=reader tests meeting the real viewport's refusal when the learner follows a run whose Application pane was closed; fails_when=the fake viewport accepts showLive on a released lease and writes its renderer into the closed pane, so a reader that follows a dead lease passes where the product reports "Viewport lease is released"; why_new=Cycle 0045 D-M3 (the fake's showLive had no released-lease check, its showHistory had); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
-test('following the current run after its viewport lease was released reports the released lease instead of rewriting the pane', async () => {
+// Value: protects=the learner who closed the Application pane of a live run and then follows the current run; fails_when=the reader asks the released lease to show the run, reports "Viewport lease is released" under a line the same render clears again, and leaves no pane and no word of what happened; why_new=Cycle 0045 H2-F1 (the harness's fake viewport accepted showLive on a released lease until D-M3, which hid this); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
+test('following the current run after its Application pane was closed says that the run ended and how to see the application again, in a line that stays', async () => {
   // Arrange: the Application pane of a live run shows the history of a selected item, and the learner closes that pane, which ends the run's lease on it.
   const harness = await workspaceHarness()
   const leaseFailures: string[] = []
   try {
     await harness.reader.open()
-    harness.reader.presentation.createViewport(
+    const lease = harness.reader.presentation.createViewport(
       'live-run',
       () => {},
       (reason) => leaseFailures.push(reason),
@@ -1503,10 +1503,11 @@ test('following the current run after its viewport lease was released reports th
     closedPane.dispose()
     const messagesBeforeReturn = harness.postedMessages().length
 
-    // Act
+    // Act: the learner follows the current run, and the reader's timer runs once more.
     await harness.reader.action('return-current')
+    await readerSeams(harness).refresh()
 
-    // Assert: the Study pane was shown the refusal while the reader returned, and the closed pane kept its page.
+    // Assert: one line was shown during the return and is still there; the released lease was not asked and the closed pane kept its page.
     const errorLinesShown = new Set(
       harness
         .postedMessages()
@@ -1516,9 +1517,58 @@ test('following the current run after its viewport lease was released reports th
     assert.deepEqual(leaseFailures, ['Owned viewport closed before cleanup'])
     assert.deepEqual(
       [...errorLinesShown],
-      ['Error: Viewport lease is released'],
+      [
+        'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+      ],
     )
+    assert.deepEqual(
+      [...harness.postedMessages().at(-1)!.errors],
+      [
+        'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+      ],
+    )
+    assert.equal(harness.postedMessages().at(-1)!.unretryableErrorCount, 1)
     assert.equal(closedPane.webview.html, historyPage)
+    // The fake lease still refuses like the real viewport (Cycle 0045 D-M3), which is what made the old behavior visible.
+    await assert.rejects(
+      lease.showLive(new AbortController().signal),
+      /Viewport lease is released/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the line about a closed Application pane leaving once a pane exists again; fails_when=the line stays through the next run, although that run's pane shows the application; why_new=Cycle 0045 H2-F1 (the line is kept under its own kind, which no render retires); seam=WorkspaceViewport
+test('a new run that opens the Application pane again retires the line about the closed one', async () => {
+  // Arrange: the learner closed the Application pane of a live run and followed the current run, which left the line.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.reader.presentation.createViewport(
+      'live-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    await harness.reader.select('repository/workspace/overview')
+    harness.reader['app']!.dispose()
+    await harness.reader.action('return-current')
+    const linesBeforeTheNewRun = [...harness.postedMessages().at(-1)!.errors]
+
+    // Act: a new run takes its viewport lease, which opens the pane again.
+    harness.reader.presentation.createViewport(
+      'next-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    // Assert
+    assert.deepEqual(linesBeforeTheNewRun, [
+      'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+    ])
+    assert.deepEqual([...harness.postedMessages().at(-1)!.errors], [])
   } finally {
     await harness.close()
   }

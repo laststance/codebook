@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import {
   AGENT_STORAGE_DIRECTORY,
+  APPLICATION_PANE_CLOSED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
@@ -7033,7 +7034,16 @@ export class StudyWorkspace {
     )
   }
 
-  /** Updates the app only when selected phase bytes/mode change, preserving a historical panel across live ticks. @example this.presentApplication(message) */
+  /**
+   * Updates the Application pane only when the selected phase's bytes or mode change, preserving a historical panel across live ticks; {@link renderSelection} calls it for every render and refresh outside a recording.
+   *
+   * A followed live run is shown through its viewport lease, a selected capture as its page in the pane. When the learner closed the
+   * pane of the followed run, its lease is released for good and the run ended with it: nothing is asked of that lease, and the reader
+   * keeps one line that says so and what to do next until a pane exists again.
+   *
+   * @param message - The Study message of the selection to show.
+   * @example this.presentApplication(message)
+   */
   private presentApplication(message: StudyViewMessage): void {
     if (this.recordingActive) return
     const image = message.model.image
@@ -7054,6 +7064,11 @@ export class StudyWorkspace {
       !message.study?.terminal &&
       this.viewport
     ) {
+      // The run's Application pane was closed: its released lease can show nothing, and a refusal reported from it would vanish at the render's end.
+      if (!this.app) {
+        this.report('application', new Error(APPLICATION_PANE_CLOSED_MESSAGE))
+        return
+      }
       const leaseId = this.leaseId,
         revision = this.revision
       void this.viewport
@@ -7281,6 +7296,8 @@ export class StudyWorkspace {
   private bindApplicationPanel(panel: vscode.WebviewPanel): void {
     this.app = panel
     this.lastApplicationKey = undefined
+    // A pane exists again, so the line about the closed one no longer describes the reader.
+    if (this.errors.delete('application')) this.publish()
     panel.onDidDispose(() => {
       if (this.app !== panel) return
       this.presentationTransition?.cancellation.abort(

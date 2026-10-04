@@ -91,6 +91,7 @@ export const MAX_SAVED_STUDIES = 256
  * {@link ReaderErrorKind}, {@link UNRETRYABLE_READER_ERROR_KINDS} and {@link CHOICE_RETIRED_ERROR_KINDS} derive from this table, so a new kind is classified where it is declared.
  */
 export const READER_ERROR_KINDS = [
+  { kind: 'application', retryable: false, choiceRetired: false },
   { kind: 'archive', retryable: true, choiceRetired: false },
   { kind: 'citations', retryable: true, choiceRetired: false },
   { kind: 'control', retryable: false, choiceRetired: true },
@@ -112,6 +113,9 @@ export const READER_ERROR_KINDS = [
 ] as const
 /** The key of one reader error line; the reader's `report` and its error map accept only these. */
 export type ReaderErrorKind = (typeof READER_ERROR_KINDS)[number]['kind']
+/** What the reader says when the learner follows the current run after its Application pane was closed: the pane's closure released the run's viewport and ended the run, so nothing can be shown for it until a new run opens the pane again. */
+export const APPLICATION_PANE_CLOSED_MESSAGE =
+  'The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.'
 // The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
 export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<ReaderErrorKind> =
   new Set(
