@@ -108,6 +108,14 @@ export async function workspaceHarness(
     firstScopeFocused: false,
     valuesListed: true,
   }
+  /** Which list of the fake host holds the keyboard focus, and so takes the list commands: its Variables view, or another list the learner clicked (the Explorer). See `clickAnotherList`. */
+  let focusedList: 'variables' | 'another-list' = 'variables'
+  /** What the list commands did to the other list while it held the focus. */
+  const anotherList = { firstRowFocused: false, firstRowExpanded: false }
+  /** Whether the Learning summary shares its side bar with Run and Debug, as in Cursor: the focus command of Variables then puts Run and Debug in the summary's place. See `shareSummarySideBarWithRunAndDebug`. */
+  let summarySharesSideBarWithRunAndDebug = false
+  /** The context keys the reader set with the editor's `setContext` command. */
+  const contextKeys = new Map<string, unknown>()
   /** Pending `awaitRetrieval` checks of the fake historical debugger, re-run whenever the fake Variables view asks for scopes or lists values. */
   const nativeVariablesWaiters = new Set<() => void>()
   const trashMoves: { path: string; options: unknown }[] = []
@@ -1800,10 +1808,19 @@ export async function workspaceHarness(
             (name) => !absentHostCommands.has(name),
           )
         },
-        async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+        async executeCommand(
+          name: string,
+          layout?: unknown,
+          contextValue?: unknown,
+        ): Promise<unknown> {
           // Both native hosts reject a command they do not register, in these words.
           if (absentHostCommands.has(name))
             throw new Error(`command '${name}' not found`)
+          // A context key changes no pane, focus or layout; it is kept apart from the recorded native commands.
+          if (name === 'setContext') {
+            contextKeys.set(String(layout), contextValue)
+            return
+          }
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
             playbackPanel.visible = true
@@ -1823,13 +1840,27 @@ export async function workspaceHarness(
             for (const listener of summaryVisibilityListeners) listener()
           }
           commands.push(name)
-          if (name === 'workbench.debug.action.focusVariablesView')
+          if (name === 'workbench.debug.action.focusVariablesView') {
+            focusedList = 'variables'
             showNativeVariablesView()
-          // A list command acts on the rows the focused tree holds at that moment; an empty tree gives it nothing to focus or expand.
-          if (name === 'list.focusFirst' && nativeVariables.treeHoldsStop)
-            nativeVariables.firstScopeFocused = true
-          if (name === 'list.expand' && nativeVariables.firstScopeFocused)
-            listNativeValues()
+            // Run and Debug opens in the side bar the summary shares with it and takes its place.
+            if (summarySharesSideBarWithRunAndDebug && summary.visible) {
+              summary.visible = false
+              for (const listener of summaryVisibilityListeners) listener()
+            }
+          }
+          // A list command acts on the rows the focused list holds at that moment; an empty tree gives it nothing to focus or expand.
+          if (name === 'list.focusFirst') {
+            if (focusedList === 'another-list')
+              anotherList.firstRowFocused = true
+            else if (nativeVariables.treeHoldsStop)
+              nativeVariables.firstScopeFocused = true
+          }
+          if (name === 'list.expand') {
+            if (focusedList === 'another-list')
+              anotherList.firstRowExpanded = anotherList.firstRowFocused
+            else if (nativeVariables.firstScopeFocused) listNativeValues()
+          }
           const held = nextCommand
           if (held?.name === name) {
             nextCommand = undefined
@@ -2495,6 +2526,22 @@ export async function workspaceHarness(
       nativeVariables.treeHoldsStop = false
       nativeVariables.firstScopeFocused = false
       nativeVariables.valuesListed = false
+    },
+    /** Models the learner clicking into another list of the host (the Explorer) while Show Variables waits: that list holds the keyboard focus until a command focuses Variables again. @example harness.clickAnotherList() */
+    clickAnotherList(): void {
+      focusedList = 'another-list'
+    },
+    /** What the list commands did to the list the learner clicked. @example harness.anotherListView() // => { firstRowFocused: false, firstRowExpanded: false } */
+    anotherListView(): { firstRowFocused: boolean; firstRowExpanded: boolean } {
+      return { ...anotherList }
+    },
+    /** Models Cursor's side bar, which the Learning summary shares with Run and Debug: the Variables focus command then hides the summary. @example harness.shareSummarySideBarWithRunAndDebug() */
+    shareSummarySideBarWithRunAndDebug(): void {
+      summarySharesSideBarWithRunAndDebug = true
+    },
+    /** Reads a context key the reader set with the editor's `setContext` command. @example harness.contextKey('codebook.learningSummaryMovable') // => true */
+    contextKey(key: string): unknown {
+      return contextKeys.get(key)
     },
     /** What the fake host's Variables view shows of the presented stop. @example harness.nativeVariablesView() // => { firstScopeFocused: true, valuesListed: true } */
     nativeVariablesView(): {

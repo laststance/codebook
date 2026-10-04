@@ -289,6 +289,108 @@ test('the retired Select Presentation command is neither contributed to the Comm
   }
 })
 
+// Value: protects=the lasting way to move the Learning summary in Cursor; fails_when=the manifest loses the command, its title action on the Learning summary or its Command Palette entry, shows them outside Cursor, or activation no longer registers the command, so the title action would end in "command not found"; why_new=Cycle 0045 NF-25 as DR-9 (a notification Cursor removes after 15 s was the only way); seam=vscode.commands.registerCommand stub and the manifest file
+test('Move Learning Summary… is contributed as a title action of the Learning summary and a Command Palette entry, both shown only while the reader turned them on, and is registered at activation', async () => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-move-summary-command-')),
+  )
+  const registered: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string) {
+            registered.push(name)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '.codebook/wiki' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        env: { openExternal: async () => true },
+        Uri: {
+          parse: (value: string) => ({ value }),
+          file: (fsPath: string) => ({ fsPath }),
+        },
+        window: { showErrorMessage: async () => undefined },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './deepWikiReader': {
+        readDeepWikiManifest: async () => undefined,
+        startDeepWikiReader: async () => ({
+          url: 'http://127.0.0.1:9/reader/index.html',
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  type MenuEntry = { command: string; when?: string; group?: string }
+  const manifest: {
+    contributes: {
+      commands: Array<{ command: string; title: string; icon?: string }>
+      menus: { 'view/title': MenuEntry[]; commandPalette?: MenuEntry[] }
+    }
+  } = JSON.parse(
+    await readFile(resolve(__dirname, '../../package.json'), 'utf8'),
+  )
+  const ofMoveCommand = (entry: { command: string }): boolean =>
+    entry.command === 'codebook.moveLearningSummary'
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: resolve(__dirname, '../..'),
+      globalStorageUri: { fsPath: projectRoot },
+      subscriptions: [],
+      workspaceState: { get: () => undefined, update: async () => {} },
+    })
+
+    // Assert
+    assert.equal(registered.includes('codebook.moveLearningSummary'), true)
+    assert.deepEqual(manifest.contributes.commands.filter(ofMoveCommand), [
+      {
+        command: 'codebook.moveLearningSummary',
+        title: 'Codebook: Move Learning Summary…',
+        icon: '$(move)',
+      },
+    ])
+    assert.deepEqual(
+      manifest.contributes.menus['view/title'].filter(ofMoveCommand),
+      [
+        {
+          command: 'codebook.moveLearningSummary',
+          when: 'view == codebook.learningSummary && codebook.learningSummaryMovable',
+          group: 'navigation',
+        },
+      ],
+    )
+    assert.deepEqual(
+      (manifest.contributes.menus.commandPalette ?? []).filter(ofMoveCommand),
+      [
+        {
+          command: 'codebook.moveLearningSummary',
+          when: 'codebook.learningSummaryMovable',
+        },
+      ],
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
 test('a Wiki question opens a source-cited editor chat draft when VS Code exposes no reader model', async () => {
   // Arrange
   const projectRoot = await realpath(

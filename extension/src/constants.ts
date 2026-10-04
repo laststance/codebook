@@ -165,13 +165,19 @@ export const HORIZONTAL_EDITOR_ORIENTATION = 0
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
-/** Workspace-state key recording that Cursor's learner was offered the Move View step for the Learning summary, so the offer appears once. */
-export const SUMMARY_PLACEMENT_OFFER_KEY = 'codebook.summaryPlacementOffer.v1'
+/** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
+export const SUMMARY_PLACEMENT_ANSWERED_KEY =
+  'codebook.summaryPlacementAnswered.v1'
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
-/** The button of {@link SUMMARY_PLACEMENT_OFFER}; it opens the editor's own Move View list for the focused Learning summary. */
+/** What Cursor's learner is told when Show Variables opened Run and Debug in the side bar the Learning summary shares with it, with the same button as {@link SUMMARY_PLACEMENT_OFFER}. */
+export const SUMMARY_DISPLACED_OFFER =
+  "Run and Debug took the Learning summary's place in Cursor's side bar. Move the summary to the right once to keep both in view."
+/** The button of {@link SUMMARY_PLACEMENT_OFFER} and {@link SUMMARY_DISPLACED_OFFER}; it opens the editor's own Move View list for the Learning summary. */
 export const SUMMARY_PLACEMENT_ACTION = 'Move Learning Summary…'
+/** The context key the reader turns on in Cursor; while it is on, the manifest shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette. */
+export const SUMMARY_PLACEMENT_CONTEXT_KEY = 'codebook.learningSummaryMovable'
 /** How long closing the reader waits for each pending storage write (saved replay position, archive writes, library queue); a write still pending then keeps running. */
 export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750

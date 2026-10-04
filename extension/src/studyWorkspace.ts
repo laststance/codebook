@@ -41,9 +41,11 @@ import {
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_SOURCE_SCHEME,
+  SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
+  SUMMARY_PLACEMENT_ANSWERED_KEY,
+  SUMMARY_PLACEMENT_CONTEXT_KEY,
   SUMMARY_PLACEMENT_OFFER,
-  SUMMARY_PLACEMENT_OFFER_KEY,
   UNRETRYABLE_READER_ERROR_KINDS,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
@@ -200,6 +202,8 @@ const actionSchema = z.enum([
   'reload-recording',
   'show-variables',
 ])
+/** When {@link StudyWorkspace} offers Cursor's learner the Move View step for the Learning summary: after the summary was shown, or after Show Variables put Run and Debug in its place. */
+type SummaryPlacementOccasion = 'summary-shown' | 'summary-displaced'
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
 const revisionShape = { revision: z.number().int().nonnegative() }
@@ -465,6 +469,11 @@ export class StudyWorkspace {
   private summaryComposition = false
   private summaryView?: vscode.WebviewView
   private summaryDocumentActive = false
+  /** The Move View offers {@link offerSummaryPlacement} made in this editor session; each occasion is offered at most once per session. */
+  private readonly summaryPlacementOffersMade =
+    new Set<SummaryPlacementOccasion>()
+  /** Whether {@link showSummaryPlacementControl} turned the Move Learning Summary… control on in this editor session. */
+  private summaryPlacementControlShown = false
   private liveEntryRunId?: string
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
@@ -7410,43 +7419,88 @@ export class StudyWorkspace {
       this.lastActiveRegion = 'context'
       this.lastPublished = undefined
       this.publish()
-      this.offerSummaryPlacement()
+      this.showSummaryPlacementControl()
+      this.offerSummaryPlacement('summary-shown')
     } finally {
       focusSubscription.dispose()
     }
   }
 
   /**
-   * Offers Cursor's learner the editor's own Move View step once per workspace, after {@link showLearningSummary} showed the summary.
+   * Tells whether the editor is Cursor, where the Learning summary shares the primary side bar with Run and Debug; {@link showSummaryPlacementControl} and {@link offerSummaryPlacement} act only there.
+   * @returns `true` in Cursor, `false` in VS Code and in a host that does not name itself.
+   * @example this.isCursorHost() // => true in Cursor 3.23
+   */
+  private isCursorHost(): boolean {
+    return vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
+  }
+
+  /**
+   * Turns on, in Cursor, the context key that shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette; {@link showLearningSummary} calls it once the summary is visible.
+   *
+   * The control stays when the offer's notification is gone: Cursor removes an information notification with a button after about 15 s.
+   * The key is set once per editor session; a host that refuses it leaves a layout line.
+   *
+   * @example this.showSummaryPlacementControl()
+   */
+  private showSummaryPlacementControl(): void {
+    if (!this.isCursorHost() || this.summaryPlacementControlShown) return
+    this.summaryPlacementControlShown = true
+    void vscode.commands
+      .executeCommand('setContext', SUMMARY_PLACEMENT_CONTEXT_KEY, true)
+      .then(undefined, (error: unknown) => this.report('layout', error))
+  }
+
+  /**
+   * Offers Cursor's learner the editor's own Move View step in a notification; {@link showLearningSummary} and {@link showNativeVariables} call it.
    *
    * Cursor rejects the `secondarySidebar` container this extension contributes, so the summary lands in the primary side bar
    * there, and its own chat containers refuse added views: no command of this extension can place the summary on the right.
    * VS Code registers the container, so nothing is offered there.
    *
-   * @example this.offerSummaryPlacement()
+   * Each occasion is offered at most once per editor session. Only the pressed button is an answer: Cursor removes an unanswered
+   * notification by itself, so nothing is stored for it and the offer returns in the next editor session.
+   *
+   * @param occasion - `'summary-shown'` after the summary opened, offered until the learner took the step in this workspace; `'summary-displaced'` after Show Variables put Run and Debug in the summary's place, offered also when the step was taken before, because the summary then shares the side bar again.
+   * @example this.offerSummaryPlacement('summary-shown')
    */
-  private offerSummaryPlacement(): void {
-    if (!vscode.env?.appName?.toLowerCase().includes('cursor')) return
-    if (this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_OFFER_KEY))
+  private offerSummaryPlacement(occasion: SummaryPlacementOccasion): void {
+    if (!this.isCursorHost() || this.summaryPlacementOffersMade.has(occasion))
       return
+    if (
+      occasion === 'summary-shown' &&
+      this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_ANSWERED_KEY)
+    )
+      return
+    this.summaryPlacementOffersMade.add(occasion)
     void (async (): Promise<void> => {
-      await this.context.workspaceState.update(
-        SUMMARY_PLACEMENT_OFFER_KEY,
-        true,
-      )
       const choice = await showPlainNotice(
         vscode.window,
         'information',
-        SUMMARY_PLACEMENT_OFFER,
+        occasion === 'summary-shown'
+          ? SUMMARY_PLACEMENT_OFFER
+          : SUMMARY_DISPLACED_OFFER,
         SUMMARY_PLACEMENT_ACTION,
       )
-      // The editor's Move View list opens for the summary itself; the learner picks its destination there.
-      if (choice === SUMMARY_PLACEMENT_ACTION)
-        await vscode.commands.executeCommand(
-          'workbench.action.moveFocusedView',
-          'codebook.learningSummary',
-        )
+      if (choice === SUMMARY_PLACEMENT_ACTION) await this.moveLearningSummary()
     })().catch((error: unknown) => this.report('layout', error))
+  }
+
+  /**
+   * Opens the editor's own Move View list for the Learning summary and remembers that the learner took the step; the command "Codebook: Move Learning Summary…" (the summary's title action in Cursor) and the button of {@link offerSummaryPlacement} call it.
+   * @throws Whatever the workspace state or the editor's Move View command rejects with.
+   * @example await workspace.moveLearningSummary()
+   */
+  async moveLearningSummary(): Promise<void> {
+    await this.context.workspaceState.update(
+      SUMMARY_PLACEMENT_ANSWERED_KEY,
+      true,
+    )
+    // The editor's Move View list opens for the summary itself; the learner picks its destination there.
+    await vscode.commands.executeCommand(
+      'workbench.action.moveFocusedView',
+      'codebook.learningSummary',
+    )
   }
 
   /**
@@ -7459,6 +7513,10 @@ export class StudyWorkspace {
    * a view that was hidden while the stop changed asks for the stop's scopes only in its deferred refresh (which then expands the first
    * scope itself), and a view opened for the first time needs a moment to fill its tree. So they run only after
    * {@link ReplayDebugger.awaitRetrieval} saw those scopes asked for and the values not arrive by themselves; every wait is bounded.
+   * Each attempt focuses Variables again directly before its list commands, so a list the learner clicked during a wait is left alone.
+   *
+   * In Cursor, where the summary shares its side bar with Run and Debug, a press that put Run and Debug in the summary's place makes
+   * the Move View offer of {@link offerSummaryPlacement}.
    *
    * @returns Resolves once Variables listed the recorded values or the list commands the host registers ran their bounded attempts, or its Run and Debug view opened, or the learner was told the manual step.
    * @throws Whatever a command the host does register throws.
@@ -7469,7 +7527,11 @@ export class StudyWorkspace {
     const [focusVariablesCommand, ...listCommands] =
       SHOW_NATIVE_VARIABLES_COMMANDS
     if (hostCommands.has(focusVariablesCommand)) {
+      const wasSummaryVisible = Boolean(this.summaryView?.visible)
       await vscode.commands.executeCommand(focusVariablesCommand)
+      // In Cursor the summary shares its side bar with Run and Debug, which the focus command just put in its place; the learner is told how to keep both.
+      if (wasSummaryVisible && !this.summaryView?.visible)
+        this.offerSummaryPlacement('summary-displaced')
       const debuggerView = this.replayDebugger
       // Until Variables asked for this stop's scopes its tree holds no row of it; the bound covers a view that never asks.
       await debuggerView?.awaitRetrieval(
@@ -7488,6 +7550,8 @@ export class StudyWorkspace {
         )
         // A reader closed during the wait must not move the focus of whatever list the learner went on to.
         if (valuesListed || this.closing || this.disposed) return
+        // The list commands act on whichever list holds the focus, and the learner may have clicked into another one during the waits: Variables gets the focus back first.
+        await vscode.commands.executeCommand(focusVariablesCommand)
         for (const command of listCommands)
           if (hostCommands.has(command))
             await vscode.commands.executeCommand(command)

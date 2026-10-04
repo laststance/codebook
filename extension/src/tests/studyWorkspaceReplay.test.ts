@@ -1455,6 +1455,49 @@ test('configured recording-context failure remains visible beside independently 
   }
 })
 
+// Value: protects=the list the learner went on to while Show Variables waits for Run and Debug; fails_when=the list commands run on whichever list holds the focus after the wait, so a click into the Explorer during the wait gets the Explorer's first row focused and expanded and the recorded values stay collapsed; why_new=Cycle 0045 RT-4 (the commands ran after two waits without focusing Variables again); seam=the harness's fake host knows which list holds the focus
+test('Show Variables expands the first scope of Variables, never the first row of a list the learner clicked during its wait', async (context) => {
+  // Arrange: a recorded stop presented while Run and Debug was never opened, so the press waits 200 ms for Variables to list the values.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('never-opened')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    enableFakeClock(context)
+    const press = harness.reader.action('show-variables').then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await advanceClock(context, 100)
+
+    // Act: the learner clicks into the Explorer 100 ms into that wait.
+    harness.clickAnotherList()
+    await advanceClockUntilSettled(context, press, 10_000)
+
+    // Assert
+    assert.equal(await press, 'completed')
+    assert.deepEqual(harness.anotherListView(), {
+      firstRowFocused: false,
+      firstRowExpanded: false,
+    })
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: true,
+      valuesListed: true,
+    })
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 // Value: protects=one captured-source tab per source file across runs; fails_when=each run's observed stop opens another Captured-theme.ts tab beside the earlier run's; why_new=Cycle 0035 O4 (six Captured-auth.ts tabs piled up natively); seam=none
 test('a second run stopping in the same source file replaces the first run captured-source tab instead of adding another', async () => {
   // Arrange
