@@ -814,15 +814,11 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.match(
     contract.sourceBinding,
-    /The line is the declaration and the column is a request: Codebook accepts the debugger's verified binding anywhere on the declared line in the sealed executed module/,
+    /The line is the declaration and the column is a preference: Codebook accepts the debugger's verified binding anywhere on the declared line in the sealed executed module/,
   )
   assert.match(
     contract.sourceBinding,
     /Each observation's inspection resource reports it as source \{line,column\} beside requestedSource \{line,column\}; cite source\./,
-  )
-  assert.match(
-    contract.sourceBinding,
-    /When the debugger cannot pause on the declared line it binds the first place after it\. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the two has a mapped position \(a kept comment is not one\), and uses it like a moved column: the inspection's source names the bound line, so cite and explain source\. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it\./,
   )
   assert.match(
     contract.sourceBinding,
@@ -842,6 +838,48 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.doesNotMatch(help.text, /exact position/)
   assert.doesNotMatch(help.text, /first stop of each participant/)
+})
+
+// Cycle 0045 (SM-16, DX-7, ER-9): red while the help counted the rule from the declared line ("no line between the two has a mapped position"), called the column a request and said a slid browser stop fails while it is armed.
+test('configured help states the binding rule from the line the stop is requested on', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { sourceBinding } = z
+    .object({ sourceBinding: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    sourceBinding.includes(
+      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one), and uses it like a moved column: the inspection's source names the bound line, so cite and explain source. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it.",
+    ),
+    true,
+  )
+  assert.equal(
+    sourceBinding.includes(
+      "Declare the column where the statement begins. When the debugger binds a stop on a later line although the line the breakpoint was requested on has a break location, Codebook requests the breakpoint once more, at that line's break location before the requested column; the stop fails while it is armed only when that second request is bound on a later line again or the line has no break location before the requested column. A binding that is first known at a pause (a server stop whose registration was still pending when it was armed) is not refused for this: the stop is accepted where it paused, and its inspection's place names the column that can pause on the requested line.",
+    ),
+    true,
+  )
+  assert.doesNotMatch(sourceBinding, /the column is a request/)
+})
+
+// Cycle 0045 (SM-17): red while the README kept the rule counted from the declared line and said nothing about the second request.
+test('the extension README states the binding rule from the requested line, as the help does', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const statesRule = readme.includes(
+      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one), and uses it like a moved column: `source` names the bound line.",
+    ),
+    statesSecondRequest = readme.includes(
+      "The line is the declaration and the column is a preference: Codebook accepts the debugger's verified binding anywhere on that line and reports the bound position as `source` beside `requestedSource` in the observation's inspection resource. Declare the column where the statement begins. When the debugger binds a stop on a later line although the line the breakpoint was requested on has a break location, Codebook requests the breakpoint once more, at that line's break location before the requested column; the stop fails while it is armed only when that second request is bound on a later line again or the line has no break location before the requested column. A binding that is first known at a pause (a server stop whose registration was still pending when it was armed) is not refused for this: the stop is accepted where it paused, and its inspection's `place` names the column that can pause on the requested line.",
+    )
+  // Assert
+  assert.equal(statesRule, true)
+  assert.equal(statesSecondRequest, true)
 })
 
 // Value: protects=the help naming the same deadline the run enforces; fails_when=the help keeps a hard-coded "20 seconds" after the active-progress deadline changes; why_new=Cycle 0036 C08b; seam=none
