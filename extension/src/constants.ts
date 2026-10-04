@@ -480,6 +480,12 @@ export const WIKI_UPDATE_RECOVERY_REQUEST =
 export const WIKI_UPDATE_RUN_MARKER_SUFFIX = '.update-run.json'
 /** How long past its host's longest run a running Wiki update's marker still counts for other editor windows; it covers the stop of the agent and the end's own file work, and after it a marker whose process id still answers (a killed editor's, given to another process since) is nobody's run. */
 export const WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS = 60_000
+/** How often the end of a Wiki update asks for the exclusive claim on its marker file before it leaves the marker as it is; another window holds that claim for the time of one read and one removal. */
+export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
+/** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */
+export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
+/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, whatever process has its id now; a running window holds the claim for milliseconds. */
+export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 /** How long a VS Code Wiki update waits for the editor's chat command to return before the run ends as failed. */
