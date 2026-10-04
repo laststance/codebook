@@ -70,7 +70,7 @@ export async function nativeParticipantsHarness(
     manualClock?: boolean
     /** Gives a participant's sealed map a second original, so a map such as 'AAAA;ACAA' puts generated line 1 in that other source. */
     otherOriginal?: Partial<Record<Participant, boolean>>
-    /** Replaces runtime bounds in the run and in the constants it reads ({@link loadConstantsWith}), so a test can move one bound and see which other bound follows it. */
+    /** Replaces runtime bounds in the run's own module and in the constants it reads ({@link loadConstantsWith}), so a test can move one bound and see which other bound follows it. The modules the run requires (the owned breakpoint, `waitUntil`) keep the real bounds. */
     runtimeConstants?: RuntimeConstantOverrides
   } = {},
 ) {

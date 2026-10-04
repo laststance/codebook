@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { assertConstantsReadBy } from './utils/assertConstantsReadBy'
 import { createManualClock } from './utils/createManualClock'
 import { createSourceBoundWaitHold } from './utils/createSourceBoundWaitHold'
 import {
@@ -22,6 +23,7 @@ import { publishedWikiFixture } from './utils/publishedWikiFixture'
 import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
 import type * as WikiOpeningWindowModule from './utils/wikiOpeningWindow'
 import { openWikiOpeningWindow } from './utils/wikiOpeningWindow'
+import { openWikiUpdateWindow } from './utils/wikiUpdateWindow'
 
 // Value: protects=deadline tests firing a run's timers as real time would; fails_when=a timer cleared by an earlier callback of the same advance still fires, or timers fire in the order they were set instead of the order they fall due; why_new=Cycle 0043 R15 (the clock fired a snapshot in insertion order); seam=none
 test('a manual clock fires due timers in the order they fall due and never one an earlier callback cleared', () => {
@@ -76,6 +78,76 @@ test('advanceClockUntil moves the clock no further than its limit: a timer set 2
   // Assert
   assert.equal(reachedAfterMs, undefined)
   assert.deepEqual(fired, ['at the limit'])
+})
+
+// Value: protects=a test that replaces a constant of a loaded module proving something about that constant; fails_when=a harness accepts a replacement the loaded module never reads, so the modules it requires run with the real value and the test passes or fails for another reason; why_new=review of Cycle 0045, tests-1 #4 (this cycle widened the replaceable names from two to every numeric constant); seam=a compiled module written for this test
+test('a replaced constant the loaded module never reads is refused by name, while one it reads passes also when its name begins another constant', async () => {
+  // Arrange: a compiled module that reads one constant itself and requires a utility that reads another.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-constants-read-'))
+  try {
+    const modulePath = join(directory, 'window.js')
+    await writeFile(
+      modulePath,
+      [
+        'const constants_1 = require("./constants");',
+        'const isLeftEmpty_1 = require("./utils/isLeftEmpty");',
+        'exports.poll = () => setTimeout(look, constants_1.WIKI_UPDATE_WATCH_POLL_MS);',
+      ].join('\n'),
+    )
+
+    // Act
+    const readByTheModule = await assertConstantsReadBy(modulePath, [
+      'WIKI_UPDATE_WATCH_POLL_MS',
+    ]).then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
+    const readOnlyBelow = await assertConstantsReadBy(modulePath, [
+      'WIKI_UPDATE_WATCH_POLL_MS',
+      'STORAGE_LOCK_UNWRITTEN_GRACE_MS',
+      'WIKI_UPDATE_WATCH',
+    ]).then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(readByTheModule, 'accepted')
+    assert.equal(
+      readOnlyBelow,
+      'Error: window.js does not read STORAGE_LOCK_UNWRITTEN_GRACE_MS, WIKI_UPDATE_WATCH itself, and the modules it requires keep the real constants, so the replacement changes nothing. Replace a constant window.js reads, or load the module that reads it.',
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki update test that shortens a bound really running with the shorter bound; fails_when=the update window accepts a replaced constant that only a utility below the extension reads (the storage lock's grace), loads the extension and lets the test run with the real value; why_new=review of Cycle 0045, tests-1 #4; seam=none
+test('an update window asked to replace a constant the extension itself never reads fails its arrangement instead of opening with the real value', async () => {
+  // Arrange
+  const projectRoot = await mkdtemp(join(tmpdir(), 'codebook-update-window-'))
+  try {
+    // Act: a window that opens after all is closed again, so the test ends either way.
+    const opening = await openWikiUpdateWindow({
+      projectRoot,
+      openReader: false,
+      constants: { STORAGE_LOCK_UNWRITTEN_GRACE_MS: 1 },
+    }).then(
+      async (window) => {
+        await window.close()
+        return 'opened'
+      },
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      opening,
+      'Error: extension.js does not read STORAGE_LOCK_UNWRITTEN_GRACE_MS itself, and the modules it requires keep the real constants, so the replacement changes nothing. Replace a constant extension.js reads, or load the module that reads it.',
+    )
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true })
+  }
 })
 
 // Value: protects=a module under test cancelling its own timer after the test faked the clock; fails_when=the loaded module's clearTimeout reaches only the faked timers, so a real timer it armed before the clock was faked still fires; why_new=Cycle 0045 D-L1; seam=a module written for this test, loaded as the suites load compiled boundary modules

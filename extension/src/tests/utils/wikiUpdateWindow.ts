@@ -10,6 +10,7 @@ import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
+import { assertConstantsReadBy } from './assertConstantsReadBy'
 import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
@@ -47,7 +48,7 @@ export type HeldUpdateStep =
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
- * @param options.constants - Replaces numeric constants of the extension (the grace a closing window gives the Cursor agent, the Cursor run's two-second look interval, a bound), so a test need not wait for them.
+ * @param options.constants - Replaces numeric constants of the extension (the grace a closing window gives the Cursor agent, the Cursor run's two-second look interval, a bound), so a test need not wait for them. The replacement reaches `extension.ts` itself and no module it requires (a utility that reads the same constant keeps the real value), so a constant `extension.ts` never reads is refused ({@link assertConstantsReadBy}).
  * @param options.chooseAction - Presses a button of a notification: it gets the notification's text and its button labels and returns the label to press; no button is pressed when omitted.
  * @param options.workspaceState - The window's workspace state; two windows opened with the same map are one window before and after a reload.
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
@@ -168,6 +169,11 @@ export async function openWikiUpdateWindow(options: {
     })
     return task({}, token)
   }
+  // A replaced constant reaches only the extension's own module: one it never reads would change nothing.
+  await assertConstantsReadBy(
+    resolve(__dirname, '../../extension.js'),
+    Object.keys(options.constants ?? {}),
+  )
   const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../../extension.js'),
     {
