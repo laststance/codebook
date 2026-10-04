@@ -63,25 +63,182 @@ const UNKNOWN_REASONS: Record<AdditionCheckFailure, string> = {
   'git-failed': 'Git could not list the added source files.',
 }
 
-/** Names why a Git command failed: the binary is missing, the time or output bound was hit, the folder is in no repository, or anything else. */
-function gitFailureCause(
-  error: unknown,
-): AdditionCheckFailure | 'no-repository' {
-  if (typeof error !== 'object' || error === null) return 'git-failed'
+/**
+ * Names the failure of a Git command that never ran to its end by the error's code; called by {@link gitFailureCause} first.
+ * @param error - What the Git command threw.
+ * @returns
+ * - `git-missing` when the binary was not found (`ENOENT`)
+ * - `git-output-limit` when Git listed more than the output bound
+ * - `undefined` for an error without a code and for any other code
+ * @example
+ * causeOfGitErrorCode({ code: 'ENOENT' }) // => 'git-missing'
+ * causeOfGitErrorCode({ code: 128 })      // => undefined
+ */
+function causeOfGitErrorCode(
+  error: object,
+):
+  | Extract<AdditionCheckFailure, 'git-missing' | 'git-output-limit'>
+  | undefined {
   const code = 'code' in error ? error.code : undefined
   if (code === 'ENOENT') return 'git-missing'
   if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'git-output-limit'
-  if ('killed' in error && error.killed === true) return 'git-timeout'
-  if (
+  return undefined
+}
+
+/**
+ * Says whether Git's own words name a folder that is in no repository; called by {@link causeOfEndedGit}.
+ * @param error - What the Git command threw.
+ * @returns Whether the error carries Git's error output and that output says "not a git repository".
+ * @example
+ * saysNotARepository({ stderr: 'fatal: not a git repository (or any of the parent directories): .git' }) // => true
+ * saysNotARepository({ stderr: 'fatal: bad object 0f9e8d7c' })                                           // => false
+ */
+function saysNotARepository(error: object): boolean {
+  return (
     'stderr' in error &&
     typeof error.stderr === 'string' &&
     /not a git repository/i.test(error.stderr)
   )
-    return 'no-repository'
+}
+
+/**
+ * Names the failure of a Git command whose error code tells nothing; called by {@link gitFailureCause} after {@link causeOfGitErrorCode}.
+ * @param error - What the Git command threw.
+ * @returns
+ * - `git-timeout` when the process was killed at the time bound
+ * - `no-repository` when Git says the folder is in no repository
+ * - `git-failed` for anything else
+ * @example
+ * causeOfEndedGit({ killed: true }) // => 'git-timeout'
+ * causeOfEndedGit({ code: 128 })    // => 'git-failed'
+ */
+function causeOfEndedGit(
+  error: object,
+):
+  | Extract<AdditionCheckFailure, 'git-timeout' | 'git-failed'>
+  | 'no-repository' {
+  if ('killed' in error && error.killed === true) return 'git-timeout'
+  if (saysNotARepository(error)) return 'no-repository'
   return 'git-failed'
 }
 
-/** Looks for source files added since the generated revision that the Wiki neither indexes nor excludes, inside the opened folder only. */
+/**
+ * Names why a Git command failed: the binary is missing, the time or output bound was hit, the folder is in no repository, or anything else; called by {@link repositoryFailure} and {@link listingFailure}.
+ * @param error - What the Git command threw.
+ * @returns The cause; `git-failed` for a thrown value that is no object.
+ * @example
+ * gitFailureCause({ code: 'ENOENT' }) // => 'git-missing'
+ * gitFailureCause('boom')             // => 'git-failed'
+ */
+function gitFailureCause(
+  error: unknown,
+): AdditionCheckFailure | 'no-repository' {
+  if (typeof error !== 'object' || error === null) return 'git-failed'
+  return causeOfGitErrorCode(error) ?? causeOfEndedGit(error)
+}
+
+/**
+ * Turns the failure of the question "is this folder in a repository" into the check's answer; called by {@link findAddedSources} when `git rev-parse` fails.
+ * @param error - What the Git command threw.
+ * @returns
+ * - `no-repository` when Git says so: there is nothing to ask for added files
+ * - `unverified` with the cause otherwise
+ * @example
+ * repositoryFailure({ code: 'ENOENT' }) // => { kind: 'unverified', cause: 'git-missing' }
+ */
+function repositoryFailure(error: unknown): AdditionCheck {
+  const cause = gitFailureCause(error)
+  return cause === 'no-repository'
+    ? { kind: 'no-repository' }
+    : { kind: 'unverified', cause }
+}
+
+/**
+ * Turns the failure of listing the added files into the check's answer; called by {@link findAddedSources} when a listing command fails or its answer cannot be read.
+ * @param error - What was thrown.
+ * @returns `unverified` with the cause; the repository answered a moment ago, so "no repository" now is reported as `git-failed`.
+ * @example
+ * listingFailure({ killed: true }) // => { kind: 'unverified', cause: 'git-timeout' }
+ */
+function listingFailure(error: unknown): AdditionCheck {
+  const cause = gitFailureCause(error)
+  // The repository answered a moment ago, so a refusal now is about the revision or the command.
+  return {
+    kind: 'unverified',
+    cause: cause === 'no-repository' ? 'git-failed' : cause,
+  }
+}
+
+/**
+ * Keeps a generated revision only when it is a full commit hash; called by {@link findAddedSources} before the revision is given to Git.
+ * @param generatedRevision - The revision the manifest records, if any.
+ * @returns The revision when it is 40 to 64 hexadecimal digits, `undefined` otherwise (none, empty, a short hash, a branch name).
+ * @example
+ * fullCommitHash('0f9e8d7c6b5a49382716051a2b3c4d5e6f708192') // => '0f9e8d7c6b5a49382716051a2b3c4d5e6f708192'
+ * fullCommitHash('main')                                     // => undefined
+ */
+function fullCommitHash(
+  generatedRevision: string | undefined,
+): string | undefined {
+  return generatedRevision && /^[a-f0-9]{40,64}$/i.test(generatedRevision)
+    ? generatedRevision
+    : undefined
+}
+
+/**
+ * Picks, from the paths Git listed, the source files the Wiki neither indexes nor excludes; called by {@link findAddedSources} with the answers of both listing commands.
+ * @param committedListing - Git's NUL-separated answer for the files committed since the generated revision.
+ * @param untrackedListing - Git's NUL-separated answer for the untracked files.
+ * @param projectRoot - Canonical opened folder, which the listed paths are relative to.
+ * @param includedSources - The sources the Wiki indexes.
+ * @param excludedPaths - Manifest exclusions.
+ * @param outputDirectory - Resolved Wiki output folder, whose own files are no added source; `undefined` when the caller named none.
+ * @returns The uncovered paths, each once, sorted.
+ * @example
+ * uncoveredAddedPaths('src/new.ts\0', '', '/repo', [], [], '/repo/.codebook/wiki') // => ['src/new.ts']
+ */
+function uncoveredAddedPaths(
+  committedListing: string,
+  untrackedListing: string,
+  projectRoot: string,
+  includedSources: WikiIncludedSource[],
+  excludedPaths: string[],
+  outputDirectory: string | undefined,
+): string[] {
+  const indexedPaths = new Set(includedSources.map((source) => source.path))
+  const outputPath =
+    outputDirectory === undefined
+      ? ''
+      : relative(projectRoot, outputDirectory).split(sep).join('/')
+  return [
+    ...new Set([
+      ...committedListing.split('\0'),
+      ...untrackedListing.split('\0'),
+    ]),
+  ]
+    .filter(
+      (path) =>
+        path &&
+        !indexedPaths.has(path) &&
+        isWikiSourceCandidate(path, outputPath, excludedPaths),
+    )
+    .sort()
+}
+
+/**
+ * Looks for source files added since the generated revision that the Wiki neither indexes nor excludes, inside the opened folder only; called by {@link inspectDeepWikiFreshness} beside the comparison of the indexed sources.
+ * @param projectRoot - Canonical opened folder; it may be a subfolder of a Git repository.
+ * @param includedSources - The sources the Wiki indexes.
+ * @param generatedRevision - Git commit captured during generation.
+ * @param excludedPaths - Manifest exclusions.
+ * @param outputDirectory - Resolved Wiki output folder.
+ * @returns
+ * - `checked` with the uncovered added paths, sorted
+ * - `no-repository` when the folder is in no Git repository
+ * - `unverified` with the cause when Git is missing, did not finish, or the manifest has no full commit hash
+ * @example
+ * await findAddedSources('/repo', [], commit, [], '/repo/.codebook/wiki') // => { kind: 'checked', addedPaths: ['src/new.ts'] }
+ */
 async function findAddedSources(
   projectRoot: string,
   includedSources: WikiIncludedSource[],
@@ -99,13 +256,10 @@ async function findAddedSources(
   try {
     await runGit('git', ['rev-parse', '--show-toplevel'], options)
   } catch (error) {
-    const cause = gitFailureCause(error)
-    return cause === 'no-repository'
-      ? { kind: 'no-repository' }
-      : { kind: 'unverified', cause }
+    return repositoryFailure(error)
   }
-  if (!generatedRevision || !/^[a-f0-9]{40,64}$/i.test(generatedRevision))
-    return { kind: 'unverified', cause: 'no-revision' }
+  const revision = fullCommitHash(generatedRevision)
+  if (!revision) return { kind: 'unverified', cause: 'no-revision' }
   try {
     // Both commands run in the opened folder and answer paths relative to it, so a subfolder of a monorepo is checked against its own files.
     const [committed, untracked] = await Promise.all([
@@ -117,7 +271,7 @@ async function findAddedSources(
           '--diff-filter=A',
           '--relative',
           '-z',
-          generatedRevision,
+          revision,
           '--',
         ],
         options,
@@ -128,35 +282,91 @@ async function findAddedSources(
         options,
       ),
     ])
-    const indexedPaths = new Set(includedSources.map((source) => source.path))
-    const outputPath =
-      outputDirectory === undefined
-        ? ''
-        : relative(projectRoot, outputDirectory).split(sep).join('/')
     return {
       kind: 'checked',
-      addedPaths: [
-        ...new Set([
-          ...committed.stdout.split('\0'),
-          ...untracked.stdout.split('\0'),
-        ]),
-      ]
-        .filter(
-          (path) =>
-            path &&
-            !indexedPaths.has(path) &&
-            isWikiSourceCandidate(path, outputPath, excludedPaths),
-        )
-        .sort(),
+      addedPaths: uncoveredAddedPaths(
+        committed.stdout,
+        untracked.stdout,
+        projectRoot,
+        includedSources,
+        excludedPaths,
+        outputDirectory,
+      ),
     }
   } catch (error) {
-    const cause = gitFailureCause(error)
-    // The repository answered a moment ago, so a refusal now is about the revision or the command.
-    return {
-      kind: 'unverified',
-      cause: cause === 'no-repository' ? 'git-failed' : cause,
-    }
+    return listingFailure(error)
   }
+}
+
+/**
+ * Says whether a manifest entry can be compared at all; called by {@link checkSource} in {@link inspectDeepWikiFreshness} before the file is touched.
+ * @param source - One indexed source of the manifest.
+ * @returns Whether the entry has a path and a full SHA-256 in hexadecimal digits.
+ * @example
+ * isComparableSource({ path: 'src/a.ts', sha256: 'not a hash' }) // => false
+ */
+function isComparableSource(source: WikiIncludedSource): boolean {
+  return Boolean(source.path) && /^[a-f0-9]{64}$/i.test(source.sha256)
+}
+
+/**
+ * Says whether a file's canonical place lies outside the opened folder; called by {@link checkSource} in {@link inspectDeepWikiFreshness} so that a link out of the project is never hashed.
+ * @param pathWithinProject - The canonical file relative to the project root.
+ * @returns `true` for the root itself, its parent and anything under the parent; `false` for a path inside the project.
+ * @example
+ * isOutsideProject('../other/a.ts') // => true
+ * isOutsideProject('src/a.ts')      // => false
+ */
+function isOutsideProject(pathWithinProject: string): boolean {
+  return (
+    !pathWithinProject ||
+    pathWithinProject === '..' ||
+    pathWithinProject.startsWith(`..${sep}`)
+  )
+}
+
+/**
+ * Names what a file's hash says about an indexed source; called by {@link checkSource} in {@link inspectDeepWikiFreshness} with the hash it has just read.
+ * @param fileSha256 - The hash of the file on disk, in lower-case hexadecimal digits.
+ * @param recordedSha256 - The hash the manifest records, in either case.
+ * @returns `matches` when the file's hash is the recorded one, `changed` when it differs.
+ * @example
+ * sourceCheckOfHash('0f9e…', '0F9E…') // => 'matches'
+ */
+function sourceCheckOfHash(
+  fileSha256: string,
+  recordedSha256: string,
+): 'matches' | 'changed' {
+  return fileSha256 === recordedSha256.toLowerCase() ? 'matches' : 'changed'
+}
+
+/**
+ * Says whether a thrown value reports a file that is gone; called by {@link sourceCheckOfFailure}.
+ * @param error - What resolving or hashing the file threw.
+ * @returns Whether it is an object whose `code` is `ENOENT`.
+ * @example
+ * isMissingFileError({ code: 'ENOENT' }) // => true
+ * isMissingFileError({ code: 'EACCES' }) // => false
+ */
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ENOENT'
+  )
+}
+
+/**
+ * Names what a failed read says about an indexed source; called by {@link checkSource} in {@link inspectDeepWikiFreshness} with what resolving or hashing the file threw.
+ * @param error - What was thrown.
+ * @returns `changed` for a file that is gone ({@link isMissingFileError}), `unchecked` for a file that is there and cannot be read.
+ * @example
+ * sourceCheckOfFailure({ code: 'ENOENT' }) // => 'changed'
+ * sourceCheckOfFailure({ code: 'EACCES' }) // => 'unchecked'
+ */
+function sourceCheckOfFailure(error: unknown): 'changed' | 'unchecked' {
+  return isMissingFileError(error) ? 'changed' : 'unchecked'
 }
 
 /**
@@ -193,32 +403,27 @@ export async function inspectDeepWikiFreshness(
   } = {},
 ): Promise<WikiFreshness> {
   const hashFile = options.hashFile ?? hashFileSha256
-  /** Compares one indexed source with the file on disk. */
+  /**
+   * Compares one indexed source with the file on disk; run for every indexed source by {@link mapWithConcurrencyLimit}.
+   * @param source - One indexed source of the manifest.
+   * @returns
+   * - `matches` or `changed` by the file's hash; a file that is gone is `changed`
+   * - `unchecked` for an entry without a usable path or hash, a file outside the project, and a file that cannot be read
+   * @example
+   * await checkSource({ path: 'src/a.ts', sha256: hash }) // => 'matches'
+   */
   const checkSource = async (
     source: WikiIncludedSource,
   ): Promise<'matches' | 'changed' | 'unchecked'> => {
-    if (!source.path || !/^[a-f0-9]{64}$/i.test(source.sha256))
-      return 'unchecked'
+    if (!isComparableSource(source)) return 'unchecked'
     try {
       const canonicalFile = await realpath(join(projectRoot, source.path))
-      const pathWithinProject = relative(projectRoot, canonicalFile)
-      if (
-        !pathWithinProject ||
-        pathWithinProject === '..' ||
-        pathWithinProject.startsWith(`..${sep}`)
-      )
+      if (isOutsideProject(relative(projectRoot, canonicalFile)))
         return 'unchecked'
       // A source of any size is compared: the question composer's size limit is no reason to call a large lockfile or image unchecked.
-      return (await hashFile(canonicalFile)) === source.sha256.toLowerCase()
-        ? 'matches'
-        : 'changed'
+      return sourceCheckOfHash(await hashFile(canonicalFile), source.sha256)
     } catch (error) {
-      return typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'ENOENT'
-        ? 'changed'
-        : 'unchecked'
+      return sourceCheckOfFailure(error)
     }
   }
   const [sourceChecks, additions] = await Promise.all([
