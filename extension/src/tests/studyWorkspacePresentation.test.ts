@@ -4201,6 +4201,44 @@ for (const reader of ['closed', 'open'] as const)
     }
   })
 
+// Value: protects=the agent chat's keyboard after a restore of the live panes that failed once the arrangement had moved the keyboard into the main editor: the chat has it again; fails_when=only the successful arrangement gives the focus back, so a restore the editor fails leaves the keyboard in the main editor and the agent's next key press goes there; why_new=Cycle 0045 local review coderabbit #6 (the live and replay branch returned the focus on success only, unlike a selection and an open); seam=workspace harness with the controlled runtime, a separate editor part, and failNextCommand on the arrangement's command batch
+test("a restore of the live panes that the editor fails after the arrangement took the keyboard, made while the agent chat's tab has the focus in Cursor, gives the chat the keyboard back", async () => {
+  // Arrange: the reader follows a paused run in Cursor and the agent's chat has the keyboard; the editor will fail the command batch of the restore's arrangement.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  try {
+    await pauseLiveRun(harness)
+    await harness.reader.open()
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+    harness.failNextCommand('runCommands')
+
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      }),
+      /Native layout command failed/,
+    )
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
+    assert.equal(harness.groups.length, 3)
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Error: Native layout command failed',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const action of ['select', 'restore'] as const)
   for (const replacesGroupObjects of [false, true])
     // Value: protects=an agent's presentation select or restore being admitted in the state a real Cursor chat submission is in (the chat input holds the keyboard, and the editor names a learner's file of the main editor as the active tab without an active text editor), and the chat having the keyboard again afterwards; fails_when=every text tab without an active text editor is refused as if it were a captured source the editor kept, which only a click into an editor clears, and an agent cannot click, or the keyboard stays on the captured source after the measurement borrowed it; why_new=Cycle 0045 cause 12 (a) (second native round, N14-b2 and owed check 1, take A2: both calls refused with "has no text editor", the run showed no stopped source); seam=workspace harness with a separate editor part that holds the keyboard while the main group stays the active tab group

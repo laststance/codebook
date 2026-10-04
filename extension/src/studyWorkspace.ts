@@ -1358,6 +1358,11 @@ export class StudyWorkspace {
         } catch (error) {
           this.presentationConfirmed = false
           this.presentationReason = String(error)
+          await this.returnForeignFocusAfterFailure(
+            focusedPane,
+            returnForeignFocus,
+            lifetime,
+          )
           throw error
         } finally {
           focusedPane.dispose()
@@ -1555,6 +1560,33 @@ export class StudyWorkspace {
   ): void {
     if (this.presentationTransition === transition)
       this.presentationTransition = undefined
+  }
+
+  /**
+   * Gives the keyboard back to the editor part that held it (an agent chat) when an arrangement of the live or recording panes failed; called by the failure path of the composition branch of {@link admitPresentation}, as a failed selection and a failed open do.
+   * @param focusedPane - The focus watch of that arrangement: a focus the learner changed since the request stays where it is.
+   * @param returnForeignFocus - What {@link retainForeignTabFocus} answered before the arrangement, `undefined` when no foreign tab had the focus.
+   * @param lifetime - The reader lifetime the arrangement began in; a reader closed or closing since gives nothing back.
+   * @returns Once the focus is given back or left: nothing is thrown, so that the arrangement's own error is the one reported.
+   * @example
+   * ```ts
+   * await this.returnForeignFocusAfterFailure(focusedPane, returnForeignFocus, lifetime)
+   * throw error
+   * ```
+   */
+  private async returnForeignFocusAfterFailure(
+    focusedPane: ReturnType<StudyWorkspace['trackFocusedStudyPane']>,
+    returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
+    lifetime: number,
+  ): Promise<void> {
+    if (!returnForeignFocus || this.closing || lifetime !== this.lifetime)
+      return
+    try {
+      focusedPane.assertUndeparted()
+      await returnForeignFocus()
+    } catch {
+      // A newer focus of the learner, or a return the editor refused, leaves the keyboard where it is.
+    }
   }
 
   /**
