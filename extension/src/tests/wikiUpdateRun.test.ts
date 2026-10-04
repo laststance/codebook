@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { WikiUpdateRun } from '../utils/wikiUpdateRun'
+import { WikiUpdateRun, type WikiUpdateEnd } from '../utils/wikiUpdateRun'
 
 const fixedClock = (): Date => new Date('2026-10-03T12:00:00.000Z')
 const output = {
@@ -326,5 +326,71 @@ test('the status snapshot cannot change the run when a caller edits it', () => {
   const status = run.status()
   assert.deepEqual(status.state === 'conflict' ? status.paths : undefined, [
     'notes/mine.md',
+  ])
+})
+
+test('each ending the classifier can return is recorded with its own fields through one entry', () => {
+  // Arrange
+  const endings: WikiUpdateEnd[] = [
+    {
+      state: 'succeeded',
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+    },
+    {
+      state: 'failed',
+      reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+      site: 'replaced',
+    },
+    { state: 'cancelled', site: 'kept' },
+    { state: 'timed-out', site: 'kept' },
+    {
+      state: 'conflict',
+      paths: ['notes/mine.md'],
+      cause: 'learner-file',
+      site: 'kept',
+    },
+  ]
+
+  // Act
+  const recorded = endings.map((ending) => {
+    const run = new WikiUpdateRun(fixedClock)
+    run.begin('cursor', output, 900_000, false)
+    run.end(ending)
+    return run.status()
+  })
+
+  // Assert
+  const ended = {
+    host: 'cursor',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  assert.deepEqual(recorded, [
+    {
+      ...ended,
+      state: 'succeeded',
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+    },
+    {
+      ...ended,
+      state: 'failed',
+      reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+      site: 'replaced',
+    },
+    { ...ended, state: 'cancelled', site: 'kept' },
+    // Only a timeout carries the bound the run began with.
+    { ...ended, state: 'timed-out', site: 'kept', timeoutMs: 900_000 },
+    {
+      ...ended,
+      state: 'conflict',
+      paths: ['notes/mine.md'],
+      cause: 'learner-file',
+      site: 'kept',
+    },
   ])
 })

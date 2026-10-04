@@ -550,6 +550,7 @@ test('a Cursor agent that publishes and then fails is shown as a failure that re
       throw new Error('Cursor Agent stopped with exit code 1 before finishing.')
     },
   })
+  // The window's freshness stays "changed": this publish does not match the source, so the agent's failure is what the run ends with. A publish that matches ends as Updated whatever the CLI reported.
   publishNew = (): Promise<void> => wiki.publish('c'.repeat(64))
   try {
     // Act

@@ -637,7 +637,7 @@ test('a freshness check reads several indexed sources at once and still names ch
 test(
   'an indexed source replaced by a named pipe is named as the file that could not be checked, at once instead of holding the freshness check',
   { timeout: 2_000 },
-  async () => {
+  async (context) => {
     // Arrange
     const directory = await mkdtemp(
       join(tmpdir(), 'codebook-wiki-freshness-pipe-'),
@@ -645,31 +645,31 @@ test(
     const root = await realpath(directory)
     const pipePath = join(root, 'source.ts')
     await runGit('mkfifo', [pipePath])
-    try {
-      // Act
-      const freshness = await inspectDeepWikiFreshness(
-        root,
-        [{ path: 'source.ts', sha256: 'a'.repeat(64) }],
-        undefined,
-        [],
-      )
-
-      // Assert
-      assert.deepEqual(freshness, {
-        status: 'unknown',
-        changedPaths: [],
-        addedPaths: [],
-        reason: 'An indexed source could not be checked: source.ts.',
-        uncheckedPath: 'source.ts',
-        unknownCause: 'unchecked-source',
-      })
-    } finally {
-      // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it.
+    // A read that waits on the pipe would keep this process alive, and the test's body with it: the hook runs also when the body is stopped at its time bound.
+    context.after(async () => {
       await open(pipePath, constants.O_WRONLY | constants.O_NONBLOCK).then(
         (writer) => writer.close(),
         () => undefined,
       )
       await rm(directory, { recursive: true, force: true })
-    }
+    })
+
+    // Act
+    const freshness = await inspectDeepWikiFreshness(
+      root,
+      [{ path: 'source.ts', sha256: 'a'.repeat(64) }],
+      undefined,
+      [],
+    )
+
+    // Assert
+    assert.deepEqual(freshness, {
+      status: 'unknown',
+      changedPaths: [],
+      addedPaths: [],
+      reason: 'An indexed source could not be checked: source.ts.',
+      uncheckedPath: 'source.ts',
+      unknownCause: 'unchecked-source',
+    })
   },
 )

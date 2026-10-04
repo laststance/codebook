@@ -218,7 +218,7 @@ test('a generated page replaced by a link is named and is not read through the l
 test(
   'a published page replaced by a link to a named pipe is reported at once instead of holding the start',
   { timeout: 2_000 },
-  async () => {
+  async (context) => {
     // Arrange
     const wiki = await publishedWikiFixture()
     const indexPath = join(wiki.outputDirectory, 'index.html')
@@ -226,20 +226,20 @@ test(
     await promisify(execFile)('mkfifo', [pipePath])
     await rm(indexPath)
     await symlink(pipePath, indexPath)
-    try {
-      // Act
-      const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
-
-      // Assert
-      assert.deepEqual(block, { cause: 'special-file', paths: ['index.html'] })
-    } finally {
-      // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it.
+    // A read that waits on the pipe would keep this process alive, and the test's body with it: the hook runs also when the body is stopped at its time bound.
+    context.after(async () => {
       await open(pipePath, constants.O_WRONLY | constants.O_NONBLOCK).then(
         (writer) => writer.close(),
         () => undefined,
       )
       await wiki.cleanup()
-    }
+    })
+
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, { cause: 'special-file', paths: ['index.html'] })
   },
 )
 

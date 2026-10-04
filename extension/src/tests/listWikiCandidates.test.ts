@@ -131,26 +131,26 @@ test('a backup the publisher kept is never read as a candidate, even when its re
 test(
   'a candidate folder whose receipt is a named pipe is skipped at once instead of holding the listing',
   { timeout: 2_000 },
-  async () => {
+  async (context) => {
     // Arrange
     const wiki = await publishedWikiFixture()
     const trap = `${wiki.outputDirectory}.stage-trap`
     const pipePath = join(trap, 'codebook-publication.json')
     await mkdir(trap)
     await promisify(execFile)('mkfifo', [pipePath])
-    try {
-      // Act
-      const candidates = await listWikiCandidates(wiki.outputDirectory)
-
-      // Assert
-      assert.deepEqual(candidates, [])
-    } finally {
-      // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it.
+    // A read that waits on the pipe would keep this process alive, and the test's body with it: the hook runs also when the body is stopped at its time bound.
+    context.after(async () => {
       await open(pipePath, constants.O_WRONLY | constants.O_NONBLOCK).then(
         (writer) => writer.close(),
         () => undefined,
       )
       await wiki.cleanup()
-    }
+    })
+
+    // Act
+    const candidates = await listWikiCandidates(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(candidates, [])
   },
 )
