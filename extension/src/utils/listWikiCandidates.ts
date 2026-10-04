@@ -23,23 +23,55 @@ export type WikiCandidate = {
   ownedPaths: string[]
 }
 
-/** Reads the output and baseline a candidate's receipt is bound to; undefined when the receipt is not a JSON object. */
-function readReceiptBinding(
-  receiptBytes: Buffer,
-): { output: unknown; baselineSha256: unknown } | undefined {
+/** What a candidate's receipt says it was prepared for: the output folder and the hash of the manifest it started from, each whatever its type. */
+type ReceiptBinding = { output: unknown; baselineSha256: unknown }
+
+/**
+ * Reads the hash of the manifest a candidate was prepared from; called by {@link bindingOfReceipt} with the receipt's `baseline`.
+ * @param baseline - The value of the receipt's `baseline` key, or `undefined` when the receipt has none.
+ * @returns The value of `manifestSha256` whatever its type, or `undefined` when the baseline is no object or has no such key.
+ * @example
+ * baselineManifestHash({ manifestSha256: 'a1b2…' }) // => 'a1b2…'
+ * baselineManifestHash('a1b2…')                     // => undefined
+ */
+function baselineManifestHash(baseline: unknown): unknown {
+  return typeof baseline === 'object' &&
+    baseline !== null &&
+    'manifestSha256' in baseline
+    ? baseline.manifestSha256
+    : undefined
+}
+
+/**
+ * Picks the two values that bind a candidate out of its parsed receipt; called by {@link readReceiptBinding} for a receipt that is a JSON object.
+ * @param receipt - The parsed receipt.
+ * @returns The receipt's `output` and its `baseline.manifestSha256`, each `undefined` when the receipt does not name it.
+ * @example
+ * bindingOfReceipt({ output: '/repo/.codebook/wiki', baseline: { manifestSha256: 'a1b2…' } })
+ * // => { output: '/repo/.codebook/wiki', baselineSha256: 'a1b2…' }
+ */
+function bindingOfReceipt(receipt: object): ReceiptBinding {
+  const baseline = 'baseline' in receipt ? receipt.baseline : undefined
+  return {
+    output: 'output' in receipt ? receipt.output : undefined,
+    baselineSha256: baselineManifestHash(baseline),
+  }
+}
+
+/**
+ * Reads the output and baseline a candidate's receipt is bound to; called by {@link isReceiptBoundTo} with the bytes of the receipt file.
+ * @param receiptBytes - The bytes of the candidate's receipt.
+ * @returns The binding of {@link bindingOfReceipt}; `undefined` when the bytes are no JSON or the receipt is no JSON object.
+ * @example
+ * readReceiptBinding(Buffer.from('{"output":"/repo/.codebook/wiki","baseline":{"manifestSha256":"a1b2…"}}'))
+ * // => { output: '/repo/.codebook/wiki', baselineSha256: 'a1b2…' }
+ * readReceiptBinding(Buffer.from('not json')) // => undefined
+ */
+function readReceiptBinding(receiptBytes: Buffer): ReceiptBinding | undefined {
   try {
     const receipt: unknown = JSON.parse(receiptBytes.toString('utf8'))
     if (typeof receipt !== 'object' || receipt === null) return undefined
-    const baseline = 'baseline' in receipt ? receipt.baseline : undefined
-    return {
-      output: 'output' in receipt ? receipt.output : undefined,
-      baselineSha256:
-        typeof baseline === 'object' &&
-        baseline !== null &&
-        'manifestSha256' in baseline
-          ? baseline.manifestSha256
-          : undefined,
-    }
+    return bindingOfReceipt(receipt)
   } catch {
     return undefined
   }
