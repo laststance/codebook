@@ -1350,6 +1350,8 @@ export async function workspaceHarness(
             removeEmptiedGroup(emptied)
           }
           if (!preserveFocus) {
+            // A pane revealed with the focus takes the keyboard from the page body.
+            keyboardOnBody = false
             retainDelayedTextFocus(kind)
             if (!suppressNativeInnerFocus && !value.blockInnerFocus)
               innerFocusedPanel = kind
@@ -2513,6 +2515,8 @@ export async function workspaceHarness(
             activeTabGroup = group
             innerFocusedPanel = undefined
             if (separateEditorPart) separateEditorPart.focused = false
+            // A text document shown with the focus takes the keyboard from the page body.
+            keyboardOnBody = false
           }
           if (options?.preview !== undefined) tab.isPreview = options.preview
           const editor = sourceEditor(
@@ -3281,7 +3285,7 @@ export async function workspaceHarness(
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
     },
-    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
+    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. Whatever gives an editor group, a text editor or the chat the keyboard ends that: a group focus command, Cursor's Focus Agent, a pane revealed or a document shown with the focus, the chat's `focus` and `focusTab`, and the learner's `focusMutableDraft`. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
     keyboardOnBody: () => keyboardOnBody,
     /**
      * Gives the fake window a primary and a secondary side bar that are open or closed, as the learner has them, and makes the fake editor behave as both editors were seen to (Cycle 0045 NF-22, obs15 P4): `workbench.action.maximizeEditorHideSidebar` hides both bars, and leaving that maximization (`workbench.action.minimizeOtherEditors`, a new layout, closing the panes) shows neither again. `workbench.action.closeSidebar` hides the primary one; `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` show their bar when it is hidden and give it the keyboard. No API of the editor says which bars are open: a layout read of columns answers in pixels of the editor area the bars leave (214 + 660 + 461 = 1335 with both open).
@@ -3385,6 +3389,7 @@ export async function workspaceHarness(
         focused: () => separateEditorPart?.focused,
         focus(): void {
           separateEditorPart!.focused = true
+          keyboardOnBody = false
           activeTextEditorChanged(undefined)
         },
         /** Gives the chat tab the keyboard focus the way Cursor reports it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. @example chat.focusTab() */
@@ -3392,6 +3397,7 @@ export async function workspaceHarness(
           const previous = activeTabGroup
           activeTabGroup = separateEditorPart!.group
           separateEditorPart!.focused = true
+          keyboardOnBody = false
           innerFocusedPanel = undefined
           changedGroups({
             opened: [],
@@ -3456,6 +3462,8 @@ export async function workspaceHarness(
       activeTabGroup = group
       visibleSourceEditors.push(editor)
       if (separateEditorPart) separateEditorPart.focused = false
+      // The learner's editor has the keyboard, whoever lost it before.
+      keyboardOnBody = false
       activeTextEditorChanged(editor)
       return {
         document,
@@ -3469,6 +3477,7 @@ export async function workspaceHarness(
           group.activeTab = tab
           activeTabGroup = group
           if (separateEditorPart) separateEditorPart.focused = false
+          keyboardOnBody = false
           activeTextEditorChanged(editor)
         },
       }
