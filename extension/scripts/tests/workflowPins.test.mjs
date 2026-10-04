@@ -564,3 +564,35 @@ test('the Windows storage lock job also runs once a week and for a new Node rele
   assert.equal(pushFilter.includes('.node-version'), true)
   assert.equal(pullRequestFilter.includes('.node-version'), true)
 })
+
+// Value: protects=the coverage report of a pull request, which Codecov posts only once every shard has uploaded; fails_when=a shard is added to the Test workflow and one of Codecov's two counts stays behind (the report then comes after the first shards and changes with every later upload), or a count is raised without its shard (the report never comes); why_new=the shard count went from twelve to fourteen in Cycle 0045 and nothing compared the three places; seam=none
+test('the Test workflow has as many shards as Codecov waits for before it reports, in both of its settings', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+  const codecov = await repositoryText('codecov.yml')
+
+  // Act
+  const shards = /^ {8}shard: \[([\d, ]+)\]$/m.exec(workflow)?.[1].split(', ')
+  const awaitedUploads = [
+    ...codecov.matchAll(/^ *after_n_builds: (\d+)$/gm),
+  ].map(([, count]) => count)
+
+  // Assert
+  assert.deepEqual(shards, [
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    '10',
+    '11',
+    '12',
+    '13',
+    '14',
+  ])
+  assert.deepEqual(awaitedUploads, ['14', '14'])
+})
