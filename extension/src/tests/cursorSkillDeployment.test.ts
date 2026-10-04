@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import * as fileSystem from 'node:fs/promises'
 import {
   lstat,
   mkdtemp,
@@ -9,17 +10,23 @@ import {
   rename,
   rm,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { hostname, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
+import type * as CursorSkillModule from '../cursorSkillDeployment'
 import {
   deployCursorSkill,
   removeManagedCursorSkill,
   verifyManagedCursorSkill,
 } from '../cursorSkillDeployment'
+import { withStorageLock } from '../utils/withStorageLock'
+
+import { loadModule } from './utils/loadModule'
 
 const INITIAL_SKILL =
   '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
@@ -212,7 +219,7 @@ test('a same-byte manual replacement does not inherit the old file ownership rec
       paths.storageRoot,
       paths.homeRoot,
     ),
-    /missing, changed or outdated/,
+    /missing or was changed/,
   )
   await assert.rejects(
     removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
@@ -735,9 +742,308 @@ test('reconnecting after an update leaves a Cursor skill that was edited since s
     paths.homeRoot,
   )
   // Assert
-  await assert.rejects(reconnecting, /missing, changed or outdated/)
+  await assert.rejects(reconnecting, /missing or was changed/)
   assert.equal(
     await readFile(paths.targetPath, 'utf8'),
     'An edit made by the learner.\n',
   )
+})
+
+/** Loads the skill deployment as one more editor window would run it: its own extension version, and optionally its own storage lock or file reads, so two windows can be interleaved in one process. @example await skillWindow('0.2.29') */
+async function skillWindow(
+  extensionVersion: string,
+  dependencies: Record<string, unknown> = {},
+): Promise<typeof CursorSkillModule> {
+  return loadModule<typeof CursorSkillModule>(
+    resolve(__dirname, '../cursorSkillDeployment.js'),
+    {
+      './constants': { ...constants, EXTENSION_VERSION: extensionVersion },
+      ...dependencies,
+    },
+    // The module tells a missing file by `instanceof Error`; the file system's errors belong to this realm.
+    { Error },
+  )
+}
+
+/** The deployed skill text of one installed extension directory, as {@link installExtension} packages it. @example publisherSkillOf('/x/laststance.codebook-0.2.29') */
+function publisherSkillOf(extensionPath: string): string {
+  return `---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nPublish with node ${join(extensionPath, 'skills', 'codebook', 'publish-wiki.mjs')}.\n`
+}
+
+// Value: protects=the shared Cursor skill a newer window deployed; fails_when=a window still running the previous extension rewrites the skill to its older bytes and publisher path at reconnect; why_new=Cycle 0045 (RT-9); seam=the module loaded with another EXTENSION_VERSION
+test('a window still running the previous extension leaves the skill a newer window deployed and reconnects', async (context) => {
+  // Arrange: the 0.2.29 window deployed the skill; a window of 0.2.28 is still open and reconnects.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    ),
+    newerExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.29',
+    )
+  const newerWindow = await skillWindow('0.2.29'),
+    previousWindow = await skillWindow('0.2.28')
+  await newerWindow.deployCursorSkill(
+    newerExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Act
+  const reconnected = await previousWindow.verifyManagedCursorSkill(
+    previousExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    publisherSkillOf(newerExtension),
+  )
+  assert.equal(reconnected.status, 'current')
+  assert.equal(
+    reconnected.sha256,
+    createHash('sha256').update(publisherSkillOf(newerExtension)).digest('hex'),
+  )
+  assert.equal(
+    JSON.parse(
+      await readFile(
+        join(paths.storageRoot, 'cursor-skill', 'receipt.json'),
+        'utf8',
+      ),
+    ).extensionVersion,
+    '0.2.29',
+  )
+})
+
+// Value: protects=the direction of the implicit update being decided under the lock; fails_when=the older window compares versions only before it takes the lock and then writes its skill over the update a newer window finished meanwhile; why_new=Cycle 0045 (RT-9, PC-4.6); seam=the older window's storage lock
+test('a newer window that finishes its update between an older window’s check and its deployment keeps its skill', async (context) => {
+  // Arrange: the skill is of 0.2.27; windows of 0.2.28 and of 0.2.29 both reconnect. The newer one finishes while the older one is about to take the lock.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const firstExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    ),
+    olderExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    ),
+    newerExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.29',
+    )
+  await (
+    await skillWindow('0.2.27')
+  ).deployCursorSkill(firstExtension, paths.storageRoot, paths.homeRoot)
+  const newerWindow = await skillWindow('0.2.29')
+  let hasNewerWindowUpdated = false
+  let newerWindowResult: string | undefined
+  const olderWindow = await skillWindow('0.2.28', {
+    './utils/withStorageLock': {
+      withStorageLock: async <Value>(
+        lockDirectory: string,
+        operation: () => Promise<Value>,
+      ): Promise<Value> => {
+        // The older window has looked and is about to lock; the newer window's whole update runs first, once.
+        if (!hasNewerWindowUpdated) {
+          hasNewerWindowUpdated = true
+          const updated = await newerWindow.verifyManagedCursorSkill(
+            newerExtension,
+            paths.storageRoot,
+            paths.homeRoot,
+          )
+          newerWindowResult = updated.status
+        }
+        return withStorageLock(lockDirectory, operation)
+      },
+    },
+  })
+
+  // Act
+  const reconnected = await olderWindow.verifyManagedCursorSkill(
+    olderExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert
+  assert.equal(newerWindowResult, 'updated')
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    publisherSkillOf(newerExtension),
+  )
+  assert.equal(reconnected.status, 'current')
+})
+
+// Value: protects=every restored Cursor window reconnecting after an extension update; fails_when=a window that meets the first window's deployment reports "Learning storage is locked" and does not start its agent server; why_new=Cycle 0045 (RT-8); seam=a lock file of a running writer and the reconnecting window's storage lock
+test('a window that reconnects while another window updates the shared skill waits for that update and reconnects', async (context) => {
+  // Arrange: the skill is of the previous installation, and another window of the running one holds the lock for its update.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    ),
+    runningExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    )
+  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  const lockPath = join(paths.storageRoot, 'cursor-skill', 'writer.lock')
+  await writeFile(
+    lockPath,
+    JSON.stringify({ pid: process.pid, hostname: hostname() }),
+  )
+  // The other window's lock is the file above, so its own deployment runs without taking a second one.
+  const updatingWindow = await skillWindow('0.2.28', {
+    './utils/withStorageLock': {
+      withStorageLock: async <Value>(
+        _lockDirectory: string,
+        operation: () => Promise<Value>,
+      ): Promise<Value> => operation(),
+    },
+  })
+  let reportRefusal!: () => void
+  const refused = new Promise<void>((resolveRefused) => {
+    reportRefusal = resolveRefused
+  })
+  const reconnectingWindow = await skillWindow('0.2.28', {
+    './utils/withStorageLock': {
+      withStorageLock: async <Value>(
+        lockDirectory: string,
+        operation: () => Promise<Value>,
+      ): Promise<Value> => {
+        try {
+          return await withStorageLock(lockDirectory, operation)
+        } catch (error) {
+          reportRefusal()
+          throw error
+        }
+      },
+    },
+  })
+
+  // Act
+  const reconnecting = reconnectingWindow.verifyManagedCursorSkill(
+    runningExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  // A rejection is looked at below; until then it must not count as unhandled.
+  reconnecting.catch(() => undefined)
+  await refused
+  await updatingWindow.deployCursorSkill(
+    runningExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await unlink(lockPath)
+  const reconnected = await reconnecting
+
+  // Assert
+  assert.equal(reconnected.status, 'current')
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    publisherSkillOf(runningExtension),
+  )
+})
+
+// Value: protects=a reconnect telling another window's regular update from an edit; fails_when=the receipt is read before and the file after another window replaced both, and the reconnect answers that the skill is missing or was changed; why_new=Cycle 0045 (RT-8, PC-4.7); seam=the reconnecting window's file reads
+test('another window’s update between a reconnect’s read of the receipt and of the skill is not answered as a missing or changed skill', async (context) => {
+  // Arrange: the skill is of the previous installation; two windows of the running one reconnect.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    ),
+    runningExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    )
+  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  const receiptPath = join(paths.storageRoot, 'cursor-skill', 'receipt.json')
+  let hasOtherWindowUpdated = false
+  let otherWindowResult: string | undefined
+  const reconnectingWindow = await skillWindow('0.2.28', {
+    'node:fs/promises': {
+      ...fileSystem,
+      readFile: async (path: string): Promise<Buffer> => {
+        const bytes = await readFile(path)
+        // Right after this window read the receipt, the other window replaces the skill and writes its receipt, once.
+        if (path === receiptPath && !hasOtherWindowUpdated) {
+          hasOtherWindowUpdated = true
+          const updated = await verifyManagedCursorSkill(
+            runningExtension,
+            paths.storageRoot,
+            paths.homeRoot,
+          )
+          otherWindowResult = updated.status
+        }
+        return bytes
+      },
+    },
+  })
+
+  // Act
+  const reconnected = await reconnectingWindow.verifyManagedCursorSkill(
+    runningExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert
+  assert.equal(otherWindowResult, 'updated')
+  assert.equal(reconnected.status, 'current')
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    publisherSkillOf(runningExtension),
+  )
+})
+
+// Value: protects=the reconnect's refusal saying what happened and the next step; fails_when=the sentence still calls the skill "outdated", which a reconnect no longer refuses but updates; why_new=Cycle 0045 (SM-14); seam=none, the real files
+test('a replaced or edited Cursor skill is refused at reconnect as missing or changed, and is never called outdated', async (context) => {
+  // Arrange: one learner edited the deployed skill, another replaced the file with the same text.
+  const edited = await fixture(context),
+    replaced = await fixture(context)
+  await deployCursorSkill(
+    edited.extensionPath,
+    edited.storageRoot,
+    edited.homeRoot,
+  )
+  await writeFile(edited.targetPath, 'An edit made by the learner.\n')
+  await deployCursorSkill(
+    replaced.extensionPath,
+    replaced.storageRoot,
+    replaced.homeRoot,
+  )
+  const replacement = join(replaced.homeRoot, 'replacement.md')
+  await writeFile(replacement, INITIAL_SKILL)
+  await rename(replacement, replaced.targetPath)
+
+  // Act
+  const editedReconnect = verifyManagedCursorSkill(
+    edited.extensionPath,
+    edited.storageRoot,
+    edited.homeRoot,
+  )
+  const replacedReconnect = verifyManagedCursorSkill(
+    replaced.extensionPath,
+    replaced.storageRoot,
+    replaced.homeRoot,
+  )
+
+  // Assert
+  await assert.rejects(editedReconnect, {
+    message:
+      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+  })
+  await assert.rejects(replacedReconnect, {
+    message:
+      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+  })
 })

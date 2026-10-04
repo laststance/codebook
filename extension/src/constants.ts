@@ -1,4 +1,4 @@
-export const API_VERSION = '1.5'
+export const API_VERSION = '1.6'
 export const EXTENSION_VERSION = '0.2.28'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
@@ -13,6 +13,10 @@ export const CURSOR_MCP_CATALOG_LOCK_RETRIES = 3
 export const CURSOR_MCP_CATALOG_LOCK_RETRY_DELAY_MS = 50
 export const CURSOR_MCP_BRIDGE_REQUEST_TIMEOUT_MS = 120_000
 export const CURSOR_SKILL_RECEIPT_LIMIT_BYTES = 16_384
+/** How often a reconnect checks the shared Cursor skill while another window holds the skill's storage lock, before it reports the lock. */
+export const CURSOR_SKILL_RECONNECT_ATTEMPTS = 20
+/** How long a reconnect waits before it checks the shared Cursor skill again; with the attempts about two seconds, far above one deployment. */
+export const CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS = 100
 export const BOOK_INPUT_LIMIT_BYTES = 1_048_576
 export const HTTP_ENVELOPE_LIMIT_BYTES = 65_536
 export const HTTP_BODY_LIMIT_BYTES =

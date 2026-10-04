@@ -415,7 +415,7 @@ export function createProtocol(service: StudyService): McpServer {
     [
       'inspection',
       'codebook://{instance}/runs/{run}/snapshots/{snapshot}/inspection',
-      "An observation's inspectionUri: bound source position beside requestedSource and the captured values, as a bounded JSON page with nextUri.",
+      "An observation's inspectionUri: the bound source position beside declaredSource (requestedSource is its older name), armed when the breakpoint was requested elsewhere, place for a stop bound on another line than declared, and the captured values, as a bounded JSON page with nextUri.",
     ],
     [
       'inspection-page',

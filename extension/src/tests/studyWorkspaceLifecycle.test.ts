@@ -1481,3 +1481,128 @@ test('closing the reader finishes after the storage bound while a library write 
     await harness.close()
   }
 })
+
+// Value: protects=reader tests meeting the real viewport's refusal when the learner follows a run whose Application pane was closed; fails_when=the fake viewport accepts showLive on a released lease and writes its renderer into the closed pane, so a reader that follows a dead lease passes where the product reports "Viewport lease is released"; why_new=Cycle 0045 D-M3 (the fake's showLive had no released-lease check, its showHistory had); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
+test('following the current run after its viewport lease was released reports the released lease instead of rewriting the pane', async () => {
+  // Arrange: the Application pane of a live run shows the history of a selected item, and the learner closes that pane, which ends the run's lease on it.
+  const harness = await workspaceHarness()
+  const leaseFailures: string[] = []
+  try {
+    await harness.reader.open()
+    harness.reader.presentation.createViewport(
+      'live-run',
+      () => {},
+      (reason) => leaseFailures.push(reason),
+      'normal',
+    )
+    await harness.reader.select('repository/workspace/overview')
+    const closedPane = harness.reader['app']!,
+      historyPage = closedPane.webview.html
+    closedPane.dispose()
+    const messagesBeforeReturn = harness.postedMessages().length
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert: the Study pane was shown the refusal while the reader returned, and the closed pane kept its page.
+    const errorLinesShown = new Set(
+      harness
+        .postedMessages()
+        .slice(messagesBeforeReturn)
+        .flatMap((message) => message.errors),
+    )
+    assert.deepEqual(leaseFailures, ['Owned viewport closed before cleanup'])
+    assert.deepEqual(
+      [...errorLinesShown],
+      ['Error: Viewport lease is released'],
+    )
+    assert.equal(closedPane.webview.html, historyPage)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests of Show Variables meeting the real debugger owner when the learner stops the recorded session during a wait; fails_when=the fake debugger keeps a wait for native Variables open after its session ended, or lets the view's refresh, 400 ms later, answer a wait as retrieved; why_new=Cycle 0045 X7-D.2 (the fake's wait read only the fake view, never the session); seam=the workspace harness's fake historical debugger and its fake Variables view
+test('the workspace harness historical debugger ends a wait for native Variables when its session ends, and the view refreshing later no longer answers one, like the real owner', async () => {
+  // Arrange: a recorded stop is presented while the host's Variables view was hidden; the learner shows the view, which refreshes 400 ms later.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('missed-the-stop')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const debuggerView = harness.historicalDebuggers.at(-1)!
+    await harness.editor.commands.executeCommand(
+      'workbench.debug.action.focusVariablesView',
+    )
+
+    // Act: the learner stops the recorded session while a wait for the stop's scopes is open; the view refreshes afterwards.
+    const waitOpenAtTheEnd = debuggerView.awaitRetrieval('scopes', 2_000)
+    harness.endHistoricalDebugSession()
+    // One turn of the event loop is the bound: the real owner answers an open wait as the session ends.
+    const answerAtTheEnd = await Promise.race([
+      waitOpenAtTheEnd,
+      new Promise<string>((resolve) => {
+        setImmediate(resolve, 'still waiting')
+      }),
+    ])
+    await waitUntil(
+      () => harness.nativeVariablesView().valuesListed,
+      'the Variables view refreshed',
+      2_000,
+    )
+    const answerAfterTheRefresh = await debuggerView.awaitRetrieval(
+      'values',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(answerAtTheEnd, false)
+    assert.equal(answerAfterTheRefresh, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests of Show Variables meeting the real debugger owner when the reader is closed during a wait; fails_when=the fake debugger keeps a wait for native Variables open after it was disposed, until the wait's own deadline; why_new=Cycle 0045 X7-D.2 (the fake's dispose woke no wait); seam=the workspace harness's fake historical debugger and its fake Variables view
+test('the workspace harness historical debugger ends a wait for native Variables when the reader is closed, like the real owner', async () => {
+  // Arrange: a recorded stop is presented while the host's Variables view shows another session, so the view never asks for the stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('shows-another-session')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const debuggerView = harness.historicalDebuggers.at(-1)!
+
+    // Act: the reader is closed, which disposes its debugger, while a wait for the stop's scopes is open.
+    const waitOpenAtTheClose = debuggerView.awaitRetrieval('scopes', 2_000)
+    await harness.reader.close()
+    // One turn of the event loop is the bound: the real owner answers an open wait as it is disposed.
+    const answerAtTheClose = await Promise.race([
+      waitOpenAtTheClose,
+      new Promise<string>((resolve) => {
+        setImmediate(resolve, 'still waiting')
+      }),
+    ])
+
+    // Assert
+    assert.equal(answerAtTheClose, false)
+  } finally {
+    await harness.close()
+  }
+})

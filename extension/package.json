@@ -280,7 +280,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-metadata.mjs",
-    "build:fast": "node scripts/build-fast.mjs && node scripts/build-metadata.mjs",
+    "build:fast": "node scripts/build-fast.mjs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm build && node --test dist/tests/*.test.js",
     "package": "node scripts/package.mjs",

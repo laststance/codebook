@@ -3316,6 +3316,65 @@ test('pressing Recording after the historical session ended keeps the moment who
   }
 })
 
+// Value: protects=tests that hold one reader's position saves measuring only that reader; fails_when=the hold patches every recording store of the process, so another harness's saves wait as well, or a second hold replaces the first and its release leaves saves held; why_new=Cycle 0045 D-L9 (the hold patched the store's prototype and its restore was not re-entrant); seam=holdPositionSaves holds the saves of the store the reader owns
+test('holding position saves in one workspace harness does not hold the saves of another, and a second hold while one is active is refused', async () => {
+  // Arrange: two readers, each showing its own recording at the opening position.
+  const holding = await recordedReaderHarness(true, true),
+    other = await recordedReaderHarness(true, true)
+  let releaseSaves = (): void => {}
+  try {
+    for (const harness of [holding, other]) {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+    }
+
+    // Act: the first harness holds its saves and is asked to hold them again; then both readers confirm the moment at 100 ms.
+    releaseSaves = holding.holdPositionSaves().release
+    let secondHoldRefusal = ''
+    try {
+      holding.holdPositionSaves().release()
+    } catch (error) {
+      secondHoldRefusal = String(error)
+    }
+    for (const harness of [holding, other]) {
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      // Bounded: an unbounded settle also waits for a held position save.
+      await harness.controller.settle(new AbortController().signal, 2_000)
+    }
+    // Bounded: a hold that reached the other reader's store would keep its save from ever landing.
+    const otherSaveLanded = await Promise.race([
+      other.controller.saved().then(() => true),
+      new Promise<boolean>((resolve) => {
+        setTimeout(resolve, 2_000, false).unref()
+      }),
+    ])
+    const storedByHoldingWhileHeld = (await holding.store.readPreference())
+        ?.positionMs,
+      storedByOther = (await other.store.readPreference())?.positionMs
+    releaseSaves()
+    await holding.controller.saved()
+
+    // Assert
+    assert.equal(
+      secondHoldRefusal,
+      'Error: Position saves of this workspace harness are already held. Release that hold before holding them again.',
+    )
+    assert.equal(otherSaveLanded, true)
+    assert.equal(storedByOther, 100)
+    assert.equal(storedByHoldingWhileHeld, 0)
+    assert.equal((await holding.store.readPreference())?.positionMs, 100)
+  } finally {
+    releaseSaves()
+    await holding.close()
+    await other.close()
+  }
+})
+
 // Value: protects=a closed reader staying closed when an agent sends playback controls; fails_when=a seek or play after Close presents through the hidden controller and recreates the Application panel without the reader; why_new=Cycle 0035 H4 (Cycle 0034 O4 covers open only); seam=none
 test('an agent seeking or playing a recording after the reader closed is refused and nothing opens', async () => {
   // Arrange

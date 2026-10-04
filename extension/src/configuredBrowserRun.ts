@@ -83,6 +83,7 @@ import { continuationReceipts } from './utils/continuationReceipts'
 import { createBindingLineRule } from './utils/createBindingLineRule'
 import { createBundleVerifier } from './utils/createBundleVerifier'
 import { deadlineText } from './utils/deadlineText'
+import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { describeCdpPause } from './utils/describeCdpPause'
 import { elapsedMsSince } from './utils/elapsedMsSince'
 import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
@@ -656,6 +657,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.evidence.record('breakpoint.bound', {
       ...binding,
       requested: { line: position.line, column: position.column },
+      ...declaredAndArmedPlace(position, armed),
     })
     await this.verifySources()
   }
@@ -2345,6 +2347,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           column: stop.source.column,
           path: stop.bundle.sourcePath,
         },
+        ...declaredAndArmedPlace(stop.source, stop.armed),
         returned:
           binding === undefined
             ? 'absent'

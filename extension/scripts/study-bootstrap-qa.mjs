@@ -79,6 +79,16 @@ async function command(arguments_, label) {
 async function check(page, options) {
   /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
   const revisionAt = (step) => options.message.revision + step
+  /** Waits until the pane reports that it rendered the Study message of this revision. The number enters the page as an argument, because a callback evaluated in the page cannot call {@link revisionAt}. @example await waitUntilRendered(revisionAt(2)) */
+  const waitUntilRendered = (revision) =>
+    page.waitForFunction(
+      (awaitedRevision) =>
+        window.sent.some(
+          (message) =>
+            message.type === 'rendered' && message.revision === awaitedRevision,
+        ),
+      revision,
+    )
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
@@ -181,7 +191,9 @@ async function check(page, options) {
         cases.push({
           name: `${phase} enables an explicit source action with the loaded revision`,
           actual: action,
-          passed: action?.action === 'current-file' && action.revision === 1,
+          passed:
+            action?.action === 'current-file' &&
+            action.revision === revisionAt(0),
         })
         if (phase === 'initial') {
           // Arrange: reproduce a narrow Study column when a followed runtime pause arrives.
@@ -211,19 +223,9 @@ async function check(page, options) {
           }
           // Act: a host loading update precedes the complete pause, as it does during a native run.
           await publish({ ...observed, loading: true })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 2,
-            ),
-          )
+          await waitUntilRendered(revisionAt(1))
           await publish({ ...observed, revision: revisionAt(2) })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 3,
-            ),
-          )
+          await waitUntilRendered(revisionAt(2))
           const revealed = await page.evaluate(() => ({
             scrollY: window.scrollY,
             interpretationTop: document
@@ -256,12 +258,7 @@ async function check(page, options) {
           })
           await page.evaluate(() => window.scrollTo(0, 0))
           await publish({ ...observed, revision: revisionAt(3) })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 4,
-            ),
-          )
+          await waitUntilRendered(revisionAt(3))
           cases.push({
             name: 'refresh of the same pause preserves the learner reading position',
             passed: await page.evaluate(() => window.scrollY === 0),
@@ -286,12 +283,7 @@ async function check(page, options) {
           }
           // A new long explanation must remain keyboard-readable while preserving native debugger ownership of values.
           await publish(longExplanation)
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 5,
-            ),
-          )
+          await waitUntilRendered(revisionAt(4))
           const longReading = await page.evaluate(() => ({
             interpretationTop: document
               .querySelector('#live-content h2')
@@ -633,8 +625,8 @@ async function check(page, options) {
           steps.every(
             (value) =>
               value.action === 'seek' &&
-              value.expectedRevision === 7 &&
-              value.revision === 6,
+              value.expectedRevision === revisionAt(6) &&
+              value.revision === revisionAt(5),
           ),
       })
       await page.locator('#understood').focus()
@@ -1286,8 +1278,8 @@ async function check(page, options) {
         passed:
           inspection.action === 'seek' &&
           inspection.positionMs === 2000 &&
-          inspection.expectedRevision === 7 &&
-          inspection.revision === 8,
+          inspection.expectedRevision === revisionAt(6) &&
+          inspection.revision === revisionAt(7),
       })
       await page.locator('[data-summary-step="derive"]').focus()
       await publish({
@@ -1389,8 +1381,8 @@ async function check(page, options) {
         name: 'bottom panel uses the current recording revision for playback',
         passed:
           play.action === 'play' &&
-          play.revision === 6 &&
-          play.expectedRevision === 7,
+          play.revision === revisionAt(5) &&
+          play.expectedRevision === revisionAt(6),
       })
       await publish({
         ...options.message,
@@ -2202,27 +2194,25 @@ const report = {
     .digest('hex'),
   cases: [],
 }
-// The check and its fixtures are served to the page instead of being passed as one command argument: together they exceed the size a single argument may have on Linux (E2BIG).
-const flow = {
-  check: check.toString(),
-  options: {
-    html: { context: studyHtml('context'), moments: studyHtml('moments') },
-    message,
-    output,
-  },
-}
+// The server only gives the page an address to load: the check navigates to it before it sets each document.
 const server = createServer((request, response) => {
-  if (request.url === '/flow.json') {
-    response.setHeader('Content-Type', 'application/json')
-    response.end(JSON.stringify(flow))
-    return
-  }
   response.setHeader('Content-Type', 'text/html')
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`.
+const flowPath = `${output}/flow.js`
 let recording = false
 try {
+  await writeFile(
+    flowPath,
+    `async (page) => (${check.toString()})(page, ${JSON.stringify({
+      html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      message,
+      output,
+      url: `http://127.0.0.1:${server.address().port}/`,
+    })})\n`,
+  )
   await command(['open', 'about:blank'], 'open')
   await command(
     [
@@ -2232,13 +2222,7 @@ try {
     'video-start',
   )
   recording = true
-  const result = await command(
-    [
-      'run-code',
-      `async page => { const url = ${JSON.stringify(`http://127.0.0.1:${server.address().port}/`)}; await page.goto(url); const flow = await page.evaluate(async () => (await fetch('/flow.json')).json()); return (0, eval)('(' + flow.check + ')')(page, { ...flow.options, url }) }`,
-    ],
-    'flow',
-  )
+  const result = await command(['run-code', `--filename=${flowPath}`], 'flow')
   Object.assign(
     report,
     JSON.parse(result.split('### Result\n')[1].split('\n###')[0]),

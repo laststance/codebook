@@ -14,7 +14,10 @@ import { learningSummarySchema } from './learningSummarySchemas'
 import { studyIdSchema } from './legacyStudySchemas'
 import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { nodeTestLearningMaterialContentSchema } from './nodeTestHistorySchemas'
-import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
+import {
+  inspectionPathSchema,
+  retainedRepositoryConfigSchema,
+} from './repositoryConfigSchemas'
 
 const instanceShape = { instanceId: z.uuid() }
 const runShape = { ...instanceShape, runId: z.uuid() }
@@ -59,12 +62,24 @@ export const revealSchema = z.strictObject({
   ...runShape,
   snapshotUri: z.string().max(REFERENCE_LENGTH_LIMIT),
 })
+// The tool's own path: the saved format keeps configuredFactPathSchema, and the service saves a bare path under its captured key.
+const explainValuePathSchema = z
+  .string()
+  .refine(
+    (value) =>
+      configuredFactPathSchema.safeParse(value).success ||
+      inspectionPathSchema.safeParse(value).success,
+    'Use a captured fact key, value:<path> or type:<path>, or the path alone when the snapshot captured one fact with that path.',
+  )
+  .describe(
+    'A captured fact key of this snapshot: value:<path> or type:<path>. The path alone is accepted when exactly one captured fact of the snapshot has that path, and the explanation is saved under that key.',
+  )
 export const explainSchema = z.strictObject({
   ...runShape,
   key,
   snapshotUri: z.string().max(REFERENCE_LENGTH_LIMIT),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
-  valuePaths: z.array(configuredFactPathSchema).min(1).max(MAX_VALUE_PATHS),
+  valuePaths: z.array(explainValuePathSchema).min(1).max(MAX_VALUE_PATHS),
   interpretation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
   learningSummary: learningSummarySchema.optional(),
 })

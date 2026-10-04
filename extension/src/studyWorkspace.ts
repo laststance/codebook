@@ -157,6 +157,7 @@ import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
 import { settledWithin } from './utils/settledWithin'
+import { showPlainNotice } from './utils/showPlainNotice'
 import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
@@ -7155,7 +7156,9 @@ export class StudyWorkspace {
         SUMMARY_PLACEMENT_OFFER_KEY,
         true,
       )
-      const choice = await vscode.window.showInformationMessage(
+      const choice = await showPlainNotice(
+        vscode.window,
+        'information',
         SUMMARY_PLACEMENT_OFFER,
         SUMMARY_PLACEMENT_ACTION,
       )
@@ -7221,7 +7224,11 @@ export class StudyWorkspace {
       return
     }
     // Nothing to run: one sentence instead of a failed command.
-    void vscode.window.showInformationMessage(SHOW_NATIVE_VARIABLES_MANUAL_STEP)
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      SHOW_NATIVE_VARIABLES_MANUAL_STEP,
+    )
   }
 
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */
