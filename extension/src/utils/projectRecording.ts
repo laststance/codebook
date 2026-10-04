@@ -11,7 +11,7 @@ import type {
 export type ExplanationSavedLater =
   'while-pause-held' | 'after-pause-ended' | 'after-recording-ended'
 
-/** One saved explanation as the replay shows it at the selected time; `savedLater` is present only when it is shown before the time it was saved. */
+/** One saved explanation as the replay shows it at the selected time. `savedLater` is present when it is shown before the time it was saved and the recording tells when that was; it is absent for an explanation shown from its saved time on, and for one saved within the recording at a stop whose pause the recording did not seal. */
 export type ShownInterpretation =
   RecordingContext['study']['observations'][number]['interpretations'][number] & {
     savedLater?: ExplanationSavedLater
@@ -20,7 +20,7 @@ export type ShownInterpretation =
 /**
  * Selects what the replay shows at one recorded time, for {@link PlaybackController}, the Study workspace and the article links of {@link RepositoryBookStore}.
  *
- * Recorded facts (frame, source, debugger state, phases, confirmations) appear only from their own time. An explanation appears from the time it was saved, with one exception: while the playhead stands in a stop's own recorded pause (its commit time, or inside its sealed paused interval), that stop shows every explanation saved before the pause ended and its first saved explanation (the first of its saved list, which is kept in the order of saving) whenever that was saved. Such an explanation carries `savedLater`. Every other explanation later than the playhead stays in `laterInterpretations`.
+ * Recorded facts (frame, source, debugger state, phases, confirmations) appear only from their own time. An explanation appears from the time it was saved, with one exception: while the playhead stands in a stop's own recorded pause (its commit time, or inside its sealed paused interval), that stop shows every explanation saved before the pause ended and its first saved explanation (the first of its saved list, which is kept in the order of saving) whenever that was saved. Such an explanation carries `savedLater`, with one exception: at a stop whose pause the recording did not seal (no entry in `pausedIntervals`: a stop without native debugger state, or a pause whose end was not observed), a first explanation saved within the recording is shown without `savedLater`, because the recording does not say whether the pause was still held then. Every other explanation later than the playhead stays in `laterInterpretations`.
  *
  * @param index - The verified recording journal.
  * @param context - The saved study with its receipt times; `undefined` projects the film alone.
