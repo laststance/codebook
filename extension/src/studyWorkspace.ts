@@ -33,6 +33,7 @@ import {
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_SOURCE_LIMIT_BYTES,
+  SAVED_STUDY_LIMIT_SETTING,
   SHOW_NATIVE_VARIABLES_COMMANDS,
   SHOW_NATIVE_VARIABLES_EXPAND_ATTEMPTS,
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
@@ -44,6 +45,7 @@ import {
   STUDY_PRESENTATIONS,
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
+  STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
@@ -145,6 +147,8 @@ import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
 import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
+import type { StudyRemovalAvailability } from './utils/fullLibraryMessage'
+import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
 import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
@@ -266,6 +270,13 @@ const messageSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('delete-study'),
+    ...revisionShape,
+    studyId: studyIdSchema,
+    // The number the asking pane gave this delete request; every state of the removal it starts or is refused with echoes it.
+    removalRequest: openRequestNumberSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('copy-study-files'),
     ...revisionShape,
     studyId: studyIdSchema,
   }),
@@ -462,6 +473,8 @@ export class StudyWorkspace {
   private removalFollowersShowing = 0
   /** The current run when the last removal ended; a later run retires that removal's outcome line. */
   private studyRemovalRunId?: string
+  /** The number the asking pane gave the delete request whose removal is in progress or was answered last; absent for a request without a number. */
+  private studyRemovalRequest?: number
   /** Studies this window moved to the system Trash; a position save still queued for one of them writes nothing. */
   private readonly removedStudyIds = new Set<string>()
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
@@ -4567,6 +4580,14 @@ export class StudyWorkspace {
     await this.refreshing
     let failure: unknown
     for (const record of service.records.values()) {
+      // A study this window saved with the material the run has now is left as it is: writing it again would change only its saved time.
+      if (
+        this.isSavedUnchanged(
+          `${service.instanceId}_${record.id}`,
+          service.state(record).materialSignature,
+        )
+      )
+        continue
       try {
         await this.checkpoint(service, record, true)
       } catch (error) {
@@ -4793,6 +4814,10 @@ export class StudyWorkspace {
         // Source, personal progress and captured history recover independently; one unavailable input cannot block the others.
         await this.readBaselines().catch(() => undefined)
         await this.refreshCitations(true)
+        // A study whose files the learner removed by hand is forgotten before the ledger is read and the selection written.
+        await this.forgetStudiesRemovedByHand().catch((error: unknown) =>
+          this.report('archive', error),
+        )
         try {
           this.progress = await this.library!.readProgress()
           // Preserve the original item/version even when the learner has since selected another item.
@@ -4814,6 +4839,8 @@ export class StudyWorkspace {
               await this.checkpoint(this.service, record, true)
           await this.library!.reconcile()
           this.catalog = await this.library!.list()
+          // Room made without a removal of this reader (files removed by hand) answers a run the full library refused.
+          this.answerRefusedRunIfRoom(await this.library!.usage())
           this.errors.delete('archive')
           if (this.selection.studyId) {
             const studyId = this.selection.studyId,
@@ -5139,10 +5166,21 @@ export class StudyWorkspace {
         vscode.workspace
           .getConfiguration('codebook')
           .get<unknown>('savedStudyLimit')
+      // A raised limit answers a run the full library refused, as a removal does.
+      this.disposables.push(
+        vscode.workspace.onDidChangeConfiguration((event) => {
+          if (event.affectsConfiguration(SAVED_STUDY_LIMIT_SETTING))
+            void this.answerRefusedRunAfterLimitChange()
+        }),
+      )
+      // Read at each refusal: the library and the store are built before a service is attached, and a removal changes the answer.
+      const removalAvailability = (): StudyRemovalAvailability =>
+        this.studyRemovalAvailability()
       this.library = new LearningLibrary(
         join(this.context.globalStorageUri.fsPath, 'learning', key),
         key,
         capacity,
+        removalAvailability,
       )
       this.recordings = new RecordingStore(
         this.library.directory,
@@ -5150,6 +5188,7 @@ export class StudyWorkspace {
         {},
         undefined,
         capacity,
+        removalAvailability,
       )
       this.nodeHistoryStore = new NodeTestHistoryStore(
         this.library.directory,
@@ -6720,8 +6759,9 @@ export class StudyWorkspace {
         ),
       errors: [
         ...this.errors.values(),
+        // The note of a study a newer Codebook saved is no failure Retry storage can answer; the entry itself carries it.
         ...this.catalog.flatMap((entry) =>
-          entry.reason ? [entry.reason] : [],
+          entry.reason && entry.format !== 'newer' ? [entry.reason] : [],
         ),
       ],
       unretryableErrorCount: [...this.errors.keys()].filter((kind) =>
@@ -6751,10 +6791,15 @@ export class StudyWorkspace {
       })),
       studies: studyCatalog,
       studyRemoval: this.studyRemoval,
+      ...(this.studyRemovalAvailability() === 'no-trash'
+        ? { removalWithoutTrash: true as const }
+        : {}),
+      // While a recording is open the pane reads that recording; the line of a run that did not start comes back with Overview or Live.
       runRefusal:
         record?.historyExcluded === 'refused-at-admission' &&
         record.error &&
-        record.id !== this.answeredRunRefusalId
+        record.id !== this.answeredRunRefusalId &&
+        !this.recordingActive
           ? `The last run did not start: ${record.error.message}`
           : undefined,
       unstoppedStudyId: this.unstoppedStudyId(),
@@ -10036,7 +10081,11 @@ export class StudyWorkspace {
     if (message.type === 'understanding')
       await this.understand(message.understood)
     if (message.type === 'delete-study') {
-      await this.removeSavedStudy(message.studyId)
+      await this.removeSavedStudy(message.studyId, message.removalRequest)
+      return
+    }
+    if (message.type === 'copy-study-files') {
+      await this.copyStudyFiles(message.studyId)
       return
     }
     // Choosing another entry retires the last removal's outcome line.
@@ -10498,6 +10547,24 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether this window's last write of a study succeeded with this material and no write of it is waiting or running; called by {@link retire} before its forced checkpoint.
+   * A forced checkpoint of such a study would capture the same content again and change only its `savedAt`, which the Saved studies list prints and sorts by.
+   * @param studyId - The study a checkpoint is asked for.
+   * @param signature - The material signature of its run now.
+   * @returns `true` only for a receipt of this window that says `saved` for the same signature, with nothing pending.
+   * @example if (this.isSavedUnchanged(id, signature)) continue
+   */
+  private isSavedUnchanged(studyId: string, signature: string): boolean {
+    const receipt = this.historyReceipts.get(studyId)
+    return (
+      receipt?.status === 'saved' &&
+      receipt.signature === signature &&
+      !this.pendingArchives.has(studyId) &&
+      !this.archiveWrites.has(studyId)
+    )
+  }
+
+  /**
    * Settles for {@link checkpoint} what becomes of a capture, or of its failure, that ended while a confirmed removal of its study is in progress: waits until the files are settled, then lets {@link discardsCapture} judge it.
    * A checkpoint the removal itself waits for cannot wait in turn (each would wait for the other for ever). Its capture is kept: {@link persistArchive} leaves it unwritten while the study is moving, and the removal drops it when something moved ({@link forgetRemovedStudy}) or writes it when nothing did ({@link resumeHeldBackWrite}).
    * @param studyId - The study the checkpoint captured.
@@ -10564,7 +10631,7 @@ export class StudyWorkspace {
   /**
    * Says why a saved study cannot be removed right now; checked when the request arrives and again after the confirmation dialog, which can stay open while the reader changes.
    * @param studyId - The entry the learner chose in Saved studies.
-   * @returns The refusal sentence, first match wins: another entry that is still opening, a Node test history, an entry no catalog lists, the study of a run that has not stopped, a Recording that is open or opening. `undefined` when the study can be removed.
+   * @returns The refusal sentence, first match wins: another entry that is still opening, a Node test history, an entry no catalog lists, a study a newer Codebook saved, the study of a run that has not stopped, a Recording that is open or opening. `undefined` when the study can be removed.
    * @example this.studyRemovalRefusal(nodeHistoryId) // => 'Node test histories cannot be deleted here yet.'
    */
   private studyRemovalRefusal(studyId: string): string | undefined {
@@ -10578,6 +10645,13 @@ export class StudyWorkspace {
       [
         !this.catalog.some((entry) => entry.id === studyId),
         STUDY_REMOVAL_REFUSALS.unavailable,
+      ],
+      // Which files a newer format keeps is not known here, so nothing of such a study is moved.
+      [
+        this.catalog.some(
+          (entry) => entry.id === studyId && entry.format === 'newer',
+        ),
+        STUDY_REMOVAL_REFUSALS.newerFormat,
       ],
       [
         this.unstoppedStudyId() === studyId,
@@ -10602,9 +10676,21 @@ export class StudyWorkspace {
     )
   }
 
-  /** Publishes a removal's outcome and remembers the run it ended under, so a later run retires the line. @example this.settleStudyRemoval({ status: 'refused', studyId, text }) */
+  /**
+   * Adds the number of the delete request a removal state answers, so the asking pane tells its own answer from an earlier one with the same words; called for every state the reader publishes.
+   * @param view - The removal state without a request number.
+   * @returns The state with `request` when the pane numbered its request, otherwise the state as it is.
+   * @example this.withRemovalRequest({ status: 'refused', studyId, text }) // => { status: 'refused', studyId, text, request: 2 }
+   */
+  private withRemovalRequest(view: StudyRemovalView): StudyRemovalView {
+    return this.studyRemovalRequest === undefined
+      ? view
+      : { ...view, request: this.studyRemovalRequest }
+  }
+
+  /** Publishes a removal's outcome with its request number and remembers the run it ended under, so a later run retires the line. @example this.settleStudyRemoval({ status: 'refused', studyId, text }) */
   private settleStudyRemoval(outcome: StudyRemovalView): void {
-    this.studyRemoval = outcome
+    this.studyRemoval = this.withRemovalRequest(outcome)
     this.studyRemovalRunId = this.currentRecord()?.id
     // The files are settled; a checkpoint that waited for them goes on.
     this.releaseStudyMove?.()
@@ -10624,6 +10710,73 @@ export class StudyWorkspace {
   }
 
   /**
+   * Tells whether this window can remove a saved study: what the attached service recorded, or what the window itself says while no service is attached; read for every full-library refusal, every delete request and every Study message.
+   * @returns `no-trash` in a WSL remote window, `trash-refused` after a removal of this session left its study in the library, otherwise `available`.
+   * @example if (this.studyRemovalAvailability() === 'no-trash') return
+   */
+  private studyRemovalAvailability(): StudyRemovalAvailability {
+    return (
+      this.service?.studyRemovalAvailability ??
+      initialStudyRemovalAvailability(vscode.env.remoteName)
+    )
+  }
+
+  /**
+   * Answers a delete request in a window without a Trash: no dialog opens and nothing is moved or deleted; the status line says so and carries the study's files, from the removal's own path list, for removal by hand. Called by {@link studyRemovalConfirmed} after the refusals that hold in every window.
+   * @param studyId - The entry the learner chose, already known to be a listed study of a stopped run.
+   * @returns Whether the request was answered this way.
+   * @example if (await this.refuseRemovalWithoutTrash(studyId)) return false
+   */
+  private async refuseRemovalWithoutTrash(studyId: string): Promise<boolean> {
+    if (this.studyRemovalAvailability() !== 'no-trash') return false
+    const evidence = await this.studyEvidenceToMove(studyId)
+    this.settleStudyRemoval({
+      status: 'refused',
+      studyId,
+      text: STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
+      files: await this.library!.studyFiles(studyId, evidence.directory),
+    })
+    return true
+  }
+
+  /**
+   * Copies the files the reader listed for the removal by hand of one study to the clipboard, one path a line; called by {@link receive} for the pane's `copy-study-files` message.
+   * Only the reader's own list for that study is copied, never text a pane sends.
+   * @param studyId - The study the pane shows the list of.
+   * @example await this.copyStudyFiles(message.studyId)
+   */
+  private async copyStudyFiles(studyId: string): Promise<void> {
+    const files =
+      this.studyRemoval?.studyId === studyId
+        ? this.studyRemoval.files
+        : undefined
+    if (files?.length) await vscode.env.clipboard.writeText(files.join('\n'))
+  }
+
+  /**
+   * Follows studies that left the library without a removal of this reader, as after the learner removed the listed files by hand; called by Retry storage / refresh before it reads the ledger and writes the selection.
+   * Such a study is one the reader listed before and the library no longer holds, or one the ledger still named. The ledger's references are dropped under the storage lock, a run of this window is forgotten like a removed one (so it is not written back), and a reader that selects the study selects none. A study that was never saved is in neither group and is left alone.
+   * @example await this.forgetStudiesRemovedByHand()
+   */
+  private async forgetStudiesRemovedByHand(): Promise<void> {
+    const listedBefore = this.catalog.map((entry) => entry.id)
+    const namedByLedger = await this.library!.forgetAbsentStudies()
+    this.catalog = await this.library!.list()
+    const gone = new Set(
+      [...listedBefore, ...namedByLedger].filter(
+        (studyId) => !this.catalog.some((entry) => entry.id === studyId),
+      ),
+    )
+    for (const studyId of gone) {
+      // A run of this window whose saved study is gone would otherwise be checkpointed into the library again.
+      if (this.recordOfStudy(studyId)) await this.forgetRemovedStudy(studyId)
+      this.activeArchive = withoutStudy(this.activeArchive, studyId)
+      this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
+      if (this.selection.studyId === studyId) this.selectNoStudy()
+    }
+  }
+
+  /**
    * Asks the learner in a native dialog whether the named study moves to the system Trash; while the dialog is open the removal is `confirming`.
    * Cancel, Escape and a dialog the host could not show all leave the study and the status line untouched.
    * @param entry - The catalog entry the dialog names.
@@ -10632,7 +10785,10 @@ export class StudyWorkspace {
    */
   private async askStudyRemoval(entry: StudyCatalogEntry): Promise<boolean> {
     const messages = studyRemovalMessages()
-    this.studyRemoval = { status: 'confirming', studyId: entry.id }
+    this.studyRemoval = this.withRemovalRequest({
+      status: 'confirming',
+      studyId: entry.id,
+    })
     this.publish()
     let confirmed = false
     try {
@@ -10661,6 +10817,7 @@ export class StudyWorkspace {
    */
   private async studyRemovalConfirmed(studyId: string): Promise<boolean> {
     if (this.refuseStudyRemoval(studyId)) return false
+    if (await this.refuseRemovalWithoutTrash(studyId)) return false
     const entry = this.catalog.find((candidate) => candidate.id === studyId)
     if (!entry || !(await this.askStudyRemoval(entry))) return false
     return !this.refuseStudyRemoval(studyId)
@@ -10670,11 +10827,16 @@ export class StudyWorkspace {
    * Removes one saved study on the learner's request from the Saved studies section: confirms in a native dialog, holds off this window's writers of that study, moves its files to the system Trash through {@link LearningLibrary.removeStudy} and reports the outcome in the message's `studyRemoval` field.
    * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines.
    * @param studyId - The entry the learner chose.
-   * @example await this.removeSavedStudy(message.studyId)
+   * @param removalRequest - The number the asking pane gave this request; every state of this removal echoes it.
+   * @example await this.removeSavedStudy(message.studyId, message.removalRequest)
    */
-  private async removeSavedStudy(studyId: string): Promise<void> {
+  private async removeSavedStudy(
+    studyId: string,
+    removalRequest?: number,
+  ): Promise<void> {
     // One removal at a time: a second request while the dialog is open or files are moving opens no second dialog.
     if (this.studyRemovalInProgress()) return
+    this.studyRemovalRequest = removalRequest
     if (!(await this.studyRemovalConfirmed(studyId))) return
     // A checkpoint of this study waits until its files are settled instead of skipping the study.
     let release!: () => void
@@ -10704,11 +10866,11 @@ export class StudyWorkspace {
    * @example await this.holdStudyAsMoving(studyId)
    */
   private async holdStudyAsMoving(studyId: string): Promise<void> {
-    this.studyRemoval = {
+    this.studyRemoval = this.withRemovalRequest({
       status: 'moving',
       studyId,
       text: studyRemovalMessages().moving,
-    }
+    })
     this.publish()
     try {
       await this.moveSavedStudy(studyId)
@@ -10848,14 +11010,14 @@ export class StudyWorkspace {
   }
 
   /**
-   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover; called by {@link moveSavedStudy}.
+   * Hands a confirmed study to {@link LearningLibrary.removeStudy} with the editor's Trash as the mover, and tells the service once whether the study left the library; called by {@link moveSavedStudy}.
    * For a run of this window the removal runs inside {@link StudyService.withEvidenceHeld}, so no explanation is written into the evidence directory while it moves.
    * @param studyId - The confirmed entry.
    * @param evidenceDirectory - The run's raw evidence when it moves with the study.
    * @returns What the removal changed on disk.
    * @example await this.moveStudyFiles(studyId, evidenceDirectory) // => { outcome: 'moved' }
    */
-  private moveStudyFiles(
+  private async moveStudyFiles(
     studyId: string,
     evidenceDirectory?: string,
   ): Promise<StudyRemoval> {
@@ -10868,25 +11030,17 @@ export class StudyWorkspace {
               recursive: true,
               useTrash: true,
             }),
-          ).then(
-            () => this.rememberTrashWorks(true),
-            (error: unknown) => {
-              this.rememberTrashWorks(false)
-              throw error
-            },
           ),
         evidenceDirectory,
       )
     const service = this.service,
       record = this.recordOfStudy(studyId)
-    return service && record
+    const removal = await (service && record
       ? service.withEvidenceHeld(record, remove)
-      : remove()
-  }
-
-  /** Tells the service whether this editor's Trash took the last path a removal gave it, so a full-library refusal names a removal only while one can work here. @example this.rememberTrashWorks(false) */
-  private rememberTrashWorks(works: boolean): void {
-    if (this.service) this.service.isStudyRemovalAvailable = works
+      : remove())
+    // The removal's outcome decides, not each path: a path the Trash rejected after it was already gone still left the library.
+    service?.recordStudyRemoval(removal.outcome === 'moved')
+    return removal
   }
 
   /** Waits for this window's writes of a study that were accepted before its removal was confirmed, so they settle before the first move: a checkpoint write, a Save learning replay and a playback position save. @example await this.settleStudyWrites(studyId) */
@@ -11000,6 +11154,34 @@ export class StudyWorkspace {
   }
 
   /**
+   * Retires the "did not start" line of the run the library refused when the library admits another study now; called after a removal by {@link settleMovedStudy} and after a change of the limit by {@link answerRefusedRunAfterLimitChange}.
+   * @param usage - The library's count and its limit, read by the caller.
+   * @returns The refused run that is answered, or `undefined` when no refused run waits or the library is still full or its limit invalid.
+   * @example if (this.answerRefusedRunIfRoom({ count: 63, limit: 64 })) this.publish()
+   */
+  private answerRefusedRunIfRoom(usage: {
+    count: number
+    limit?: number
+  }): { id: string } | undefined {
+    const answeredRun = libraryHasRoom(usage)
+      ? this.refusedRunAwaitingRoom()
+      : undefined
+    if (answeredRun) this.answeredRunRefusalId = answeredRun.id
+    return answeredRun
+  }
+
+  /**
+   * Follows a change of the Saved Study Limit setting: when the new limit leaves room, the run the full library refused is answered and its line goes; called by the configuration listener {@link initialize} installs.
+   * A limit that leaves the library full, an invalid limit and a library that cannot be read keep the line.
+   * @example void this.answerRefusedRunAfterLimitChange()
+   */
+  private async answerRefusedRunAfterLimitChange(): Promise<void> {
+    if (!this.library || !this.refusedRunAwaitingRoom()) return
+    const usage = await this.library.usage().catch(() => undefined)
+    if (usage && this.answerRefusedRunIfRoom(usage)) this.publish()
+  }
+
+  /**
    * Reports a completed removal with the room the library now has, read once; when that room answers a run the library refused, its "did not start" line is retired and the learner is told to ask for the run again.
    * Both admission refusals are answered by room under a valid limit, so no refusal reason is stored.
    * @param studyId - The study that was moved.
@@ -11016,11 +11198,9 @@ export class StudyWorkspace {
       count: this.catalog.length,
       limit: undefined,
     }))
-    const answeredRun =
-      libraryHasRoom(usage) && !isLockLeft
-        ? this.refusedRunAwaitingRoom()
-        : undefined
-    if (answeredRun) this.answeredRunRefusalId = answeredRun.id
+    const answeredRun = isLockLeft
+      ? undefined
+      : this.answerRefusedRunIfRoom(usage)
     this.settleStudyRemoval({
       status: 'moved',
       studyId,
@@ -11074,7 +11254,7 @@ export class StudyWorkspace {
 
   /**
    * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval} when nothing was chosen during the removal.
-   * A study the learner chooses while the neighbour is read wins and never finds the removed study still selected. A reader that is closing, or has closed, renders nothing and remembers the neighbour.
+   * A study the learner chooses while the neighbour is read wins and never finds the removed study still selected; so does a return to the current run or repository evidence opened meanwhile, which take a history request number of their own and move the reader off the removed study. A reader that is closing, or has closed, renders nothing and remembers the neighbour.
    * @param studyId - The study that was moved.
    * @param neighbours - The candidates from {@link removalNeighbours}, nearest first.
    * @example await this.showRemovalNeighbour(removedStudyId, [olderStudyId])
@@ -11083,11 +11263,15 @@ export class StudyWorkspace {
     studyId: string,
     neighbours: string[],
   ): Promise<void> {
-    // The number retires older reads; only an entry the learner chooses while the neighbour is read overtakes it.
-    this.historyRequest++
+    // The number retires older reads, and a later number says that the learner or an agent acted on the reader while the neighbour was read.
+    const request = ++this.historyRequest
     const choiceGeneration = this.studyChoices
     const shown = await this.firstReadableStudy(neighbours)
-    if (this.studyChoices !== choiceGeneration) {
+    // An item chosen on the removed study takes a number too and leaves the reader on that study; the neighbour is then still due.
+    const hasReaderMovedOn =
+      request !== this.historyRequest &&
+      (this.selection.studyId !== studyId || this.selection.follow)
+    if (this.studyChoices !== choiceGeneration || hasReaderMovedOn) {
       if (this.selection.studyId === studyId) await this.leaveRemovedSelection()
       return
     }

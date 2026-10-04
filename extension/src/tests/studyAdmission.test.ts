@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
@@ -26,6 +26,7 @@ const TRASH = systemTrashName()
  * @param limit - The Saved Study Limit both stores read.
  * @param fill - Which store already holds one entry before the run starts.
  * @param arrangeBeforeStart - Arranges a condition that holds only once the run starts, after the stores are filled: it may replace the limit setting or act on the service and its store.
+ * @param remoteName - `vscode.env.remoteName` of the window the service runs in; `wsl` models a WSL remote window, which has no Trash.
  * @example const started = await startRunWithStorage(context, 1, 'study')
  * @example const started = await startRunWithStorage(context, 1, 'study', ({ changeLimitSetting }) => changeLimitSetting(0))
  */
@@ -38,6 +39,7 @@ async function startRunWithStorage(
     store: RecordingStore
     changeLimitSetting(value: unknown): void
   }) => void = () => {},
+  remoteName?: string,
 ) {
   let service: StudyService | undefined, books: RepositoryBookStore | undefined
   context.after(async () => {
@@ -110,6 +112,7 @@ async function startRunWithStorage(
         apiVersion: 'test',
         commit: 'test',
       },
+      remoteName,
       build: {
         revision: 'controlled-runtime',
         dirty: false,
@@ -881,7 +884,7 @@ test('the next actions of a run refused on a full study library do not offer to 
   assert.deepEqual(state.nextActions, [])
 })
 
-// Value: protects=after this editor's Trash refused a removal, a refusal of a full library names only the remedy that can work here; fails_when=the refusal keeps telling the learner to delete a saved study in an editor that cannot move one to the Trash (0038-F9); why_new=the delete remedy was named unconditionally; seam=the service's removal-availability flag that the reader clears
+// Value: protects=after this editor's Trash refused a removal, a refusal of a full library names only the remedy that can work here; fails_when=the refusal keeps telling the learner to delete a saved study in an editor that cannot move one to the Trash (0038-F9); why_new=the delete remedy was named unconditionally; seam=the service's record of a removal that left its study in the library, which the reader makes
 test('a run refused on a full study library after the Trash refused a removal names only the limit setting', async (context) => {
   // Arrange / Act: the reader has reported that the Trash refused a removal in this session.
   const started = await startRunWithStorage(
@@ -889,13 +892,46 @@ test('a run refused on a full study library after the Trash refused a removal na
     1,
     'study',
     ({ service }) => {
-      service.isStudyRemovalAvailable = false
+      service.recordStudyRemoval(false)
     },
   )
   // Assert
   assert.equal(
     started.record.error?.message,
     `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this editor could not move a saved study to the ${TRASH} in this session. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.`,
+  )
+})
+
+// Value: protects=in a WSL remote window, whose files the editor cannot move to a Trash, the learner and the agent are never told to delete a saved study, and at the maximum are told the way out that exists; fails_when=the service starts with removal available there, so the first refusal names a deletion that cannot work, or the sentences claim a failed attempt that never happened (RT-7, DX-20, ER-12); why_new=the removal availability started as available in every window; seam=the environment's remote name, as `vscode.env.remoteName` gives it
+test('in a WSL remote window the first full-library refusal names no removal', async (context) => {
+  // Arrange: a WSL remote window with a library full at one study; no removal was tried in this session.
+  let changeLimit: (value: unknown) => void = () => {}
+  const started = await startRunWithStorage(
+    context,
+    1,
+    'study',
+    ({ changeLimitSetting }) => {
+      changeLimit = changeLimitSetting
+    },
+    'wsl',
+  )
+  await waitUntil(() => started.record.stopped, 'the end of the refused run')
+  // Act: the library is filled to the maximum of 256 studies and a second run is started under that limit.
+  for (let count = 1; count < 256; count++)
+    await writeFile(
+      join(started.directory, `${randomUUID()}_${randomUUID()}.study.v3.json`),
+      '{}',
+    )
+  changeLimit(256)
+  const atMaximum = await startEndedRun(started, 'at-the-maximum')
+  // Assert
+  assert.equal(
+    started.record.error?.message,
+    'Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another run; this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.',
+  )
+  assert.equal(
+    atMaximum.record.error?.message,
+    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: Saved studies lists the files of a chosen study for removal by hand; an editor agent never deletes files. Existing learning was kept.',
   )
 })
 

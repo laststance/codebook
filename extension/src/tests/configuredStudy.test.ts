@@ -36,6 +36,21 @@ test('configured offline history retains exact source, complete citations and ac
   assert.equal(JSON.stringify(archive), before)
 })
 
+// Value: protects=after a rollback, a study the newer release saved is refused with the step that helps and the assurance that it is kept; fails_when=its unknown format number ends in a schema error that names neither (RT-1, DX-15); why_new=no format number above the known ones was ever read; seam=none
+test('a study saved in a newer format is refused as saved by a newer Codebook, not with a schema error', () => {
+  // Arrange: a valid study whose format number is one above the highest this Codebook reads.
+  const study = createConfiguredStudy(),
+    savedByNewerCodebook = { ...study, version: 5 }
+  // Act
+  const decode = (): unknown =>
+    decodeConfiguredStudy(savedByNewerCodebook, study.workspaceKey)
+  // Assert
+  assert.throws(decode, {
+    message:
+      'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  })
+})
+
 test('preparation failure can retain configured intent without fabricating an article binding or observed pause', () => {
   // Arrange
   const archive = createConfiguredStudy()

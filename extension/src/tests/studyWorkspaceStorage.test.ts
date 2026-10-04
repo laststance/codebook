@@ -203,6 +203,68 @@ test('retiring before the next polling tick preserves the last accepted interpre
   }
 })
 
+// Value: protects=the saved time of a study, which the Saved studies list prints and sorts by, changes only when the study's content does; fails_when=retiring the reader writes every study of the editor session again although nothing changed, so each gets the time of the quit (NF-32); why_new=retirement was only tested for a study whose last state was not saved yet; seam=the reader's polling timer, which the test never fires
+test('retiring the reader leaves a study whose content did not change since its last save byte-identical, and still writes one that changed', async (context) => {
+  // Arrange: the poll never fires. A first run is stopped and saved by Retry storage; a second run is saved at its pause and explained afterwards, which no save has seen.
+  context.mock.timers.enable({ apis: ['setInterval'] })
+  const harness = await workspaceHarness(),
+    service = harness.service
+  try {
+    const startPausedRun = async (key: string) => {
+      const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: PROFILE_ID,
+        configuration: harness.configuration,
+        key,
+      })
+      const record = service.record(receipt)
+      await record.preparation
+      service.action({
+        instanceId: service.instanceId,
+        runId: receipt.runId,
+        action: 'repository-click',
+        key: `${key}-click`,
+      })
+      return record
+    }
+    const unchanged = await startPausedRun('unchanged')
+    await service.stop({ instanceId: service.instanceId, runId: unchanged.id })
+    const changed = await startPausedRun('changed')
+    await harness.reader.action('retry')
+    const directory = harness.reader.inspect().libraryDirectory!
+    const archiveOf = (runId: string): Promise<string> =>
+      readFile(
+        join(directory, `${service.instanceId}_${runId}.study.v3.json`),
+        'utf8',
+      )
+    const unchangedBefore = await archiveOf(unchanged.id),
+      changedBefore = await archiveOf(changed.id)
+    await service.explain({
+      instanceId: service.instanceId,
+      runId: changed.id,
+      key: 'explained-after-the-save',
+      snapshotUri: service.state(changed).participants.browser.snapshotUri!,
+      sourceHash: sha256('const nextTheme = "dark";\n'),
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The next theme is dark at this pause.',
+    })
+    // Act
+    await service.shutdown()
+    await harness.reader.retire(service)
+    // Assert
+    assert.equal(await archiveOf(unchanged.id), unchangedBefore)
+    const changedAfter = await archiveOf(changed.id)
+    assert.notEqual(changedAfter, changedBefore)
+    assert.equal(
+      changedAfter.includes('The next theme is dark at this pause.'),
+      true,
+    )
+  } finally {
+    await harness.close()
+    context.mock.timers.reset()
+  }
+})
+
 test('a successful runtime with a rejected final history write stays partial in both service and reader until Retry', async (context) => {
   // Arrange
   const harness = await workspaceHarness(),

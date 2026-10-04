@@ -94,9 +94,13 @@ import {
   explanationPlace,
   type ExplanationPlace,
 } from './utils/explanationPlace'
-import { fullLibraryMessage } from './utils/fullLibraryMessage'
+import {
+  fullLibraryMessage,
+  type StudyRemovalAvailability,
+} from './utils/fullLibraryMessage'
 import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
+import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
@@ -212,8 +216,8 @@ export class StudyService {
   readonly instanceId = randomUUID()
   readonly records = new Map<string, StudyRecord>()
   recordings?: RecordingStore
-  /** Cleared by {@link StudyWorkspace} once this editor's Trash refused to move a saved study in this session, so a full-library refusal stops naming a removal that cannot work here. */
-  isStudyRemovalAvailable = true
+  /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what its last removal told; written only by {@link recordStudyRemoval}. */
+  private removalAvailability: StudyRemovalAvailability
   playbackController?: PlaybackController
   presentationController?: Pick<
     StudyWorkspace,
@@ -258,12 +262,38 @@ export class StudyService {
     readonly storageRoot: string,
     private readonly now = Date.now,
   ) {
+    this.removalAvailability = initialStudyRemovalAvailability(
+      environment.remoteName,
+    )
     // MCP transports -> one service -> owned runtime. Transport close never replays input.
     this.maintenance = setInterval(
       () => this.maintain(),
       MAINTENANCE_INTERVAL_MS,
     )
     this.maintenance.unref()
+  }
+
+  /**
+   * Tells whether this window can remove a saved study, so every full-library refusal names a removal only while one can work here; read by the run admission and, through {@link StudyWorkspace}, by the study library and the recording store.
+   * @returns `no-trash` in a window without a Trash, where no removal is started; otherwise `available` until a removal left its study in the library, then `trash-refused` until a later removal moves one.
+   * @example
+   * service.studyRemovalAvailability // => 'available'
+   */
+  get studyRemovalAvailability(): StudyRemovalAvailability {
+    return this.removalAvailability
+  }
+
+  /**
+   * Records once per removal whether the study left the library; called by {@link StudyWorkspace} when {@link LearningLibrary.removeStudy} has settled.
+   * A path the Trash rejected inside a removal that still moved the study does not count against the Trash.
+   * @param hasStudyLeftLibrary - `true` for a removal that ended `moved`, `false` for `nothing-moved` and `partly-moved`.
+   * @example
+   * service.recordStudyRemoval(removal.outcome === 'moved')
+   */
+  recordStudyRemoval(hasStudyLeftLibrary: boolean): void {
+    this.removalAvailability = hasStudyLeftLibrary
+      ? 'available'
+      : 'trash-refused'
   }
 
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
@@ -2444,7 +2474,7 @@ export class StudyService {
     if (limit === undefined) return INVALID_SAVED_STUDY_LIMIT_MESSAGE
     return (await recordings.admitsStudy(`${this.instanceId}_${record.id}`))
       ? undefined
-      : fullLibraryMessage('run', limit, this.isStudyRemovalAvailable)
+      : fullLibraryMessage('run', limit, this.removalAvailability)
   }
 
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */

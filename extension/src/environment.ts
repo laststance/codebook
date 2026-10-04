@@ -199,6 +199,7 @@ export async function createEnvironment(
   return {
     workspace,
     host,
+    remoteName: vscode.env.remoteName,
     build,
     assertWorkspace(): void {
       if (requireWorkspace() !== workspace)

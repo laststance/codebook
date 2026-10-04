@@ -16,6 +16,7 @@ import type * as AtomicPrivateBytesModule from '../utils/atomicPrivateBytes'
 import { atomicPrivateWrite } from '../utils/atomicPrivateWrite'
 import type * as AtomicPrivateWriteModule from '../utils/atomicPrivateWrite'
 import { decodeLearnerProgress } from '../utils/decodeLearnerProgress'
+import { systemTrashName } from '../utils/systemTrashName'
 import { validateStudy } from '../utils/validateStudy'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -290,6 +291,102 @@ test('a configured sixteen-entry library rejects the seventeenth study without l
   assert.equal((await library.list()).length, 16)
   assert.equal((await library.readStudy(studies[0]!.id)).terminal, true)
   assert.equal((await readdir(directory)).includes('writer.lock'), false)
+})
+
+// Value: protects=after a rollback a study the newer release saved stays listed, counted and untouched, and its older file never stands in for it; fails_when=the listing skips a file whose format number it does not know and shows the older file as the study, or a read ends in a schema error (RT-1, DX-15, PC-4.1); why_new=the library knew only the suffixes of its own formats; seam=the library directory, into which the test writes files as a newer Codebook would name them
+test('a library that holds a study in a newer format beside its older file lists it as saved by a newer Codebook, counts it once and refuses to read it', async (context) => {
+  // Arrange: one study this Codebook saved, one study that also has a file in format 5, and one whose format 4 file holds format 6.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const library = new LearningLibrary(directory, workspaceKey, () => 16),
+    readable = capturedStudy(),
+    savedAgainByNewer = capturedStudy(),
+    newerInKnownFile = capturedStudy()
+  await library.saveStudy(readable)
+  await library.saveStudy(savedAgainByNewer)
+  const newerPath = join(directory, `${savedAgainByNewer.id}.study.v5.json`),
+    newerBytes = JSON.stringify({ ...savedAgainByNewer, version: 5 })
+  await writeFile(newerPath, newerBytes)
+  await writeFile(
+    join(directory, `${newerInKnownFile.id}.study.v4.json`),
+    JSON.stringify({ ...newerInKnownFile, version: 6 }),
+  )
+  const olderBytes = await readFile(
+    join(directory, `${savedAgainByNewer.id}.study.v3.json`),
+    'utf8',
+  )
+  // Act
+  const listed = await library.list(),
+    count = await library.savedStudyCount()
+  const readOfNewer = library.readStudy(savedAgainByNewer.id),
+    checkpointOfNewer = library.readCheckpoint(savedAgainByNewer.id),
+    readOfKnownFile = library.readStudy(newerInKnownFile.id)
+  // Assert
+  const newerSentence =
+    'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.'
+  await assert.rejects(readOfNewer, { message: newerSentence })
+  await assert.rejects(checkpointOfNewer, { message: newerSentence })
+  await assert.rejects(readOfKnownFile, {
+    message:
+      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  })
+  assert.equal(count, 3)
+  assert.deepEqual(
+    listed
+      .map((entry) => ({
+        id: entry.id,
+        format: entry.format,
+        metadata: entry.metadata,
+        outcome: entry.outcome,
+        note: entry.format === 'newer' ? entry.reason : undefined,
+      }))
+      .filter((entry) => entry.id !== newerInKnownFile.id)
+      .sort((left, right) => left.format.localeCompare(right.format)),
+    [
+      {
+        id: savedAgainByNewer.id,
+        format: 'newer',
+        metadata: 'unavailable',
+        outcome: 'Saved by a newer Codebook; kept as it is',
+        note: newerSentence,
+      },
+      {
+        id: readable.id,
+        format: 'v3',
+        metadata: 'validated',
+        outcome: 'pending-teardown',
+        note: undefined,
+      },
+    ],
+  )
+  assert.equal(await readFile(newerPath, 'utf8'), newerBytes)
+  assert.equal(
+    await readFile(
+      join(directory, `${savedAgainByNewer.id}.study.v3.json`),
+      'utf8',
+    ),
+    olderBytes,
+  )
+})
+
+// Value: protects=a learner whose editor could not move a saved study to the Trash is not told to delete one when a save is refused; fails_when=the library words its refusal without asking whether a removal can work in this window (B-M3, C-L3); why_new=only the run refusal read the removal availability; seam=the library's reader of the removal availability
+test('a save refused by a full library names no delete remedy after this editor’s Trash refused a removal', async (context) => {
+  // Arrange: a library full at one study, in a window whose last removal left its study in the library.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const library = new LearningLibrary(
+    directory,
+    workspaceKey,
+    () => 1,
+    () => 'trash-refused',
+  )
+  await library.saveStudy(capturedStudy())
+  // Act
+  const save = library.saveStudy(capturedStudy())
+  // Assert
+  await assert.rejects(save, {
+    message: `Study library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings, then retry storage; this editor could not move a saved study to the ${systemTrashName()} in this session. Existing learning was kept.`,
+  })
 })
 
 test('one thousand learner choices retain their bytes when new intent is rejected and identical retry still succeeds', async (context) => {

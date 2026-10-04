@@ -159,10 +159,17 @@ export const STUDY_REMOVAL_REFUSALS = {
     'Choose Overview or Live to leave Recording before deleting this study.',
   studyOpening: 'Wait for the chosen saved study to open.',
   unavailable: STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
+  newerFormat:
+    'This study was saved by a newer Codebook and is kept as it is. Update the extension, then delete it there.',
 } as const
+/** What Saved studies answers a delete request with in a window without a Trash; the reader lists the study's files with it and deletes nothing itself. */
+export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
+  "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh."
 // Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
 export const AGENT_STORAGE_DIRECTORY = 'agent'
 export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
+/** The setting that bounds the saved studies and recordings, as the editor's configuration events name it. */
+export const SAVED_STUDY_LIMIT_SETTING = 'codebook.savedStudyLimit'
 export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
 /** What the file name of every captured-source document starts with, so its tab reads apart from the editable workspace file of the same name. */
