@@ -508,6 +508,35 @@ test('a second start from the browser link is refused before the confirmation is
   }
 })
 
+// Value: protects=one update run per window when two entries start it before the first has finished its start checks; fails_when=the second start no longer joins the first while its checks still run, so both pass the running check and two chat requests and two watches begin; why_new=the second-start tests press again only once the first run is recorded as running; seam=none
+test('the update command and the browser link pressed while the first start is still in its start checks send one chat request and start one watch', async () => {
+  // Arrange: the freshness inspection of the first start's checks is held open.
+  const wiki = await openWikiWindow({ cancellable: [] })
+  try {
+    const inspection = wiki.hold('freshness-inspection')
+    const commandStart = wiki.runUpdateCommand()
+    await inspection.started
+
+    // Act: the browser link is confirmed before the held check answers.
+    const linkStart = wiki.clickUpdate()
+    inspection.release()
+    await Promise.all([commandStart, linkStart])
+
+    // Assert
+    assert.deepEqual(
+      wiki.chatRequests.map((request) => request.name),
+      ['workbench.action.chat.open'],
+    )
+    assert.deepEqual(wiki.progressTitles, [
+      'Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat)',
+    ])
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('updating before any Wiki exists says to generate one first instead of showing a file error', async () => {
   // Arrange
   const wiki = await openWikiWindow()

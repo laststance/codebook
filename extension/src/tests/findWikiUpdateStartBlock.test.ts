@@ -115,6 +115,39 @@ test('a published Wiki nobody touched does not block the start, and the learnerâ
   }
 })
 
+// Value: protects=the start check reads and names only files inside the Wiki folder; fails_when=an owned-file entry with `..` or an absolute path is hashed, so a file outside the Wiki is read and named to the learner as an edited page; why_new=the other start-block tests use manifests the real publisher wrote, which never list an outside path; seam=none
+test('a manifest that lists files outside the Wiki folder among its owned files does not make the start check read or name them', async () => {
+  // Arrange: a hand-written manifest whose owned files point beside the Wiki, once through `..` and once by an absolute path.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-outside-')),
+  )
+  const output = join(directory, 'wiki')
+  const outsideFile = join(directory, 'private-notes.txt')
+  await mkdir(output)
+  await writeFile(outsideFile, 'not a Wiki page')
+  await writeFile(
+    join(output, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      pages: [],
+      assets: [],
+      ownedFiles: {
+        '../private-notes.txt': '0'.repeat(64),
+        [outsideFile]: '0'.repeat(64),
+      },
+    }),
+  )
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(output)
+
+    // Assert
+    assert.equal(block, undefined)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('a Wiki published before file hashes were recorded does not block the start', async () => {
   // Arrange
   const output = join(

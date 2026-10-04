@@ -80,6 +80,31 @@ test('a stale storage lock that a second window takes over while this window is 
   assert.deepEqual(await readdir(directory), ['writer.lock'])
 })
 
+// Value: protects=a storage lock written on another machine is never taken over; fails_when=the takeover judges a lock by its process id alone, so a writer on another machine that shares the storage loses its lock to this window and both write; why_new=every other takeover test writes its lock with this machine’s host name or with none; seam=none
+test('a storage lock that names another machine stays in place although no process of its id runs here, and this window’s write is refused', async (context) => {
+  // Arrange: the lock of process 4242 on another machine; no process 4242 runs on this one.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '{"pid":4242,"hostname":"another-machine"}')
+  answerProcessProbes(context, [4242])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(
+    outcome,
+    'Error: Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+  )
+  assert.equal(writes, 0)
+  assert.equal(
+    await readFile(lockPath, 'utf8'),
+    '{"pid":4242,"hostname":"another-machine"}',
+  )
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
 // Value: protects=the release never removes a lock that another window holds; fails_when=the release unlinks whatever is at the lock path, so a window whose lock replaced this one loses it and a third writer gets in (Cycle 0044 review C-H1, the release); why_new=the release tests removed the lock file or put a directory in its place; seam=the held write, during which the lock file comes to name another writer
 test('releasing the storage lock leaves a lock that names another window by then in place', async (context) => {
   // Arrange

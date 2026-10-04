@@ -7,6 +7,12 @@ import {
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClock,
+  advanceClockUntil,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 
 test('the first presentation selection keeps a debugger preview of a cited workspace file and arranges the Study without restore', async () => {
   // Arrange
@@ -65,6 +71,45 @@ test('Open replay clicked while another window has the desktop focus opens the r
     await harness.close()
   }
 })
+
+// Value: protects=the answer of Open replay when the work window never gains the desktop focus; fails_when=the focus wait loses its ten-second bound or its refusal no longer names the window to click and the control to choose again; why_new=the only focus test gives the window its focus after 200 ms, and the full wait was seen once by hand; seam=none
+test(
+  'Open replay while another window keeps the desktop focus is refused after ten seconds with the window to click and the control to choose again',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.close()
+      harness.changeWindowFocus(false)
+
+      // Act: the 10 s wait for the work window's focus passes on a faked clock.
+      await harness.reader.openRecording(harness.studyId)
+      enableFakeClock(context)
+      await advanceClock(context, 9_000)
+      const readinessBeforeBound = harness.controller.state().readiness
+      const refusedAfterMs = await advanceClockUntil(
+        context,
+        () => harness.controller.state().readiness === 'failed',
+        10_000,
+      )
+      resetFakeClock(context)
+
+      // Assert
+      assert.equal(readinessBeforeBound, 'loading')
+      assert.notEqual(refusedAfterMs, undefined)
+      assert.equal(
+        harness.controller.state().reason,
+        'Error: Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for 10 s. Click in this editor window, then choose Open replay again.',
+      )
+      assert.equal(harness.summary.visible, false)
+    } finally {
+      resetFakeClock(context)
+      harness.changeWindowFocus(true)
+      await harness.close()
+    }
+  },
+)
 
 test('Open replay in Cursor beside a foreign preview tab that keeps the main editor from reporting focus names that tab and how to clear it', async () => {
   // Arrange

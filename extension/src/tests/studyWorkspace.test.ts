@@ -17,6 +17,7 @@ import {
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import {
+  advanceClock,
   advanceClockUntilSettled,
   enableFakeClock,
   resetFakeClock,
@@ -2070,6 +2071,54 @@ test('Show Variables finishes without an error when Run and Debug keeps showing 
     )
   } finally {
     resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard focus of whatever list the learner went on to after closing the reader during a Show Variables press; fails_when=the press runs its list commands although the reader is closing, so list.focusFirst and list.expand act on a list that is not Variables; why_new=every other Show Variables test keeps the reader open until the press ends; seam=none
+test('Show Variables on a reader that is closed while the press waits for Variables sends no list command', async (context) => {
+  // Arrange: a recorded stop whose values the host's Variables view never asks for, and an editor slow to stop the recorded session.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDisposal = (): void => {}
+  let closing: Promise<void> | undefined
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('shows-another-session')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const commandsBefore = harness.commands.length
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    enableFakeClock(context)
+    const press = harness.reader.action('show-variables').then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await advanceClock(context, 1_000)
+
+    // Act: the learner closes the reader one second into the press's wait for the scopes.
+    closing = harness.reader.close()
+    await advanceClockUntilSettled(context, press, 10_000)
+
+    // Assert
+    assert.equal(await press, 'completed')
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => command.startsWith('list.')),
+      [],
+    )
+  } finally {
+    resetFakeClock(context)
+    releaseDisposal()
+    await closing
     await harness.close()
   }
 })
