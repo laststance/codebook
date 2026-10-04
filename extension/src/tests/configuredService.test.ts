@@ -2999,6 +2999,66 @@ for (const order of ['reveal first', 'continue first'] as const)
     }
   })
 
+// Cycle 0045 (X7-E3.1): the "continue first" case above awaits the whole continuation before it reveals, so the reveal never met a pause that is reserved and not yet resumed; this case holds the continuation in that state.
+test('a reveal sent while the continuation of the same stop has reserved the pause and not yet resumed it answers STALE_PAUSE and never asks the reader', async (context) => {
+  // Arrange
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'reveal-during-continue',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    browser = service.state(record).participants.browser,
+    snapshotUri = browser.snapshotUri!
+  let readerAsked = false
+  runtime.reveal = async (): Promise<void> => {
+    readerAsked = true
+  }
+  let resume!: () => void
+  const resumeBarrier = new Promise<void>((resolve) => {
+    resume = resolve
+  })
+  // The continuation reserves the pause at once and resumes it only after its own checks, as the native coordinator does while it arms the next stop.
+  runtime.continue = async (_participant, pause): Promise<void> => {
+    if (!runtime.gate.reserve(pause))
+      throw new Error('conflict: stale or foreign pause')
+    await resumeBarrier
+    runtime.gate.invalidate()
+    runtime.status = 'running'
+  }
+  // Act
+  const continuing = service.continue(browser.continueArguments!)
+  await waitUntil(
+    () => runtime.gate.phase === 'resume-requested',
+    'the continuation reserved the pause',
+    1_000,
+  )
+  const revealOutcome = await service.reveal({ ...receipt, snapshotUri }).then(
+    () => 'revealed',
+    (error: unknown) =>
+      error instanceof StudyError
+        ? `${error.code}: ${error.message}`
+        : String(error),
+  )
+  const phaseAfterReveal = runtime.gate.phase
+  resume()
+  const continued = await continuing
+  // Assert
+  assert.equal(
+    revealOutcome,
+    'STALE_PAUSE: Reveal shows only the current pause, and this snapshot is no longer it: its continuation was accepted or the debugger moved on. Reveal a stop before continuing it; its captured source stays readable at sourceUri.',
+  )
+  assert.equal(phaseAfterReveal, 'resume-requested')
+  assert.equal(readerAsked, false)
+  assert.equal(continued.accepted, true)
+})
+
 test('a reveal whose pause the learner resumes in the debugger meanwhile answers STALE_PAUSE instead of an evidence failure', async (context) => {
   // Arrange
   const { service, configuration, runtimes } =
