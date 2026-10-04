@@ -17,6 +17,8 @@ import {
   type VitestListingReleaseFailure,
 } from '../utils/listVitestTestFiles'
 
+import { keptListingFolderOf } from './utils/keptListingFolderOf'
+
 /**
  * Writes a stand-in Vitest CLI that records how it was started, then behaves as the given script body.
  *
@@ -53,6 +55,7 @@ ${body}
 
 /**
  * Removes the private folder a listing kept because its release failed, so that a test of such a listing leaves nothing in the temporary directory, also when it fails.
+ * Only a listing folder directly in the temporary directory is deleted ({@link keptListingFolderOf}); a recorded start that names any other path removes nothing.
  * @param vitest - The stand-in Vitest of the test, whose recorded start names the folder.
  * @example
  * await removeKeptListingFolder(vitest) // the folder of '--json=/tmp/codebook-vitest-list-x/files.json' is gone
@@ -61,8 +64,8 @@ async function removeKeptListingFolder(
   vitest: Awaited<ReturnType<typeof stubVitest>>,
 ): Promise<void> {
   const started = await vitest.started().catch(() => undefined)
-  const output = started?.argv[2]?.slice('--json='.length)
-  if (output) await rm(dirname(output), { recursive: true, force: true })
+  const folder = keptListingFolderOf(started?.argv ?? [], tmpdir())
+  if (folder) await rm(folder, { recursive: true, force: true })
 }
 
 test('listing runs the owned Vitest in the repository with the run environment and returns the files it would select', async () => {

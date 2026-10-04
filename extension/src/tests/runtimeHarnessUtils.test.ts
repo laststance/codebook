@@ -16,6 +16,7 @@ import {
   FakeRelativePattern,
 } from './utils/fakeFileWatching'
 import { openFakeWikiPage } from './utils/fakeWikiPage'
+import { keptListingFolderOf } from './utils/keptListingFolderOf'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
@@ -197,6 +198,60 @@ test('a held wait that the test releases ends as a timeout although its run is n
   // Assert
   await assert.rejects(waiting, /Timed out waiting for source-bound CDP stop/)
   assert.equal(looks, 3)
+})
+
+// Value: protects=the working directory and every other folder of the machine against the cleanup of a listing test; fails_when=the cleanup takes the third recorded argument as the listing's output whatever it is, so with another argument order the folder of a filter (for `src/a.test.ts` that is `.`) is deleted with everything in it; why_new=local CodeRabbit review of Cycle 0045, finding 5 (`removeKeptListingFolder` in listVitestTestFiles.test.ts); seam=none
+test('the cleanup of a kept Vitest listing names only a listing folder directly in the temporary directory, wherever the output argument stands', () => {
+  // Arrange: the recorded starts of four stand-in Vitest runs.
+  const starts = {
+    outputThird: [
+      'list',
+      '--filesOnly',
+      '--json=/tmp/codebook-vitest-list-Ab12Cd/files.json',
+      'src/a.test.ts',
+    ],
+    outputLast: [
+      'list',
+      '--filesOnly',
+      'src/a.test.ts',
+      '--json=/tmp/codebook-vitest-list-Ab12Cd/files.json',
+    ],
+    outputInAnotherFolder: [
+      'list',
+      '--filesOnly',
+      '--json=/home/learner/project/files.json',
+    ],
+    outputInANestedFolder: [
+      'list',
+      '--filesOnly',
+      '--json=/tmp/other/codebook-vitest-list-Ab12Cd/files.json',
+    ],
+    noOutput: ['list', '--filesOnly', 'src/a.test.ts'],
+  }
+
+  // Act
+  const folders = {
+    outputThird: keptListingFolderOf(starts.outputThird, '/tmp'),
+    outputLast: keptListingFolderOf(starts.outputLast, '/tmp'),
+    outputInAnotherFolder: keptListingFolderOf(
+      starts.outputInAnotherFolder,
+      '/tmp',
+    ),
+    outputInANestedFolder: keptListingFolderOf(
+      starts.outputInANestedFolder,
+      '/tmp',
+    ),
+    noOutput: keptListingFolderOf(starts.noOutput, '/tmp'),
+  }
+
+  // Assert
+  assert.deepEqual(folders, {
+    outputThird: '/tmp/codebook-vitest-list-Ab12Cd',
+    outputLast: '/tmp/codebook-vitest-list-Ab12Cd',
+    outputInAnotherFolder: undefined,
+    outputInANestedFolder: undefined,
+    noOutput: undefined,
+  })
 })
 
 // Value: protects=a page test that looks for an element by a selector the fake page cannot evaluate failing instead of passing on the wrong element; fails_when=a bracket group that is neither `[attribute]` nor `[attribute=value]` is dropped from the selector, so it matches every element and the first one is returned; why_new=Cycle 0045 D-L4 (the fake said such selectors throw and matched everything); seam=none
