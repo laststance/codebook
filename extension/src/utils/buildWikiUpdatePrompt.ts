@@ -1,6 +1,44 @@
 import { MS_PER_MINUTE, WIKI_UPDATE_SHOWN_PATH_LIMIT } from '../constants'
 
 /**
+ * Words the condition under which a published manifest matches the source, for a folder with and without a Git repository; called by {@link buildWikiUpdatePrompt} for the sentence that names what Codebook accepts.
+ * @param hasGitRepository - Whether the opened folder is inside a Git repository; without one no revision and no added-file condition can hold.
+ * @returns
+ * - With a repository: the hashes, the revision and the added files
+ * - Without one: the hashes only, and the request to record no revision
+ * @example
+ * describeMatchingManifest(false) // => 'every includedSources sha256 equals the file on disk. This folder has no Git repository: record no revision and do not create one.'
+ */
+function describeMatchingManifest(hasGitRepository: boolean): string {
+  return hasGitRepository
+    ? 'every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths.'
+    : 'every includedSources sha256 equals the file on disk. This folder has no Git repository: record no revision and do not create one.'
+}
+
+/**
+ * Names the added source files the Wiki neither indexes nor excludes right now; called by {@link buildWikiUpdatePrompt}, which puts the sentence into the request only when there is such a file.
+ * @param uncoveredPaths - The added files; the first {@link WIKI_UPDATE_SHOWN_PATH_LIMIT} are named, the rest counted.
+ * @returns
+ * - No such file: no sentence
+ * - Otherwise: the one sentence, in the singular for one file
+ * @example
+ * describeUncoveredPaths(['src/new.ts']) // => ['Right now this added file is neither indexed nor excluded: src/new.ts.']
+ * describeUncoveredPaths([])             // => []
+ */
+function describeUncoveredPaths(uncoveredPaths: string[]): string[] {
+  const uncoveredCount = uncoveredPaths.length
+  const namedPaths = uncoveredPaths
+    .slice(0, WIKI_UPDATE_SHOWN_PATH_LIMIT)
+    .join(', ')
+  const moreCount = uncoveredCount - WIKI_UPDATE_SHOWN_PATH_LIMIT
+  return uncoveredCount > 0
+    ? [
+        `Right now ${uncoveredCount === 1 ? 'this added file is' : 'these added files are'} neither indexed nor excluded: ${namedPaths}${moreCount > 0 ? ` and ${moreCount} more` : ''}.`,
+      ]
+    : []
+}
+
+/**
  * Writes the request an editor agent gets for a Wiki update, including what Codebook will accept as the update's success.
  *
  * Why: the agent has no channel back to Codebook except the published manifest, so it must be told the conditions it is judged by, and only those that can hold in this folder: publish through the installed publisher, within the bound, with a manifest that matches the source at that moment. A folder without a Git repository cannot record a commit, and asking for one invites the agent to create a repository in the learner's project.
@@ -27,24 +65,11 @@ export function buildWikiUpdatePrompt(options: {
   uncoveredPaths: string[]
 }): string {
   const minutes = Math.round(options.timeoutMs / MS_PER_MINUTE)
-  const uncoveredCount = options.uncoveredPaths.length
-  const namedPaths = options.uncoveredPaths
-    .slice(0, WIKI_UPDATE_SHOWN_PATH_LIMIT)
-    .join(', ')
-  const moreCount = uncoveredCount - WIKI_UPDATE_SHOWN_PATH_LIMIT
   return [
     `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(options.manifestPath)} and the installed Codebook skill.`,
     'Reinspect current source, preserve manual files and the last usable Wiki on failure.',
-    `Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} and the published manifest matches the source at that moment: ${
-      options.hasGitRepository
-        ? 'every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths.'
-        : 'every includedSources sha256 equals the file on disk. This folder has no Git repository: record no revision and do not create one.'
-    }`,
-    ...(uncoveredCount > 0
-      ? [
-          `Right now ${uncoveredCount === 1 ? 'this added file is' : 'these added files are'} neither indexed nor excluded: ${namedPaths}${moreCount > 0 ? ` and ${moreCount} more` : ''}.`,
-        ]
-      : []),
+    `Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} and the published manifest matches the source at that moment: ${describeMatchingManifest(options.hasGitRepository)}`,
+    ...describeUncoveredPaths(options.uncoveredPaths),
     'If you cannot publish, say why in your reply and stop.',
     ...(options.isReplyRead
       ? ['Then report changed pages and citations.']
