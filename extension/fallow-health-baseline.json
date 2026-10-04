@@ -11,6 +11,9 @@
       },
       "crap_critical": {
         "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
       }
     },
     "scripts/study-reading-pose-qa.mjs": {
@@ -140,16 +143,16 @@
     },
     "src/configuredBrowserRun.ts": {
       "complexity_critical": {
-        "count": 6
+        "count": 4
       },
       "crap_critical": {
-        "count": 13
+        "count": 11
       },
       "crap_high": {
-        "count": 9
+        "count": 3
       },
       "crap_moderate": {
-        "count": 16
+        "count": 7
       }
     },
     "src/cursorMcpBridge.ts": {
@@ -166,9 +169,6 @@
       },
       "crap_critical": {
         "count": 6
-      },
-      "crap_high": {
-        "count": 1
       },
       "crap_moderate": {
         "count": 4
@@ -190,7 +190,7 @@
     },
     "src/environment.ts": {
       "crap_high": {
-        "count": 4
+        "count": 3
       },
       "crap_moderate": {
         "count": 1
@@ -201,13 +201,13 @@
         "count": 3
       },
       "crap_critical": {
-        "count": 9
+        "count": 8
       },
       "crap_high": {
-        "count": 3
+        "count": 1
       },
       "crap_moderate": {
-        "count": 3
+        "count": 2
       }
     },
     "src/learningLibrary.ts": {
@@ -215,7 +215,7 @@
         "count": 4
       },
       "crap_moderate": {
-        "count": 5
+        "count": 3
       }
     },
     "src/nativeNodeTestBootstrap.ts": {
@@ -277,13 +277,13 @@
         "count": 2
       },
       "crap_critical": {
-        "count": 3
+        "count": 2
       },
       "crap_high": {
-        "count": 2
+        "count": 1
       },
       "crap_moderate": {
-        "count": 2
+        "count": 1
       }
     },
     "src/playbackController.ts": {
@@ -305,13 +305,13 @@
         "count": 2
       },
       "crap_critical": {
-        "count": 5
+        "count": 4
       },
       "crap_high": {
         "count": 4
       },
       "crap_moderate": {
-        "count": 4
+        "count": 5
       }
     },
     "src/replayDebugAdapter.ts": {
@@ -322,9 +322,6 @@
         "count": 2
       },
       "crap_high": {
-        "count": 1
-      },
-      "crap_moderate": {
         "count": 1
       }
     },
@@ -337,11 +334,8 @@
       "crap_critical": {
         "count": 1
       },
-      "crap_high": {
-        "count": 2
-      },
       "crap_moderate": {
-        "count": 8
+        "count": 5
       }
     },
     "src/repositoryBook.ts": {
@@ -407,7 +401,7 @@
         "count": 3
       },
       "crap_high": {
-        "count": 3
+        "count": 2
       },
       "crap_moderate": {
         "count": 8
@@ -506,7 +500,7 @@
         "count": 2
       },
       "crap_moderate": {
-        "count": 5
+        "count": 3
       }
     },
     "src/studyModel.ts": {
@@ -522,10 +516,10 @@
         "count": 57
       },
       "crap_high": {
-        "count": 40
+        "count": 32
       },
       "crap_moderate": {
-        "count": 39
+        "count": 27
       }
     },
     "src/ui/repositoryHtml.ts": {
@@ -550,10 +544,10 @@
         "count": 11
       },
       "crap_high": {
-        "count": 6
+        "count": 9
       },
       "crap_moderate": {
-        "count": 6
+        "count": 11
       }
     },
     "src/utils/answerDeepWikiQuestion.ts": {
@@ -641,14 +635,6 @@
         "count": 1
       }
     },
-    "src/utils/classifyWikiUpdateEnd.ts": {
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_high": {
-        "count": 1
-      }
-    },
     "src/utils/configuredDomExpression.ts": {
       "complexity_critical": {
         "count": 1
@@ -660,18 +646,15 @@
         "count": 1
       }
     },
-    "src/utils/createBindingLineRule.ts": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
     "src/utils/createBundleVerifier.ts": {
       "crap_critical": {
         "count": 1
       },
-      "crap_high": {
+      "crap_moderate": {
         "count": 1
-      },
+      }
+    },
+    "src/utils/createChromeExecutableLookup.ts": {
       "crap_moderate": {
         "count": 1
       }
@@ -694,14 +677,6 @@
         "count": 1
       }
     },
-    "src/utils/describeCitationMismatch.ts": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
     "src/utils/describeStudy.ts": {
       "crap_critical": {
         "count": 1
@@ -715,44 +690,12 @@
         "count": 1
       }
     },
-    "src/utils/describeWikiUpdate.ts": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "src/utils/detectWikiPublishConflicts.ts": {
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
-      }
-    },
     "src/utils/extractDevelopmentModule.ts": {
       "complexity_critical": {
         "count": 2
       },
       "crap_critical": {
         "count": 2
-      }
-    },
-    "src/utils/findUnmappedDeclaredStop.ts": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "src/utils/findWikiUpdateStartBlock.ts": {
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_high": {
-        "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
       }
     },
     "src/utils/focusWebview.ts": {
@@ -766,10 +709,7 @@
       }
     },
     "src/utils/inspectDeepWikiFreshness.ts": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
+      "crap_high": {
         "count": 1
       }
     },
@@ -794,31 +734,10 @@
     },
     "src/utils/installWikiUpdateStatus.ts": {
       "complexity_critical": {
-        "count": 1
+        "count": 2
       },
       "crap_critical": {
         "count": 3
-      },
-      "crap_high": {
-        "count": 2
-      },
-      "crap_moderate": {
-        "count": 5
-      }
-    },
-    "src/utils/isCollapsedEditorLayout.ts": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "src/utils/isCommentAt.ts": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "src/utils/isPausedAtSnapshot.ts": {
-      "crap_high": {
-        "count": 1
       }
     },
     "src/utils/isProportionalEditorLayout.ts": {
@@ -829,23 +748,12 @@
         "count": 1
       }
     },
-    "src/utils/isSavedBindingReceiptAtStop.ts": {
-      "crap_high": {
-        "count": 1
-      }
-    },
     "src/utils/isSourcePosition.ts": {
       "crap_high": {
         "count": 1
       }
     },
     "src/utils/launchDevelopmentServer.ts": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      },
       "crap_high": {
         "count": 3
       },
@@ -866,14 +774,6 @@
         "count": 1
       }
     },
-    "src/utils/listWikiCandidates.ts": {
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_high": {
-        "count": 1
-      }
-    },
     "src/utils/matchesWikiExclusion.ts": {
       "crap_moderate": {
         "count": 1
@@ -883,11 +783,6 @@
       "crap_high": {
         "count": 2
       },
-      "crap_moderate": {
-        "count": 2
-      }
-    },
-    "src/utils/pausedIntervalBoundary.ts": {
       "crap_moderate": {
         "count": 1
       }
@@ -914,11 +809,6 @@
       },
       "crap_moderate": {
         "count": 2
-      }
-    },
-    "src/utils/prepareRepositoryStudy.ts": {
-      "crap_moderate": {
-        "count": 1
       }
     },
     "src/utils/projectConfiguredStudy.ts": {
@@ -1004,16 +894,6 @@
         "count": 1
       }
     },
-    "src/utils/readWikiOwnedPaths.ts": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "src/utils/readWikiWatchStamp.ts": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
     "src/utils/refreshCursorMcpCatalog.ts": {
       "complexity_critical": {
         "count": 2
@@ -1030,11 +910,6 @@
     },
     "src/utils/requestCursorWikiText.ts": {
       "crap_critical": {
-        "count": 1
-      }
-    },
-    "src/utils/resolveChromeExecutable.ts": {
-      "crap_high": {
         "count": 1
       }
     },
@@ -1072,18 +947,10 @@
     "src/utils/runCursorWikiUpdate.ts": {
       "crap_high": {
         "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
       }
     },
     "src/utils/savedStudyLimit.ts": {
       "crap_moderate": {
-        "count": 1
-      }
-    },
-    "src/utils/selectActiveWikiCandidate.ts": {
-      "crap_high": {
         "count": 1
       }
     },
@@ -1102,24 +969,8 @@
         "count": 1
       }
     },
-    "src/utils/selfDeclaredInspectionHint.ts": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
     "src/utils/sourceExclusion.ts": {
       "crap_critical": {
-        "count": 1
-      }
-    },
-    "src/utils/sourceMapMappedPositions.ts": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      },
-      "crap_high": {
         "count": 1
       }
     },
@@ -1177,50 +1028,28 @@
       "crap_critical": {
         "count": 1
       }
-    },
-    "src/utils/waitForWikiPublish.ts": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "src/utils/wikiOutputLabel.ts": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "src/utils/wikiUpdateNotice.ts": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "src/utils/wikiUpdateRun.ts": {
-      "crap_moderate": {
-        "count": 1
-      }
     }
   },
   "runtime_coverage_findings": [],
   "target_keys": [
     "src/studyModel.ts:dead code",
-    "src/recordingSchemas.ts:dead code",
-    "src/utils/captureStudy.ts:complexity",
     "src/utils/projectRecording.ts:high impact",
+    "src/utils/captureStudy.ts:complexity",
     "skills/codebook/render-wiki.mjs:complexity",
+    "src/utils/projectConfiguredStudy.ts:complexity",
     "src/service.ts:complexity",
-    "src/recordingStore.ts:complexity",
     "src/utils/validateConfiguredStudyEvidence.ts:complexity",
     "src/utils/validateRecordingContext.ts:high impact",
-    "src/resources.ts:complexity",
-    "src/deepWikiReader.ts:complexity",
+    "src/recordingStore.ts:complexity",
     "src/utils/decodeConfiguredStudy.ts:high impact",
-    "src/utils/projectConfiguredStudy.ts:complexity",
+    "src/resources.ts:complexity",
+    "src/recordingSchemas.ts:dead code",
     "src/ui/studyHtml.ts:high impact",
     "src/utils/answerDeepWikiQuestion.ts:complexity",
     "src/ownedNodeTestRun.ts:complexity",
+    "src/utils/readRecordingResource.ts:complexity",
     "src/playbackController.ts:complexity",
+    "src/deepWikiReader.ts:complexity",
     "skills/codebook/publish-wiki.mjs:complexity",
     "src/runtimeSupport/utils/installWebviewFocus.ts:high impact",
     "src/nodeTestHistoryStore.ts:complexity",
@@ -1228,20 +1057,17 @@
     "skills/codebook/render-wiki-diagrams.mjs:complexity",
     "src/utils/configuredDomExpression.ts:high impact",
     "src/utils/validateRepositoryBook.ts:complexity",
-    "src/utils/readRecordingResource.ts:complexity",
-    "src/studyWorkspace.ts:complexity",
     "src/runtimeSupport/hostBrowser.ts:complexity",
-    "src/configuredBrowserRun.ts:complexity",
+    "src/studyWorkspace.ts:complexity",
+    "src/extension.ts:complexity",
     "src/utils/resolveNextClientManifest.ts:complexity",
     "src/utils/retainEditorReadingPosition.ts:untested risk",
+    "src/configuredBrowserRun.ts:complexity",
     "scripts/utils/inspectBundle.mjs:complexity",
     "src/ui/repositoryHtml.ts:complexity",
     "scripts/utils/runPackageCommand.mjs:complexity",
-    "src/utils/describeWikiUpdate.ts:complexity",
-    "src/utils/sourceMapMappedPositions.ts:complexity",
-    "src/ownedRepositoryBreakpoint.ts:complexity",
-    "src/utils/waitForWikiPublish.ts:complexity",
     "src/cursorSkillDeployment.ts:complexity",
+    "src/ownedRepositoryBreakpoint.ts:complexity",
     "scripts/utils/readBuildIdentity.mjs:complexity",
     "src/replayDebugAdapter.ts:complexity",
     "scripts/study-bootstrap-qa.mjs:complexity"
