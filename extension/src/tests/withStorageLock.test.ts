@@ -1,24 +1,35 @@
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
-import {
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import fsPromises, {
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
 
-/** Creates an empty storage directory that is removed with the test. @example const directory = await storageDirectory(context) */
+/** Creates an empty storage directory that is removed with the test, and returns its canonical path, which is the one the lock file is named by. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'codebook-storage-lock-'))
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-storage-lock-')),
+  )
   context.after(() => rm(directory, { recursive: true, force: true }))
   return directory
+}
+
+/** Makes a file or folder look as if it was last changed that long ago, as one is that a killed window left behind. @example await leaveUntouchedFor(lockPath, 60_000) */
+async function leaveUntouchedFor(path: string, ageMs: number): Promise<void> {
+  const lastChanged = new Date(Date.now() - ageMs)
+  await utimes(path, lastChanged, lastChanged)
 }
 
 /**
@@ -39,12 +50,13 @@ function answerProcessProbes(
   })
 }
 
-/** Runs one write under the storage lock and says how it ended, in words a test can compare. @example await writeUnderLock(directory, async () => {}) // => 'written' */
+/** Runs one write under the storage lock and says how it ended, in words a test can compare; `identity` is the machine and boot of the window that writes, this process's own when left out. @example await writeUnderLock(directory, async () => {}) // => 'written' */
 function writeUnderLock(
   directory: string,
   write: () => Promise<void>,
+  identity?: StorageOwnerIdentity,
 ): Promise<string> {
-  return withStorageLock(directory, write).then(
+  return withStorageLock(directory, write, identity).then(
     () => 'written',
     (error: unknown) => String(error),
   )
@@ -70,7 +82,7 @@ test('a stale storage lock that a second window takes over while this window is 
   // Assert
   assert.equal(
     outcome,
-    'Error: Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
   )
   assert.equal(writes, 0)
   assert.deepEqual(JSON.parse(await readFile(lockPath, 'utf8')), {
@@ -95,7 +107,7 @@ test('a storage lock that names another machine stays in place although no proce
   // Assert
   assert.equal(
     outcome,
-    'Error: Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
   )
   assert.equal(writes, 0)
   assert.equal(
@@ -143,7 +155,7 @@ test('while another running window is taking a stale storage lock over, this win
   // Assert
   assert.equal(
     outcome,
-    'Error: Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
   )
   assert.equal(writes, 0)
   assert.deepEqual(JSON.parse(await readFile(lockPath, 'utf8')), {
@@ -181,4 +193,394 @@ test('a takeover claim left by a window that was killed in the middle of a takeo
   assert.equal(outcome, 'written')
   assert.equal(writes, 1)
   assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a lock a writer left when the machine restarted is taken over although another process got its id, also the new extension host itself; fails_when=the lock is judged by its process id alone, so every later write is refused until the file is removed by hand (Cycle 0044 row RT-11); why_new=every takeover test used a process id that no longer exists; seam=the injected boot identity and the process probe
+test('a lock left before the last restart is taken over although its process id is in use again', async (context) => {
+  // Arrange: the lock of process 4242, written under the boot before the restart; a process with id 4242 runs again.
+  const directory = await storageDirectory(context)
+  await writeFile(
+    join(directory, 'writer.lock'),
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-before-the-restart"}}',
+  )
+  answerProcessProbes(context, [])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      writes += 1
+    },
+    { hostname: 'workstation', boot: { id: 'boot-after-the-restart' } },
+  )
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a boot time that two clocks moved by seconds never makes a running writer's lock stale; fails_when=any difference between the recorded and the current boot time counts as a restart, so a clock correction lets a second window write beside the first (engineering review ER-20); why_new=the boot identity is new; seam=the injected boot identity and the process probe
+test('a lock whose boot time differs by less than the tolerance is not stale', async (context) => {
+  // Arrange: the lock of running process 4242, whose recorded boot time is 59 s before the one this window computes.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(
+    lockPath,
+    '{"pid":4242,"hostname":"workstation","boot":{"startedAtMs":1790000000000}}',
+  )
+  answerProcessProbes(context, [])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      writes += 1
+    },
+    { hostname: 'workstation', boot: { startedAtMs: 1_790_000_059_000 } },
+  )
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(
+    await readFile(lockPath, 'utf8'),
+    '{"pid":4242,"hostname":"workstation","boot":{"startedAtMs":1790000000000}}',
+  )
+})
+
+// Value: protects=on a system without a kernel boot id a lock from before the restart is still taken over; fails_when=boot times are never compared, so there a reused process id keeps the lock for good; why_new=the boot identity is new; seam=the injected boot identity and the process probe
+test('a lock whose boot time lies before this boot by more than the tolerance is taken over although its process id is in use again', async (context) => {
+  // Arrange: the lock of process 4242, whose recorded boot time is 61 s before the one this window computes; a process with id 4242 runs.
+  const directory = await storageDirectory(context)
+  await writeFile(
+    join(directory, 'writer.lock'),
+    '{"pid":4242,"hostname":"workstation","boot":{"startedAtMs":1790000000000}}',
+  )
+  answerProcessProbes(context, [])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      writes += 1
+    },
+    { hostname: 'workstation', boot: { startedAtMs: 1_790_000_061_000 } },
+  )
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a lock file a killed writer created and never wrote does not refuse every later write; fails_when=a lock without a readable owner is never stale (Cycle 0044 row RT-11); why_new=no test arranged an empty lock; seam=the lock file's modification time
+test('an empty lock file left by a killed writer is taken over', async (context) => {
+  // Arrange: a lock file of zero bytes that nothing has touched for a minute.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  await leaveUntouchedFor(lockPath, 60_000)
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a lock file that a writer of an earlier build created an instant ago and is about to write is never taken from it; fails_when=every empty lock counts as abandoned, whatever its age; why_new=the takeover of an empty lock is new; seam=none
+test('an empty lock file created a moment ago stays in place, and this window’s write is refused', async (context) => {
+  // Arrange: a lock file of zero bytes created just now.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, '')
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(await readFile(lockPath, 'utf8'), '')
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
+// Value: protects=a learner or an agent who is refused by a storage lock learns which file holds it, and a caller that waits for another window still recognises the refusal; fails_when=the sentence names no file (Cycle 0044 row RT-11) or the refusal loses its EEXIST cause, which the Cursor catalog retry reads; why_new=the sentence named no file; seam=the process probe
+test('the refusal of a locked storage names the lock file', async (context) => {
+  // Arrange: the lock of running process 4242 of this machine.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(lockPath, JSON.stringify({ pid: 4242, hostname: hostname() }))
+  answerProcessProbes(context, [])
+  // Act
+  const refusal: unknown = await withStorageLock(
+    directory,
+    async () => {},
+  ).catch((error: unknown) => error)
+  // Assert
+  assert.ok(refusal instanceof Error)
+  assert.equal(
+    refusal.message,
+    `Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.ok(refusal.cause instanceof Error && 'code' in refusal.cause)
+  assert.equal(refusal.cause.code, 'EEXIST')
+})
+
+// Value: protects=a storage lock never exists without its owner, so a writer killed at any moment leaves a lock that can be judged; fails_when=the lock file is created first and written afterwards (Cycle 0044 row RT-11), or its record lacks the machine or the boot; why_new=the lock was created empty; seam=the hard link that gives the prepared file the lock's name
+test('a storage lock is placed with its owner already written, naming the process, the machine and the boot of its writer', async (context) => {
+  // Arrange: every placement of a lock is observed at the moment the prepared file gets the lock's name.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const linkBefore = fsPromises.link
+  const placements: { prepared: string; wasLockPresent: boolean }[] = []
+  context.mock.method(
+    fsPromises,
+    'link',
+    async (...input: Parameters<typeof linkBefore>) => {
+      placements.push({
+        prepared: readFileSync(input[0], 'utf8'),
+        wasLockPresent: existsSync(lockPath),
+      })
+      return linkBefore(...input)
+    },
+  )
+  let lockDuringWrite = ''
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      lockDuringWrite = await readFile(lockPath, 'utf8')
+    },
+    { hostname: 'workstation', machineId: 'machine-a', boot: { id: 'boot-1' } },
+  )
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.deepEqual(placements, [
+    {
+      prepared: `{"pid":${process.pid},"hostname":"workstation","machineId":"machine-a","boot":{"id":"boot-1"}}`,
+      wasLockPresent: false,
+    },
+  ])
+  assert.equal(
+    lockDuringWrite,
+    `{"pid":${process.pid},"hostname":"workstation","machineId":"machine-a","boot":{"id":"boot-1"}}`,
+  )
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=learning storage on a file system without hard links can still be written; fails_when=a refused hard link fails every write instead of creating the lock in place; why_new=the lock is placed with a hard link since Cycle 0045; seam=the hard link, which the file system refuses
+test('storage on a file system that refuses hard links still takes its lock, writes and releases it', async (context) => {
+  // Arrange
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  context.mock.method(fsPromises, 'link', async () => {
+    throw Object.assign(new Error('EPERM: operation not permitted, link'), {
+      code: 'EPERM',
+    })
+  })
+  let lockDuringWrite = ''
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      lockDuringWrite = await readFile(lockPath, 'utf8')
+    },
+    { hostname: 'workstation', boot: { id: 'boot-1' } },
+  )
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(
+    lockDuringWrite,
+    `{"pid":${process.pid},"hostname":"workstation","boot":{"id":"boot-1"}}`,
+  )
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a lock a killed editor left is taken over although the machine's host name changed since, as it does on macOS with the network; fails_when=the machine is identified by its host name alone (Cycle 0044 row AD-6); why_new=every takeover test wrote its lock with the current host name; seam=the injected machine identity and the process probe
+test('a lock written under another host name by the same machine is taken over when its process is gone', async (context) => {
+  // Arrange: the lock of exited process 4242, written by this machine while it had another host name.
+  const directory = await storageDirectory(context)
+  await writeFile(
+    join(directory, 'writer.lock'),
+    '{"pid":4242,"hostname":"laptop.home-network","machineId":"machine-a","boot":{"id":"boot-1"}}',
+  )
+  answerProcessProbes(context, [4242])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      writes += 1
+    },
+    {
+      hostname: 'laptop.office-network',
+      machineId: 'machine-a',
+      boot: { id: 'boot-1' },
+    },
+  )
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=two machines that share storage and happen to have one host name never take each other's lock; fails_when=an equal host name counts as the same machine although the machine ids differ; why_new=the machine id is new; seam=the injected machine identity and the process probe
+test('a lock of another machine that has the same host name stays in place, and this window’s write is refused', async (context) => {
+  // Arrange: the lock of process 4242 on another machine named like this one; no process 4242 runs here, and the boots differ.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  await writeFile(
+    lockPath,
+    '{"pid":4242,"hostname":"workstation","machineId":"machine-b","boot":{"id":"boot-of-machine-b"}}',
+  )
+  answerProcessProbes(context, [4242])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      writes += 1
+    },
+    {
+      hostname: 'workstation',
+      machineId: 'machine-a',
+      boot: { id: 'boot-of-machine-a' },
+    },
+  )
+  // Assert
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(
+    await readFile(lockPath, 'utf8'),
+    '{"pid":4242,"hostname":"workstation","machineId":"machine-b","boot":{"id":"boot-of-machine-b"}}',
+  )
+})
+
+// Value: protects=the release never removes the lock a window of an earlier build has just created and not yet written; fails_when=the release unlinks whatever it cannot read at the lock path (Cycle 0044 row AD-6), so that window's lock is gone and a third writer gets in; why_new=the release tests put a readable lock or a directory in the lock's place; seam=the held write, during which the lock file is replaced by an empty one
+test("releasing leaves another window's lock whose owner is not written yet", async (context) => {
+  // Arrange
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  // Act: while this window writes, its lock is replaced by a lock another window has created and not yet written.
+  const outcome = await writeUnderLock(directory, async () => {
+    await rm(lockPath)
+    await writeFile(lockPath, '')
+  })
+  const lockAfterRelease = await readFile(lockPath, 'utf8').catch(
+    () => 'no lock file',
+  )
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(lockAfterRelease, '')
+})
+
+// Value: protects=the folder a window prepared for its takeover claim and never renamed, because it was killed, does not stay in the storage for good; fails_when=only claims inside the claim directory are swept (Cycle 0044 row AD-6); why_new=the takeover tests arranged placed claims only; seam=the process probe
+test('a prepared takeover claim left by a killed window is removed by the next takeover', async (context) => {
+  // Arrange: the lock of exited process 4242, and the claim exited process 4243 prepared beside it and never placed.
+  const directory = await storageDirectory(context)
+  const preparedClaim = join(directory, 'writer.lock.takeover-claim-of-4243')
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: 4242, hostname: hostname() }),
+  )
+  await mkdir(preparedClaim)
+  await writeFile(
+    join(preparedClaim, 'claim-of-4243'),
+    JSON.stringify({ pid: 4243, hostname: hostname() }),
+  )
+  answerProcessProbes(context, [4242, 4243])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=the empty folder of a window that was killed between creating its claim folder and writing its owner is removed too; fails_when=a prepared claim without an owner file is never swept (Cycle 0044 row RF-1); why_new=nothing removed a prepared claim; seam=the folder's modification time and the process probe
+test('a claim a killed window prepared but never placed is removed by the next takeover', async (context) => {
+  // Arrange: the lock of exited process 4242, and an empty prepared claim folder that nothing has touched for a minute.
+  const directory = await storageDirectory(context)
+  const preparedClaim = join(directory, 'writer.lock.takeover-never-written')
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: 4242, hostname: hostname() }),
+  )
+  await mkdir(preparedClaim)
+  await leaveUntouchedFor(preparedClaim, 60_000)
+  answerProcessProbes(context, [4242])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=the sweep of prepared claims never removes the folder a running window is filling right now; fails_when=every prepared claim without an owner file is removed, whatever its age or its owner; why_new=the sweep is new; seam=the process probe
+test('the prepared takeover claims of windows that are still running stay in place while this window takes a stale lock over', async (context) => {
+  // Arrange: the lock of exited process 4242, a claim folder created just now, and the prepared claim of running process 4343.
+  const directory = await storageDirectory(context)
+  const claimOfRunningWindow = join(
+    directory,
+    'writer.lock.takeover-claim-of-4343',
+  )
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: 4242, hostname: hostname() }),
+  )
+  await mkdir(join(directory, 'writer.lock.takeover-created-just-now'))
+  await mkdir(claimOfRunningWindow)
+  await writeFile(
+    join(claimOfRunningWindow, 'claim-of-4343'),
+    JSON.stringify({ pid: 4343, hostname: hostname() }),
+  )
+  answerProcessProbes(context, [4242])
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.deepEqual((await readdir(directory)).sort(), [
+    'writer.lock.takeover-claim-of-4343',
+    'writer.lock.takeover-created-just-now',
+  ])
+  assert.deepEqual(await readdir(claimOfRunningWindow), ['claim-of-4343'])
+})
+
+// Value: protects=the file a window wrote for its lock and never gave the lock's name, because it was killed, does not stay in the storage for good; fails_when=prepared lock files are never swept, or only when a stale lock happens to be taken over; why_new=the lock is prepared in a file of its own since Cycle 0045; seam=the process probe
+test('a lock file a killed window prepared but never placed is removed by the next write, and one of a running window stays', async (context) => {
+  // Arrange: no lock; the prepared lock of exited process 4243 and the prepared lock of running process 4343.
+  const directory = await storageDirectory(context)
+  await writeFile(
+    join(directory, 'writer.lock.pending-of-4243'),
+    JSON.stringify({ pid: 4243, hostname: hostname() }),
+  )
+  await writeFile(
+    join(directory, 'writer.lock.pending-of-4343'),
+    JSON.stringify({ pid: 4343, hostname: hostname() }),
+  )
+  answerProcessProbes(context, [4243])
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.deepEqual(await readdir(directory), ['writer.lock.pending-of-4343'])
 })

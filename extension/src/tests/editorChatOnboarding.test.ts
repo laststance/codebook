@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type * as ExtensionModule from '../extension'
+import { currentStorageOwner } from '../utils/currentStorageOwner'
 
 import { loadModule } from './utils/loadModule'
 
@@ -80,7 +81,7 @@ async function boundary(
     ) {}
   }
   const vscode = {
-    env: { appName },
+    env: { appName, machineId: 'machine-of-this-editor' },
     commands: {
       registerCommand(name: string, action: Command) {
         commands.set(name, action)
@@ -556,6 +557,36 @@ test('stopping Cursor while its Node resolves never registers a retired server d
     assert.deepEqual(editor.removals, ['codebook-instance-1'])
   } finally {
     release()
+    await editor.loaded.deactivate()
+  }
+})
+
+// Value: protects=another window can tell this window's connection descriptor from one a crashed window left, also on storage two machines share and after a restart; fails_when=the descriptor names a process id and no machine (Cycle 0044 row C-L1), so its owner is judged by a process id of whatever machine reads it; why_new=the descriptor's content beyond the instance was never asserted; seam=the editor boundary, whose machine id the test names
+test('the connection descriptor of a started agent server names its process, its machine and its boot', async (context) => {
+  // Arrange: a local editor window whose machine id is "machine-of-this-editor".
+  const editor = await boundary(context, 'Visual Studio Code')
+  try {
+    // Act
+    const descriptorPath = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!()
+
+    // Assert
+    assert.ok(typeof descriptorPath === 'string')
+    const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'))
+    assert.deepEqual(descriptor, {
+      url: 'http://127.0.0.1/instance-1/mcp',
+      token: 'token-instance-1',
+      instanceId: 'instance-1',
+      workspace: editor.directory,
+      apiVersion: '1.6',
+      pid: process.pid,
+      hostname: hostname(),
+      machineId: 'machine-of-this-editor',
+      boot: (await currentStorageOwner()).boot,
+    })
+    await editor.commands.get('codebook.stopAgentServer')!()
+  } finally {
     await editor.loaded.deactivate()
   }
 })

@@ -7,6 +7,7 @@ import fsPromises, {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   symlink,
@@ -138,11 +139,25 @@ async function filesBelow(directory: string): Promise<[string, string][]> {
   )
 }
 
-/** Puts a directory in the place of the storage lock file while the lock is held, so the lock cannot be released and stays, as a lock does whose file the editor may not delete. @example await blockLockRelease(storage.directory) */
-async function blockLockRelease(directory: string): Promise<void> {
-  const lockPath = join(directory, 'writer.lock')
-  await rm(lockPath)
-  await mkdir(join(lockPath, 'kept'), { recursive: true })
+/** Makes the removal of the storage lock file fail while the lock is held, so the lock cannot be released and stays, as a lock does whose file the editor may not delete. @example await blockLockRelease(context, storage.directory) */
+async function blockLockRelease(
+  context: TestContext,
+  directory: string,
+): Promise<void> {
+  const lockPath = join(await realpath(directory), 'writer.lock')
+  const unlinkBefore = fsPromises.unlink
+  context.mock.method(
+    fsPromises,
+    'unlink',
+    async (...input: Parameters<typeof unlinkBefore>) => {
+      if (input[0] === lockPath)
+        throw Object.assign(
+          new Error(`EPERM: operation not permitted, unlink '${lockPath}'`),
+          { code: 'EPERM' },
+        )
+      return unlinkBefore(...input)
+    },
+  )
 }
 
 // Value: protects=a removal moves exactly the study's files, the recording first and the archive last, and makes room in a full library; fails_when=a step is dropped, reordered or touches another study; why_new=no removal existed; seam=the injected mover, which keeps the library free of the editor API
@@ -411,8 +426,7 @@ test('a removal while another writer holds the storage lock moves nothing and na
   // Assert
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
-    cause:
-      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    cause: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
   })
   assert.deepEqual(storage.moved, [])
   assert.deepEqual(
@@ -581,13 +595,13 @@ test('a removal that moved nothing and cannot write the ledger back says that no
 
 // Value: protects=a removal that moved every file is reported as moved even when its storage lock cannot be released afterwards; fails_when=the lock's rejection is read as "nothing moved"; why_new=no test made the release fail after the steps ran; seam=the injected mover, which removes the lock file with its last move
 test('a removal whose storage lock cannot be released after every file moved is reported as moved and names the lock failure', async (context) => {
-  // Arrange: the Trash takes every file and a directory takes the lock file's place with the last one, so the release fails.
+  // Arrange: the Trash takes every file and the lock file can no longer be removed from the last one on, so the release fails.
   const storage = await removalStorage(context, 4)
   const study = await saveStudyWithRecording(storage)
   const moverThatLosesTheLock: StudyMover = async (path) => {
     await storage.moveToTrash(path)
     if (path.endsWith('.study.v3.json'))
-      await blockLockRelease(storage.directory)
+      await blockLockRelease(context, storage.directory)
   }
   // Act
   const removal = await storage.library.removeStudy(
@@ -614,7 +628,7 @@ test('a removal that stopped at a refused sidecar and then cannot release its st
   const study = await saveStudyWithRecording(storage)
   const moverThatLosesTheLock: StudyMover = async (path) => {
     if (!path.endsWith('.study.meta.v3.json')) return storage.moveToTrash(path)
-    await blockLockRelease(storage.directory)
+    await blockLockRelease(context, storage.directory)
     throw new Error('Trash refused the sidecar')
   }
   // Act
@@ -640,7 +654,7 @@ test('a removal the Trash refused at its first file and that cannot release its 
   const storage = await removalStorage(context, 4)
   const study = await saveStudy(storage)
   const moverThatLosesTheLock: StudyMover = async () => {
-    await blockLockRelease(storage.directory)
+    await blockLockRelease(context, storage.directory)
     throw new Error('Trash refused the sidecar')
   }
   // Act
@@ -1198,8 +1212,7 @@ test('a storage lock of a process that still runs on this machine keeps refusing
   // Assert
   assert.deepEqual(removal, {
     outcome: 'nothing-moved',
-    cause:
-      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    cause: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
   })
   assert.deepEqual(storage.moved, [])
 })
@@ -1223,7 +1236,7 @@ test('a removal whose storage lock file is already gone at its release is report
   assert.deepEqual(removal, { outcome: 'moved' })
 })
 
-// Value: protects=a lock that a removal could not release keeps refusing later writes with the lock sentence, as the reader's storage line says; fails_when=a later write ignores the lock that stayed; why_new=every unreleased-lock test deleted the lock file (0040-D12c); seam=the injected mover, which puts a directory in the lock file's place
+// Value: protects=a lock that a removal could not release keeps refusing later writes with the lock sentence, as the reader's storage line says; fails_when=a later write ignores the lock that stayed; why_new=every unreleased-lock test deleted the lock file (0040-D12c); seam=the injected mover, after whose last move the lock file can no longer be removed
 test('after a removal could not release its storage lock and the lock stayed, a later study save is refused with the lock sentence', async (context) => {
   // Arrange: the removal completes while the lock cannot be released.
   const storage = await removalStorage(context, 4)
@@ -1231,7 +1244,7 @@ test('after a removal could not release its storage lock and the lock stayed, a 
   const moverThatKeepsTheLock: StudyMover = async (path) => {
     await storage.moveToTrash(path)
     if (path.endsWith('.study.v3.json'))
-      await blockLockRelease(storage.directory)
+      await blockLockRelease(context, storage.directory)
   }
   const removal = await storage.library.removeStudy(
     removed.id,
@@ -1242,7 +1255,6 @@ test('after a removal could not release its storage lock and the lock stayed, a 
   // Assert
   assert.equal(removal.outcome, 'moved')
   await assert.rejects(save, {
-    message:
-      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    message: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(storage.directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
   })
 })
