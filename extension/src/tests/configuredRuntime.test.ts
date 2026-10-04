@@ -7,6 +7,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { thrownMessage } from '../utils/thrownMessage'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { retainLiveRun } from './utils/retainLiveRun'
 import { retainStoppedRun } from './utils/retainStoppedRun'
 
 test('internal browser setup stops do not consume the configured learning pause or prevent its later completion', async (context) => {
@@ -942,6 +943,62 @@ test('renewing a held pause for every replay frame adds no events to the run jou
 
   // Assert
   assert.equal(eventsAfterRenewals, eventsBeforeRenewals)
+})
+
+// Cycle 0045 (R2-F3): the browser twin; red while the run's status became paused-browser when the debugger announced the stop, before the stop's image and observation were committed.
+test('a read of the run resource made between a browser pause and its committed observation does not answer a paused state without the observation', async (context) => {
+  // Arrange: the debugger has announced the browser stop and the run is inspecting it; the renderer has not confirmed the stop's image yet.
+  const { run, holdCapture, directory } =
+    await configuredRuntimeHarness(context)
+  const image = holdCapture('paused-browser')
+  await run.prepare()
+  const { service, record } = retainLiveRun(context, run, directory)
+  /** Reads the run resource as an agent does and keeps what tells a pause it can act on from one it cannot. */
+  const readRunState = async () => {
+    const resource = await readResource(service, service.uri(record.id))
+    assert.ok('text' in resource)
+    const state = JSON.parse(resource.text)
+    return {
+      state: state.state,
+      runtimeState: state.runtimeState,
+      nextActions: state.nextActions,
+      observations: state.observations.length,
+      browserPhase: state.participants.browser.phase,
+      browserResumable: state.participants.browser.resumable,
+      continuationOffered:
+        state.participants.browser.continueArguments !== undefined,
+    }
+  }
+  run.action('one', 'repository-click')
+  await image.started
+  // Act: the run resource is read in that window, and again once the observation is committed.
+  const betweenPauseAndObservation = await readRunState()
+  image.release()
+  await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'browser stop committed',
+  )
+  const afterTheObservation = await readRunState()
+  await run.stop()
+  // Assert
+  assert.deepEqual(betweenPauseAndObservation, {
+    state: 'acting',
+    runtimeState: 'acting',
+    nextActions: ['stop', 'read-history'],
+    observations: 0,
+    browserPhase: 'running',
+    browserResumable: false,
+    continuationOffered: false,
+  })
+  assert.deepEqual(afterTheObservation, {
+    state: 'paused-browser',
+    runtimeState: 'paused-browser',
+    nextActions: ['continue-browser', 'stop', 'read-history'],
+    observations: 1,
+    browserPhase: 'paused',
+    browserResumable: true,
+    continuationOffered: true,
+  })
 })
 
 // Cycle 0045 (SM-2): red while a deadline counted as the pause hold when its length equalled the hold's; the run is loaded with an active bound of 300 s, the hold's own length, so only what the deadline is for can tell the two apart.

@@ -1582,7 +1582,11 @@ export class StudyService {
         sourceUri: snapshotUri && `${snapshotUri}/source/typescript`,
         itemId: snapshot?.itemId,
         actionId: snapshot?.actionId,
-        phase: participant?.phase,
+        // A debugger that has stopped is reported as paused only with its committed observation: while the stop is still inspected, the participant reads as running, like the run's state.
+        phase:
+          participant?.phase === 'paused' && !snapshot
+            ? 'running'
+            : participant?.phase,
         resumable,
         continueArguments,
       }

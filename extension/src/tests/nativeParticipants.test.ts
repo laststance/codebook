@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { z } from 'zod'
+
 import {
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
@@ -12,6 +14,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { pausedIntervalBoundary } from '../utils/pausedIntervalBoundary'
 
 import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
+import { retainLiveRun } from './utils/retainLiveRun'
 import { retainStoppedRun } from './utils/retainStoppedRun'
 
 const pauseReady = async (
@@ -3434,6 +3437,86 @@ test('the runtime’s own instrumentation pause and resume in the browser while 
       instrumentationResume.sequence < intervalEnd.sequence,
     true,
   )
+})
+
+/** Reads the run resource as an agent does and keeps what tells a pause it can act on from one it cannot. @example (await readRunState(service, record)).state // 'acting' */
+const readRunState = async (
+  service: ReturnType<typeof retainLiveRun>['service'],
+  record: ReturnType<typeof retainLiveRun>['record'],
+) => {
+  const resource = await readResource(service, service.uri(record.id))
+  assert.ok('text' in resource)
+  const run = z
+    .object({
+      state: z.string(),
+      runtimeState: z.string(),
+      nextActions: z.array(z.string()),
+      observations: z.array(z.object({ participant: z.string() })),
+      participants: z.object({
+        server: z.object({
+          phase: z.string(),
+          resumable: z.boolean(),
+          snapshotUri: z.string().optional(),
+          continueArguments: z.object({}).optional(),
+        }),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  return {
+    state: run.state,
+    runtimeState: run.runtimeState,
+    nextActions: run.nextActions,
+    observations: run.observations.map(
+      (observation) => observation.participant,
+    ),
+    serverPhase: run.participants.server.phase,
+    serverResumable: run.participants.server.resumable,
+    serverSnapshotListed: run.participants.server.snapshotUri !== undefined,
+    continuationOffered:
+      run.participants.server.continueArguments !== undefined,
+  }
+}
+
+// Cycle 0045 (R2-F3): red while the run's status became paused-server when the debugger announced the stop, before the stop was inspected; a read in that window (seen in Cursor, second native round) answered a pause with no observation and no continuation.
+test('a read of the run resource made between a server pause and its committed observation does not answer a paused state without the observation', async (context) => {
+  // Arrange: the debugger has announced the server stop and the run is inspecting it; the adapter has not answered the binding read yet.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  const { service, record } = retainLiveRun(
+    context,
+    harness.run,
+    harness.directory,
+  )
+  const bindingRead = harness.holdBindingLookup()
+  harness.run.action('once', 'repository-click')
+  await bindingRead.started
+  // Act: the run resource is read in that window, and again once the observation is committed.
+  const betweenPauseAndObservation = await readRunState(service, record)
+  bindingRead.release()
+  await pauseReady(harness, 'server')
+  const afterTheObservation = await readRunState(service, record)
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(betweenPauseAndObservation, {
+    state: 'acting',
+    runtimeState: 'acting',
+    nextActions: ['stop', 'read-history'],
+    observations: [],
+    serverPhase: 'running',
+    serverResumable: false,
+    serverSnapshotListed: false,
+    continuationOffered: false,
+  })
+  assert.deepEqual(afterTheObservation, {
+    state: 'paused-server',
+    runtimeState: 'paused-server',
+    nextActions: ['continue-server', 'stop', 'read-history'],
+    observations: ['server'],
+    serverPhase: 'paused',
+    serverResumable: true,
+    serverSnapshotListed: true,
+    continuationOffered: true,
+  })
 })
 
 // Cycle 0045 (X7-C2.3): red while the end of any owned debug session ended a held stop's paused interval in the replay, also of a child session the stop is not paused in.

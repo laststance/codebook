@@ -2029,7 +2029,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         success: response.success,
       })
   }
-  /** Reserves stops in declared order, retaining per-session generations across participant transitions. @example run.onEvent(selected, stopped) */
+  /** Reserves stops in declared order, retaining per-session generations across participant transitions. An accepted stop starts the pause hold and its inspection; the status becomes `paused-<participant>` only when {@link inspect} commits the observation. @example run.onEvent(selected, stopped) */
   onEvent(session: vscode.DebugSession, event: DebugProtocol.Event): void {
     const name = this.participantName(session)
     if (this.cleaning || !name) return
@@ -2117,7 +2117,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       }
       this.acceptedStop = true
       const pause = participant.gate.stop(session.id, body.threadId!)
-      this.status = `paused-${name}`
+      // The run's status stays what it was until inspect has committed the observation: a read in between must not answer a pause it can neither read nor continue.
       this.holdPauseDeadline()
       this.evidence.record('dap.stopped', {
         participant: name,
@@ -2581,7 +2581,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       : undefined
   }
 
-  /** Seals actual configured values and renderer pixels only while the exact source-bound pause remains current. @example await this.inspect(pause) */
+  /**
+   * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
+   * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
+   * @param pause - The identity the pause gate gave the accepted stop.
+   * @throws The failure that ends the run when the pause changed, its binding or frame is refused, or the evidence cannot be saved; a failed image or required inspection is thrown after the snapshot was committed, so its facts stay readable.
+   * @example
+   * ```ts
+   * this.track(this.inspect(pause))
+   * ```
+   */
   private async inspect(pause: PauseIdentity): Promise<void> {
     const stop = this.stops[this.stopIndex]!,
       participant = this.participants[stop.participant],
@@ -2819,6 +2828,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate(true)
       throw inspectionFailure
     }
+    // The paused state is published in one step with the observation (above) and the continuation it offers (the ready snapshot), so no read sees one without the others.
+    this.status = phase
     this.snapshotReady = true
     await this.persist()
   }
