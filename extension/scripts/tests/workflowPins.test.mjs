@@ -282,6 +282,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/isProcessGone.test.ts',
     'extension/src/tests/isSameStorageMachine.test.ts',
     'extension/src/tests/readBootIdentity.test.ts',
+    'extension/src/tests/utils/answerKernelBootId.ts',
     'extension/src/tests/withStorageLock.test.ts',
     'extension/src/utils/claimStorageLockTakeover.ts',
     'extension/src/utils/currentStorageOwner.ts',
@@ -315,6 +316,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.equal(settings.includes('runs-on: windows-latest'), true)
   assert.equal(settings.includes('name: Storage lock tests on Windows'), true)
   assert.deepEqual(runCommandsOf(workflow), [
+    'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
     'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js',
   ])

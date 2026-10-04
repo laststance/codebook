@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { hostname } from 'node:os'
+import os, { hostname } from 'node:os'
 import { test } from 'node:test'
 
 import {
@@ -7,19 +7,38 @@ import {
   useEditorMachineId,
 } from '../utils/currentStorageOwner'
 
+import { answerKernelBootId } from './utils/answerKernelBootId'
+
 // Value: protects=a storage lock and a connection descriptor of a local window name the machine by the editor's id, which does not change with the network; fails_when=the id the editor gave is not recorded, so a lock is judged by the host name alone (Cycle 0044 row AD-6); why_new=the owner identity is new; seam=none
 test('a local window records the editor’s machine id with the host name and the boot of this process', async (context) => {
-  // Arrange
+  // Arrange: a local window of the editor that calls this machine "machine-a", under the kernel boot "boot-of-this-test".
   context.after(() => useEditorMachineId(undefined, undefined))
+  answerKernelBootId(context, 'boot-of-this-test')
   useEditorMachineId('machine-a', undefined)
   // Act
-  const owner = await currentStorageOwner(),
-    ownerAskedAgain = await currentStorageOwner()
-  // Assert: the boot is read once, so every lock of this process names the same one.
-  assert.equal(owner.hostname, hostname())
-  assert.equal(owner.machineId, 'machine-a')
-  assert.ok(owner.boot !== undefined)
-  assert.deepEqual(ownerAskedAgain, owner)
+  const owner = await currentStorageOwner()
+  // Assert
+  assert.deepEqual(owner, {
+    hostname: hostname(),
+    machineId: 'machine-a',
+    boot: { id: 'boot-of-this-test' },
+  })
+})
+
+// Value: protects=two windows of one machine without a kernel boot id never take each other's locks because the clock was corrected between their starts; fails_when=a window keeps the boot time it computed first, so after a correction of more than the tolerance it disagrees for good with every window opened later, and each takes the other's live lock for one of an earlier boot; why_new=the boot identity is new (engineering review ER-20); seam=the kernel boot id file, the clock and the uptime
+test('on a system without a kernel boot id the boot time is computed again at every look and follows a corrected clock', async (context) => {
+  // Arrange: no kernel boot id; the machine has been up for 600 s and the clock reads 1 790 000 600 000 ms.
+  answerKernelBootId(context, undefined)
+  let clockMs = 1_790_000_600_000
+  context.mock.method(Date, 'now', () => clockMs)
+  context.mock.method(os, 'uptime', () => 600)
+  // Act: the window names its boot, the clock is set forward by 90 s, and the window names its boot again.
+  const beforeTheCorrection = await currentStorageOwner()
+  clockMs += 90_000
+  const afterTheCorrection = await currentStorageOwner()
+  // Assert
+  assert.deepEqual(beforeTheCorrection.boot, { startedAtMs: 1_790_000_000_000 })
+  assert.deepEqual(afterTheCorrection.boot, { startedAtMs: 1_790_000_090_000 })
 })
 
 // Value: protects=two hosts that share a home directory and are opened from one computer never count as one machine; fails_when=a remote window records the editor's machine id, which names the computer the editor's interface runs on, so the lock of a writer on the other host looks like one of an earlier boot and is taken over; why_new=the owner identity is new; seam=none

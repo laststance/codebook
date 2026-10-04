@@ -6,7 +6,7 @@ import { KERNEL_BOOT_ID_PATH, MILLISECONDS_PER_SECOND } from '../constants'
 import type { BootIdentity } from './readRecordedOwner'
 
 /**
- * Reads which start of this machine the process runs under, so that a storage owner recorded before a restart is recognised although its process id is in use again; called once per process by {@link currentStorageOwner}.
+ * Reads which start of this machine the process runs under, so that a storage owner recorded before a restart is recognised although its process id is in use again; called by {@link currentStorageOwner} each time an owner is recorded or judged.
  * The kernel's boot id needs no clock. Where the system publishes none, the boot time is the wall clock minus the uptime, which a clock correction moves; {@link isFromEarlierBoot} compares it with a tolerance.
  * @param kernelBootIdPath - The file that holds the kernel's boot id; tests name one of their own.
  * @returns

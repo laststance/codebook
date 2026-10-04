@@ -10,12 +10,14 @@ import fsPromises, {
   utimes,
   writeFile,
 } from 'node:fs/promises'
-import { hostname, tmpdir } from 'node:os'
+import os, { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
+
+import { answerKernelBootId } from './utils/answerKernelBootId'
 
 /** Creates an empty storage directory that is removed with the test, and returns its canonical path, which is the one the lock file is named by. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
@@ -247,6 +249,40 @@ test('a lock whose boot time differs by less than the tolerance is not stale', a
   assert.equal(
     await readFile(lockPath, 'utf8'),
     '{"pid":4242,"hostname":"workstation","boot":{"startedAtMs":1790000000000}}',
+  )
+})
+
+// Value: protects=two running windows of one machine without a kernel boot id never take each other's locks after the clock was corrected; fails_when=a window judges by the boot time it computed at its first write, so a lock placed after a correction of more than the tolerance looks like one of an earlier boot and is taken from its running writer; why_new=the boot identity is new (engineering review ER-20); seam=the kernel boot id file, the clock, the uptime and the process probe
+test('a clock corrected since this window first wrote does not make a running window’s lock one of an earlier boot', async (context) => {
+  // Arrange: no kernel boot id; the machine has been up for 600 s. This window writes once, then the clock is set back by 90 s, and running process 4242 takes the lock, recording the boot time the corrected clock gives.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  answerKernelBootId(context, undefined)
+  answerProcessProbes(context, [])
+  let clockMs = 1_790_000_600_000
+  context.mock.method(Date, 'now', () => clockMs)
+  context.mock.method(os, 'uptime', () => 600)
+  const firstWrite = await writeUnderLock(directory, async () => {})
+  clockMs -= 90_000
+  await writeFile(
+    lockPath,
+    `{"pid":4242,"hostname":${JSON.stringify(hostname())},"boot":{"startedAtMs":1789999910000}}`,
+  )
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(firstWrite, 'written')
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(
+    await readFile(lockPath, 'utf8'),
+    `{"pid":4242,"hostname":${JSON.stringify(hostname())},"boot":{"startedAtMs":1789999910000}}`,
   )
 })
 

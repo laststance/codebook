@@ -128,6 +128,25 @@ test('the evidence of a window that crashed before the last restart moves with i
   assert.equal(inUse, false)
 })
 
+// Value: protects=the evidence of a running window is never moved to the Trash because the clock was corrected while the window ran; fails_when=a descriptor, which lives as long as its window, is judged by a boot time, so a correction of more than the tolerance makes its owner one of an earlier boot; why_new=the descriptor records its boot since Cycle 0045; seam=the injected boot identity and the process probe
+test('the evidence of a running window stays in use elsewhere although the boot time its descriptor recorded lies before the one computed now', async (context) => {
+  // Arrange: the descriptor of running process 4242 of this machine, written before the clock was set forward by 90 s.
+  const agent = await agentStorage(context)
+  await writeFile(
+    agent.descriptor,
+    '{"pid":4242,"hostname":"workstation","boot":{"startedAtMs":1790000000000}}',
+  )
+  context.mock.method(process, 'kill', (): true => true)
+  // Act
+  const inUse = await evidenceInUseElsewhere(
+    agent.evidenceDirectory,
+    'own-instance',
+    { hostname: 'workstation', boot: { startedAtMs: 1_790_000_090_000 } },
+  )
+  // Assert
+  assert.equal(inUse, true)
+})
+
 // Value: protects=a descriptor of an earlier build, which names a process id and no machine, is never taken for one of this machine; fails_when=a missing host counts as this machine, so on shared storage a running window's evidence is moved; why_new=the machine is judged since Cycle 0045; seam=a real exited process
 test('the evidence of a window whose connection descriptor names a process and no machine stays in use elsewhere', async (context) => {
   // Arrange: a descriptor as an earlier build wrote it, with a process id that no longer exists on this machine.

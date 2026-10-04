@@ -14,6 +14,7 @@ on:
       - extension/src/tests/isProcessGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
       - extension/src/tests/readBootIdentity.test.ts
+      - extension/src/tests/utils/answerKernelBootId.ts
       - extension/src/tests/withStorageLock.test.ts
       - extension/src/utils/claimStorageLockTakeover.ts
       - extension/src/utils/currentStorageOwner.ts
@@ -39,6 +40,7 @@ on:
       - extension/src/tests/isProcessGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
       - extension/src/tests/readBootIdentity.test.ts
+      - extension/src/tests/utils/answerKernelBootId.ts
       - extension/src/tests/withStorageLock.test.ts
       - extension/src/utils/claimStorageLockTakeover.ts
       - extension/src/utils/currentStorageOwner.ts
@@ -71,6 +73,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
+      # The repository has no .gitattributes, and Git for Windows would check text files out with CRLF line endings, also
+      # the dependency patch that pnpm applies to files with LF line endings.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

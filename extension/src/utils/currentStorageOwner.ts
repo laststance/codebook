@@ -3,13 +3,10 @@ import { hostname } from 'node:os'
 import { EDITOR_MACHINE_ID_PLACEHOLDER } from '../constants'
 
 import { readBootIdentity } from './readBootIdentity'
-import type { BootIdentity, StorageOwnerIdentity } from './readRecordedOwner'
+import type { StorageOwnerIdentity } from './readRecordedOwner'
 
 /** The editor's id of this machine, once {@link useEditorMachineId} accepted one. */
 let editorMachineId: string | undefined
-
-/** The boot of this process, read once: it cannot change while the process lives, and a boot time computed again would move with the clock. */
-let bootIdentity: Promise<BootIdentity> | undefined
 
 /**
  * Gives the storage utilities the editor's id of this machine, which stays the same when the host name follows the network; called once by {@link activate}, before anything takes a storage lock.
@@ -31,15 +28,15 @@ export function useEditorMachineId(
 
 /**
  * Names the machine and the boot this process runs under, as it writes them into every storage lock, takeover claim and connection descriptor and judges other owners by; the default identity of {@link withStorageLock} and {@link evidenceInUseElsewhere}, and what {@link activate} adds to its connection descriptor.
- * @returns The host name, the editor's machine id when {@link useEditorMachineId} accepted one, and the boot from {@link readBootIdentity}.
+ * The boot is read at every call and never kept: where it is a boot time, it moves when the clock is corrected, and a value kept from before a correction would disagree for good with the one a window opened afterwards computes, which would make each window's locks look like an earlier boot's to the other.
+ * @returns The host name, the editor's machine id when {@link useEditorMachineId} accepted one, and the boot {@link readBootIdentity} reads now.
  * @example
  * await currentStorageOwner() // => { hostname: 'workstation', machineId: 'f3a1…', boot: { id: '0c1d…' } }
  */
 export async function currentStorageOwner(): Promise<StorageOwnerIdentity> {
-  bootIdentity ??= readBootIdentity()
   return {
     hostname: hostname(),
     machineId: editorMachineId,
-    boot: await bootIdentity,
+    boot: await readBootIdentity(),
   }
 }

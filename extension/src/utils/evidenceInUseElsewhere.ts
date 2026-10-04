@@ -19,12 +19,19 @@ function isPresent(path: string): Promise<boolean> {
   )
 }
 
+/** Leaves a boot time out of the identity a connection descriptor is judged by. A descriptor lives as long as its window, and a clock corrected in that time moves the boot time this process computes, so only a kernel boot id, which no clock moves, may call a descriptor's owner one of an earlier boot. @example withoutBootTime({ hostname: 'workstation', boot: { startedAtMs: 1_790_000_000_000 } }) // => { hostname: 'workstation', boot: undefined } */
+function withoutBootTime(identity: StorageOwnerIdentity): StorageOwnerIdentity {
+  return identity.boot && 'id' in identity.boot
+    ? identity
+    : { ...identity, boot: undefined }
+}
+
 /**
  * Says whether a connection descriptor names an editor process that no longer exists, so a descriptor left by a crashed window keeps nothing in place; called by {@link evidenceInUseElsewhere}.
  * @param descriptor - The `<instanceId>.connection.json` file of another instance.
  * @param identity - The machine and the boot of this process; {@link currentStorageOwner} when left out.
  * @returns
- * - `true` when the descriptor names this machine and either an earlier boot or a process id that no longer exists ({@link isRecordedOwnerGone})
+ * - `true` when the descriptor names this machine and either an earlier kernel boot id or a process id that no longer exists ({@link isRecordedOwnerGone})
  * - `false` for a descriptor of another machine, one without a machine or a process id (written by an earlier build), one that cannot be read, and one whose process may still run: each may belong to a running window
  * @example
  * await isDescriptorOwnerGone('/storage/agent/instance.connection.json') // => true after its window was killed
@@ -36,7 +43,10 @@ async function isDescriptorOwnerGone(
   const owner = await readRecordedOwner(descriptor)
   return (
     owner !== undefined &&
-    isRecordedOwnerGone(owner, identity ?? (await currentStorageOwner()))
+    isRecordedOwnerGone(
+      owner,
+      withoutBootTime(identity ?? (await currentStorageOwner())),
+    )
   )
 }
 

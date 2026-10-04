@@ -5,8 +5,8 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type * as ExtensionModule from '../extension'
-import { currentStorageOwner } from '../utils/currentStorageOwner'
 
+import { answerKernelBootId } from './utils/answerKernelBootId'
 import { loadModule } from './utils/loadModule'
 
 type Command = () => Promise<unknown>
@@ -563,7 +563,8 @@ test('stopping Cursor while its Node resolves never registers a retired server d
 
 // Value: protects=another window can tell this window's connection descriptor from one a crashed window left, also on storage two machines share and after a restart; fails_when=the descriptor names a process id and no machine (Cycle 0044 row C-L1), so its owner is judged by a process id of whatever machine reads it; why_new=the descriptor's content beyond the instance was never asserted; seam=the editor boundary, whose machine id the test names
 test('the connection descriptor of a started agent server names its process, its machine and its boot', async (context) => {
-  // Arrange: a local editor window whose machine id is "machine-of-this-editor".
+  // Arrange: a local editor window whose machine id is "machine-of-this-editor", under the kernel boot "boot-of-this-test".
+  answerKernelBootId(context, 'boot-of-this-test')
   const editor = await boundary(context, 'Visual Studio Code')
   try {
     // Act
@@ -583,7 +584,7 @@ test('the connection descriptor of a started agent server names its process, its
       pid: process.pid,
       hostname: hostname(),
       machineId: 'machine-of-this-editor',
-      boot: (await currentStorageOwner()).boot,
+      boot: { id: 'boot-of-this-test' },
     })
     await editor.commands.get('codebook.stopAgentServer')!()
   } finally {
