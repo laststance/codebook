@@ -5615,9 +5615,7 @@ export class StudyWorkspace {
         await this.readBaselines().catch(() => undefined)
         await this.refreshCitations(true)
         // A study whose files the learner removed by hand is forgotten before the ledger is read and the selection written.
-        await this.forgetStudiesRemovedByHand().catch((error: unknown) =>
-          this.report('archive', error),
-        )
+        const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
         try {
           this.progress = await this.library!.readProgress()
           // Preserve the original item/version even when the learner has since selected another item.
@@ -5641,7 +5639,8 @@ export class StudyWorkspace {
           this.catalog = await this.library!.list()
           // Room made without a removal of this reader (files removed by hand) answers a run the full library refused.
           this.answerRefusedRunIfRoom(await this.library!.usage())
-          this.errors.delete('archive')
+          // The line of a ledger that could not be cleaned above stays, although these later steps succeeded.
+          if (ledgerCleaned) this.errors.delete('archive')
           if (this.selection.studyId) {
             const studyId = this.selection.studyId,
               revision = this.revision
@@ -12364,6 +12363,25 @@ export class StudyWorkspace {
       this.activeArchive = withoutStudy(this.activeArchive, studyId)
       this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
       if (this.selection.studyId === studyId) this.selectNoStudy()
+    }
+  }
+
+  /**
+   * Runs {@link forgetStudiesRemovedByHand} for Retry storage / refresh and shows its failure as the `archive` line; called by {@link action} before it reads the ledger.
+   * @returns `true` when the ledger was cleaned; `false` when the step failed and its line is shown, which the caller then keeps although its later storage steps succeed.
+   * @example
+   * ```ts
+   * const ledgerCleaned = await this.forgetStudiesRemovedByHandOrReport()
+   * if (ledgerCleaned) this.errors.delete('archive')
+   * ```
+   */
+  private async forgetStudiesRemovedByHandOrReport(): Promise<boolean> {
+    try {
+      await this.forgetStudiesRemovedByHand()
+      return true
+    } catch (error) {
+      this.report('archive', error)
+      return false
     }
   }
 
