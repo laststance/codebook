@@ -88,7 +88,7 @@ function stepLines(workflow, name) {
   return lines.slice(first, next === -1 ? undefined : next)
 }
 
-test('the fast build writes the build metadata once: neither the build:fast script nor a workflow job runs build-metadata.mjs after it', async () => {
+test('the fast build writes the build metadata once: neither the build:fast script nor the Reader DOM job runs build-metadata.mjs after it', async () => {
   // Arrange
   const manifest = JSON.parse(await repositoryText('extension/package.json'))
   const fastBuild = await repositoryText('extension/scripts/build-fast.mjs')
