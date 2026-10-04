@@ -19,8 +19,10 @@ import { configuredStops } from '../../utils/configuredStops'
 import { pausePlace } from '../../utils/pausePlace'
 
 import {
-  breakLocationsInRange,
+  answerBreakLocationRequest,
+  type BreakLocationRange,
   type GeneratedPlace,
+  type ScriptPlace,
 } from './breakLocationsInRange'
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
 import { createManualClock } from './createManualClock'
@@ -34,8 +36,6 @@ import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
-/** A generated place as a break location request names it, with the script it lies in. */
-type ScriptPlace = GeneratedPlace & { scriptId: string }
 /** The adapter id of the first editor breakpoint a harness's adapter sees; later ones count up from it. */
 const FIRST_ADAPTER_BREAKPOINT_ID = 12
 /** How far the id of a breakpoint the adapter rebound at its pause lies from the acknowledged one. */
@@ -167,11 +167,9 @@ export async function nativeParticipantsHarness(
   const possibleBreakLocations: Partial<Record<Participant, GeneratedPlace[]>> =
     {}
   // Every range the run asked break locations for, in order, as it sent them.
-  const breakLocationRequests: {
+  const breakLocationRequests: (BreakLocationRange & {
     participant: Participant
-    start: ScriptPlace
-    end?: ScriptPlace
-  }[] = []
+  })[] = []
   // The adapter's id of each editor breakpoint; every breakpoint has its own, as natively.
   const adapterIds = new Map<string, number>()
   const adapterId = (breakpoint: { id: string }): number => {
@@ -525,18 +523,12 @@ export async function nativeParticipantsHarness(
         listed &&
         parameters?.start
       ) {
-        const { start, end } = parameters
-        // The run's objects come from its own module context; a test compares plain copies.
-        breakLocationRequests.push({
-          participant: name,
-          start: { ...start },
-          ...(end ? { end: { ...end } } : {}),
+        const { range, answer } = answerBreakLocationRequest(listed, name, {
+          start: parameters.start,
+          end: parameters.end,
         })
-        return {
-          locations: breakLocationsInRange(listed, start, end).map(
-            (location) => ({ scriptId: name, ...location }),
-          ),
-        }
+        breakLocationRequests.push({ participant: name, ...range })
+        return answer
       }
       if (method === 'Input.dispatchMouseEvent') {
         if (parameters?.type === 'mousePressed') return {}

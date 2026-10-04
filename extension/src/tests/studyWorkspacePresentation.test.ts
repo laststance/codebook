@@ -874,13 +874,8 @@ test('restoring replay preserves a learner draft opened over historical source d
     assert.equal(draft.tab.isDirty, true)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
     assert.deepEqual(harness.editorLayout(), placedLayout)
-    // The held read was the width read that follows the end of the Read's maximization: the side bars the Read hid come back (the recording's two rows give no width, so both are shown) and the editor group the learner is in gets the keyboard back (Cycle 0045 NF-22). No layout command follows.
-    assert.deepEqual(harness.commands, [
-      ...commands,
-      'workbench.action.focusAuxiliaryBar',
-      'workbench.action.focusSideBar',
-      'workbench.action.focusActiveEditorGroup',
-    ])
+    // The held read was the first layout read after the end of the Read's maximization. The recording's two rows gave the Read no width to measure the side bars by, so it hid none and none is shown (Cycle 0045 local review study-1 #1). No command follows.
+    assert.deepEqual(harness.commands, commands)
     assert.deepEqual(harness.panelReveals(), reveals)
     assert.equal(harness.reader.presentationState().layoutConfirmed, false)
     assert.equal(harness.presentationPreferences.size, 0)
@@ -3900,6 +3895,155 @@ test('a selection after Close Study Workspace during a paused run opens the read
   }
 })
 
+// Value: protects=a presentation select answering with the opened reader after a first entry during a paused run was refused; fails_when=the refused entry keeps the live arrangement flag of a reader that is not open, so the next select arranges two rows in a window that holds no Codebook pane and is refused until Open Study Workspace, Open replay or Close; why_new=Cycle 0045 local review study-1 #2 (NF-21 reset the flags in Close only); seam=workspace harness with the controlled runtime and failNextPanelCreation
+test('a selection after a first entry that was refused during a paused run opens the reader in the live arrangement', async () => {
+  // Arrange: an agent's run is paused, the reader is closed and the learner's file has the focus; the first selection is refused inside the entry, after the entry chose the live arrangement.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft()
+    await pauseLiveRun(harness)
+    const closed = harness.reader.presentationState()
+    harness.failNextPanelCreation('codebook.scopedBrowser')
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: closed.presentationId,
+        expectedRevision: closed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      }),
+    )
+    const refused = {
+      state: harness.reader.presentationState().state,
+      live: readerSeams(harness).isLiveArrangement(),
+      panels: harness.counts().panels,
+    }
+    const state = harness.reader.presentationState()
+
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert
+    assert.deepEqual(refused, { state: 'closed', live: false, panels: 0 })
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(readerSeams(harness).isLiveArrangement(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+/** The editor commands that hide or show a side bar; a reading whose side bars could not be measured runs none of them. */
+const SIDE_BAR_COMMANDS = [
+  'workbench.action.closeSidebar',
+  'workbench.action.maximizeEditorHideSidebar',
+  'workbench.action.focusSideBar',
+  'workbench.action.focusAuxiliaryBar',
+]
+
+for (const open of [
+  { primary: false, auxiliary: true },
+  { primary: true, auxiliary: false },
+  { primary: false, auxiliary: false },
+  { primary: true, auxiliary: true },
+])
+  // Value: protects=the learner's side bars through a Read of the Application pane during a live run and the Restore that ends it: each bar is open or closed as the learner had it; fails_when=the live arrangement's two rows give the reader no width to measure the bars by, the Read hides both anyway and its end shows both, so a learner who keeps the file explorer or the chat closed gets it opened by every Read; why_new=Cycle 0045 local review study-1 #1 (the "stays closed" tests of NF-22 used the three-pane columns only); seam=the workspace harness's side bar model, the controlled runtime and the fake editor's maximized group
+  test(`a Read in the live arrangement and its Restore leave the side bars as the learner has them, with the primary side bar ${open.primary ? 'open' : 'closed'} and the secondary one ${open.auxiliary ? 'open' : 'closed'}`, async () => {
+    // Arrange: a paused live run in its two rows; the learner reads the Application pane enlarged.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars(open)
+    try {
+      await pauseLiveRun(harness)
+      await harness.reader.open()
+      const liveBeforeRead = readerSeams(harness).isLiveArrangement()
+      await harness.reader.action('read-app')
+      const duringRead = {
+        ...harness.sideBars(),
+        maximized: harness.maximizedEditorGroup(),
+      }
+      const state = harness.reader.presentationState()
+
+      // Act
+      const restored = await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+
+      // Assert
+      assert.equal(liveBeforeRead, true)
+      assert.deepEqual(duringRead, {
+        ...open,
+        hasKeyboard: false,
+        maximized: true,
+      })
+      assert.deepEqual(harness.sideBars(), { ...open, hasKeyboard: false })
+      assert.equal(harness.maximizedEditorGroup(), false)
+      assert.equal(restored.layoutConfirmed, true)
+      assert.equal(restored.reason, undefined)
+      // No bar is hidden for a measurement that cannot be made, and none is shown.
+      assert.deepEqual(
+        harness.commands.filter((command) =>
+          SIDE_BAR_COMMANDS.includes(command),
+        ),
+        [],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner's side bars through a Read of the captured source in a recording and Close Study Workspace: a bar the learner keeps closed is closed afterwards and an open one is open; fails_when=the replay arrangement's two rows give no width, the Read hides both bars and Close shows both, which opens the bar the learner had closed; why_new=Cycle 0045 local review study-1 #1 (the replay arrangement was covered only by a test that pinned both show commands); seam=the recorded reader harness, the workspace harness's side bar model and the fake editor's maximized group
+test('a Read in a recording and Close Study Workspace leave a side bar the learner had closed as it was', async () => {
+  // Arrange: a recording is open in its two rows, the primary side bar closed and the secondary one open; the learner reads the captured source enlarged.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: false, auxiliary: true })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.action('read-source')
+    const duringRead = {
+      ...harness.sideBars(),
+      maximized: harness.maximizedEditorGroup(),
+    }
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(duringRead, {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: false,
+      maximized: true,
+    })
+    assert.deepEqual(harness.sideBars(), {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.deepEqual(
+      harness.commands.filter((command) => SIDE_BAR_COMMANDS.includes(command)),
+      [],
+    )
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent's first presentation select during a paused run answering with the live panes arranged and confirmed; fails_when=the selection that opened a closed reader into the live arrangement still waits for a Study pane's render, which that arrangement does not have, and is refused after five seconds; why_new=Cycle 0045 NF-19: every selection test of a closed reader ran without a current run; seam=workspace harness with the controlled runtime
 test('the first presentation select during a paused live run with the reader closed arranges the live panes and answers a confirmed layout', async () => {
   // Arrange: an agent's run is paused at its stop and the learner has not opened the Study workspace; the learner's file has the focus.
@@ -4102,6 +4246,44 @@ for (const reader of ['closed', 'open'] as const)
       await harness.close()
     }
   })
+
+// Value: protects=the agent chat's keyboard after a restore of the live panes that failed once the arrangement had moved the keyboard into the main editor: the chat has it again; fails_when=only the successful arrangement gives the focus back, so a restore the editor fails leaves the keyboard in the main editor and the agent's next key press goes there; why_new=Cycle 0045 local review coderabbit #6 (the live and replay branch returned the focus on success only, unlike a selection and an open); seam=workspace harness with the controlled runtime, a separate editor part, and failNextCommand on the arrangement's command batch
+test("a restore of the live panes that the editor fails after the arrangement took the keyboard, made while the agent chat's tab has the focus in Cursor, gives the chat the keyboard back", async () => {
+  // Arrange: the reader follows a paused run in Cursor and the agent's chat has the keyboard; the editor will fail the command batch of the restore's arrangement.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  try {
+    await pauseLiveRun(harness)
+    await harness.reader.open()
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+    harness.failNextCommand('runCommands')
+
+    // Act
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      }),
+      /Native layout command failed/,
+    )
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
+    assert.equal(harness.groups.length, 3)
+    assert.equal(
+      harness.reader.presentationState().reason,
+      'Error: Native layout command failed',
+    )
+  } finally {
+    await harness.close()
+  }
+})
 
 for (const action of ['select', 'restore'] as const)
   for (const replacesGroupObjects of [false, true])

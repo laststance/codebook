@@ -21,8 +21,10 @@ import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
 
 import {
-  breakLocationsInRange,
+  answerBreakLocationRequest,
+  type BreakLocationRange,
   type GeneratedPlace,
+  type ScriptPlace,
 } from './breakLocationsInRange'
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
@@ -44,9 +46,6 @@ interface BeforeFailure {
   /** The page's control counts, sent with a missing click target. */
   candidates?: { button: number; link: number; field: number }
 }
-
-/** A generated place as a break location request names it, with the script it lies in. */
-type ScriptPlace = GeneratedPlace & { scriptId: string }
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
@@ -178,7 +177,7 @@ export async function configuredRuntimeHarness(
   // Every scan of a sealed map the run asked its verifiers for, in order.
   const mapScans: { startLine: number; endLine: number }[] = []
   // Every range the run asked break locations for, in order, as it sent them.
-  const breakLocationRequests: { start: ScriptPlace; end?: ScriptPlace }[] = []
+  const breakLocationRequests: BreakLocationRange[] = []
   // The bound the run gave each of those requests, in the same order; `undefined` for a request left to the default.
   const breakLocationRequestTimeoutsMs: (number | undefined)[] = []
   let rejectedCapture: string | undefined,
@@ -512,21 +511,14 @@ export async function configuredRuntimeHarness(
         possibleBreakLocations &&
         parameters?.start
       ) {
-        const { start, end } = parameters
-        // The run's objects come from its own module context; a test compares plain copies.
-        breakLocationRequests.push(
-          end
-            ? { start: { ...start }, end: { ...end } }
-            : { start: { ...start } },
+        const { range, answer } = answerBreakLocationRequest(
+          possibleBreakLocations,
+          'actual',
+          { start: parameters.start, end: parameters.end },
         )
+        breakLocationRequests.push(range)
         breakLocationRequestTimeoutsMs.push(timeout)
-        return {
-          locations: breakLocationsInRange(
-            possibleBreakLocations,
-            start,
-            end,
-          ).map((location) => ({ scriptId: 'actual', ...location })),
-        }
+        return answer
       }
       throw new Error(`Unexpected CDP request: ${method}`)
     },

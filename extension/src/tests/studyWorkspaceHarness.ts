@@ -24,8 +24,8 @@ import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
 import type { ConfiguredRuntimeView } from '../runtime'
-import { VIEWPORT_ACK_TIMEOUT_REASON } from '../runtimeSupport/constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
 import type { StudyViewMessage } from '../ui/studyHtml'
@@ -543,6 +543,11 @@ export async function workspaceHarness(
   let keyboardOnBody = false
   /** Which side bars the fake window shows, once a test models them with `modelSideBars`; the editor area then has the width they leave. */
   let sideBars: { primary: boolean; auxiliary: boolean } | undefined
+  /** The widths of the fake window's side bars in pixels; `modelSideBars` can replace Cursor's. */
+  let sideBarWidthsPx = {
+    primary: SIDE_BAR_WINDOW_PX.primary,
+    auxiliary: SIDE_BAR_WINDOW_PX.auxiliary,
+  }
   /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
   let keyboardInSideBar = false
   // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
@@ -564,6 +569,25 @@ export async function workspaceHarness(
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
   const pendingDisposedTabCloses: (() => void)[] = []
+  /** The fake editor's own timers that have not run yet (a disposed pane's tab close, a late reveal). The harness's `close` clears them, so no fake editor changes its groups or calls a listener after its test ended. */
+  const pendingEditorTimers = new Set<ReturnType<typeof setTimeout>>()
+  /**
+   * Runs one pending tab change of the fake editor by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS}, unless a layout read took it from `pendingDisposedTabCloses` first or the harness was closed; called for a disposed pane's tab close and for a late reveal.
+   * @param change - The change that was pushed to `pendingDisposedTabCloses`.
+   * @example
+   * pendingDisposedTabCloses.push(closeTab)
+   * applyByItselfLater(closeTab)
+   */
+  function applyByItselfLater(change: () => void): void {
+    const timer = setTimeout(() => {
+      pendingEditorTimers.delete(timer)
+      const index = pendingDisposedTabCloses.indexOf(change)
+      if (index < 0) return
+      pendingDisposedTabCloses.splice(index, 1)
+      change()
+    }, DISPOSED_TAB_CLOSE_DELAY_MS)
+    pendingEditorTimers.add(timer)
+  }
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
     settledLayout: unknown,
@@ -620,12 +644,18 @@ export async function workspaceHarness(
    * Gives every editor group a new TabGroup object, as Cursor 3.23.12 does whenever a tab opened, another tab of a group became active, a tab closed, or a group opened or closed (obs13 items 7 and 8: 19 of 19 events that name every group); a no-op unless `replaceGroupObjectsOnTabChanges` is on.
    * The view columns, the tabs and the keyboard focus stay, and every holder of a group object is pointed at the new one. The Tab objects are kept: Cursor replaces them too and reports a tab of unknown input with `input` undefined.
    * @param closed - Groups the same change closed; they are reported as closed and get no new object.
+   * @param opened - The group the same change opened; it is reported as opened and keeps its object.
    * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
    */
-  function replaceGroupObjects(closed: typeof groups = []): void {
+  function replaceGroupObjects(
+    closed: typeof groups = [],
+    opened?: (typeof groups)[number],
+  ): void {
     if (!replacesGroupObjectsOnTabChanges) return
     const replacements = new Map(
-      groups.map((group) => [group, { ...group, tabs: [...group.tabs] }]),
+      groups
+        .filter((group) => group !== opened)
+        .map((group) => [group, { ...group, tabs: [...group.tabs] }]),
     )
     /** Names the new object of a group that survived, and leaves a group that is gone as it is. */
     const replaced = (group: (typeof groups)[number]) =>
@@ -636,7 +666,11 @@ export async function workspaceHarness(
       separateEditorPart.group = replaced(separateEditorPart.group)
     for (const editor of visibleSourceEditors)
       editor.group = replaced(editor.group)
-    changedGroups({ opened: [], closed, changed: [...groups] })
+    changedGroups({
+      opened: opened ? [opened] : [],
+      closed,
+      changed: [...replacements.values()],
+    })
   }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
@@ -681,30 +715,7 @@ export async function workspaceHarness(
       }
     if (replacesGroupObjectsOnTabChanges) {
       // Cursor names the opened group and gives every surviving group a new object in the same event.
-      const survivors = new Map(
-        groups
-          .filter((candidate) => candidate !== group)
-          .map((candidate) => [
-            candidate,
-            { ...candidate, tabs: [...candidate.tabs] },
-          ]),
-      )
-      groups.splice(
-        0,
-        groups.length,
-        ...groups.map((candidate) => survivors.get(candidate) ?? candidate),
-      )
-      activeTabGroup = survivors.get(activeTabGroup) ?? activeTabGroup
-      if (separateEditorPart)
-        separateEditorPart.group =
-          survivors.get(separateEditorPart.group) ?? separateEditorPart.group
-      for (const editor of visibleSourceEditors)
-        editor.group = survivors.get(editor.group) ?? editor.group
-      changedGroups({
-        opened: [group],
-        closed: [],
-        changed: [...survivors.values()],
-      })
+      replaceGroupObjects([], group)
       return group
     }
     changedGroups({ opened: [group], closed: [], changed: retained })
@@ -1279,12 +1290,7 @@ export async function workspaceHarness(
           }
           pendingDisposedTabCloses.push(applyReveal)
           // Without a layout read the reveal is reported by itself a moment later.
-          setTimeout(() => {
-            const index = pendingDisposedTabCloses.indexOf(applyReveal)
-            if (index < 0) return
-            pendingDisposedTabCloses.splice(index, 1)
-            applyReveal()
-          }, DISPOSED_TAB_CLOSE_DELAY_MS)
+          applyByItselfLater(applyReveal)
           return
         }
         panelReveals.push({ kind, column, preserveFocus })
@@ -1344,6 +1350,8 @@ export async function workspaceHarness(
             removeEmptiedGroup(emptied)
           }
           if (!preserveFocus) {
+            // A pane revealed with the focus takes the keyboard from the page body.
+            keyboardOnBody = false
             retainDelayedTextFocus(kind)
             if (!suppressNativeInnerFocus && !value.blockInnerFocus)
               innerFocusedPanel = kind
@@ -1511,20 +1519,11 @@ export async function workspaceHarness(
         if (
           closeDisposedPanelTabsLater ||
           closeDisposedPanelTabsDuringLayoutRead
-        )
+        ) {
           pendingDisposedTabCloses.push(closeTab)
-        else closeTab()
-        // Without a layout read the worker closes the tab by itself a moment later.
-        if (
-          closeDisposedPanelTabsLater ||
-          closeDisposedPanelTabsDuringLayoutRead
-        )
-          setTimeout(() => {
-            const index = pendingDisposedTabCloses.indexOf(closeTab)
-            if (index < 0) return
-            pendingDisposedTabCloses.splice(index, 1)
-            closeTab()
-          }, DISPOSED_TAB_CLOSE_DELAY_MS)
+          // Without a layout read the worker closes the tab by itself a moment later.
+          applyByItselfLater(closeTab)
+        } else closeTab()
         for (const listener of disposed) listener()
       },
     }
@@ -1749,7 +1748,7 @@ export async function workspaceHarness(
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
       // No renderer acknowledges a frame once another writer replaced this viewport's document; the real delivery then runs out of its paint budget.
       if (this.mode === 'recording' && !this.rendererInPlace())
-        throw new Error(VIEWPORT_ACK_TIMEOUT_REASON)
+        throw new ViewportAckTimeoutError()
       const held = nextImage
       nextImage = undefined
       if (held) {
@@ -2220,8 +2219,8 @@ export async function workspaceHarness(
             ) {
               const areaPx =
                   SIDE_BAR_WINDOW_PX.window -
-                  (sideBars.primary ? SIDE_BAR_WINDOW_PX.primary : 0) -
-                  (sideBars.auxiliary ? SIDE_BAR_WINDOW_PX.auxiliary : 0),
+                  (sideBars.primary ? sideBarWidthsPx.primary : 0) -
+                  (sideBars.auxiliary ? sideBarWidthsPx.auxiliary : 0),
                 columns: { size: number }[] = layout.groups,
                 total = columns.reduce((sum, column) => sum + column.size, 0)
               for (const column of columns)
@@ -2516,6 +2515,8 @@ export async function workspaceHarness(
             activeTabGroup = group
             innerFocusedPanel = undefined
             if (separateEditorPart) separateEditorPart.focused = false
+            // A text document shown with the focus takes the keyboard from the page body.
+            keyboardOnBody = false
           }
           if (options?.preview !== undefined) tab.isPreview = options.preview
           const editor = sourceEditor(
@@ -3284,15 +3285,22 @@ export async function workspaceHarness(
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
     },
-    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
+    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. Whatever gives an editor group, a text editor or the chat the keyboard ends that: a group focus command, Cursor's Focus Agent, a pane revealed or a document shown with the focus, the chat's `focus` and `focusTab`, and the learner's `focusMutableDraft`. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
     keyboardOnBody: () => keyboardOnBody,
     /**
      * Gives the fake window a primary and a secondary side bar that are open or closed, as the learner has them, and makes the fake editor behave as both editors were seen to (Cycle 0045 NF-22, obs15 P4): `workbench.action.maximizeEditorHideSidebar` hides both bars, and leaving that maximization (`workbench.action.minimizeOtherEditors`, a new layout, closing the panes) shows neither again. `workbench.action.closeSidebar` hides the primary one; `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` show their bar when it is hidden and give it the keyboard. No API of the editor says which bars are open: a layout read of columns answers in pixels of the editor area the bars leave (214 + 660 + 461 = 1335 with both open).
+     * @param open - Which of the two bars the learner has open.
+     * @param widthsPx - The bars' widths in the window of 1335 px; left out, Cursor's 214 and 461.
      * @example
      * harness.modelSideBars({ primary: true, auxiliary: false })
+     * harness.modelSideBars({ primary: false, auxiliary: true }, { primary: 300, auxiliary: 300 })
      */
-    modelSideBars(open: { primary: boolean; auxiliary: boolean }): void {
+    modelSideBars(
+      open: { primary: boolean; auxiliary: boolean },
+      widthsPx: { primary: number; auxiliary: number } = sideBarWidthsPx,
+    ): void {
       sideBars = { ...open }
+      sideBarWidthsPx = { ...widthsPx }
     },
     /** The side bars the fake window shows now, and whether one of them has the keyboard; `undefined` bars without `modelSideBars`. @example harness.sideBars() // => { primary: true, auxiliary: true, hasKeyboard: false } */
     sideBars: () => ({ ...sideBars, hasKeyboard: keyboardInSideBar }),
@@ -3381,6 +3389,7 @@ export async function workspaceHarness(
         focused: () => separateEditorPart?.focused,
         focus(): void {
           separateEditorPart!.focused = true
+          keyboardOnBody = false
           activeTextEditorChanged(undefined)
         },
         /** Gives the chat tab the keyboard focus the way Cursor reports it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. @example chat.focusTab() */
@@ -3388,6 +3397,7 @@ export async function workspaceHarness(
           const previous = activeTabGroup
           activeTabGroup = separateEditorPart!.group
           separateEditorPart!.focused = true
+          keyboardOnBody = false
           innerFocusedPanel = undefined
           changedGroups({
             opened: [],
@@ -3452,6 +3462,8 @@ export async function workspaceHarness(
       activeTabGroup = group
       visibleSourceEditors.push(editor)
       if (separateEditorPart) separateEditorPart.focused = false
+      // The learner's editor has the keyboard, whoever lost it before.
+      keyboardOnBody = false
       activeTextEditorChanged(editor)
       return {
         document,
@@ -3465,6 +3477,7 @@ export async function workspaceHarness(
           group.activeTab = tab
           activeTabGroup = group
           if (separateEditorPart) separateEditorPart.focused = false
+          keyboardOnBody = false
           activeTextEditorChanged(editor)
         },
       }
@@ -3874,8 +3887,14 @@ export async function workspaceHarness(
     async close(): Promise<void> {
       await reader.retire(harness.service)
       await reader.dispose()
+      // The fake editor of a closed harness changes nothing any more: its pending tab closes and reveals are dropped with their timers.
+      for (const timer of pendingEditorTimers) clearTimeout(timer)
+      pendingEditorTimers.clear()
+      pendingDisposedTabCloses.length = 0
       await harness.close()
     },
+    /** Counts the fake editor's own timers that have not run yet: a disposed pane's tab close or a late reveal that waits for {@link DISPOSED_TAB_CLOSE_DELAY_MS}. @example harness.pendingEditorTimerCount() // => 2 right after a reader with two panes was closed in an editor that closes tabs later */
+    pendingEditorTimerCount: (): number => pendingEditorTimers.size,
   }
 }
 

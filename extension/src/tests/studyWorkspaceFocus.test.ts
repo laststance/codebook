@@ -1497,6 +1497,90 @@ test("the fake editor leaves the keyboard on the page body when a disposed pane'
   }
 })
 
+for (const regained of [
+  'a pane revealed with the focus',
+  'a text document shown with the focus',
+  "the chat's tab focused",
+  "the learner's file focused",
+] as const)
+  // Value: protects=reader tests judging the keyboard after a close as the editor would: once an editor, a pane or the chat was given the keyboard, it is no longer on the page body; fails_when=the fake keeps "the page body has the keyboard" until a group focus command runs, so a reader that returns the focus by showing a document or revealing a pane fails the keyboard assertions although an editor has the keyboard; why_new=Cycle 0045 local review tests-1 #7 (only the group focus commands and Cursor's Focus Agent cleared the flag); seam=the fake editor's keyboardOnBody after a focused pane was disposed
+  test(`the fake editor takes the keyboard from the page body again with ${regained}`, async () => {
+    // Arrange: the Application pane had the keyboard and was disposed, so the page body has it.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const panels = harness.nativePanels(),
+        application = panels.find(
+          (panel) => panel.kind === 'codebook.scopedBrowser',
+        ),
+        explanation = panels.find(
+          (panel) => panel.kind === 'codebook.studyContext',
+        )
+      assert.ok(application)
+      assert.ok(explanation)
+      application.reveal(undefined, false)
+      application.dispose()
+      const afterDisposal = harness.keyboardOnBody()
+
+      // Act
+      if (regained === 'a pane revealed with the focus')
+        explanation.reveal(undefined, false)
+      if (regained === 'a text document shown with the focus')
+        await harness.editor.window.showTextDocument(
+          {
+            uri: harness.editor.Uri.file('/learner/notes.txt'),
+            getText: () => 'Learner notes.\n',
+          },
+          { viewColumn: 1, preserveFocus: false },
+        )
+      if (regained === "the chat's tab focused") chat.focusTab()
+      if (regained === "the learner's file focused")
+        harness.focusMutableDraft('learner-notes.ts', 1)
+
+      // Assert
+      assert.equal(afterDisposal, true)
+      assert.equal(harness.keyboardOnBody(), false)
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=a finished reader test leaving nothing behind in its fake editor: a tab close the fake editor still owed at the harness's close never runs; fails_when=the fake editor's timer outlives the harness, so up to 20 ms after a test ended it removes tabs and groups and calls the listeners of that test; why_new=Cycle 0045 local review tests-1 #3 (the timers of closeDisposedPanelTabsLater and revealPanelsLater were never cleared); seam=the fake editor's pending timers and its tab and group events
+test("the fake editor of a closed harness runs none of the tab closes it still owed: its tabs stay and no listener is called after the harness's close", async () => {
+  // Arrange: the editor closes a disposed pane's tab 20 ms after the disposal; the learner's file has the keyboard, so the reader's close waits for no tab.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  let eventsAfterClose = 0,
+    closed = false
+  const countAfterClose = (): void => {
+    if (closed) eventsAfterClose++
+  }
+  await harness.reader.open()
+  harness.focusMutableDraft('learner-notes.ts', 2)
+  harness.editor.window.tabGroups.onDidChangeTabGroups(countAfterClose)
+  harness.editor.window.tabGroups.onDidChangeTabs(countAfterClose)
+
+  // Act: the harness closes while the disposed panes' tabs still wait for their close; three times the fake editor's delay then passes.
+  await harness.reader.close()
+  const owedAtReaderClose = harness.pendingEditorTimerCount()
+  await harness.close()
+  closed = true
+  const tabsAtClose = harness.groups.flatMap((group) => group.tabs).length
+  await new Promise((resolve) => setTimeout(resolve, 60))
+
+  // Assert
+  assert.equal(owedAtReaderClose, 2)
+  assert.equal(harness.pendingEditorTimerCount(), 0)
+  assert.equal(eventsAfterClose, 0)
+  assert.equal(
+    harness.groups.flatMap((group) => group.tabs).length,
+    tabsAtClose,
+  )
+})
+
 // Value: protects=reader tests meeting Cursor as it answers the command that focuses the first editor group while the chat input has the keyboard and the editor names a group of the main editor: a pane in the first group is not reported as focused and the named group stays the named one; fails_when=the fake reports the pane's focus in that state, which Cursor does not, so a measurement that waits for that report passes in the tests and ends after five seconds in the editor; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: a recording opened from the chat input while the editor named the captured source's group was never read; the wait for the first group's focus ran out); seam=the fake editor with a separate editor part, leavePaneFocusUnreportedBesideChat and its panes
 test("the fake Cursor reports no focus of a pane in the first group while the chat input has the keyboard and the editor names the captured source's group", async () => {
   // Arrange: the three Study panes are open, the Application pane is the tab the first group shows; the learner clicked into the captured source and then into the chat input.

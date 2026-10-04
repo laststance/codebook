@@ -2050,20 +2050,6 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
     const firstGroupBefore = harness.groups.find(
       (group) => group.viewColumn === 1,
     )
-    console.log(
-      JSON.stringify({
-        selected: [selected.layoutConfirmed, selected.panes, selected.reason],
-        active: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
-        groups: harness.groups.map((g) => [
-          g.viewColumn,
-          g.tabs.map(
-            (t: any) =>
-              (t === g.activeTab ? '*' : '') +
-              (t.label ?? t.input?.viewType ?? String(t.input?.uri).slice(-22)),
-          ),
-        ]),
-      }),
-    )
     // Cursor closes the context pane's tab, and then its group, a moment after the entry disposed the pane: while the entry measures the main editor.
     harness.closeDisposedPanelTabsDuringLayoutRead()
     harness.service.start({
@@ -2081,22 +2067,6 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
 
     // Assert
     const ready = harness.reader.inspect().presentation
-    console.log(
-      JSON.stringify({
-        ready: [ready.layoutConfirmed, ready.panes, ready.reason],
-        errors: readerSeams(harness).errorLines(),
-        live: readerSeams(harness).isLiveArrangement(),
-        active: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
-        groups: harness.groups.map((g) => [
-          g.viewColumn,
-          g.tabs.map(
-            (t: any) =>
-              (t === g.activeTab ? '*' : '') +
-              (t.label ?? t.input?.viewType ?? String(t.input?.uri).slice(-22)),
-          ),
-        ]),
-      }),
-    )
     assert.equal(selected.layoutConfirmed, true)
     assert.equal(selected.panes.contextColumn, 3)
     assert.equal(firstGroupBefore?.tabs.includes(learnerFile.tab), true)

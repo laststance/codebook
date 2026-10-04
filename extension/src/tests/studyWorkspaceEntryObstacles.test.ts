@@ -242,8 +242,8 @@ test('a presentation selection refused for a learner preview names that tab, its
   }
 })
 
-// Value: protects=Open replay opening the recording at the first click while the learner's file is the tab in front of the live Application pane; fails_when=the entry reveals the Application pane and starts its arrangement before the editor has reported that reveal, so its own reveal reads as a change the learner made and the click ends with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0045 NF-20 (Cursor: the first click failed whenever a preview or kept tab was in front of the pane, the second opened it); seam=the recorded reader harness, focusMutableDraft, and the fake editor reporting a pane's reveal one turn later
-test("Open replay with the learner's file in front of the live Application pane opens the recording at the first click", async () => {
+// Value: protects=Open replay opening the recording at the first click while the learner's file is the tab in front of the live Application pane; fails_when=the entry reveals the Application pane and starts its arrangement before the editor has reported that reveal, so its own reveal reads as a change the learner made and the click ends with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0045 NF-20 (Cursor: the first click failed whenever a preview or kept tab was in front of the pane, the second opened it); seam=the recorded reader harness, focusMutableDraft, the fake editor reporting a pane's reveal later, and the fake clock, which alone lets the fake editor's own timer pass (local review tests-1 #3: no real delay decides whether the report arrives during the arrangement)
+test("Open replay with the learner's file in front of the live Application pane opens the recording at the first click", async (context) => {
   // Arrange: the reader is open, and the file the learner (or the debugger) opened in the Application's group is in front of the pane with the keyboard focus.
   const harness = await recordedReaderHarness()
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
@@ -251,10 +251,14 @@ test("Open replay with the learner's file in front of the live Application pane 
     await harness.reader.open()
     const learnerFile = harness.focusMutableDraft('login-form.tsx', 1)
     harness.revealPanelsLater()
+    enableFakeClock(context)
 
-    // Act: one click on Open replay.
-    await harness.reader.openRecording(harness.studyId)
-    await harness.controller.settle()
+    // Act: one click on Open replay. The fake editor reports the reveal while a layout read is pending, or by itself once the faked clock has passed its delay; the clock moves only while the entry waits.
+    const opening = harness.reader
+      .openRecording(harness.studyId)
+      .then(() => harness.controller.settle())
+    await advanceClockUntilSettled(context, opening, 6_000)
+    resetFakeClock(context)
 
     // Assert
     assert.equal(harness.controller.state().reason, undefined)
@@ -267,6 +271,7 @@ test("Open replay with the learner's file in front of the live Application pane 
       true,
     )
   } finally {
+    resetFakeClock(context)
     await harness.close()
   }
 })
@@ -453,6 +458,99 @@ test('a Restore that ends a Read brings back the side bars the Read hid and conf
     assert.equal(restored.layoutConfirmed, true)
     assert.equal(restored.reason, undefined)
   } finally {
+    await harness.close()
+  }
+})
+
+for (const before of [
+  { primary: false, auxiliary: true },
+  { primary: false, auxiliary: false },
+])
+  // Value: protects=the side bars after a Read during which the learner opened the primary side bar again: the Restore brings back the secondary bar the Read hid and leaves the primary one open; fails_when=the Restore compares the editor area beside the reopened primary bar with the width it had beside the secondary one, sees no gain for bars of about the same width, and leaves the chat hidden; or its second measurement hides the reopened primary bar and does not show it again; why_new=Cycle 0045 local review study-1 #1, second case (the measurement assumed that no bar is opened between Read and Restore); seam=the workspace harness's side bar model with both bars 300 px wide, and the learner's own show command
+  test(`a Restore after the learner opened the primary side bar during a Read shows the bars the Read hid and keeps the primary one open, with the secondary side bar ${before.auxiliary ? 'open' : 'closed'} before the Read`, async () => {
+    // Arrange: both bars are 300 px wide; the primary one is closed before the Read, and the learner opens it while reading and returns to the pane.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars(before, { primary: 300, auxiliary: 300 })
+    try {
+      await harness.reader.open()
+      await harness.reader.action('read-context')
+      await harness.editor.commands.executeCommand(
+        'workbench.action.focusSideBar',
+      )
+      await harness.editor.commands.executeCommand(
+        'workbench.action.focusActiveEditorGroup',
+      )
+      const duringRead = harness.sideBars()
+
+      // Act
+      await harness.reader.action('arrange')
+
+      // Assert
+      assert.deepEqual(duringRead, {
+        primary: true,
+        auxiliary: false,
+        hasKeyboard: false,
+      })
+      assert.deepEqual(harness.sideBars(), {
+        primary: true,
+        auxiliary: before.auxiliary,
+        hasKeyboard: false,
+      })
+      assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+      assert.equal(harness.maximizedEditorGroup(), false)
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner's primary side bar after a Read that was refused because the work window lost the focus while the reader measured the side bars: the bar is open as before, and the next Read measures again; fails_when=the measurement hid the primary side bar, the refusal left it hidden with no maximized group, and the reader kept the reading as begun, so the file explorer stays away until a later Restore or Close; why_new=Cycle 0045 local review study-1 #6 and coderabbit #6 (the measurement of NF-22 runs before the Read's last check that can refuse); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command, changeWindowFocus
+test('a Read refused while the reader measured the side bars leaves the primary side bar open and no maximized group', async () => {
+  // Arrange: both side bars are open; the work window loses and regains the focus while the Read's measurement hides the primary side bar.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    const measurement = harness.holdNextCommand('workbench.action.closeSidebar')
+    release = measurement.release
+
+    // Act
+    const reading = harness.reader.action('read-context')
+    await measurement.started
+    harness.changeWindowFocus(false)
+    harness.changeWindowFocus(true)
+    measurement.release()
+    await assert.rejects(reading, /work window lost focus/i)
+    const afterRefusal = {
+      ...harness.sideBars(),
+      maximized: harness.maximizedEditorGroup(),
+    }
+    await harness.reader.action('read-context')
+    const duringNextRead = harness.sideBars()
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(afterRefusal, {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+      maximized: false,
+    })
+    assert.deepEqual(duringNextRead, {
+      primary: false,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    // The next Read measured both bars as open, so its Close shows both again.
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+  } finally {
+    release()
     await harness.close()
   }
 })

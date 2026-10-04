@@ -11,6 +11,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
   workspaceHarness,
+  readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 test('updating repository source and extension location preserves recorded bytes and learner history while requesting source review', async () => {
@@ -1527,6 +1528,31 @@ test('a source reveal that arrives while the reader is still reading the run fro
     assert.match(harness.reader.inspect().sourceUri!, /^codebook-source:/)
   } finally {
     release()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line Retry storage / refresh shows when it could not drop the studies removed by hand from the ledger; fails_when=the same Retry clears that line once its later reconcile and listing succeed, so the learner sees no error while the ledger still names the removed studies; why_new=Cycle 0045 local review study-1 #3 (the failed step and the later steps report under one error kind, and the later success deleted it); seam=the reader's learning storage with a `forgetAbsentStudies` that rejects, and the reader's error lines
+test('Retry storage keeps the line of a ledger it could not clean of studies removed by hand, although the rest of the retry succeeds', async () => {
+  // Arrange: the ledger cannot be rewritten (another window holds the storage lock); every other storage step works.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const library = await harness.reader.learningStorage()
+    library.forgetAbsentStudies = async (): Promise<string[]> => {
+      throw new Error('The storage lock is held by another window.')
+    }
+
+    // Act
+    await harness.reader.action('retry')
+
+    // Assert
+    assert.deepEqual(readerSeams(harness).errorLines(), [
+      'Error: The storage lock is held by another window.',
+    ])
+    assert.equal(readerSeams(harness).hasErrorOfKind('archive'), true)
+  } finally {
     await harness.close()
   }
 })
