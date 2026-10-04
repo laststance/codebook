@@ -2272,6 +2272,49 @@ test('a stop declared on a line the sealed map has no position on is requested a
   assert.equal(mouse.length, 2)
 })
 
+// Cycle 0045 (ST-14): every live-run test declared 1:1 and mapped the next line at column 1, so the requested column could not be told from the declared one; green on 6a7a0b8, its controls are the column handed to the owned breakpoint and the column of the requested place.
+test('a stop declared at column 1 of an unmapped line is requested and captured at the column of the first mapped position on the next line', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches; line 2 holds an indented statement, mapped at its column 3.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: ';AACE',
+      fixture: {
+        source: '// toggles the theme\n  const nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([2])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the requested column')
+  const armed = run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 1, character: 2 },
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(armed?.detail)), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 2, column: 3 },
+  })
+  assert.equal(snapshot.source.line, 2)
+  assert.equal(snapshot.source.column, 3)
+})
+
 // Cycle 0045 (SP-7, SS-12, SS-13, PC-3.9): red while the place and the two checks of the preparation refusal each scanned the sealed map (three scans for this stop; a fourth by the binding rule when the requested line is not the citation's last).
 test('preparing a stop declared on an unmapped line scans its sealed map once', async (context) => {
   // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both.
@@ -2522,6 +2565,43 @@ test('a browser stop slid to the next line although its declared line has a brea
   // Assert
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-1): the accept path of the slide check had no answering debugger; green on 6a7a0b8, its control is the comparison of each answered location's line with the requested line.
+test('a browser stop bound on the next line is armed and captured there when the debugger lists break locations only on that line', async (context) => {
+  // Arrange: source line 1 is generated lines 0 and 2, source line 2 is generated line 1 between them, so the range asked for line 1 also holds the place of line 2; the debugger can pause only there and verifies the stop declared at 1:1 at 2:1.
+  const {
+    run,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+    breakLocationRequests,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA;AACA;AADA',
+    fixture: {
+      source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
+      citationEndLine: 2,
+    },
+  })
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([1])
+  // Act
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on the line the debugger bound')
+  await run.stop()
+  // Assert: the debugger was asked, and its only break location lies on line 2, so line 2 is the stop.
+  assert.deepEqual(breakLocationRequests, [
+    {
+      start: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 },
+      end: { scriptId: 'actual', lineNumber: 3, columnNumber: 0 },
+    },
+  ])
+  assert.equal(snapshot.source.line, 2)
+  assert.equal(snapshot.source.column, 1)
 })
 
 // Cycle 0045 (B-L6, SP-3, ER-21, PC-3.1): red while the debugger was asked for every break location of the module from 0:0 with no end.
