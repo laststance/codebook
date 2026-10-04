@@ -53,6 +53,26 @@ function throwIfWikiUpdateCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
 }
 
+/**
+ * Words the failure of an agent process that closed without a clean exit and that Codebook did not stop; called by the `close` handler of {@link runCursorWikiUpdate}.
+ * @param code - The exit code, or `null` when a signal ended the process.
+ * @param exitSignal - The signal that ended the process, or `null`.
+ * @returns The error whose sentence says how the agent stopped and where its own message can be read; the page alone says what was kept.
+ * @example
+ * unfinishedExitError(1, null).message
+ * // => 'Cursor Agent stopped with exit code 1 before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.'
+ * unfinishedExitError(null, 'SIGTERM').message
+ * // => 'Cursor Agent stopped on signal SIGTERM before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.'
+ */
+function unfinishedExitError(
+  code: number | null,
+  exitSignal: NodeJS.Signals | null,
+): Error {
+  return new Error(
+    `Cursor Agent stopped ${code === null ? `on signal ${exitSignal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
+  )
+}
+
 /** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window, which aborts with {@link WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON} and so gets the shorter grace before the hard stop. @param timeoutMs - Bound after which the agent is stopped; the caller passes the bound it announced. @returns The agent's reply, once the agent process has closed. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel (also one that arrives while the executable is looked up, which starts no process), a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed, and after a stop nothing of the agent's process group is left running. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal, 900_000) */
 export async function runCursorWikiUpdate(
   projectRoot: string,
@@ -164,11 +184,7 @@ export async function runCursorWikiUpdate(
       }
       if (code !== 0) {
         // A reason says what happened and what to do; the page alone says what was kept.
-        reject(
-          new Error(
-            `Cursor Agent stopped ${code === null ? `on signal ${exitSignal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
-          ),
-        )
+        reject(unfinishedExitError(code, exitSignal))
         return
       }
       resolve(Buffer.concat(chunks).toString('utf8'))
