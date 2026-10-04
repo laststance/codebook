@@ -11,8 +11,8 @@ import type {
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
 
-/** A step of opening or asking that a test can keep open: the start of a reader, or the editor's answer to which chat models it has. */
-export type HeldOpeningStep = 'reader-start' | 'model-list'
+/** A step of opening or asking that a test can keep open: the start of a reader, the editor's answer to which chat models it has, or the learner's choice among them. */
+export type HeldOpeningStep = 'reader-start' | 'model-list' | 'model-choice'
 
 /** A reader the window started, as a stand-in records it. */
 export type StartedWikiReader = {
@@ -33,8 +33,8 @@ export type StartedWikiReader = {
  * Used by the Wiki opening tests.
  *
  * @param options.forwardTo - The address the editor forwards a reader's URL to (a remote window); the URL itself when omitted (a local window).
- * @param options.models - The chat models the editor exposes to the question handler; none when omitted.
- * @returns What the window did (`readers` it started, `openedUrls` it handed to the browser, `errors` it showed, `modelQuestions` it sent to a chat model), the fake file watching, `open` (runs the command), `hold` (keeps one step of the next open or question open until `release()`) and `close` (deactivates and removes the project).
+ * @param options.models - The chat models the editor exposes to the question handler; none when omitted. The learner picks the first one when the editor asks.
+ * @returns What the window did (`readers` it started, `openedUrls` it handed to the browser, `errors` it showed, `modelQuestions` it sent to a chat model, `chatDrafts` it put into the editor chat), the fake file watching, `open` (runs the command), `hold` (keeps one step of the next open or question open until `release()`) and `close` (deactivates and removes the project).
  *
  * @example
  * ```ts
@@ -56,6 +56,7 @@ export async function openWikiOpeningWindow(
   openedUrls: string[]
   errors: string[]
   modelQuestions: string[]
+  chatDrafts: string[]
   files: ReturnType<typeof createFakeFileWatching>
   open(): Promise<void>
   hold(step: HeldOpeningStep): { started: Promise<void>; release(): void }
@@ -84,6 +85,7 @@ export async function openWikiOpeningWindow(
   const openedUrls: string[] = []
   const errors: string[] = []
   const modelQuestions: string[] = []
+  const chatDrafts: string[] = []
   const files = createFakeFileWatching()
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
@@ -118,6 +120,9 @@ export async function openWikiOpeningWindow(
             commands.set(name, action)
             return { dispose(): void {} }
           },
+          executeCommand: async (name: string) => {
+            chatDrafts.push(name)
+          },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
@@ -143,6 +148,10 @@ export async function openWikiOpeningWindow(
           showErrorMessage(message: string) {
             errors.push(message)
             return Promise.resolve(undefined)
+          },
+          showQuickPick: async <Item>(items: Item[]) => {
+            await passHold('model-choice')
+            return items[0]
           },
         },
       },
@@ -221,6 +230,7 @@ export async function openWikiOpeningWindow(
     openedUrls,
     errors,
     modelQuestions,
+    chatDrafts,
     files,
     async open(): Promise<void> {
       const command = commands.get('codebook.openDeepWiki')

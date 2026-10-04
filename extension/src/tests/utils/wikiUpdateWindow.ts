@@ -10,6 +10,7 @@ import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
+import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
 
@@ -202,9 +203,10 @@ export async function openWikiUpdateWindow(options: {
         },
         env: {
           ...(options.cursor ? { appName: 'Cursor' } : {}),
+          asExternalUri: keepLocalAddress,
           openExternal: async () => true,
         },
-        Uri: { parse: (value: string) => ({ value }) },
+        Uri: { parse: parseFakeUri },
         window: {
           registerUriHandler: (handler: { handleUri: UriHandler }) => {
             handleUri = handler.handleUri
@@ -282,6 +284,7 @@ export async function openWikiUpdateWindow(options: {
           readUpdateStatus = statusProvider
           return {
             url: 'http://127.0.0.1:9/index.html',
+            acceptForwardedOrigin(): void {},
             noteSourceChange(): void {},
             close: async (): Promise<void> => {},
           }

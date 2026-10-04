@@ -13,6 +13,7 @@ import {
   WIKI_FRESHNESS_MIN_INTERVAL_MS,
   WIKI_FRESHNESS_ROUTE,
   WIKI_HTTP_BODY_LIMIT_BYTES,
+  WIKI_LOOPBACK_HOSTS,
   WIKI_MANIFEST_FILE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
@@ -45,9 +46,11 @@ import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
-/** A started Wiki reader: where the browser opens it, how it is told that a project file changed, and how it is closed. */
+/** A started Wiki reader: where the browser opens it, how it is told where the editor forwards it and that a project file changed, and how it is closed. */
 export type DeepWikiReader = {
   url: string
+  /** Tells the reader which address the editor forwards it to (a remote window forwards the loopback port, often to another one), so a question from its own page at that address is answered. Only an address on this machine is accepted; any other is ignored. @param address - The reader's URL as `vscode.env.asExternalUri` resolved it. */
+  acceptForwardedOrigin(address: string): void
   /** Tells the reader that a file of the project was changed, created or deleted, whoever wrote it; the reader raises its source-change stamp when the file can change the Wiki's freshness. @param path - Absolute path of the file. */
   noteSourceChange(path: string): void
   close(): Promise<void>
@@ -198,7 +201,7 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entry for reported file changes and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entries for the forwarded address and for reported file changes, and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
@@ -237,6 +240,8 @@ export async function startDeepWikiReader(
     }
   })
   let origin = ''
+  /** The origin of the address the editor forwards this reader to, when that is another loopback address than its own. */
+  let forwardedOrigin: string | undefined
   /** The freshness inspection in flight and the generation of the site it reads; requests of that generation that overlap await it. */
   let freshnessInspection:
     { generation: string; result: Promise<WikiFreshness> } | undefined
@@ -314,9 +319,14 @@ export async function startDeepWikiReader(
     // An agent may publish a new owned directory while this reader stays open.
     const { files, sources } = await readManifest()
     if (relativePath === WIKI_QUESTION_ROUTE) {
+      const askedFrom = request.headers.origin
+      // The reader's own page asks from the reader's address, or from the one the editor forwards it to; a request without an origin is no page of this reader.
+      const isOwnPage =
+        askedFrom !== undefined &&
+        (askedFrom === origin || askedFrom === forwardedOrigin)
       if (
         request.method !== 'POST' ||
-        request.headers.origin !== origin ||
+        !isOwnPage ||
         request.headers['content-type']?.split(';')[0] !== 'application/json'
       ) {
         sendJson(response, 403, {
@@ -434,6 +444,12 @@ export async function startDeepWikiReader(
     origin = `http://127.0.0.1:${address.port}`
     return {
       url: `${origin}${prefix}${WIKI_ENTRY_FILE}`,
+      acceptForwardedOrigin(address: string): void {
+        const forwarded = new URL(address)
+        // A forwarded address that is not on this machine is somebody else's page.
+        if (WIKI_LOOPBACK_HOSTS.includes(forwarded.hostname))
+          forwardedOrigin = forwarded.origin
+      },
       noteSourceChange(path: string): void {
         const projectPath = relative(projectRoot, path).split(sep).join('/')
         // Only a file the freshness check weighs can change the label: an indexed source, or a file of the project it would count as added.
@@ -455,9 +471,11 @@ export async function startDeepWikiReader(
       },
       close: (): Promise<void> => {
         clearTimeout(sourceChangeTimer)
-        return new Promise<void>((resolve, reject) =>
-          server.close((error) => (error ? reject(error) : resolve())),
-        )
+        return new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()))
+          // A question in flight keeps its connection open, and the server would wait for it: ending the connections aborts the question and lets the close finish.
+          server.closeAllConnections()
+        })
       },
     }
   } catch (error) {

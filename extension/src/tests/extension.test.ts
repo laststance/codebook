@@ -21,6 +21,7 @@ import { startServer } from '../server'
 import type { StudyService } from '../service'
 
 import { createHarness } from './helpers'
+import { keepLocalAddress, parseFakeUri } from './utils/fakeEditorAddresses'
 import {
   createFakeFileWatching,
   FakeRelativePattern,
@@ -58,13 +59,14 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
             createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
+          asExternalUri: keepLocalAddress,
           openExternal: async (uri: { value: string }) => {
             opened.push(uri.value)
             return true
           },
         },
         Uri: {
-          parse: (value: string) => ({ value }),
+          parse: parseFakeUri,
           file: (fsPath: string) => ({ fsPath }),
         },
         window: {
@@ -166,9 +168,12 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
           createFileSystemWatcher:
             createFakeFileWatching().createFileSystemWatcher,
         },
-        env: { openExternal: async () => true },
+        env: {
+          asExternalUri: keepLocalAddress,
+          openExternal: async () => true,
+        },
         Uri: {
-          parse: (value: string) => ({ value }),
+          parse: parseFakeUri,
           file: (fsPath: string) => ({ fsPath }),
         },
         window: { showErrorMessage: async () => undefined },
@@ -178,6 +183,8 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
         readDeepWikiManifest: async () => undefined,
         startDeepWikiReader: async () => ({
           url: 'http://127.0.0.1:9/reader/index.html',
+          acceptForwardedOrigin(): void {},
+          noteSourceChange(): void {},
           close: async () => {
             releases.push('deepwiki-reader')
             throw new Error('reader close failed')
@@ -345,13 +352,14 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
             createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
+          asExternalUri: keepLocalAddress,
           openExternal: async (uri: { value: string }) => {
             opened.push(uri.value)
             return true
           },
         },
         Uri: {
-          parse: (value: string) => ({ value }),
+          parse: parseFakeUri,
           file: (fsPath: string) => ({ fsPath }),
         },
         lm: { selectChatModels: async () => [] },
@@ -465,6 +473,7 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
             createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
+          asExternalUri: keepLocalAddress,
           appName: 'Cursor',
           openExternal: async (uri: { value: string }) => {
             opened.push(uri.value)
@@ -472,7 +481,7 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
           },
         },
         Uri: {
-          parse: (value: string) => ({ value }),
+          parse: parseFakeUri,
           file: (fsPath: string) => ({ fsPath }),
         },
         lm: { selectChatModels: async () => [] },

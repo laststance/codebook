@@ -68,6 +68,7 @@ import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
@@ -1356,121 +1357,138 @@ export function activate(
         throw error
       }
     }),
-    registerCommand('codebook.openDeepWiki', async () => {
-      try {
-        const { projectRoot, outputDirectory } = await currentDeepWiki()
-        await deepWikiReader?.close()
-        deepWikiReader = undefined
-        const openedReader = await startDeepWikiReader(
-          outputDirectory,
-          projectRoot,
-          async (question, sources, signal) => {
-            if ((await realpath(requireWorkspace())) !== projectRoot)
-              throw new Error('The opened repository changed. Reopen its Wiki.')
-            const models = vscode.lm?.selectChatModels
-              ? await vscode.lm.selectChatModels()
-              : []
-            if (!models.length) {
-              if (isCursorHost) {
-                const cancellation = new vscode.CancellationTokenSource()
-                signal.addEventListener('abort', () => cancellation.cancel(), {
-                  once: true,
-                })
-                try {
-                  return await answerDeepWikiQuestionWithPrompt(
-                    (prompt) =>
-                      requestCursorWikiText(prompt, cancellation.token),
-                    projectRoot,
-                    sources,
-                    question,
-                    'cursor',
+    // A second command while the first is still opening joins it: two opens in flight would each start a reader, and the failure of one would close the other's.
+    registerCommand(
+      'codebook.openDeepWiki',
+      joinInFlight(async () => {
+        try {
+          const { projectRoot, outputDirectory } = await currentDeepWiki()
+          await deepWikiReader?.close()
+          deepWikiReader = undefined
+          const openedReader = await startDeepWikiReader(
+            outputDirectory,
+            projectRoot,
+            async (question, sources, signal) => {
+              if ((await realpath(requireWorkspace())) !== projectRoot)
+                throw new Error(
+                  'The opened repository changed. Reopen its Wiki.',
+                )
+              const models = vscode.lm?.selectChatModels
+                ? await vscode.lm.selectChatModels()
+                : []
+              // The browser tab may have been closed while the editor listed its models: a question nobody waits for is not sent.
+              signal.throwIfAborted()
+              if (!models.length) {
+                if (isCursorHost) {
+                  const cancellation = new vscode.CancellationTokenSource()
+                  signal.addEventListener(
+                    'abort',
+                    () => cancellation.cancel(),
+                    {
+                      once: true,
+                    },
                   )
-                } finally {
-                  cancellation.dispose()
+                  try {
+                    return await answerDeepWikiQuestionWithPrompt(
+                      (prompt) =>
+                        requestCursorWikiText(prompt, cancellation.token),
+                      projectRoot,
+                      sources,
+                      question,
+                      'cursor',
+                    )
+                  } finally {
+                    cancellation.dispose()
+                  }
+                }
+                const { outputDirectory } = await currentDeepWiki()
+                const query = `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(outputDirectory, WIKI_MANIFEST_FILE))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: ${JSON.stringify(question)}`
+                await vscode.commands.executeCommand(
+                  'workbench.action.chat.open',
+                  { query, isPartialQuery: true },
+                )
+                return {
+                  handoff:
+                    'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.',
                 }
               }
-              const { outputDirectory } = await currentDeepWiki()
-              const query = `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(outputDirectory, WIKI_MANIFEST_FILE))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: ${JSON.stringify(question)}`
-              await vscode.commands.executeCommand(
-                'workbench.action.chat.open',
-                { query, isPartialQuery: true },
+              const automatic = models.find((model) =>
+                /auto/i.test(`${model.id} ${model.name}`),
               )
-              return {
-                handoff:
-                  'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.',
-              }
-            }
-            const automatic = models.find((model) =>
-              /auto/i.test(`${model.id} ${model.name}`),
-            )
-            const chosen = automatic
-              ? undefined
-              : await vscode.window.showQuickPick(
-                  models.map((model) => ({
-                    label: model.name,
-                    description: model.vendor,
-                    model,
-                  })),
-                  {
-                    placeHolder:
-                      'Choose the editor model for this Wiki question',
-                  },
+              const chosen = automatic
+                ? undefined
+                : await vscode.window.showQuickPick(
+                    models.map((model) => ({
+                      label: model.name,
+                      description: model.vendor,
+                      model,
+                    })),
+                    {
+                      placeHolder:
+                        'Choose the editor model for this Wiki question',
+                    },
+                  )
+              // The same holds for a tab closed while the learner chose a model.
+              signal.throwIfAborted()
+              const model = automatic ?? chosen?.model
+              if (!model)
+                throw new Error(
+                  'No editor model was selected for this Wiki question.',
                 )
-            const model = automatic ?? chosen?.model
-            if (!model)
-              throw new Error(
-                'No editor model was selected for this Wiki question.',
-              )
-            const cancellation = new vscode.CancellationTokenSource()
-            signal.addEventListener('abort', () => cancellation.cancel(), {
-              once: true,
-            })
-            try {
-              return await answerDeepWikiQuestion(
-                model,
-                projectRoot,
-                sources,
-                question,
-                isCursorHost ? 'cursor' : 'vscode',
-                cancellation.token,
-              )
-            } finally {
-              cancellation.dispose()
-            }
-          },
-          isCursorHost ? 'cursor' : 'vscode',
-          () => wikiUpdateRun.status(),
-        )
-        // A source also changes without a save in this editor (an agent's CLI and Git write files directly), so the project's files are watched for as long as the reader serves.
-        const sourceWatcher = vscode.workspace.createFileSystemWatcher(
-          new vscode.RelativePattern(projectRoot, '**'),
-        )
-        const noteSourceChange = (file: vscode.Uri): void =>
-          openedReader.noteSourceChange(file.fsPath)
-        sourceWatcher.onDidChange(noteSourceChange)
-        sourceWatcher.onDidCreate(noteSourceChange)
-        sourceWatcher.onDidDelete(noteSourceChange)
-        deepWikiReader = {
-          ...openedReader,
-          close: async (): Promise<void> => {
-            sourceWatcher.dispose()
-            await openedReader.close()
-          },
+              const cancellation = new vscode.CancellationTokenSource()
+              signal.addEventListener('abort', () => cancellation.cancel(), {
+                once: true,
+              })
+              try {
+                return await answerDeepWikiQuestion(
+                  model,
+                  projectRoot,
+                  sources,
+                  question,
+                  isCursorHost ? 'cursor' : 'vscode',
+                  cancellation.token,
+                )
+              } finally {
+                cancellation.dispose()
+              }
+            },
+            isCursorHost ? 'cursor' : 'vscode',
+            () => wikiUpdateRun.status(),
+          )
+          // A source also changes without a save in this editor (an agent's CLI and Git write files directly), so the project's files are watched for as long as the reader serves.
+          const sourceWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(projectRoot, '**'),
+          )
+          const noteSourceChange = (file: vscode.Uri): void =>
+            openedReader.noteSourceChange(file.fsPath)
+          sourceWatcher.onDidChange(noteSourceChange)
+          sourceWatcher.onDidCreate(noteSourceChange)
+          sourceWatcher.onDidDelete(noteSourceChange)
+          deepWikiReader = {
+            ...openedReader,
+            close: async (): Promise<void> => {
+              sourceWatcher.dispose()
+              await openedReader.close()
+            },
+          }
+          const readerAddress = vscode.Uri.parse(openedReader.url)
+          // In a remote window the editor forwards the reader's port, often to another one, and the page then asks its questions from that address. The browser is still sent to the reader's own address: the editor resolves what it opens by itself.
+          openedReader.acceptForwardedOrigin(
+            (await vscode.env.asExternalUri(readerAddress)).toString(),
+          )
+          if (!(await vscode.env.openExternal(readerAddress)))
+            throw new Error('The browser did not open the generated DeepWiki.')
+        } catch (error) {
+          await deepWikiReader?.close()
+          deepWikiReader = undefined
+          void showNotice(
+            'error',
+            `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
+          )
+          throw error
         }
-        if (
-          !(await vscode.env.openExternal(vscode.Uri.parse(openedReader.url)))
-        )
-          throw new Error('The browser did not open the generated DeepWiki.')
-      } catch (error) {
-        await deepWikiReader?.close()
-        deepWikiReader = undefined
-        void showNotice(
-          'error',
-          `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
-        )
-        throw error
-      }
-    }),
+      }),
+    ),
     registerCommand('codebook.updateDeepWiki', async () => {
       try {
         await updateDeepWiki()

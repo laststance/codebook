@@ -389,6 +389,12 @@ export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
 export const WIKI_FRESHNESS_ROUTE = 'api/freshness'
 /** Route of the Wiki reader that takes a repository question from its own page. */
 export const WIKI_QUESTION_ROUTE = 'api/ask'
+/** The host names of an address on this machine; an address the editor forwards the Wiki reader to is accepted as the reader's own page only under one of them. */
+export const WIKI_LOOPBACK_HOSTS: readonly string[] = [
+  '127.0.0.1',
+  'localhost',
+  '[::1]',
+]
 /** File name of the Wiki publisher's receipt in an output or candidate folder. */
 export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
 /** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */
