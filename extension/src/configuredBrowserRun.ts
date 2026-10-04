@@ -830,10 +830,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Words a refused or lost registration for {@link registeredStop} and for the synchronous receipt check before input in {@link dispatchInput}, so each place the run reads the receipt names the declared stop.
    * @param stop - The declared server stop whose registration failed.
    * @param error - What the tracker threw.
-   * @returns The error to throw; a removed breakpoint gets no mapping hints, because another line would not help.
+   * @returns The error to throw. A refusal names the next step (a new run, then another statement of the citation) and the configuration field of the stop, followed by the mapping hints; a removed breakpoint gets neither, because another line would not help.
    * @example
    * ```ts
-   * throw this.registrationFailure(stop, error) // 'Declared stop app/lib/actions.ts:36 was not registered: …'
+   * throw this.registrationFailure(stop, error) // 'Declared stop app/lib/actions.ts:36 was not registered: …. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.source). Frozen source map positions …'
    * ```
    */
   private registrationFailure(stop: PreparedStop, error: unknown): Error {
@@ -841,7 +841,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
     return reason === OWNED_BREAKPOINT_REMOVED
       ? new Error(message)
-      : this.bindingFailure(stop, message)
+      : this.bindingFailure(
+          stop,
+          `${message}. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (${this.declaredField(stop)})`,
+        )
+  }
+
+  /** Names the configuration field that holds a declared stop's position, for the refusals that tell the agent what to change ({@link registrationFailure}, {@link slideRefusal}). @example this.declaredField(stop) // 'configuration.source' for the first stop */
+  private declaredField(stop: PreparedStop): string {
+    return configuredStopFields(
+      this.definition.configuration.version,
+      this.stops.indexOf(stop),
+    ).source
   }
 
   /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change; stops that share one line (a line that runs twice) are told apart by their place in the declared order. @example this.declaredAt(stop) // 'app/lib/actions.ts:36', or 'app/lib/actions.ts:36 (stop 2 of 3)' when another stop names that line */
@@ -978,10 +989,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       secondRequest = firstRequest
         ? `, and a second request at ${armed.line}:${armed.column} was bound on line ${binding.line} again`
         : ''
-    const field = configuredStopFields(
-      this.definition.configuration.version,
-      this.stops.indexOf(stop),
-    ).source
+    const field = this.declaredField(stop)
     // Codebook chose the column of a stop requested after its declared line, so the agent is told which line to declare.
     const advice =
       armed.line === source.line

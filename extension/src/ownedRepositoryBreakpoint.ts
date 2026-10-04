@@ -48,7 +48,7 @@ export const verifiedPlaceSchema = z.object({
   line: z.number().int(),
   column: z.number().int(),
 })
-/** Refusal of a registration whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the declared line. */
+/** Refusal of a registration whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the requested line. */
 export const OWNED_BREAKPOINT_REMOVED =
   'Owned breakpoint was removed before registration'
 /** Where an adapter verified a breakpoint: one-based line and column. */
@@ -68,7 +68,7 @@ type RegistrationReceipt = {
   requestSequence: number
   breakpointId: number
   status: 'pending' | 'bound'
-  /** Present only when the adapter verified the breakpoint on a later line that the owner's rule accepted, and named its column. */
+  /** Present only when the adapter verified the breakpoint on another line than requested, which the owner's rule accepted, and named its column. */
   movedTo?: VerifiedPlace
 }
 /** Where the adapter verified the owned breakpoint, kept beside the receipt so the run can compare a pause with it; absent while pending or when the reply named no whole position. */
@@ -97,12 +97,12 @@ export class OwnedRepositoryBreakpoint {
   } & VerifiedRegistration
   retired = false
   /**
-   * Adds the owned breakpoint to the editor at the declared position.
+   * Adds the owned breakpoint to the editor at the requested position: the place its owner asks the debugger for. A Node test run requests the position its stop was declared at; a configured run requests the declared position, or the first mapped position after a declared line without one ({@link resolveArmedPlace}).
    * @param path - Absolute path of the source file the stop belongs to.
-   * @param line - One-based declared line.
-   * @param column - One-based declared column.
-   * @param acknowledgedAt - What the adapter's registration reply must name. `'declared-line'` (configured runs) accepts any column of the declared line, because that caller commits the stop at the position the debugger bound. `'declared-column'` (Node test runs) also refuses another column, because that caller captures its pause at the declared column; a pending reply that names no column yet is still accepted.
-   * @param acceptsLaterLine - Tells whether a line other than the declared one may be this breakpoint's verified place. A configured run passes its binding rule ({@link createBindingLineRule}), because a debugger that cannot pause on the declared line binds the first place after it. Without it, and under `'declared-column'`, a verified reply on another line is refused.
+   * @param line - One-based requested line.
+   * @param column - One-based requested column.
+   * @param acknowledgedAt - What the adapter's registration reply must name. `'declared-line'` (configured runs) accepts any column of the requested line, because that caller commits the stop at the position the debugger bound. `'declared-column'` (Node test runs, which request the declared position) also refuses another column, because that caller captures its pause at that column; a pending reply that names no column yet is still accepted.
+   * @param acceptsOtherLine - Tells whether a line other than the requested one may be this breakpoint's verified place. A configured run passes its binding rule ({@link createBindingLineRule}), which accepts the lines from the declared to the requested one and a later line no mapped line separates from the requested one. Without it, and under `'declared-column'`, a verified reply on another line is refused.
    * @example
    * new OwnedRepositoryBreakpoint('/repo/actions.ts', 20, 5)
    * new OwnedRepositoryBreakpoint('/repo/theme.ts', 1, 14, 'declared-column')
@@ -114,7 +114,7 @@ export class OwnedRepositoryBreakpoint {
     readonly column: number,
     private readonly acknowledgedAt:
       'declared-line' | 'declared-column' = 'declared-line',
-    private readonly acceptsLaterLine?: (line: number) => boolean,
+    private readonly acceptsOtherLine?: (line: number) => boolean,
   ) {
     this.breakpoint = new vscode.SourceBreakpoint(
       new vscode.Location(
@@ -196,48 +196,48 @@ export class OwnedRepositoryBreakpoint {
 
   /**
    * Tells whether an adapter reply names a position this owner accepts; called by {@link onResponse} for the owned breakpoint's entry.
-   * A reply may leave a position out while it is pending; a verified one must name the declared line, and for an owner that captures at the declared column also that column. An owner that commits at the bound position also takes a verified reply on a line its rule accepts.
+   * A reply may leave a position out while it is pending; a verified one must name the requested line, and for an owner that captures at the requested column also that column. An owner that commits at the bound position also takes a verified reply on a line its rule accepts.
    * @param binding - The owned breakpoint's entry of the setBreakpoints reply.
    * @returns `false` when the reply names another line that the owner's rule does not accept, or, under `'declared-column'`, another line or column.
    * @example
-   * this.acknowledgesPosition({ verified: true, line: 20, column: 12 }) // => true for 'declared-line', false for 'declared-column' declared at 20:5
+   * this.acknowledgesPosition({ verified: true, line: 20, column: 12 }) // => true for 'declared-line', false for 'declared-column' requested at 20:5
    */
   private acknowledgesPosition(binding: {
     verified: boolean
     line?: number
     column?: number
   }): boolean {
-    const names = (declared: number, replied?: number): boolean =>
+    const names = (requested: number, replied?: number): boolean =>
       binding.verified
-        ? replied === declared
-        : (replied ?? declared) === declared
-    // An owner that captures at the declared column takes that exact position and nothing else.
+        ? replied === requested
+        : (replied ?? requested) === requested
+    // An owner that captures at the requested column takes that exact position and nothing else.
     if (this.acknowledgedAt === 'declared-column')
       return (
         names(this.line, binding.line) && names(this.column, binding.column)
       )
     // Otherwise the adapter chooses the column, and may have moved the breakpoint to a line the owner's rule accepts.
-    return names(this.line, binding.line) || this.isOnAcceptedLaterLine(binding)
+    return names(this.line, binding.line) || this.isOnAcceptedOtherLine(binding)
   }
 
-  /** Tells {@link acknowledgesPosition} whether a verified reply names another line that the owner's rule accepts; a pending reply never does. @example this.isOnAcceptedLaterLine({ verified: true, line: 35 }) // true for an owner whose rule accepts line 35 */
-  private isOnAcceptedLaterLine(binding: {
+  /** Tells {@link acknowledgesPosition} whether a verified reply names another line that the owner's rule accepts; a pending reply never does. @example this.isOnAcceptedOtherLine({ verified: true, line: 35 }) // true for an owner whose rule accepts line 35 */
+  private isOnAcceptedOtherLine(binding: {
     verified: boolean
     line?: number
   }): boolean {
     return (
       binding.verified &&
       binding.line !== undefined &&
-      Boolean(this.acceptsLaterLine?.(binding.line))
+      Boolean(this.acceptsOtherLine?.(binding.line))
     )
   }
 
   /**
    * Gives {@link onResponse} and {@link onEvent} the places an acknowledged binding names: where it is verified, and the receipt's `movedTo` entry, whose key is absent unless the breakpoint moved so every other receipt keeps its shape.
    * @param binding - The owned breakpoint's parsed entry of a setBreakpoints reply or `breakpoint` event that {@link acknowledgesPosition} accepted.
-   * @returns `verifiedAt` for a verified binding that names its whole position, and `movedTo` when that is another line than declared.
+   * @returns `verifiedAt` for a verified binding that names its whole position, and `movedTo` when that is another line than requested.
    * @example
-   * this.verifiedPlaces({ verified: true, line: 35, column: 5 }) // => { verifiedAt: { line: 35, column: 5 }, movedTo: { line: 35, column: 5 } } for an owner declared at 33:5
+   * this.verifiedPlaces({ verified: true, line: 35, column: 5 }) // => { verifiedAt: { line: 35, column: 5 }, movedTo: { line: 35, column: 5 } } for an owner requested at 33:5
    * this.verifiedPlaces({ verified: false }) // => {}
    */
   private verifiedPlaces(binding: {
@@ -257,7 +257,7 @@ export class OwnedRepositoryBreakpoint {
       : { verifiedAt, movedTo: verifiedAt }
   }
 
-  /** Tells whether a breakpoint position of a request or reply may be the owned one: the declared position, or the place the adapter verified it at; a position without a column matches any column of that line. @example this.isOwnedPosition({ line: 35 }, { line: 35, column: 5 }) // true */
+  /** Tells whether a breakpoint position of a request or reply may be the owned one: the requested position, or the place the adapter verified it at; a position without a column matches any column of that line. @example this.isOwnedPosition({ line: 35 }, { line: 35, column: 5 }) // true */
   private isOwnedPosition(
     position: { line?: number; column?: number },
     verifiedAt: VerifiedPlace | undefined,
@@ -270,7 +270,7 @@ export class OwnedRepositoryBreakpoint {
     )
   }
 
-  /** Accepts only a successful matching setBreakpoints response on the declared line, or on a later line the owner's rule accepts, at whichever column the adapter bound unless the owner asked for the declared column; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
+  /** Accepts only a successful matching setBreakpoints response on the requested line, or on another line the owner's rule accepts, at whichever column the adapter bound unless the owner asked for the requested column; a retirement response must exclude the owned stop. @example owned.onResponse(session, response) */
   onResponse(
     session: vscode.DebugSession,
     response: DebugProtocol.Response,
@@ -302,7 +302,7 @@ export class OwnedRepositoryBreakpoint {
         !this.acknowledgesPosition(binding)
       ) {
         // The readable positions come first; the JSON keeps every field of the reply for diagnosis.
-        registration.failure = `Selected adapter did not acknowledge the declared breakpoint registration (declared ${this.line}:${this.column}, ${
+        registration.failure = `Selected adapter did not acknowledge the breakpoint registration (requested ${this.line}:${this.column}, ${
           binding
             ? `answered ${binding.line ?? 'no line'}:${binding.column ?? 'no column'} ${binding.verified ? 'verified' : 'unverified'}`
             : 'no answer for this breakpoint'
@@ -381,10 +381,10 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Reads where the adapter currently has this breakpoint when it moved it to a later line, for a deadline text that must name that place while it fails a run; {@link ConfiguredBrowserRun} calls it when such a deadline expires.
+   * Reads where the adapter currently has this breakpoint when it moved it to another line than requested, for a deadline text that must name that place while it fails a run; {@link ConfiguredBrowserRun} calls it when such a deadline expires.
    * Unlike {@link registration} it never throws: a refused, revoked or retired registration has no moved place.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
-   * @returns The verified line and column of the current acknowledgement, or `undefined` when it is on the declared line, pending, refused or gone.
+   * @returns The verified line and column of the current acknowledgement, or `undefined` when it is on the requested line, pending, refused or gone.
    * @example
    * owned.movedTo(session) // => { line: 35, column: 5 }
    */
@@ -415,12 +415,12 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Reads where the adapter currently has this breakpoint verified, on the declared line or on a later line the owner's rule accepted, so a pause can be compared with that exact line before the run binds the stop; {@link ConfiguredBrowserRun} asks it for every pause it admits.
+   * Reads where the adapter currently has this breakpoint verified, on the requested line or on another line the owner's rule accepted, so a pause can be compared with that exact line before the run binds the stop; {@link ConfiguredBrowserRun} asks it for every pause it admits.
    * Like {@link movedTo} it never throws.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
    * @returns The verified line and column, or `undefined` while pending, without a whole position, or when refused or gone.
    * @example
-   * owned.verifiedPlace(session) // => { line: 33, column: 5 } for a breakpoint verified on its declared line 33
+   * owned.verifiedPlace(session) // => { line: 33, column: 5 } for a breakpoint verified on its requested line 33
    */
   verifiedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
     const registration = this.registrations.get(session.id)

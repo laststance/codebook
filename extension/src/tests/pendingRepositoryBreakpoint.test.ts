@@ -14,7 +14,7 @@ import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 async function breakpointHarness(
   acknowledgedAt?: 'declared-line' | 'declared-column',
   /** The owner's rule for a verified reply on another line; without it such a reply is refused. */
-  acceptsLaterLine?: (line: number) => boolean,
+  acceptsOtherLine?: (line: number) => boolean,
   /** One-based column the owned breakpoint is requested at on line 20. */
   requestedColumn = 5,
 ) {
@@ -76,7 +76,7 @@ async function breakpointHarness(
     20,
     requestedColumn,
     acknowledgedAt,
-    acceptsLaterLine,
+    acceptsOtherLine,
   )
   const request = (
     sequence = 1,
@@ -215,7 +215,7 @@ test('a registration the adapter verifies on another line blocks continuation an
   await assert.rejects(breakpoint.registered(session, signal), (error) => {
     assert.match(
       String(error),
-      /Selected adapter did not acknowledge the declared breakpoint registration/,
+      /Selected adapter did not acknowledge the breakpoint registration/,
     )
     assert.match(String(error), /"expectedLine":20/)
     assert.match(String(error), /"selectedLine":21/)
@@ -553,11 +553,11 @@ for (const verified of [true, false])
       verified
         ? {
             message:
-              'Selected adapter did not acknowledge the declared breakpoint registration (declared 20:5, answered 20:12 verified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":true,"selectedReason":null,"selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
+              'Selected adapter did not acknowledge the breakpoint registration (requested 20:5, answered 20:12 verified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":true,"selectedReason":null,"selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
           }
         : {
             message:
-              'Selected adapter did not acknowledge the declared breakpoint registration (declared 20:5, answered 20:12 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
+              'Selected adapter did not acknowledge the breakpoint registration (requested 20:5, answered 20:12 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
           },
     )
   })
@@ -606,7 +606,7 @@ test('an owner that captures at the declared column accepts a registration verif
       withoutColumn.session,
       withoutColumn.signal,
     ),
-    /Selected adapter did not acknowledge the declared breakpoint registration/,
+    /Selected adapter did not acknowledge the breakpoint registration/,
   )
 })
 
@@ -648,7 +648,7 @@ test('a registration the adapter verifies on a line the owner’s rule refuses b
   await assert.rejects(breakpoint.registered(session, signal), (error) => {
     assert.match(
       String(error),
-      /Selected adapter did not acknowledge the declared breakpoint registration/,
+      /Selected adapter did not acknowledge the breakpoint registration/,
     )
     assert.match(String(error), /"expectedLine":20/)
     assert.match(String(error), /"selectedLine":22/)
@@ -720,7 +720,7 @@ test('a pending registration that names a later line the owner’s rule accepts 
   // Assert
   await assert.rejects(breakpoint.registered(session, signal), {
     message:
-      'Selected adapter did not acknowledge the declared breakpoint registration (declared 20:5, answered 21:7 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":21,"selectedColumn":7,"selectedSourceMatches":null}',
+      'Selected adapter did not acknowledge the breakpoint registration (requested 20:5, answered 21:7 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":21,"selectedColumn":7,"selectedSourceMatches":null}',
   })
   assert.equal(breakpoint.movedTo(session), undefined)
 })
