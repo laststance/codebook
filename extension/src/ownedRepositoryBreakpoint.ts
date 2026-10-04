@@ -42,6 +42,10 @@ const registrationResponseSchema = z.object({
     }),
   ),
 })
+/** One breakpoint of a setBreakpoints reply, as the adapter answers the registration of {@link OwnedRepositoryBreakpoint}. */
+type RegistrationBinding = z.infer<
+  typeof registrationResponseSchema
+>['breakpoints'][number]
 /** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. {@link ConfiguredBrowserRun} reads a browser binding with it too. */
 export const verifiedPlaceSchema = z.object({
   verified: z.literal(true),
@@ -348,20 +352,13 @@ export class OwnedRepositoryBreakpoint {
         ? parsed.data.breakpoints[registration.index]
         : undefined
       // DAP preserves request order; never select an arbitrary matching line from a truncated/reordered response.
-      if (
-        !response.success ||
-        !parsed.success ||
-        parsed.data.breakpoints.length !== registration.count ||
-        !binding ||
-        binding.id === undefined ||
-        binding.reason === 'failed' ||
-        parsed.data.breakpoints.filter(
-          (candidate) => candidate.id === binding.id,
-        ).length !== 1 ||
-        (binding.source?.path &&
-          resolve(binding.source.path) !== resolve(this.path)) ||
-        !this.acknowledgesPosition(binding)
-      ) {
+      const isOwnAnswer =
+        response.success &&
+        parsed.success &&
+        parsed.data.breakpoints.length === registration.count &&
+        this.isIdentifiedBinding(binding, parsed.data.breakpoints) &&
+        this.isInOwnedSource(binding)
+      if (!isOwnAnswer || !this.acknowledgesPosition(binding)) {
         // The readable positions come first; the JSON keeps every field of the reply for diagnosis.
         registration.failure = `Selected adapter did not acknowledge the breakpoint registration (requested ${this.line}:${this.column}, ${
           binding
@@ -382,7 +379,7 @@ export class OwnedRepositoryBreakpoint {
             ? resolve(binding.source.path) === resolve(this.path)
             : null,
         })}`
-        registration.refusedAt = this.refusedReplyPlace(binding)
+        registration.refusedAt = this.refusedReplyPlace(binding, isOwnAnswer)
       } else {
         const { verifiedAt, ...moved } = this.verifiedPlaces(binding)
         registration.verifiedAt = verifiedAt
@@ -428,16 +425,46 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
-   * Gives {@link onResponse} the place a refused registration reply verified the owned breakpoint at, so the owner can read it with {@link refusedPlace} instead of taking it from the refusal's text.
-   * @param binding - The owned breakpoint's entry of the refused reply; `undefined` when the reply held none.
-   * @returns The verified line and column when the reply names a place this owner does not accept ({@link acknowledgesPosition}); `undefined` for a reply without an entry, for one that is unverified or names no whole position, and for one refused for another reason at an accepted place.
+   * Tells {@link onResponse} whether the reply's entry for the owned breakpoint identifies one breakpoint the adapter did not fail: the part of an acknowledgement that does not depend on where the breakpoint was bound.
+   * @param binding - The entry at the owned breakpoint's index of the reply; `undefined` when the reply holds none there.
+   * @param breakpoints - Every entry of the reply.
+   * @returns `true` for an entry with an id that no other entry of the reply carries and whose reason is not `failed`; `false` otherwise.
    * @example
-   * this.refusedReplyPlace({ verified: true, line: 26, column: 5 }) // => { line: 26, column: 5 } for an owner requested at 22:40 whose rule refuses line 26
+   * this.isIdentifiedBinding({ id: 8, verified: true, line: 20, column: 5 }, breakpoints) // => true when no other entry has id 8
+   */
+  private isIdentifiedBinding(
+    binding: RegistrationBinding | undefined,
+    breakpoints: RegistrationBinding[],
+  ): binding is RegistrationBinding & { id: number } {
+    if (binding?.id === undefined || binding.reason === 'failed') return false
+    return (
+      breakpoints.filter((candidate) => candidate.id === binding.id).length ===
+      1
+    )
+  }
+
+  /** Tells {@link onResponse} whether the reply's entry lies in the owned source; an entry that names no source is taken as the owned one's. @example this.isInOwnedSource({ verified: true, source: { path: '/other/file.ts' } }) // => false */
+  private isInOwnedSource(binding: RegistrationBinding): boolean {
+    return !(
+      binding.source?.path &&
+      resolve(binding.source.path) !== resolve(this.path)
+    )
+  }
+
+  /**
+   * Gives {@link onResponse} the place a refused registration reply verified the owned breakpoint at, so the owner can read it with {@link refusedPlace} instead of taking it from the refusal's text.
+   * A place is kept only for a reply that was refused for its place alone: a reply that failed, is incomplete, does not identify the breakpoint or names another source says nothing its owner could request again from.
+   * @param binding - The owned breakpoint's entry of the refused reply; `undefined` when the reply held none.
+   * @param isOwnAnswer - Whether the reply acknowledged the breakpoint in every respect but its place.
+   * @returns The verified line and column of a reply refused only because this owner does not accept that place ({@link acknowledgesPosition}); `undefined` for a reply refused for another reason, and for an entry that is unverified or names no whole position.
+   * @example
+   * this.refusedReplyPlace({ id: 8, verified: true, line: 26, column: 5 }, true) // => { line: 26, column: 5 } for an owner requested at 22:40 whose rule refuses line 26
    */
   private refusedReplyPlace(
-    binding: { verified: boolean; line?: number; column?: number } | undefined,
+    binding: RegistrationBinding | undefined,
+    isOwnAnswer: boolean,
   ): VerifiedPlace | undefined {
-    if (!binding || this.acknowledgesPosition(binding)) return undefined
+    if (!isOwnAnswer || !binding) return undefined
     return wholeVerifiedPosition(binding)
   }
 
@@ -445,7 +472,7 @@ export class OwnedRepositoryBreakpoint {
    * Reads where the adapter verified this breakpoint when its owner refuses that place, in the registration reply or in a later `breakpoint` event, so the owner can answer the refusal by requesting the breakpoint elsewhere; {@link ConfiguredBrowserRun} asks it when the registration of a stop it is arming was refused.
    * Like {@link movedTo} it never throws.
    * @param session - The debug session whose adapter answered the registration.
-   * @returns The refused line and column, or `undefined` when the session has no registration, the registration stands, or it was refused for another reason than its place.
+   * @returns The refused line and column, or `undefined` when the session has no registration, the registration stands, or it was refused for another reason than its place (a failed or incomplete reply, an unidentified breakpoint, another source).
    * @example
    * owned.refusedPlace(session) // => { line: 26, column: 5 }
    */

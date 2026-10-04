@@ -723,6 +723,103 @@ test('a registration the adapter verifies on a line the owner’s rule refuses b
   assert.equal(breakpoint.movedTo(session), undefined)
 })
 
+// Value: protects=a run requesting a stop again only from a place the adapter really verified its own breakpoint at; fails_when=a reply refused for another reason (another source, a failed reason, an id two breakpoints share) still hands its line to the owner, so the run retires the breakpoint and requests it again on line numbers that are not its own; why_new=Cycle 0045 local review (runtime-1 #3: the refused place is read by the run to make a second request); seam=none
+test('a refused registration names its place only when the adapter verified the owned breakpoint there, not for a reply refused for another reason', async () => {
+  // Arrange: four owners whose rule accepts line 21 only; each adapter reply verifies the owned breakpoint on line 22.
+  const refusedForItsPlace = await breakpointHarness(
+      'declared-line',
+      (line) => line === 21,
+    ),
+    inAnotherSource = await breakpointHarness(
+      'declared-line',
+      (line) => line === 21,
+    ),
+    failedByTheAdapter = await breakpointHarness(
+      'declared-line',
+      (line) => line === 21,
+    ),
+    sharingAnId = await breakpointHarness(
+      'declared-line',
+      (line) => line === 21,
+    )
+  // Act
+  refusedForItsPlace.breakpoint.onRequest(
+    refusedForItsPlace.session,
+    refusedForItsPlace.request(),
+  )
+  refusedForItsPlace.breakpoint.onResponse(
+    refusedForItsPlace.session,
+    refusedForItsPlace.response(1, {
+      id: 8,
+      verified: true,
+      line: 22,
+      column: 5,
+    }),
+  )
+  inAnotherSource.breakpoint.onRequest(
+    inAnotherSource.session,
+    inAnotherSource.request(),
+  )
+  inAnotherSource.breakpoint.onResponse(
+    inAnotherSource.session,
+    inAnotherSource.response(1, {
+      id: 8,
+      verified: true,
+      line: 22,
+      column: 5,
+      source: { path: '/repo/other.ts' },
+    }),
+  )
+  failedByTheAdapter.breakpoint.onRequest(
+    failedByTheAdapter.session,
+    failedByTheAdapter.request(),
+  )
+  failedByTheAdapter.breakpoint.onResponse(
+    failedByTheAdapter.session,
+    failedByTheAdapter.response(1, {
+      id: 8,
+      verified: true,
+      line: 22,
+      column: 5,
+      reason: 'failed',
+    }),
+  )
+  sharingAnId.breakpoint.onRequest(sharingAnId.session, sharingAnId.request())
+  sharingAnId.breakpoint.onResponse(
+    sharingAnId.session,
+    sharingAnId.response(1, { id: 7, verified: true, line: 22, column: 5 }),
+  )
+  // Assert: every registration is refused; only the first one names a place.
+  for (const refused of [
+    refusedForItsPlace,
+    inAnotherSource,
+    failedByTheAdapter,
+    sharingAnId,
+  ])
+    await assert.rejects(
+      refused.breakpoint.registered(refused.session, refused.signal),
+      /Selected adapter did not acknowledge the breakpoint registration/,
+    )
+  assert.equal(
+    JSON.stringify(
+      refusedForItsPlace.breakpoint.refusedPlace(refusedForItsPlace.session),
+    ),
+    '{"line":22,"column":5}',
+  )
+  assert.equal(
+    inAnotherSource.breakpoint.refusedPlace(inAnotherSource.session),
+    undefined,
+  )
+  assert.equal(
+    failedByTheAdapter.breakpoint.refusedPlace(failedByTheAdapter.session),
+    undefined,
+  )
+  assert.equal(
+    sharingAnId.breakpoint.refusedPlace(sharingAnId.session),
+    undefined,
+  )
+})
+
 // Value: protects=a Node test stop staying refused on another line, because that caller captures its pause at the declared column; fails_when=a rule passed to a 'declared-column' owner is consulted; why_new=the rule is new and must not reach Node test stops (Cycle 0043, ER4); seam=none
 test('an owner that captures at the declared column refuses a verified reply on another line even when a rule would accept it', async () => {
   // Arrange
