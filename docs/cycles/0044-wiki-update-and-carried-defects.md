@@ -3,7 +3,7 @@
 Type: product-increment with the carried defects of Cycles 0031 to 0043\
 Status: validating\
 Result: demonstrated in VS Code; in Cursor demonstrated for a refused start and a failure, not run for a running update\
-Delivery: committed\
+Delivery: PR-open\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/83 \
 Goal issue: https://github.com/laststance/codebook/issues/1 \
@@ -479,15 +479,23 @@ The fix of row 0041-N10-1b changed behavior after pass 2's reviews were bound, s
 - Found by more than one reader: the list commands of Show Variables after its wait (RT-4, CX-S2), the partial-scan path (NF-29, CX-A2, ST-20), the start check that reads through links (C-L6, CX-A3).
 - The review records: pass 3 is recorded as not complete for the same reason as the passes before it (the Cursor legs of criterion 9 NOT RUN, W-1; named, not waived). Its content snapshot equals the native adversarial record's, which is what the delivery binds.
 
+### Pull request and CI, 2026-10-04
+
+`/ship` invocation 1 ended with pull request [#84](https://github.com/laststance/codebook/pull/84) on `61c1afc`. Its documentation audit corrected 27 statements in five documents (`README.md`, `extension/README.md`, `PROJECT_STATE.md`, the test execution guide and 19 cells of the Closed column) and left no blocker; its verification gate on the committed tree: 2,405 of 2,405, package 193 of 193, the hook 4 of 4, every static gate passing.
+
+CI on that head: 22 checks passed, and the new Reader DOM job failed on its first run, before any case. The harness records a video of the run, and the runner has no ffmpeg build for the Playwright that `playwright-cli` bundles ("screencast.start: Executable doesn't exist at …/ms-playwright/ffmpeg-1011/ffmpeg-linux"). On this host that build was already in the Playwright cache, so no local run had shown it. `0c9807f` installs it in the job (`playwright-cli install-browser ffmpeg`). On that commit all 23 checks passed, the Reader DOM job with 82 of 82 cases in the runner's Chrome and the twelve Test jobs in 34 to 52 s. That run closes row 0038-T11 / 0040-D12a: the job runs the DOM script and ends non-zero when the harness does, as its first run showed. The workflow change was made after the delivery's reviews; it touches no product source, no test and no packaged file.
+
+The audit's documentation debt goes to Cycle 0045's Issue with the list under "Next action": the Show Variables button, the Move Learning Summary offer, the storage lock takeover, the replacement of an idle MCP session by a ninth client and the 10 s wait of "Open replay" are in no usage document or in the CHANGELOG only; the Reader DOM check has no how-to in the test execution guide; `README.md` has no Cycle 0044 paragraph under its implementation status and still cites numbers of the retired decision log; the "Recorded walkthroughs" and `writer.lock` passages of `extension/README.md` predate this cycle's fixes; many Closed cells name line numbers of an earlier tree, row 0031-D2 is off by one line and the label mapping of row 0034-R1 is doubtful.
+
 ## Result and decision
 
-- Result: demonstrated for VS Code; in Cursor demonstrated for a refused start and a failure only, with the running, succeeding and cancelled update NOT RUN (the Cursor Agent CLI is not installed on this host; its sign-in is the owner's). Part 2: every carried row is closed, the last one with the CI job's first run on the pull request.
+- Result: demonstrated for VS Code; in Cursor demonstrated for a refused start and a failure only, with the running, succeeding and cancelled update NOT RUN (the Cursor Agent CLI is not installed on this host; its sign-in is the owner's). Part 2: every carried row is closed, the last one on the pull request with the CI job's first passing run ("Pull request and CI" above).
 - Findings: one extension-owned run state fed by a manifest watch (VS Code) or the agent's process (Cursor) is enough to show a run and exactly one result without a chat API; the hypothesis holds. What falsifies a naive version of it was found by the plan reviews and the first native generation, and is fixed: a result decided from the manifest's identity alone misses a publish with unchanged sources, a failure that replaced the site must say so, and "Updated" was unreachable for a Wiki indexing a large file.
 - Keep / revise / replace: keep. Revise next: the freshness answer for a folder that is not a Git repository root, and the cost of an update when the output lies outside the workspace.
 - Evidence that can update goal state: the tables under "Native check N13", "Native re-run of the fixed rows on candidate 5", "Show Variables on candidates 6, 7 and 9", "Native rows on the release build (candidate 10)" and the native table of row 0041-N10-1b; private evidence in `/home/murakami/codebook-qa/n13`, `n13p2`, `n13p2c`, `n13p3`, `n13p4`, `n13p5`, `n13p6`, `n13p7`, `n13p8` (not in the repository).
 - Acceptance-map IDs advanced / actual UI compared with the approved image: AC-WIKI-UPDATE (development-native in VS Code; partly in Cursor). The update panel was compared with region 3 of the approved PNG in the light theme at default zoom: label, button and status line in that order inside one bordered panel above "On this page"; a neutral panel without the PNG's tint and icon, by the design review's decision. No row reaches integrated acceptance.
 - Before/after source and proof gaps for every affected AC; regressions and unaffected-evidence rationale: PROJECT_STATE's rows AC-WIKI-UPDATE, AC-WIKI, AC-SOURCE-LINKS, AC-LIVE, AC-SAVE, AC-REPLAY, AC-GAPS, AC-ENTRY, AC-DESKTOP and AC-SKILL are updated; AC-LEARNING, AC-SHORTCUTS and AC-REAL-PROJECTS carry forward (the carried rows that name them were closed by evidence or by tests that do not change their behavior). The frozen natural `/codebook` request was not run in a chat on the new source: AC-LIVE's fixes are proven at mechanism level, with driver-run native rows (R19, 0042-N11d, N-3, N-6 and the declarations of 0041-N10-1b: three in VS Code, two of them in Cursor).
-- Delivery state and proof: the reviews, the fixes they and the native run of the release build asked for, and the gates on the delivered tree are recorded under "Delivery through `/ship`" and the sections after it. The pull request, its CI (with the first run of `reader-dom.yml`), the separate exact-HEAD gate, the merge and the closure of Issue #83 follow this commit and are recorded by the next cycle's branch, as for the cycles before.
+- Delivery state and proof: the reviews, the fixes they and the native run of the release build asked for, and the gates on the delivered tree are recorded under "Delivery through `/ship`" and the sections after it. The pull request is [#84](https://github.com/laststance/codebook/pull/84) and its CI is recorded under "Pull request and CI". The separate exact-HEAD gate, the merge and the closure of Issue #83 follow and are recorded by the next cycle's branch, as for the cycles before.
 
 ## Handoff
 
@@ -497,8 +505,8 @@ The fix of row 0041-N10-1b changed behavior after pass 2's reviews were bound, s
 
 ## Next action
 
-- Exact next action: the rest of `/ship` as 0.2.28.0 (the push and the pull request with `@coderabbitai ignore` and "Linked to #83"), CI with the first run of `reader-dom.yml`, the separate exact-HEAD gate, `gh pr merge --squash --match-head-commit` in its own step, the closure of Issue #83 by hand naming every defect below, then the Issue of Cycle 0045 through `/spec` with all of them.
-- Changed files / branch / active processes: this branch, not pushed; no editor, browser, database or agent is running.
+- Exact next action: CI on the final head of pull request #84, the separate exact-HEAD gate, `gh pr merge --squash --match-head-commit` in its own step, the closure of Issue #83 by hand naming every defect below, then the Issue of Cycle 0045 through `/spec` with all of them.
+- Changed files / branch / active processes: this branch, pushed as pull request #84; no editor, browser, database or agent is running.
 - State updated in PROJECT_STATE.md: yes (with this record's commit).
 - Owner rules stated in the required reads: the cycle rule (AGENTS.md, DEVELOPMENT.md); nothing new this cycle.
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue; a finding of the delivery's reviews is added to this list there):
