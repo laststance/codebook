@@ -2101,6 +2101,12 @@ const journalDetails = (
     .events.filter((event) => event.type === type)
     .map((event) => JSON.parse(JSON.stringify(event.detail)))
 
+/** Reads every journal entry of one type of a run, with its place on the journal clock. @example journalEvents(run, 'cdp.resumed').at(-1)?.elapsedMs // 412.7 */
+const journalEvents = (
+  run: Awaited<ReturnType<typeof configuredRuntimeHarness>>['run'],
+  type: string,
+) => run.view().events.filter((event) => event.type === type)
+
 const SECOND_STOP = [
   {
     line: 1,
@@ -2158,10 +2164,17 @@ test('a next stop’s pause that waited for the preceding continuation’s recei
   const resumed = journalDetails(run, 'cdp.resumed').at(-1)
   assert.equal(journalDetails(run, 'cdp.pause-observed').length, 2)
   assert.ok(resumed && typeof resumed === 'object' && 'pausedForMs' in resumed)
+  assert.ok(typeof resumed.pausedForMs === 'number')
+  // Cycle 0045 (X7-E2.4): "at least 60 ms" also held for a clock restarted at the replay whenever the rest of the test took 60 ms; the duration is compared with the journal's own clock between the pause's one observation and its resume. The 10 ms allow for rounding and for the turn between a clock read and its journal entry; a clock restarted at the replay is off by the 60 ms waited before it.
+  const journalClockMs =
+    (journalEvents(run, 'cdp.resumed').at(-1)?.elapsedMs ?? Number.NaN) -
+    (journalEvents(run, 'cdp.pause-observed').at(-1)?.elapsedMs ?? Number.NaN)
   assert.equal(
-    typeof resumed.pausedForMs === 'number' && resumed.pausedForMs >= 60,
+    Math.abs(resumed.pausedForMs - journalClockMs) <= 10,
     true,
+    `pausedForMs ${resumed.pausedForMs} against ${journalClockMs} ms between the observation and the resume on the journal clock`,
   )
+  assert.equal(resumed.pausedForMs >= 60, true)
 })
 
 // Cycle 0044 (0042-SR14 / 0042-ER-limit1): red while a pause on the expected stop's line at another column counted as that stop, so the adapter's resume of it ended the run as a foreign resume.
