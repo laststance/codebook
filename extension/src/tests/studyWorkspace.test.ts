@@ -3100,33 +3100,41 @@ test('an unanswered Move Learning Summary offer is made again in the next editor
   }
 })
 
-// Value: protects=a way to move the Learning summary that stays after Cursor removed the offer's notification; fails_when=the reader never turns on the context key that shows "Move Learning Summary…" in the summary's title and the Command Palette, or the command behind it no longer opens the editor's Move View list for the summary; why_new=Cycle 0045 NF-25 as DR-9 (Cursor removes an information notification with a button after 15 s, so a notification cannot be the only way); seam=the harness keeps the context keys set with setContext
-test('in Cursor the Learning summary offers Move Learning Summary… in its title after the offer’s notification is gone', async () => {
-  // Arrange: in Cursor the summary was shown and its offer's notification went away unanswered.
+// Value: protects=a way to move the Learning summary that stays after Cursor removed the offer's notification; fails_when=the reader does not turn on, from activation on, the context key that shows "Move Learning Summary…" in the summary's title and the Command Palette, or the command behind it no longer opens the editor's Move View list for the summary; why_new=Cycle 0045 NF-25 as DR-9 (Cursor removes an information notification with a button after 15 s, so a notification cannot be the only way); seam=the harness keeps the context keys set with setContext, and a reader created after the host was named stands for Cursor's activation
+test("in Cursor the Learning summary offers Move Learning Summary… in its title after the offer's notification is gone", async () => {
+  // Arrange: Cursor activates the extension, which constructs the reader.
   const harness = await recordedReaderHarness()
+  let cursorSession: ReturnType<typeof harness.createReader> | undefined
   try {
+    await harness.reader.dispose()
     harness.useHostAppName('Cursor')
-    const titleActionShownBeforeTheSummary = harness.contextKey(
+    const controlBeforeActivation = harness.contextKey(
       'codebook.learningSummaryMovable',
     )
-    await harness.reader.openRecording(harness.studyId)
-    await harness.controller.settle()
+    cursorSession = harness.createReader()
+    const controlAtActivation = harness.contextKey(
+      'codebook.learningSummaryMovable',
+    )
+    await cursorSession.attach(harness.service)
+    await cursorSession.openRecording(harness.studyId)
+    await harness.service.playbackController!.settle()
     await waitUntil(
       () => harness.informationMessages.length === 1,
-      'the unanswered offer',
+      'the offer, which goes away unanswered',
       1_000,
     )
     const moveListsBefore = harness.commands.filter(
       (command) => command === 'workbench.action.moveFocusedView',
     ).length
 
-    // Act: the learner presses the title action, which runs the contributed command.
-    await harness.reader.moveLearningSummary()
-    await harness.reader.showLearningSummary()
+    // Act: the learner presses the title action, which runs the contributed command, and shows the summary again.
+    await cursorSession.moveLearningSummary()
+    await cursorSession.showLearningSummary()
     await new Promise<void>((resolve) => setImmediate(resolve))
 
-    // Assert: the control is on, it opens the Move View list, and the step once taken is not offered again.
-    assert.equal(titleActionShownBeforeTheSummary, undefined)
+    // Assert: the control is on from activation, it opens the Move View list, and the step once taken is not offered again.
+    assert.equal(controlBeforeActivation, undefined)
+    assert.equal(controlAtActivation, true)
     assert.equal(harness.contextKey('codebook.learningSummaryMovable'), true)
     assert.equal(moveListsBefore, 0)
     assert.equal(
@@ -3137,12 +3145,13 @@ test('in Cursor the Learning summary offers Move Learning Summary… in its titl
     )
     assert.equal(harness.informationMessages.length, 1)
   } finally {
+    await cursorSession?.dispose()
     await harness.close()
   }
 })
 
 // Value: protects=Cursor's learner being told why the Learning summary left the screen at Show Variables and how to keep both in view; fails_when=Run and Debug takes the summary's place in the shared side bar and nothing is offered, so the summary and the recorded values are never on screen together; why_new=Cycle 0045 NF-9 as DR-9 (second native round, candidate 14: after one press Run and Debug stayed in front and no Move offer appeared); seam=the harness's Variables focus command hides the summary, as Cursor's shared side bar does
-test('in Cursor, Show Variables that took the Learning summary’s place in the side bar offers the Move View step', async () => {
+test("in Cursor, Show Variables that took the Learning summary's place in the side bar offers the Move View step", async () => {
   // Arrange: Cursor, where the summary shares its side bar with Run and Debug; the recording is open with its summary in front, and the offer made at the open went away unanswered.
   const harness = await recordedReaderHarness(true, true)
   try {

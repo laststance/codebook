@@ -483,8 +483,6 @@ export class StudyWorkspace {
   /** The Move View offers {@link offerSummaryPlacement} made in this editor session; each occasion is offered at most once per session. */
   private readonly summaryPlacementOffersMade =
     new Set<SummaryPlacementOccasion>()
-  /** Whether {@link showSummaryPlacementControl} turned the Move Learning Summary… control on in this editor session. */
-  private summaryPlacementControlShown = false
   private liveEntryRunId?: string
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
@@ -5606,7 +5604,7 @@ export class StudyWorkspace {
     void showPlainNotice(
       vscode.window,
       'error',
-      `Codebook could not open the learning replay: ${state.reason.replace(/^Error: /, '')}`,
+      `Codebook could not open the learning replay: ${state.reason.replace(/^[A-Za-z]*Error: /, '')}`,
     )
   }
 
@@ -7518,7 +7516,6 @@ export class StudyWorkspace {
       this.lastActiveRegion = 'context'
       this.lastPublished = undefined
       this.publish()
-      this.showSummaryPlacementControl()
       this.offerSummaryPlacement('summary-shown')
     } finally {
       focusSubscription.dispose()
@@ -7526,28 +7523,12 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells whether the editor is Cursor, where the Learning summary shares the primary side bar with Run and Debug; {@link showSummaryPlacementControl} and {@link offerSummaryPlacement} act only there.
+   * Tells whether the editor is Cursor, where the Learning summary shares the primary side bar with Run and Debug; {@link installReaders} turns the Move Learning Summary… control on and {@link offerSummaryPlacement} acts only there.
    * @returns `true` in Cursor, `false` in VS Code and in a host that does not name itself.
    * @example this.isCursorHost() // => true in Cursor 3.23
    */
   private isCursorHost(): boolean {
     return vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
-  }
-
-  /**
-   * Turns on, in Cursor, the context key that shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette; {@link showLearningSummary} calls it once the summary is visible.
-   *
-   * The control stays when the offer's notification is gone: Cursor removes an information notification with a button after about 15 s.
-   * The key is set once per editor session; a host that refuses it leaves a layout line.
-   *
-   * @example this.showSummaryPlacementControl()
-   */
-  private showSummaryPlacementControl(): void {
-    if (!this.isCursorHost() || this.summaryPlacementControlShown) return
-    this.summaryPlacementControlShown = true
-    void vscode.commands
-      .executeCommand('setContext', SUMMARY_PLACEMENT_CONTEXT_KEY, true)
-      .then(undefined, (error: unknown) => this.report('layout', error))
   }
 
   /**
@@ -7691,9 +7672,18 @@ export class StudyWorkspace {
         '<!DOCTYPE html><html><body><p>Open saved learning from Codebook to view its summary.</p></body></html>'
   }
 
-  /** Registers native readers once, keeping checkbox persistence under explicit learner control. @example this.installReaders() */
+  /**
+   * Registers native readers once, keeping checkbox persistence under explicit learner control; the constructor calls it at activation.
+   * In Cursor it also turns on the context key that shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette for the whole editor session, so the step stays reachable when the offer's notification is gone.
+   * @example this.installReaders()
+   */
   private installReaders(): void {
     if (this.outline) return
+    // Cursor removes an information notification with a button after about 15 s; the title action and the palette entry stay.
+    if (this.isCursorHost())
+      void vscode.commands
+        .executeCommand('setContext', SUMMARY_PLACEMENT_CONTEXT_KEY, true)
+        .then(undefined, (error: unknown) => this.report('layout', error))
     this.observeEditorGroups()
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabGroups((event) =>
