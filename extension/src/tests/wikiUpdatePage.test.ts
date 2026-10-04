@@ -396,6 +396,33 @@ test('the page shows the run again when its reader answers again', async () => {
   assert.equal(page.find('.wiki-update')?.getAttribute('aria-disabled'), 'true')
 })
 
+test('a press after contact was lost during a run shows the running update again when the reader answers, not a request to confirm in the editor', async () => {
+  // Arrange: the reader stops answering during a run, so the page frees the button.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const link = page.find('.wiki-update')
+  page.reader.isDown = true
+  await page.advance(8_000)
+  const stateWhileTheReaderWasGone = status?.getAttribute('data-state')
+
+  // Act: the learner presses the freed button, then the reader answers again with the same run.
+  await page.click(link)
+  page.reader.isDown = false
+  await page.advance(2_000)
+
+  // Assert
+  assert.equal(stateWhileTheReaderWasGone, 'unreachable')
+  assert.equal(
+    status?.textContent,
+    'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
+  )
+  assert.equal(link?.getAttribute('aria-disabled'), 'true')
+})
+
 test('a result on screen gives way to the lost-contact sentence at the first failed read', async () => {
   // Arrange
   const page = await openFakeWikiPage(

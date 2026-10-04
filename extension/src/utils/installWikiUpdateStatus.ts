@@ -279,7 +279,9 @@ export function installWikiUpdateStatus(
     if (isAwaitingStart) {
       // A press before the first answer takes that answer as its starting point.
       answerAtPress ??= answerText
-      if (answerText !== answerAtPress) isAwaitingStart = false
+      // A run that is active is what the press waits for, also when it is the very answer the press started from: after lost contact the link was free during a run.
+      if (answerText !== answerAtPress || answer.state === 'running')
+        isAwaitingStart = false
       else if (Date.now() >= awaitingStartUntilMs) {
         isAwaitingStart = false
         didStartWaitPass = true
