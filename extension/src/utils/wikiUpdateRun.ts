@@ -186,8 +186,8 @@ function refusalReason(
  * ```ts
  * const run = new WikiUpdateRun()
  * const output = { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }
- * run.begin('vscode', output, 900_000) // => true
- * run.begin('vscode', output, 900_000) // => false while running
+ * run.begin('vscode', output, 900_000, false) // => true
+ * run.begin('vscode', output, 900_000, false) // => false while running
  * run.end({ state: 'succeeded', identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' })
  * ```
  */
