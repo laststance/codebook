@@ -2194,27 +2194,25 @@ const report = {
     .digest('hex'),
   cases: [],
 }
-// The check and its fixtures are served to the page instead of being passed as one command argument: together they exceed the size a single argument may have on Linux (E2BIG).
-const flow = {
-  check: check.toString(),
-  options: {
-    html: { context: studyHtml('context'), moments: studyHtml('moments') },
-    message,
-    output,
-  },
-}
+// The server only gives the page an address to load: the check navigates to it before it sets each document.
 const server = createServer((request, response) => {
-  if (request.url === '/flow.json') {
-    response.setHeader('Content-Type', 'application/json')
-    response.end(JSON.stringify(flow))
-    return
-  }
   response.setHeader('Content-Type', 'text/html')
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`.
+const flowPath = `${output}/flow.js`
 let recording = false
 try {
+  await writeFile(
+    flowPath,
+    `async (page) => (${check.toString()})(page, ${JSON.stringify({
+      html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      message,
+      output,
+      url: `http://127.0.0.1:${server.address().port}/`,
+    })})\n`,
+  )
   await command(['open', 'about:blank'], 'open')
   await command(
     [
@@ -2224,13 +2222,7 @@ try {
     'video-start',
   )
   recording = true
-  const result = await command(
-    [
-      'run-code',
-      `async page => { const url = ${JSON.stringify(`http://127.0.0.1:${server.address().port}/`)}; await page.goto(url); const flow = await page.evaluate(async () => (await fetch('/flow.json')).json()); return (0, eval)('(' + flow.check + ')')(page, { ...flow.options, url }) }`,
-    ],
-    'flow',
-  )
+  const result = await command(['run-code', `--filename=${flowPath}`], 'flow')
   Object.assign(
     report,
     JSON.parse(result.split('### Result\n')[1].split('\n###')[0]),
