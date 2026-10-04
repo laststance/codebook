@@ -124,6 +124,86 @@ test('a browser stop whose binding the debugger moved to another column after ar
   assert.equal(run.view().finalOutcome, 'demonstrated')
 })
 
+// Cycle 0045 (T-4): red while a pause at another column of the bound line was taken as the stop's only when the 3 s wait for the armed column had ended; the wait is held open here and never released.
+test('a browser stop whose binding moved to another column after arming commits at the re-read column while the wait for the armed column is still open', async (context) => {
+  // Arrange: the stop is armed at 1:1; afterwards the adapter reports the breakpoint, and pauses, at 1:7. The wait for a pause at the armed column never ends by itself.
+  const { run, bindFirstStopAt, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA,MAAM',
+    })
+  await run.prepare()
+  bindFirstStopAt(1, 7)
+  holdSourceBoundWait()
+
+  // Act: the stop is given one second to commit, a third of the wait's own bound.
+  run.action('moved-after-arming', 'repository-click')
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'stop committed at the re-read column',
+    1_000,
+  ).catch(() => undefined)
+  const failuresWhileWaiting = run.view().failures.join('; ')
+  await run.stop()
+
+  // Assert
+  assert.equal(failuresWhileWaiting, '')
+  assert.equal(stop?.source.line, 1)
+  assert.equal(stop?.source.column, 7)
+  assert.equal(
+    JSON.stringify(journalDetails(run, 'cdp.held-pause-adopted')),
+    '[{"participant":"browser","url":"webpack-internal:///(app-pages-browser)/./src/theme.ts","line":1,"column":7,"hitBreakpoints":["mapped-source"],"place":"src/theme.ts:1","declared":"src/theme.ts:1"}]',
+  )
+})
+
+// Cycle 0045 (T-4, 0042-SR14 stays): a pause at another column of the bound line whose binding, read again, still names the armed column is the debugger's own; red when such a pause is taken as the stop's at once (the stop then fails its frame check at 1:7).
+test('a pause held at another column of the bound line while the stop is announced keeps waiting when the binding read again did not move, and the stop is captured at its own column', async (context) => {
+  // Arrange: the first stop is bound at 1:1; generated 0:6 is another statement of that line, at source 1:7. The debugger pauses there for itself, and its announcement of the declared stop is read before that pause is resumed.
+  const {
+    run,
+    suppressInputPause,
+    emitCdpPauseAt,
+    emitStopped,
+    manualResume,
+    emitCdpPause,
+    holdSourceBoundWait,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA,MAAM',
+  })
+  suppressInputPause()
+  holdSourceBoundWait()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  emitCdpPauseAt({
+    scriptId: 'actual',
+    lineNumber: 0,
+    columnNumber: 6,
+    functionName: '',
+    hitBreakpoints: ['adapter-internal'],
+  })
+  emitStopped()
+  // Act: the debugger resumes its own pause and the declared stop pauses at its bound column.
+  await setTimeout(50)
+  const adoptedWhileHeld = journalDetails(run, 'cdp.held-pause-adopted').length
+  manualResume()
+  emitCdpPause()
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at its own column')
+  await run.stop()
+
+  // Assert
+  assert.equal(adoptedWhileHeld, 0)
+  assert.equal(stop.source.column, 1)
+  assert.equal(journalDetails(run, 'cdp.adapter-pause-retired').length, 1)
+  assert.equal(journalDetails(run, 'cdp.held-pause-adopted').length, 0)
+})
+
 // Value: protects=a run whose sealed source map the position scanner rejects; fails_when=the scanner's error escapes as an unexplained crash after input, or the run is prepared on a map it cannot read; why_new=Cycle 0036 C07d (no test fed the scanner a rejected map); seam=none
 test('a sealed source map with a malformed segment is refused at preparation, before any input', async (context) => {
   // Arrange: 'AA' is a segment of two fields, which no source map allows.

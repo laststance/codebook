@@ -2386,7 +2386,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Finds the runtime pause that belongs to an accepted debugger stop, called by {@link inspect}.
-   * The pause may be read after its `stopped`, so the wait is bounded; it takes only a pause at the stop's place (its bound line, or before that is known its declared line or a line its rule accepts), which {@link admitPause} stored.
+   * The pause may be read after its `stopped`, so the wait is bounded; it takes only a pause at the stop's place (its bound line, or before that is known its declared line or a line its rule accepts), which {@link admitPause} stored. A pause held on a browser stop's bound line at another column is taken at once when the binding, read again, names that column ({@link pauseAtMovedColumn}); every other held pause is judged only when the wait has ended.
    * @param stop - The declared stop whose `stopped` was accepted.
    * @returns The stop's pause, not yet bound to a generation.
    * @throws The wait's timeout when no pause arrives at the stop's place and no pause held while the stop was expected stayed elsewhere in its module.
@@ -2399,9 +2399,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): Promise<NonNullable<DebugParticipant['stopped']>> {
     const participant = this.participants[stop.participant]
+    // The held pause whose column was already compared with the binding read again; one read per held pause is enough.
+    let comparedPause: Protocol.Debugger.PausedEvent | undefined
     try {
       return await waitUntil(
-        () => {
+        async () => {
           // A pause held since before the stop's turn that outlasted the adapter's bound is not about to be resumed; the wait ends with its text.
           const early = this.pauseHeldBeforeTurn(stop)
           if (
@@ -2411,12 +2413,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           )
             throw this.earlyPauseFailure(stop, early)
           const candidate = participant.stopped
-          return candidate &&
+          if (
+            candidate &&
             candidate.generation === undefined &&
             candidate.event.callFrames[0]?.location.scriptId ===
               stop.script?.scriptId
-            ? candidate
-            : undefined
+          )
+            return candidate
+          const held = this.pauseHeldForStop(stop)
+          if (!held || held.event === comparedPause) return undefined
+          comparedPause = held.event
+          return this.pauseAtMovedColumn(stop, held)
         },
         SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
         CAPTURE_TIMEOUT_MS,
@@ -2432,6 +2439,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : this.pauseHeldBeforeTurn(stop)
       throw early ? this.earlyPauseFailure(stop, early) : error
     }
+  }
+
+  /**
+   * Takes a pause held for an accepted browser stop on its bound line at another column as that stop's pause without waiting for the bound of {@link pauseOfAcceptedStop}, when the debugger moved the stop's binding to that column after it was armed.
+   * The binding is read again once: only when it names the held pause's column is the pause the announced one. A pause the debugger makes for itself at another statement of that line leaves the binding where it was and keeps waiting for its resume, and a held pause on any other line is judged when the wait has ended ({@link adoptPauseHeldInModule}).
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @param held - The pause held for that stop in its module ({@link pauseHeldForStop}).
+   * @returns
+   * - The adopted pause, when the re-read binding is on the stop's bound line at the held pause's column and the pause is still held
+   * - `undefined` for a server stop, a pause on another line, a binding that did not move to the pause's column or could not be read, and a pause that was resumed while the binding was read
+   * @example
+   * ```ts
+   * await this.pauseAtMovedColumn(stop, held) // the stop armed at 22:5 whose breakpoint and pause are now at 22:12 is taken at once
+   * ```
+   */
+  private async pauseAtMovedColumn(
+    stop: PreparedStop,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): Promise<DebugParticipant['stopped']> {
+    const participant = this.participants[stop.participant],
+      location = held.event.callFrames[0]?.location
+    // Only a browser stop has a binding from arming that can move along its line; a pause on another line waits for the bound.
+    if (
+      stop.participant !== 'browser' ||
+      !stop.bound ||
+      !location ||
+      !isPauseAtStop(held.event, this.pauseTarget(stop))
+    )
+      return undefined
+    // A binding that cannot be read now decides nothing: the pause stays held and the end of the wait judges it.
+    const binding = verifiedPlaceSchema.safeParse(
+      await awaitResponse(
+        participant.selected!.getDebugProtocolBreakpoint(
+          stop.breakpoint!.breakpoint,
+        ),
+        'held browser binding',
+        this.abort.signal,
+      ).catch(() => undefined),
+    )
+    // The pause may have been resumed while the binding was read.
+    if (
+      participant.unannouncedPause !== held ||
+      !binding.success ||
+      binding.data.line !== stop.bound.line ||
+      binding.data.column !== stop.verifier.originalColumn(location)
+    )
+      return undefined
+    return this.adoptPauseHeldInModule(stop)
   }
 
   /**
@@ -2473,7 +2528,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Adopts a pause that stayed elsewhere in an accepted stop's module as that stop's pause, called by {@link pauseOfAcceptedStop} after its wait ended.
+   * Adopts a pause that stayed elsewhere in an accepted stop's module as that stop's pause, called by {@link pauseOfAcceptedStop} after its wait ended and by {@link pauseAtMovedColumn} as soon as the binding read again names the held pause's column.
    * The adapter resumes its own pauses within milliseconds, so a pause that outlasted the wait in the stop's own module, held while that stop was the expected one, is the announced one: a binding on another line, or another breakpoint in that file. A pause in any other script, or one held before the stop's turn, is left alone (see {@link pauseHeldForStop}).
    * @param stop - The declared stop whose `stopped` was accepted.
    * @returns The adopted pause, or `undefined` when the run was cancelled or no such pause is held.
