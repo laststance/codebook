@@ -4345,3 +4345,35 @@ test('a selection refused because the main editor reports no keyboard focus clos
     await harness.close()
   }
 })
+
+for (const reader of ['study-workspace', 'living-book'] as const)
+  // Value: protects=the presentation resource offering an agent only layouts its next select is accepted for; fails_when=the resource lists Living book and Guided walkthrough beside Study workspace, and a select of either is refused as retired; why_new=Cycle 0045 SM-10 (`presentationState` listed all three modes while `selectPresentation` refused two of them); seam=none
+  test(`the presentation resource offers only layouts a select accepts: Study workspace, and a retired layout only while the reader is in it (reader in ${reader})`, async () => {
+    // Arrange: an earlier version may have saved a layout that is retired now; the reader still opens in it.
+    const harness = await workspaceHarness()
+    try {
+      if (reader === 'living-book') {
+        harness.presentationPreferences.set('codebook.presentation.v1', {
+          version: 1,
+          mode: 'living-book',
+        })
+        await harness.reader.close()
+        harness.useNativeLayout({ orientation: 0, groups: [{}] })
+        await harness.reader.open()
+      }
+      // Act
+      const resource = await harness.service.presentationState(
+        harness.service.instanceId,
+      )
+      // Assert
+      assert.equal(resource.mode, reader)
+      assert.deepEqual(
+        resource.modes.map((offered) => offered.mode),
+        reader === 'living-book'
+          ? ['study-workspace', 'living-book']
+          : ['study-workspace'],
+      )
+    } finally {
+      await harness.close()
+    }
+  })

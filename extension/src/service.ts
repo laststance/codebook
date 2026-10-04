@@ -553,11 +553,15 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
       )
+    const state = await this.presentationController.readPresentationState()
     return {
       instanceId: this.instanceId,
-      ...(await this.presentationController.readPresentationState()),
+      ...state,
       uri: `codebook://${this.instanceId}/presentation`,
-      modes: PRESENTATION_MODE_IDS.map((mode) => ({
+      // Only layouts {@link selectPresentation} accepts are offered: Study workspace, and a retired layout while the reader is still in it.
+      modes: PRESENTATION_MODE_IDS.filter(
+        (mode) => mode === SELECTABLE_PRESENTATION_MODE || mode === state.mode,
+      ).map((mode) => ({
         mode,
         title: STUDY_PRESENTATIONS[mode].title,
         description: STUDY_PRESENTATIONS[mode].description,
