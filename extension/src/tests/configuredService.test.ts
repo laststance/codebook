@@ -1639,6 +1639,177 @@ test('the inspection resource template says that an inspection names the declare
   )
 })
 
+/**
+ * Connects a real MCP SDK client to a service's endpoint, so a test sends a tool call through the tool's input schema as an editor chat does.
+ * @param context - The test, whose end closes the client and the endpoint.
+ * @param service - The harness's service.
+ * @returns The connected client.
+ * @example const client = await connectMcpClient(context, service)
+ */
+const connectMcpClient = async (
+  context: TestContext,
+  service: Parameters<typeof startServer>[0],
+) => {
+  const endpoint = await startServer(service)
+  context.after(() => endpoint.close())
+  const client = new Client({ name: 'configured-tool-test', version: '1.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${endpoint.descriptor.token}` },
+      },
+    }),
+  )
+  context.after(() => client.close())
+  return client
+}
+
+// Value: protects=an agent that names a captured fact by its path alone having its explanation saved; fails_when=codebook_explain answers "Use a declared value:<path> or type:<path> inspection. at valuePaths[0]", as it did in the VS Code run of the baseline round; why_new=Cycle 0045 cause 2 (ER-6; the amendment's title names "email", the fixture's captured fact is value:nextTheme); seam=none
+test('codebook_explain accepts nextTheme for the captured fact value:nextTheme and saves it under that key', async (context) => {
+  // Arrange: one stop is committed with the captured fact value:nextTheme and no fact type:nextTheme.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'bare-path',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const explanation = {
+    instanceId: receipt.instanceId,
+    runId: receipt.runId,
+    key: 'explain-bare-path',
+    snapshotUri: service.state(record).observations[0]!.snapshotUri,
+    sourceHash: configuration.source.hash,
+    interpretation: 'The next theme is dark.',
+  }
+
+  // Act
+  const explained = await client.callTool({
+      name: 'codebook_explain',
+      arguments: { ...explanation, valuePaths: ['nextTheme'] },
+    }),
+    repeatedWithPrefix = await client.callTool({
+      name: 'codebook_explain',
+      arguments: { ...explanation, valuePaths: ['value:nextTheme'] },
+    })
+
+  // Assert
+  assert.equal(explained.isError, undefined, JSON.stringify(explained.content))
+  const saved = z
+    .object({
+      data: z.object({
+        explanationUri: z.string(),
+        valuePaths: z.array(z.string()),
+      }),
+    })
+    .parse(explained.structuredContent).data
+  assert.deepEqual(saved.valuePaths, ['value:nextTheme'])
+  const resource = await readResource(service, saved.explanationUri)
+  assert.ok('text' in resource)
+  assert.equal(
+    JSON.stringify(JSON.parse(resource.text).capturedFacts),
+    '[{"path":"value:nextTheme","value":"dark"}]',
+  )
+  const entries = savedExplanationEntries(runtimes[0]!)
+  assert.equal(entries.length, 1)
+  assert.equal(
+    JSON.stringify(entries[0].rewrittenPaths),
+    '[{"from":"nextTheme","to":"value:nextTheme"}]',
+  )
+  // The same key in the other spelling names the same content and replays the receipt.
+  assert.deepEqual(
+    repeatedWithPrefix.structuredContent,
+    explained.structuredContent,
+  )
+})
+
+// Value: protects=an agent that leaves out the prefix where it decides between two facts being told so; fails_when=a bare path that is the path of a value fact and of a type fact is saved under one of them by guess; why_new=Cycle 0045 cause 2 (ER-6); seam=the synthetic runtime's snapshot, which gains a second fact with the same path
+test('a bare path that names a value and a type fact is refused with both keys', async (context) => {
+  // Arrange: the committed stop captured value:nextTheme and type:nextTheme.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'ambiguous-bare-path',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const stop = runtimes[0]!.snapshots[0]!
+  stop.values = { ...stop.values, 'type:nextTheme': 'string' }
+  const explanation = {
+    instanceId: receipt.instanceId,
+    runId: receipt.runId,
+    key: 'explain-ambiguous-path',
+    snapshotUri: service.state(record).observations[0]!.snapshotUri,
+    sourceHash: configuration.source.hash,
+    interpretation: 'The next theme is a string.',
+  }
+
+  // Act
+  const refused = await client.callTool({
+      name: 'codebook_explain',
+      arguments: { ...explanation, valuePaths: ['nextTheme'] },
+    }),
+    withPrefix = await client.callTool({
+      name: 'codebook_explain',
+      arguments: { ...explanation, valuePaths: ['type:nextTheme'] },
+    })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  const error = z
+    .object({ error: z.object({ code: z.string(), message: z.string() }) })
+    .parse(refused.structuredContent).error
+  assert.equal(error.code, 'INVALID_REFERENCE')
+  assert.equal(
+    error.message,
+    'valuePaths[0] "nextTheme" is the path of two captured facts of this snapshot, value:nextTheme and type:nextTheme. Send the one you mean with its prefix; the same key is free.',
+  )
+  assert.equal(withPrefix.isError, undefined)
+  assert.deepEqual(
+    z
+      .object({ data: z.object({ valuePaths: z.array(z.string()) }) })
+      .parse(withPrefix.structuredContent).data.valuePaths,
+    ['type:nextTheme'],
+  )
+})
+
+// Value: protects=an agent that reads the tool's input schema directly before the call learning which spellings of a fact path are taken; fails_when=the schema of valuePaths carries no description, or one that asks for the prefix only; why_new=Cycle 0045 cause 2 (ER-6: the tool gets an input schema of its own); seam=none
+test('the input schema of codebook_explain says that a fact path is taken with its prefix, or alone when one captured fact has it', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const tools = await client.listTools()
+
+  // Assert
+  const schema = z
+    .object({
+      properties: z.object({
+        valuePaths: z.object({
+          items: z.object({ description: z.string() }),
+        }),
+      }),
+    })
+    .parse(
+      tools.tools.find((tool) => tool.name === 'codebook_explain')?.inputSchema,
+    )
+  assert.equal(
+    schema.properties.valuePaths.items.description,
+    'A captured fact key of this snapshot: value:<path> or type:<path>. The path alone is accepted when exactly one captured fact of the snapshot has that path, and the explanation is saved under that key.',
+  )
+})
+
 // Value: protects=an agent that sends codebook_reveal and codebook_continue for the same stop together; fails_when=the reveal answers EVIDENCE_UNAVAILABLE ("Matching captured source is not displayed") because the continuation retired the pause the reader presents; why_new=reveal tests never ran beside a continuation (Cycle 0044 row N-13, native N12-a); seam=the synthetic runtime's reveal, which fails like the reader once the pause is gone
 for (const order of ['reveal first', 'continue first'] as const)
   test(`a reveal and a continuation of the same stop issued together, ${order}, never answer an evidence failure`, async (context) => {

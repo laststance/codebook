@@ -101,6 +101,7 @@ import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { thrownMessage } from './utils/thrownMessage'
 
@@ -117,6 +118,11 @@ export interface Explanation {
   agentInterpretation: string
   createdAt: string
   learnerUnderstandingChanged: false
+}
+/** What `codebook_explain` answers: where the committed explanation is read, and the captured keys it was saved under (a path sent without its prefix appears here with it). */
+export interface ExplanationReceipt {
+  explanationUri: string
+  valuePaths: string[]
 }
 export type StudyRecord = StudyRecordState &
   StartIntent & {
@@ -157,7 +163,7 @@ interface StudyRecordState {
   explanations: Map<string, Explanation>
   explanationKeys: Map<
     string,
-    { signature: string; result: Promise<{ explanationUri: string }> }
+    { signature: string; result: Promise<ExplanationReceipt> }
   >
   sourceReveals: Set<Promise<void>>
   /** Per committed snapshot of a moved stop, how far {@link StudyService.explain}'s one check of the paused line has gone: `refused` after the one refusal, `explained` once an explanation was accepted, after which none is checked. */
@@ -877,8 +883,15 @@ export class StudyService {
     return this.state(record)
   }
 
-  /** Commits labeled interpretation only after the referenced evidence and atomic write succeed. @example await service.explain({...run, snapshotUri, sourceHash, valuePaths:['price'], interpretation:'Price is 24.', key:'explain-1'}) */
-  explain(input: ExplainInput): Promise<{ explanationUri: string }> {
+  /**
+   * Commits a labeled interpretation of one committed snapshot only after the referenced evidence and the atomic write succeed; called by the `codebook_explain` tool.
+   * A value path sent without its `value:` or `type:` prefix is saved under the one captured key that has it ({@link resolveCapturedFactPaths}). The first explanation of a stop the debugger bound on another line than declared is refused once when its interpretation lacks the paused line's number ({@link namesLineNumber}); that check is a bounded guard on prose and no proof of the place, which is why every explanation of such a stop is saved with Codebook's own {@link Explanation.boundPlace}.
+   * @param input - The run, an explanation key, the snapshot URI with its TypeScript hash, the captured fact paths and the interpretation, optionally with a complete learning summary.
+   * @returns The explanation's resource URI and the captured keys it was saved under; a repeated key with the same content returns the first receipt.
+   * @throws An `INVALID_REFERENCE` {@link StudyError} for an unknown snapshot, a wrong hash, an uncaptured or ambiguous path, an unverified summary reference, and once for a moved stop whose first interpretation does not name the paused line; `IDEMPOTENCY_CONFLICT` for a key that names other content; `BUSY` during cleanup or a removal; `LIMIT_EXCEEDED` past the explanation limit.
+   * @example await service.explain({...run, snapshotUri, sourceHash, valuePaths:['value:price'], interpretation:'Price is 24.', key:'explain-1'})
+   */
+  explain(input: ExplainInput): Promise<ExplanationReceipt> {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     // An explanation after the removal would be written into a directory that is in the Trash.
@@ -892,10 +905,14 @@ export class StudyService {
     const learningSummary =
       input.learningSummary &&
       learningSummarySchema.parse(input.learningSummary)
+    const snapshot = this.snapshot(record, input.snapshotUri)
+    // A path sent without its value: or type: prefix is saved under the one captured key that has it; the signature holds the keys as saved, so a retry in either spelling names the same content.
+    const { paths: valuePaths, rewritten: rewrittenPaths } =
+      resolveCapturedFactPaths(input.valuePaths, snapshot.values)
     const signature = JSON.stringify([
       input.snapshotUri,
       input.sourceHash,
-      input.valuePaths,
+      valuePaths,
       input.interpretation,
       learningSummary,
     ])
@@ -918,10 +935,9 @@ export class StudyService {
         'BUSY',
         "The learner is deleting this run's saved study; wait for it to finish.",
       )
-    const snapshot = this.snapshot(record, input.snapshotUri)
     if (
       snapshotSourceHashes(snapshot).typescript !== input.sourceHash ||
-      new Set(input.valuePaths).size !== input.valuePaths.length
+      new Set(valuePaths).size !== valuePaths.length
     )
       throw new StudyError(
         'INVALID_REFERENCE',
@@ -967,7 +983,7 @@ export class StudyService {
     const captured = new Map<string, ConfiguredFactValue>(
       Object.entries(snapshot.values),
     )
-    const capturedFacts = input.valuePaths.map((path) => {
+    const capturedFacts = valuePaths.map((path) => {
       const value = captured.get(path)
       if (value === undefined)
         throw new StudyError(
@@ -1021,11 +1037,14 @@ export class StudyService {
           snapshotId: snapshot.id,
           // Recorded for the first saved explanation of a moved stop only: whether its interpretation holds the paused line's number.
           ...(placeNamed !== undefined && { placeNamed }),
+          // Every path the agent sent without its prefix, with the captured key it was saved under.
+          ...(rewrittenPaths.length > 0 && { rewrittenPaths }),
         })
         await record.runtime!.evidence.flush()
         record.explanations.set(explanation.id, explanation)
         return {
           explanationUri: this.uri(record.id, `explanations/${explanation.id}`),
+          valuePaths,
         }
       } catch (error) {
         record.error = new StudyError(
