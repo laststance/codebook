@@ -167,6 +167,8 @@ export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limi
 export const MAX_SOURCE_DOCUMENTS = 34
 /** What the file name of every captured-source document starts with, so its tab reads apart from the editable workspace file of the same name. */
 export const CAPTURED_SOURCE_NAME_PREFIX = 'Captured-'
+/** Cursor's command "Focus Agent": it gives the input of the selected Agent chat the keyboard focus. The chat's group is no group of the main editor grid, so the editor's numbered focus commands cannot reach it: for the column after the grid's last group they open a new empty group. {@link StudyWorkspace} runs this command, where the host registers it, to give the chat the keyboard back after a measurement borrowed it. */
+export const CURSOR_FOCUS_AGENT_COMMAND = 'composer.focusComposer'
 export const STUDY_REFRESH_INTERVAL_MS = 250
 /** The least time between two layout requests of a saved study that waits for the hidden editor area: the reader's timer ticks every {@link STUDY_REFRESH_INTERVAL_MS}, the wait has no end, and the editor is asked once a second at most. */
 export const STUDY_EDITOR_AREA_LOOK_INTERVAL_MS = 1_000
