@@ -1728,17 +1728,18 @@ export async function workspaceHarness(
               setImmediate(() => {
                 for (const close of dueTabCloses) close()
               })
+            // The focused separate part answers for itself, and a hidden editor area reports its stacked groups collapsed.
+            let reportedLayout = editorLayout
+            if (separateEditorPart?.focused)
+              reportedLayout =
+                separatePartLayoutReport ?? separateEditorPart.layout
+            else if (panelMaximized)
+              reportedLayout = collapsedLayout(editorLayout)
             const layout = JSON.parse(
-              JSON.stringify(
-                separateEditorPart?.focused
-                  ? (separatePartLayoutReport ?? separateEditorPart.layout)
-                  : panelMaximized
-                    ? collapsedLayout(editorLayout)
-                    : editorLayout,
-                (key, value) =>
-                  key === 'groups' && Array.isArray(value)
-                    ? value.map((group) => ({ size: 1, ...group }))
-                    : value,
+              JSON.stringify(reportedLayout, (key, value) =>
+                key === 'groups' && Array.isArray(value)
+                  ? value.map((group) => ({ size: 1, ...group }))
+                  : value,
               ),
             )
             // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
@@ -3067,6 +3068,13 @@ export async function workspaceHarness(
             input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)),
           })
       const previous = [...groups]
+      /** Gives a tab the new input wrapper of its own kind that a full tab-model resync reports. @example resyncedInput(new TabInputText(uri)) // => another TabInputText of the same uri */
+      const resyncedInput = (input: Tab['input']): Tab['input'] => {
+        if (input instanceof TabInputText) return new TabInputText(input.uri)
+        if (input instanceof TabInputWebview)
+          return new TabInputWebview(input.viewType)
+        return new TabInputUnknown()
+      }
       groups.splice(
         0,
         groups.length,
@@ -3075,12 +3083,7 @@ export async function workspaceHarness(
           tabs: group.tabs.map((tab) => ({
             ...tab,
             label: 'Recorded application',
-            input:
-              tab.input instanceof TabInputText
-                ? new TabInputText(tab.input.uri)
-                : tab.input instanceof TabInputWebview
-                  ? new TabInputWebview(tab.input.viewType)
-                  : new TabInputUnknown(),
+            input: resyncedInput(tab.input),
           })),
         })),
       )
@@ -3130,24 +3133,22 @@ export async function workspaceHarness(
       kind: 'known' | 'unknown' | 'duplicate' | 'ambiguous' | 'empty',
     ): void {
       for (const group of groups) {
-        const type =
-          kind === 'ambiguous' || group.viewColumn === 1
-            ? 'codebook.scopedBrowser'
-            : group.viewColumn === 2
-              ? 'codebook.repositoryWiki'
-              : 'codebook.studyContext'
+        // Column 1 holds the Application pane and column 2 the Wiki; an ambiguous seed puts the Application pane everywhere.
+        let type = 'codebook.studyContext'
+        if (kind === 'ambiguous' || group.viewColumn === 1)
+          type = 'codebook.scopedBrowser'
+        else if (group.viewColumn === 2) type = 'codebook.repositoryWiki'
         const tab = {
           label: 'Application',
           input: new TabInputWebview(
             `${kind === 'unknown' ? 'foreign-' : 'mainThreadWebview-'}${type}`,
           ),
         }
-        group.tabs =
-          kind === 'empty'
-            ? []
-            : kind === 'duplicate'
-              ? [tab, { ...tab }]
-              : [tab]
+        // An empty seed leaves the group without a tab; a duplicate seed gives it the same pane twice.
+        let seededTabs = [tab]
+        if (kind === 'empty') seededTabs = []
+        else if (kind === 'duplicate') seededTabs = [tab, { ...tab }]
+        group.tabs = seededTabs
       }
     },
     holdNextImage() {
