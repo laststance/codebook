@@ -2214,7 +2214,50 @@ test('a stop declared on a line the sealed map has no position on is requested a
   })
   assert.equal(snapshot.source.line, 2)
   assert.equal(snapshot.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot.source.binding)), {
+    declaredLine: 1,
+    requestedLine: 2,
+    boundLine: 2,
+    mappedLinesBetween: 0,
+  })
   assert.equal(mouse.length, 2)
+})
+
+// Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).
+test('a stop requested after its unmapped declared line that the debugger then binds on the next line commits there, as a stop declared on the requested line would', async (context) => {
+  // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request on line 2 and verifies it at 3:1.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines, bindFirstStopAt } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: ';AACA;AACA',
+      fixture: {
+        source: '// toggles the theme\nconst nextTheme =\n  "dark";\n',
+        citationEndLine: 3,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([2])
+  bindFirstStopAt(3, 1)
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on the line after the requested one')
+  await run.stop()
+  // Assert
+  assert.equal(requested?.line, 1)
+  assert.equal(snapshot.source.line, 3)
+  assert.equal(snapshot.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot.source.binding)), {
+    declaredLine: 1,
+    requestedLine: 2,
+    boundLine: 3,
+    mappedLinesBetween: 0,
+  })
 })
 
 // Cycle 0044 (0041-N10-1b): the declared position is still what is requested when its line has a mapped position, also when the debugger then binds it on the next line.

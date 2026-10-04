@@ -1,6 +1,8 @@
 /** The run's saved receipt that its binding rule held for a stop: the declared and the bound line, with no mapped line between. */
 type BindingReceipt = {
   declaredLine: number
+  /** The first mapped line after a declared line that has no mapped position; absent when the breakpoint was requested on the declared line. */
+  requestedLine?: number
   boundLine: number
   mappedLinesBetween: 0
 }
@@ -12,12 +14,13 @@ type BindingReceipt = {
  * @param declaredLine - The line the stop was declared on.
  * @param studyHasBindingReceipts - Whether any observation of the study carries a receipt, which tells a study of this format from a legacy one.
  * @returns
- * - `true` for a receipt that names the declared line and the observed line, the observed one not before the declared one
+ * - `true` for a receipt that names the declared line and the observed line, the observed one not before the declared one, and, when it names a requested line, that line after the declared and not after the observed one
  * - `true` without a receipt on the declared line, and on a later line only in a legacy study
  * - `false` for a receipt that contradicts the lines, and for a later line without a receipt in a study that carries receipts
  * @example
  * isSavedBindingReceiptAtStop({ line: 23, binding: { declaredLine: 22, boundLine: 23, mappedLinesBetween: 0 } }, 22, true) // => true
  * isSavedBindingReceiptAtStop({ line: 23 }, 22, true) // => false
+ * isSavedBindingReceiptAtStop({ line: 75, binding: { declaredLine: 73, requestedLine: 74, boundLine: 75, mappedLinesBetween: 0 } }, 73, true) // => true
  * isSavedBindingReceiptAtStop({ line: 23 }, 22, false) // => true: a study saved by 0.2.27
  */
 export function isSavedBindingReceiptAtStop(
@@ -30,7 +33,11 @@ export function isSavedBindingReceiptAtStop(
     return (
       receipt.declaredLine === declaredLine &&
       receipt.boundLine === source.line &&
-      receipt.boundLine >= receipt.declaredLine
+      receipt.boundLine >= receipt.declaredLine &&
+      // A requested line lies after the declared one and not after the bound one.
+      (receipt.requestedLine === undefined ||
+        (receipt.requestedLine > receipt.declaredLine &&
+          receipt.requestedLine <= receipt.boundLine))
     )
   return source.line === declaredLine || !studyHasBindingReceipts
 }

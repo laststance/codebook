@@ -129,3 +129,18 @@ test('the sealed map is scanned once per stop however many lines the rule is ask
   assert.deepEqual(answers, [true, true, true, false, true])
   assert.equal(scans, 1)
 })
+
+// Cycle 0044 (0041-N10-1b): red while the rule of a stop on a line without a mapped position was measured from its declared line, so the debugger's move from the requested line to the next one was refused (natively: "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position").
+test('a stop requested on the first mapped line after its unmapped declared line accepts a binding on the line after the requested one', () => {
+  // Arrange: line 23 is declared and unmapped, line 24 is the first mapped line (where the breakpoint is requested), line 25 is mapped too.
+  const rule = createBindingLineRule(23, citation, mapWith([24, 25, 26]), 24)
+  // Act
+  const acceptedLines = [23, 24, 25].map((line) => rule.accepts(line))
+  const refusal = rule.refusal(26)
+  // Assert
+  assert.deepEqual(acceptedLines, [true, true, true])
+  assert.equal(
+    refusal,
+    'line 25 between line 24, where the stop declared on line 23 was requested, and line 26 has a mapped position',
+  )
+})

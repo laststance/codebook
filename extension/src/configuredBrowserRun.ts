@@ -96,6 +96,7 @@ import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { pausePlace } from './utils/pausePlace'
 import { prepareRepositoryInputs } from './utils/prepareRepositoryInputs'
 import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
+import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import { thrownMessage } from './utils/thrownMessage'
@@ -120,6 +121,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
   breakpoint?: OwnedRepositoryBreakpoint
+  /** Where the stop's breakpoint is requested ({@link resolveArmedPlace}): the declared position, or the first mapped position after a declared line that has none. */
+  armed: { line: number; column: number }
   /** The debugger's verified binding, on the declared line or on a later line {@link PreparedStop.acceptsBoundLine} accepts; every later check, the saved observation and the display use it instead of the requested position. */
   bound?: { line: number; column: number }
   /** Tells whether a line the debugger chose is this stop's place: the declared line, or a later line within the stop's citation with no mapped line between ({@link createBindingLineRule}). Every site that compares a binding or a pause with this stop asks it. */
@@ -412,15 +415,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const verifier = createBundleVerifier(acquired.bundle),
         citation = this.definition.descriptor.anchors[stop.anchorIndex]!
       // The rule reads the sealed map once here; the pause handler only compares lines.
+      const mappedPositions = (startLine: number, endLine: number) =>
+          verifier.mappedPositions(startLine, endLine),
+        // The debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it, and its rule is measured from there.
+        armed = resolveArmedPlace(
+          stop.source,
+          citation.endLine,
+          mappedPositions,
+        )
       const bindingRule = createBindingLineRule(
         stop.source.line,
         citation,
-        (startLine, endLine) => verifier.mappedPositions(startLine, endLine),
+        mappedPositions,
+        armed.line,
       )
       const prepared: PreparedStop = {
         ...stop,
         bundle: acquired.bundle,
         verifier,
+        armed: { line: armed.line, column: armed.column },
         acceptsBoundLine: bindingRule.accepts,
         bindingRefusal: bindingRule.refusal,
       }
@@ -592,9 +605,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       await this.assertExecutedModuleSealed(stop, phase)
     }
-    // The debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested where its rule accepts it.
-    const armed = this.armedPlace(stop)
-    if (!stop.breakpoint && armed !== position)
+    const armed = stop.armed,
+      armedAfterDeclaredLine = armed.line !== position.line
+    if (!stop.breakpoint && armedAfterDeclaredLine)
       this.evidence.record('breakpoint.armed-after-declared-line', {
         participant: stop.participant,
         declared: { line: position.line, column: position.column },
@@ -645,7 +658,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           return parsed.data
         },
-        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${armed === position ? `requested column ${position.column}` : `requested at ${armed.line}:${armed.column}, the first mapped position after the declared line`}); choose an executable statement reached by the requested action`,
+        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${armedAfterDeclaredLine ? `requested at ${armed.line}:${armed.column}, the first mapped position after the declared line` : `requested column ${position.column}`}); choose an executable statement reached by the requested action`,
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
@@ -660,8 +673,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       throw this.bindingFailure(stop, thrownMessage(error))
     }
     this.alive()
-    // A later line is the stop's place only when the debugger could not pause on the declared line at all, not when the requested column lay after its last break location.
-    if (binding.line !== position.line)
+    // A line after the requested one is the stop's place only when the debugger could not pause on the requested line at all, not when the requested column lay after its last break location.
+    if (binding.line !== armed.line)
       await this.refuseSlidePastDeclaredLine(stop, binding)
     this.bindBoundPlace(stop, binding)
     this.evidence.record('breakpoint.bound', {
@@ -669,36 +682,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       requested: { line: position.line, column: position.column },
     })
     await this.verifySources()
-  }
-
-  /**
-   * Chooses the position a declared stop's breakpoint is requested at, called by {@link armStop}.
-   * The debugger verifies no breakpoint that is requested on a line the sealed map has no position on (a blank line, a comment, the `>` that closes an opening tag): natively a browser stop there was never verified and a server stop was never registered or never hit. Such a stop is requested at the first mapped position after its line within its citation, which is the place the stop's binding rule accepts and what the refusal's hints told an agent to declare instead.
-   * @param stop - The declared stop that is about to be armed.
-   * @returns
-   * - `stop.source` itself when its line has a mapped position, when no later line of its citation has one, and when the map was too large to scan completely (the declared position is then requested as before)
-   * - The first mapped position of the first later mapped line of the citation otherwise
-   * @example
-   * ```ts
-   * this.armedPlace(stop) // { line: 39, column: 9 } for a stop declared on the blank line 38
-   * ```
-   */
-  private armedPlace(stop: PreparedStop): { line: number; column: number } {
-    const declared = stop.source,
-      endLine = this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
-      onDeclaredLine = stop.verifier.mappedPositions(
-        declared.line,
-        declared.line,
-      )
-    if (
-      !onDeclaredLine.complete ||
-      onDeclaredLine.positions.length ||
-      declared.line >= endLine
-    )
-      return declared
-    const later = stop.verifier.mappedPositions(declared.line + 1, endLine)
-    // A partial scan may have missed an earlier mapped line, and a binding past such a line is refused by the stop's rule.
-    return later.complete ? (later.positions[0] ?? declared) : declared
   }
 
   /**
@@ -849,7 +832,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         },
       )
       onDeclaredLine = possible.locations.some(
-        (location) => stop.verifier.originalLine(location) === stop.source.line,
+        (location) => stop.verifier.originalLine(location) === stop.armed.line,
       )
     } catch {
       // An adapter that cannot list break locations leaves the binding to the line rule.
@@ -860,7 +843,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (onDeclaredLine)
       throw this.bindingFailure(
         stop,
-        `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on the declared line ${stop.source.line}, so requested column ${stop.source.column} lies after its statement; request the column where the statement begins`,
+        `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${stop.armed.line === stop.source.line ? `the declared line ${stop.source.line}` : `line ${stop.armed.line}, where the stop was requested`}, so requested column ${stop.armed.column} lies after its statement; request the column where the statement begins`,
       )
   }
 
@@ -2368,9 +2351,12 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           line: callFrame.location.lineNumber,
           column: callFrame.location.columnNumber ?? 0,
         },
-        // The stop's rule accepted this bound line: no line between it and the declared one has a mapped position.
+        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position, and the requested line is the declared one or the first mapped line after it.
         binding: {
           declaredLine: position.line,
+          ...(stop.armed.line === position.line
+            ? {}
+            : { requestedLine: stop.armed.line }),
           boundLine: frame.line,
           mappedLinesBetween: 0,
         },

@@ -2376,6 +2376,46 @@ test('a server stop declared on a line the sealed map has no position on is requ
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
 })
 
+// Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the first server stop declared at actions.ts 30:3 was requested at 31:3, paused at 32:11 and the run ended "bound at 32:11, refused: line 31 between the declared line 30 and line 32 has a mapped position" (native).
+test('a server stop requested after its unmapped declared line that pauses on the line after the requested one is captured there', async (context) => {
+  // Arrange: line 1 has no mapping, lines 2 and 3 have one; the breakpoint requested on line 2 binds at 3:1 and the runtime pauses there.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: ';AACA;AACA' },
+    fixture: {
+      server: { source: THREE_LINE_SERVER_SOURCE, citationEndLine: 3 },
+    },
+  })
+  await harness.run.prepare()
+  const requested = harness.breakpoints[0]?.location.range.start
+  harness.pauseAt('server', 2, 0)
+  harness.bindAt('server', 3, 1)
+  harness.movePausedFrame(3)
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.server?.snapshot
+  }, 'server stop captured on the line after the requested one')
+  await harness.run.continue('server', server.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after a stop bound after its requested line',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(requested?.line, 1)
+  assert.equal(server.source.line, 3)
+  assert.equal(server.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(server.source.binding)), {
+    declaredLine: 1,
+    requestedLine: 2,
+    boundLine: 3,
+    mappedLinesBetween: 0,
+  })
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+})
+
 // Value: protects=a paused server stop the debugger moved to the next line surviving a stack refresh that arrives before its binding is read; fails_when=the refreshed frame is compared with the declared line only and the run ends with "Native stack refresh changed the captured source location"; why_new=before a binding was known only the declared line was a place it could be on (Cycle 0043, ER6); seam=the binding lookup, held by the harness
 test('a stack refresh that arrives before the binding of a server stop moved to the next line is read keeps the pause and the stop commits at the bound line', async (context) => {
   // Arrange: the server stop has paused on line 2 and the adapter has not yet answered where its breakpoint bound.

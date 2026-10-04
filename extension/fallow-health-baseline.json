@@ -140,7 +140,7 @@
     },
     "src/configuredBrowserRun.ts": {
       "complexity_critical": {
-        "count": 5
+        "count": 6
       },
       "crap_critical": {
         "count": 13
@@ -661,7 +661,7 @@
       }
     },
     "src/utils/createBindingLineRule.ts": {
-      "crap_high": {
+      "crap_critical": {
         "count": 1
       }
     },
@@ -830,7 +830,7 @@
       }
     },
     "src/utils/isSavedBindingReceiptAtStop.ts": {
-      "crap_moderate": {
+      "crap_high": {
         "count": 1
       }
     },

@@ -88,6 +88,8 @@ export const configuredObservationSchema = z.strictObject({
     binding: z
       .strictObject({
         declaredLine: z.number().int().positive(),
+        // Present only for a stop declared on a line without a mapped position: the first mapped line after it, where its breakpoint was requested and from which the rule was measured.
+        requestedLine: z.number().int().positive().optional(),
         boundLine: z.number().int().positive(),
         mappedLinesBetween: z.literal(0),
       })

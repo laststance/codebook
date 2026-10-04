@@ -19,24 +19,32 @@ export interface BindingLineRule {
  * @param declaredLine - One-based line the agent declared the stop on; it lies within the citation.
  * @param citation - The stop's article excerpt; only its last line is needed, because an accepted bound line is never before the declared one.
  * @param mappedPositions - Reads the sealed map's mapped positions in a line range, as {@link createBundleVerifier} offers them; asked once.
+ * @param requestedLine - The line the stop's breakpoint is requested on ({@link resolveArmedPlace}): the declared line, or, for a stop declared on a line without a mapped position, the first mapped line after it. The rule is measured from this line, because a debugger that cannot pause there either binds the first place after it, exactly as for a stop declared there.
  * @returns The rule:
- * - `accepts` is `true` on the declared line, and on a later whole line within the citation with no mapped line between
+ * - `accepts` is `true` from the declared line to the requested one, and on a later whole line within the citation with no mapped line between it and the requested line
  * - `refusal` names an earlier line, a line after the citation, the mapped line between, or a scan that stopped at its size limit
  * @example
  * const rule = createBindingLineRule(22, { endLine: 95 }, verifier.mappedPositions)
  * rule.accepts(23) // => true: the debugger moved `return (` onto the `<form>` line
  * rule.refusal(21) // => 'line 21 is before the declared line 22'
+ * createBindingLineRule(73, { endLine: 95 }, verifier.mappedPositions, 74).accepts(75) // => true: requested on 74, the first mapped line after the unmapped 73, and bound on the next line
  */
 export function createBindingLineRule(
   declaredLine: number,
   citation: { endLine: number },
   mappedPositions: MappedPositionsReader,
+  requestedLine: number = declaredLine,
 ): BindingLineRule {
   const later =
-    declaredLine < citation.endLine
-      ? mappedPositions(declaredLine + 1, citation.endLine)
+    requestedLine < citation.endLine
+      ? mappedPositions(requestedLine + 1, citation.endLine)
       : { positions: [], complete: true }
-  const firstMappedLine = later.positions[0]?.line
+  const firstMappedLine = later.positions[0]?.line,
+    // A stop requested after its declared line names both in a refusal, so an agent sees which line the rule was measured from.
+    requestedAt =
+      requestedLine === declaredLine
+        ? `the declared line ${declaredLine}`
+        : `line ${requestedLine}, where the stop declared on line ${declaredLine} was requested,`
   const refusal = (line: number): string | undefined => {
     if (!Number.isInteger(line)) return `${line} is not a whole line number`
     if (line === declaredLine) return undefined
@@ -44,13 +52,15 @@ export function createBindingLineRule(
       return `line ${line} is before the declared line ${declaredLine}`
     if (line > citation.endLine)
       return `line ${line} is after the last line ${citation.endLine} of the citation`
+    // No line from the declared one up to the requested one has a mapped position before the requested line itself.
+    if (line <= requestedLine) return undefined
     // The next line has nothing between, whatever the scan could cover.
-    if (line === declaredLine + 1) return undefined
+    if (line === requestedLine + 1) return undefined
     if (firstMappedLine !== undefined && firstMappedLine < line)
-      return `line ${firstMappedLine} between the declared line ${declaredLine} and line ${line} has a mapped position`
+      return `line ${firstMappedLine} between ${requestedAt} and line ${line} has a mapped position`
     // A scan that stopped at its size limit proves nothing about the lines it did not reach.
     if (!later.complete)
-      return `the sealed map was too large to scan completely, so lines ${declaredLine + 1} to ${line - 1} between the declared line and line ${line} may hold code`
+      return `the sealed map was too large to scan completely, so lines ${requestedLine + 1} to ${line - 1} between the declared line and line ${line} may hold code`
     return undefined
   }
   return {
