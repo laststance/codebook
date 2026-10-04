@@ -194,6 +194,10 @@ export async function nativeParticipantsHarness(
   const sourceBoundWait = createSourceBoundWaitHold()
   // Every bounded wait the run entered, by its description, in order.
   const enteredWaits: string[] = []
+  // The bounded waits the run is inside now, by their descriptions; a wait leaves the list when it ends, however it ends.
+  const waitsInProgress: string[] = []
+  // Every wait the harness answered itself instead of handing it to the real wait, by its description.
+  const substitutedWaits: string[] = []
   // The run's timers under a manual clock: each fires only when the test advances the clock to its time.
   const manualClock = createManualClock()
   // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
@@ -735,20 +739,29 @@ export async function nativeParticipantsHarness(
           signal?: AbortSignal,
         ) => {
           enteredWaits.push(description)
-          // The capture bound is 3 s of real time; a test of its expiry looks once and then lets the real timeout contract end the wait.
-          if (
-            sourceBoundWaitExpired &&
-            description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION
-          ) {
-            signal?.throwIfAborted()
-            const value = await read()
-            signal?.throwIfAborted()
-            if (value) return value
-            return waitUntil(read, description, 0, signal)
+          waitsInProgress.push(description)
+          try {
+            // The capture bound is 3 s of real time; a test of its expiry looks once and then lets the real timeout contract end the wait.
+            if (
+              sourceBoundWaitExpired &&
+              description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION
+            ) {
+              substitutedWaits.push(description)
+              signal?.throwIfAborted()
+              const value = await read()
+              signal?.throwIfAborted()
+              if (value) return value
+              return await waitUntil(read, description, 0, signal)
+            }
+            if (sourceBoundWait.holds(description)) {
+              substitutedWaits.push(description)
+              return await sourceBoundWait.wait(read, description, signal)
+            }
+            return await waitUntil(read, description, timeoutMs, signal)
+          } finally {
+            // The wait ended, with a value or a failure: it is no longer one a test can act inside.
+            waitsInProgress.splice(waitsInProgress.indexOf(description), 1)
           }
-          if (sourceBoundWait.holds(description))
-            return sourceBoundWait.wait(read, description, signal)
-          return waitUntil(read, description, timeoutMs, signal)
         },
       },
       './utils/pausePlace': {
@@ -896,9 +909,17 @@ export async function nativeParticipantsHarness(
     emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
     },
-    /** Tells whether the run has entered a bounded wait with this description, so a test can act while the run is inside that wait. @example harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION) */
+    /** Tells whether the run has ever entered a bounded wait with this description; it stays true after that wait ended, so a test that acts while the run is inside a wait reads {@link waitInProgress} instead. @example harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) */
     waitEntered(description: string): boolean {
       return enteredWaits.includes(description)
+    },
+    /** Tells whether the run is inside a bounded wait with this description now, so a test can act while that wait is open; a wait that ended is no longer reported, so waiting for the next one of the same name does not pass at once. @example await waitUntil(() => harness.waitInProgress(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION), 'the wait') */
+    waitInProgress(description: string): boolean {
+      return waitsInProgress.includes(description)
+    },
+    /** Tells whether the harness answered a wait with this description itself ({@link expireSourceBoundWait}, {@link holdSourceBoundWait}) instead of handing it to the real wait. @example harness.waitSubstituted(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) */
+    waitSubstituted(description: string): boolean {
+      return substitutedWaits.includes(description)
     },
     /** Keeps the next continuation from announcing the declared stop it reaches (that one stop only), so a test can send other events first and then release the stop's two notifications in the order it needs. @example const next = harness.holdNextPause(); next.stopped(); next.paused() */
     holdNextPause() {
