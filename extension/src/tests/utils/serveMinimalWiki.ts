@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type DeepWikiReader, startDeepWikiReader } from '../../deepWikiReader'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
+
+import { writeMinimalWiki } from './writeMinimalWiki'
 
 /**
  * Publishes a one-page Wiki in a temporary project and serves it, for tests of the reader's routes and of its served page script.
@@ -39,23 +41,8 @@ export async function serveMinimalWiki(
     rm(projectDirectory, { recursive: true, force: true })
   try {
     const projectRoot = await realpath(projectDirectory)
-    const output = join(projectRoot, '.codebook', 'wiki')
-    await mkdir(output, { recursive: true })
-    await writeFile(
-      join(output, 'index.html'),
-      '<!doctype html><body>Wiki</body>',
-    )
-    const manifestPath = join(output, 'codebook-wiki.json')
-    await writeFile(
-      manifestPath,
-      JSON.stringify({
-        schemaVersion: 1,
-        repositoryRoot: projectRoot,
-        pages: [],
-        assets: [],
-        includedSources: [],
-      }),
-    )
+    const { outputDirectory: output, manifestPath } =
+      await writeMinimalWiki(projectRoot)
     const reader = await startReader(
       output,
       projectRoot,

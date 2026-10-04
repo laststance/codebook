@@ -19,6 +19,8 @@ import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
+import type * as WikiOpeningWindowModule from './utils/wikiOpeningWindow'
+import { openWikiOpeningWindow } from './utils/wikiOpeningWindow'
 
 // Value: protects=deadline tests firing a run's timers as real time would; fails_when=a timer cleared by an earlier callback of the same advance still fires, or timers fire in the order they were set instead of the order they fall due; why_new=Cycle 0043 R15 (the clock fired a snapshot in insertion order); seam=none
 test('a manual clock fires due timers in the order they fall due and never one an earlier callback cleared', () => {
@@ -399,6 +401,59 @@ test('a published Wiki fixture whose first publish is refused removes the tempor
     if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
     else process.env.TMPDIR = previousTemporaryFolder
     await rm(temporaryFolder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the machine's temporary folder staying free of Wiki projects that a failed window fixture created; fails_when=the Wiki opening window throws after it created its temporary project (the extension does not load or activate) and leaves the project there, although no caller holds its `close`; why_new=review of Cycle 0045, tests-1 #9 (a) (X7-D.3 guarded the two other Wiki fixtures and not this one); seam=TMPDIR of this test process, and the fixture loaded with a module loader that refuses the extension
+test('a Wiki opening window whose extension does not load removes the temporary project it created', async () => {
+  // Arrange: temporary projects are created in a folder of this test, and the fixture's loader refuses the extension.
+  const temporaryFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-fixture-cleanup-'),
+  )
+  const previousTemporaryFolder = process.env.TMPDIR
+  process.env.TMPDIR = temporaryFolder
+  try {
+    const fixture = await loadModule<typeof WikiOpeningWindowModule>(
+      join(__dirname, 'utils', 'wikiOpeningWindow.js'),
+      {
+        './loadModule': {
+          loadModule: async () => {
+            throw new Error('The extension could not load.')
+          },
+        },
+      },
+    )
+    // Act
+    const opening = fixture.openWikiOpeningWindow()
+    // Assert
+    await assert.rejects(opening, { message: 'The extension could not load.' })
+    assert.deepEqual(await readdir(temporaryFolder), [])
+  } finally {
+    if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTemporaryFolder
+    await rm(temporaryFolder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a test of the opened Wiki asserting what was put into the editor chat for a question; fails_when=the window fixture records only the name of the executed command, so no test can tell the drafted text, or records commands that carry no draft; why_new=review of Cycle 0045, tests-1 #9 (c) (`chatDrafts` held command names); seam=the real extension activated on the stubbed editor of the fixture
+test('the Wiki opening window records a question handed to the editor chat with the command and the drafted text', async () => {
+  // Arrange: the editor exposes no model, so a question becomes a draft in the editor chat.
+  const window = await openWikiOpeningWindow()
+  try {
+    await window.open()
+
+    // Act
+    await window.readers[0]?.ask('Where is it?', new AbortController().signal)
+
+    // Assert
+    assert.deepEqual(window.chatDrafts, [
+      {
+        name: 'workbench.action.chat.open',
+        query: `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(window.projectRoot, '.codebook', 'wiki', 'codebook-wiki.json'))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: "Where is it?"`,
+      },
+    ])
+  } finally {
+    await window.close()
   }
 })
 
