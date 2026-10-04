@@ -526,6 +526,8 @@ export async function workspaceHarness(
   let deferredPanelFocus: { kind: string; remaining: number } | undefined
   let deferPrimaryFocusEcho = false,
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
+  // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
+  let leavesPaneFocusUnreportedBesideChat = false
   let deferMovedFocusEcho = false,
     pendingMovedFocusEcho: typeof activeTabGroup | undefined
   let deferKeptFocusEcho = false,
@@ -1884,6 +1886,13 @@ export async function workspaceHarness(
             const focusedGroup = groups.find(
               (group) => group.viewColumn === focusedColumn,
             )
+            // The group the editor already names gets the keyboard back from a pane that took it without a report.
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              focusedGroup === activeTabGroup &&
+              focusedGroup === separateEditorPart?.group
+            )
+              separateEditorPart.focused = true
             if (focusedGroup && focusedGroup !== activeTabGroup) {
               const previousGroup = activeTabGroup
               returnHiddenEditorArea()
@@ -1907,6 +1916,15 @@ export async function workspaceHarness(
             const primaryEditor = visibleSourceEditors.find(
               (editor) => editor.group === primaryGroup,
             )
+            // The first group's pane has the keyboard and layout reads are answered for the main editor, yet no event arrives and the chat's group stays the named one.
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              activeTabGroup === separateEditorPart?.group &&
+              !(primaryGroup.activeTab?.input instanceof TabInputText)
+            ) {
+              separateEditorPart.focused = false
+              return undefined
+            }
             // Native text and tab-group notifications have no cross-event ordering guarantee.
             if (primaryNotificationOrder === 'editor first') {
               partialFocusEditor = { value: primaryEditor }
@@ -2911,6 +2929,16 @@ export async function workspaceHarness(
      */
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group and the first group shows a tab that is no text editor (the Application pane, twice in the second native round of Cycle 0045): that tab takes the keyboard, layout reads are answered for the main editor from then on, and the editor reports nothing: no group event, and the chat's group stays the active tab group. The numbered focus command for the chat's group then gives the keyboard back. A first group that shows a text editor is reported as before (natively seen for a click into it and a double-click on its tab; for the command it is the model's assumption).
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.leavePaneFocusUnreportedBesideChat()
+     * chat.focusTab()
+     */
+    leavePaneFocusUnreportedBesideChat(): void {
+      leavesPaneFocusUnreportedBesideChat = true
     },
     useNativeLayout(layout: unknown): void {
       nativeLayout = true
