@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { Dirent } from 'node:fs'
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
@@ -45,6 +46,128 @@ function readReceiptBinding(
 }
 
 /**
+ * Says whether a sibling of the Wiki folder may be a candidate at all; called by {@link listBoundCandidates} before any receipt is read.
+ * @param sibling - One entry of the Wiki folder's parent.
+ * @param outputName - The Wiki folder's own name.
+ * @returns `false` for what is no folder, for the Wiki folder itself and for a backup the publisher kept (reading each one's receipt would grow with every update); `true` otherwise.
+ * @example
+ * isCandidateFolder(stageFolderEntry, 'wiki') // => true for a folder named 'wiki.stage-3f6c'
+ */
+function isCandidateFolder(sibling: Dirent, outputName: string): boolean {
+  return (
+    sibling.isDirectory() &&
+    sibling.name !== outputName &&
+    // A backup the publisher kept is never accepted as a stage; reading each one's receipt would grow with every update.
+    !sibling.name.startsWith(outputName + WIKI_PUBLISH_BACKUP_INFIX)
+  )
+}
+
+/**
+ * Says whether a candidate's receipt binds it to this Wiki as it is published now; called by {@link readBoundCandidate}.
+ * @param receiptBytes - The bytes of the candidate's receipt.
+ * @param boundOutput - The Wiki folder in the form the publisher records it: its parent resolved, then its name.
+ * @param publishedSha256 - The hash of the manifest that is published now.
+ * @returns Whether the receipt names this output and this manifest as its baseline; a candidate prepared from an older generation is refused by the publisher.
+ * @example
+ * isReceiptBoundTo(receiptBytes, '/repo/.codebook/wiki', publishedSha256) // => true
+ */
+function isReceiptBoundTo(
+  receiptBytes: Buffer,
+  boundOutput: string,
+  publishedSha256: string,
+): boolean {
+  const binding = readReceiptBinding(receiptBytes)
+  return (
+    binding?.output === boundOutput &&
+    binding.baselineSha256 === publishedSha256
+  )
+}
+
+/**
+ * Describes a candidate that is bound to this Wiki: when it was last written and what its manifest owns so far; called by {@link readBoundCandidate}.
+ * @param candidateDirectory - The candidate's folder.
+ * @param name - The candidate's folder name.
+ * @param receiptModifiedAtMs - When its receipt was last written (epoch milliseconds).
+ * @returns The candidate; a manifest that is not there yet gives the receipt's time and no owned paths.
+ * @example
+ * await describeCandidate('/repo/.codebook/wiki.stage-3f6c', 'wiki.stage-3f6c', 1790000000000)
+ * // => { name: 'wiki.stage-3f6c', writtenAtMs: 1790000000000, ownedPaths: ['index.html'] }
+ */
+async function describeCandidate(
+  candidateDirectory: string,
+  name: string,
+  receiptModifiedAtMs: number,
+): Promise<WikiCandidate> {
+  const manifestPath = join(candidateDirectory, WIKI_MANIFEST_FILE)
+  const manifestStat = await lstat(manifestPath).catch(() => undefined)
+  return {
+    name,
+    writtenAtMs: Math.max(receiptModifiedAtMs, manifestStat?.mtimeMs ?? 0),
+    ownedPaths: [...((await readWikiOwnedPaths(manifestPath)) ?? [])],
+  }
+}
+
+/**
+ * Reads one sibling folder as a candidate of this Wiki; called by {@link listBoundCandidates} for each folder that may be one.
+ * @param candidateDirectory - The sibling folder.
+ * @param name - Its folder name.
+ * @param boundOutput - The Wiki folder in the form the publisher records it.
+ * @param publishedSha256 - The hash of the manifest that is published now.
+ * @returns
+ * - The candidate, when its receipt binds it to this output and this manifest
+ * - `undefined` for a folder without a regular receipt file (never prepared by the publisher, or vanished meanwhile) and for one bound to another output or an older generation
+ * @example
+ * await readBoundCandidate('/repo/.codebook/notes', 'notes', '/repo/.codebook/wiki', publishedSha256) // => undefined
+ */
+async function readBoundCandidate(
+  candidateDirectory: string,
+  name: string,
+  boundOutput: string,
+  publishedSha256: string,
+): Promise<WikiCandidate | undefined> {
+  const receipt = await readWikiRegularFile(
+    join(candidateDirectory, WIKI_PUBLICATION_RECEIPT_FILE),
+  )
+  // A folder without a regular receipt file was never prepared by the publisher, or vanished meanwhile.
+  if (!receipt) return undefined
+  // A candidate prepared from an older generation is refused by the publisher, so it is nobody's update any more.
+  if (!isReceiptBoundTo(receipt.bytes, boundOutput, publishedSha256))
+    return undefined
+  return describeCandidate(candidateDirectory, name, receipt.modifiedAtMs)
+}
+
+/**
+ * Looks through the siblings of the Wiki folder for candidates prepared from the published manifest, one folder after the other; called by {@link listWikiCandidates} once that manifest was read.
+ * @param outputDirectory - Resolved Wiki output folder.
+ * @param publishedSha256 - The hash of the manifest that is published now.
+ * @returns The candidates in folder-name order.
+ * @throws The file system's error when the parent folder cannot be resolved or listed.
+ * @example
+ * await listBoundCandidates('/repo/.codebook/wiki', publishedSha256) // => [{ name: 'wiki.stage-3f6c', writtenAtMs: 1790000000000, ownedPaths: ['index.html'] }]
+ */
+async function listBoundCandidates(
+  outputDirectory: string,
+  publishedSha256: string,
+): Promise<WikiCandidate[]> {
+  // The publisher records the output with its parent folder resolved, so the comparison uses the same form.
+  const parent = await realpath(dirname(outputDirectory))
+  const outputName = basename(outputDirectory)
+  const boundOutput = join(parent, outputName)
+  const candidates: WikiCandidate[] = []
+  for (const sibling of await readdir(parent, { withFileTypes: true })) {
+    if (!isCandidateFolder(sibling, outputName)) continue
+    const candidate = await readBoundCandidate(
+      join(parent, sibling.name),
+      sibling.name,
+      boundOutput,
+      publishedSha256,
+    )
+    if (candidate) candidates.push(candidate)
+  }
+  return candidates.sort((left, right) => left.name.localeCompare(right.name))
+}
+
+/**
  * Lists the candidates the publisher would still accept for a published Wiki, whatever their folders are called.
  *
  * Why: the publisher takes any sibling folder as a stage (`--stage`), and binds it by its receipt: `output` names the Wiki and `baseline.manifestSha256` the generation it was prepared from. A folder name or a folder time says neither.
@@ -70,37 +193,7 @@ export async function listWikiCandidates(
     const publishedSha256 = createHash('sha256')
       .update(published.bytes)
       .digest('hex')
-    // The publisher records the output with its parent folder resolved, so the comparison uses the same form.
-    const parent = await realpath(dirname(outputDirectory))
-    const outputName = basename(outputDirectory)
-    const boundOutput = join(parent, outputName)
-    const candidates: WikiCandidate[] = []
-    for (const sibling of await readdir(parent, { withFileTypes: true })) {
-      if (!sibling.isDirectory() || sibling.name === outputName) continue
-      // A backup the publisher kept is never accepted as a stage; reading each one's receipt would grow with every update.
-      if (sibling.name.startsWith(outputName + WIKI_PUBLISH_BACKUP_INFIX))
-        continue
-      const receipt = await readWikiRegularFile(
-        join(parent, sibling.name, WIKI_PUBLICATION_RECEIPT_FILE),
-      )
-      // A folder without a regular receipt file was never prepared by the publisher, or vanished meanwhile.
-      if (!receipt) continue
-      const binding = readReceiptBinding(receipt.bytes)
-      // A candidate prepared from an older generation is refused by the publisher, so it is nobody's update any more.
-      if (
-        binding?.output !== boundOutput ||
-        binding.baselineSha256 !== publishedSha256
-      )
-        continue
-      const manifestPath = join(parent, sibling.name, WIKI_MANIFEST_FILE)
-      const manifestStat = await lstat(manifestPath).catch(() => undefined)
-      candidates.push({
-        name: sibling.name,
-        writtenAtMs: Math.max(receipt.modifiedAtMs, manifestStat?.mtimeMs ?? 0),
-        ownedPaths: [...((await readWikiOwnedPaths(manifestPath)) ?? [])],
-      })
-    }
-    return candidates.sort((left, right) => left.name.localeCompare(right.name))
+    return await listBoundCandidates(outputDirectory, publishedSha256)
   } catch (error) {
     // A Wiki folder that is missing or being swapped right now has no candidates this look.
     if (systemErrorCode(error) === 'ENOENT') return []
