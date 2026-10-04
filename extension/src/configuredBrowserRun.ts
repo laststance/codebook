@@ -138,10 +138,14 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   /** Names the condition that refuses a line as this stop's place, for the failure an agent reads; `undefined` for an accepted line. */
   bindingRefusal: (line: number) => string | undefined
 }
-/** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on. */
+/** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on, and the place when the adapter moved the breakpoint to a line the stop's rule refuses. */
 type RegistrationStatus =
   | { status: 'pending' | 'bound' | 'unknown' }
-  | { status: 'refused'; reason: string }
+  | {
+      status: 'refused'
+      reason: string
+      movedTo?: { line: number; column: number }
+    }
 type DebugParticipant = {
   gate: PauseGate
   selected?: vscode.DebugSession
@@ -1200,7 +1204,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         registration.status === 'refused' ||
         registration.status === 'unknown'
       )
-        return `${opening}: declared server stop ${this.declaredAt(stop)}${requested ? ` (${requested})` : ''} ${notHit}; ${this.unacknowledgedText(registration)}`
+        return `${opening}: declared server stop ${this.declaredAt(stop)}${requested ? ` (${requested})` : ''} ${notHit}; ${this.unacknowledgedText(stop, registration)}`
       return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${registration.status}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
     }
     return `${opening}: declared stop ${this.declaredAt(stop)} ${notHit}; its line must execute after the input`
@@ -1227,7 +1231,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param stop - The declared server stop that was not reached.
    * @returns
    * - `pending` until the stop's module loads, `bound` once the adapter verified it
-   * - `refused` with the reason the registration read threw, when the adapter refused or revoked it, moved it to a refused place, or the breakpoint is gone
+   * - `refused` with the reason the registration read threw, when the adapter refused or revoked it or the breakpoint is gone; and with `movedTo` when the adapter moved it to a place the stop's rule refuses
    * - `unknown` when no current receipt can be read: a newer registration request is unanswered, or no session is selected
    * @example
    * ```ts
@@ -1241,12 +1245,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       const receipt = stop.breakpoint.registration(session)
       return receipt ? { status: receipt.status } : { status: 'unknown' }
     } catch (error) {
-      return { status: 'refused', reason: thrownMessage(error) }
+      return {
+        status: 'refused',
+        reason: thrownMessage(error),
+        ...(error instanceof OwnedBreakpointMovedError
+          ? { movedTo: error.place }
+          : {}),
+      }
     }
   }
 
-  /** Words what both deadline texts say for a server stop whose breakpoint the adapter does not hold acknowledged: what was read, and that only a new run helps, because no other declaration would. @example this.unacknowledgedText({ status: 'unknown' }) // 'the debugger no longer acknowledged its breakpoint (no current registration receipt could be read), so the stop could not pause. Stop this run and start a new one.' */
-  private unacknowledgedText(registration: RegistrationStatus): string {
+  /**
+   * Words what both deadline texts say for a server stop whose breakpoint the adapter does not hold acknowledged where the stop can use it; {@link unreachedFirstStopReason} and {@link unreachedNextStopReason} append it.
+   * @param stop - The declared server stop that was not reached.
+   * @param registration - What {@link registrationStatus} read: refused, or without a current receipt.
+   * @returns
+   * - For a breakpoint the adapter moved to a line the stop's rule refuses: the place, the rule's reason, and that the bound place is what to declare, because a new run would bind it there again
+   * - Otherwise what was read, and that only a new run helps, because no other declaration would
+   * @example
+   * ```ts
+   * this.unacknowledgedText(stop, { status: 'unknown' }) // 'the debugger no longer acknowledged its breakpoint (no current registration receipt could be read), so the stop could not pause. Stop this run and start a new one.'
+   * ```
+   */
+  private unacknowledgedText(
+    stop: PreparedStop,
+    registration: RegistrationStatus,
+  ): string {
+    // The adapter moved the acknowledged breakpoint to a refused line: the declaration, not the run, is what to change.
+    if (registration.status === 'refused' && registration.movedTo) {
+      const { line, column } = registration.movedTo
+      return `the debugger moved its breakpoint to ${line}:${column}, refused: ${stop.bindingRefusal(line) ?? 'the binding rule refused that line'}, so the stop could not be captured there. Declare the bound place instead (${this.declaredField(stop)}), in a citation that covers it.`
+    }
     const read =
       registration.status === 'refused'
         ? registration.reason
@@ -1288,7 +1317,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       registration?.status === 'refused' ||
       registration?.status === 'unknown'
     )
-      return `${serverOpening} ${within}; ${this.unacknowledgedText(registration)}`
+      return `${serverOpening} ${within}; ${this.unacknowledgedText(stop, registration)}`
     return `${opening} ${within}; its line must execute after the preceding continuation`
   }
 

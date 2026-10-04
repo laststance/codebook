@@ -3181,6 +3181,36 @@ test('a first server stop whose breakpoint was removed after the input ends the 
   )
 })
 
+// Cycle 0045 (X7-A.1 with ST-4): red while a breakpoint the adapter moved to a refused line after the input ended the run with "the debugger no longer acknowledged its breakpoint (…). Stop this run and start a new one.": a new run binds it there again, so the declaration is what to change.
+test('a server stop whose breakpoint the adapter moves to a refused line after the input ends the run at the deadline naming that place, why it is refused and what to declare', async (context) => {
+  // Arrange: the stop is declared at 1:1 and its citation is line 1; the input is sent and the stop's pause is held back, then the adapter reports the breakpoint verified at 2:1.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  harness.announceBreakpointVerified('server', 2, 1)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'server stop moved to a refused line not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository input reached no verified pause: declared server stop src/mode.ts:1 was not hit within 20 s of the accepted action; the debugger moved its breakpoint to 2:1, refused: line 2 is after the last line 1 of the citation, so the stop could not be captured there. Declare the bound place instead (configuration.source), in a citation that covers it.',
+  )
+})
+
 // Cycle 0045 (NF-29 b): the later stop's twin of the first stop's deadline text; red while only the declared place was named.
 test('the deadline text of a later server stop requested after its declared line names the requested place', async (context) => {
   // Arrange: line 1 of the server module has no mapping, line 2 has one, so both stops declared at 1:1 are requested at 2:1; the first is captured there, the second stays pending and no pause arrives.
