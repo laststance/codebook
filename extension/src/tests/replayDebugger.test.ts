@@ -2967,6 +2967,34 @@ test('the reader is told that Run and Debug loaded the values 150 ms after they 
   }
 })
 
+/** Counts the timers the process still waits for, as `process.getActiveResourcesInfo()` names them. @example pendingTimeouts() // => 1 while one setTimeout has not run */
+function pendingTimeouts(): number {
+  return process
+    .getActiveResourcesInfo()
+    .filter((resource) => resource === 'Timeout').length
+}
+
+// Value: protects=the editor's event loop after the historical debugger was disposed: no notice to the reader waits on a timer of an owner that is gone; fails_when=the values-loaded notice, scheduled 150 ms after the adapter served the values, stays pending through the disposal and keeps the event loop alive for an owner that tells its reader nothing any more; why_new=Cycle 0045 local review coderabbit #4 (the notice's timer handle was not kept); seam=the process's active timers
+test('a disposed historical debugger leaves no values-loaded notice waiting on a timer', async () => {
+  // Arrange: the values of the presented stop were served, so the notice to the reader waits for its paint allowance.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  await fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded pause',
+    new AbortController().signal,
+  )
+  const timersBeforeTheNotice = pendingTimeouts()
+  fixture.inspect()
+  const timersWhileTheNoticeWaits = pendingTimeouts()
+
+  // Act
+  await fixture.owner.dispose()
+
+  // Assert
+  assert.equal(timersWhileTheNoticeWaits, timersBeforeTheNotice + 1)
+  assert.equal(pendingTimeouts(), timersBeforeTheNotice)
+})
+
 // Value: protects=the hint of the stop the reader shows now; fails_when=values served for a stop the recording left within the paint allowance are still reported, so the reader drops the hint of the moment it moved to; why_new=Cycle 0044 (the values-loaded notification is delivered late); seam=none
 test('values served for a stop the recording has left by the time the reader would be told are not reported', async (context) => {
   // Arrange

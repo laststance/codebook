@@ -39,6 +39,8 @@ type InspectionOutcome = { inspection: ReplayInspection } | { error: unknown }
 export class ReplayDebugger {
   private readonly token = randomUUID()
   private readonly disposables: vscode.Disposable[] = []
+  /** The timers of {@link notifyValuesLoaded} that have not told the reader yet; {@link releaseAdapterAndListeners} clears them. */
+  private readonly valuesLoadedTimers = new Set<ReturnType<typeof setTimeout>>()
   private session?: vscode.DebugSession
   private adapter?: ReplayDebugAdapter
   private starting?: Promise<void>
@@ -210,11 +212,13 @@ export class ReplayDebugger {
    * @example this.notifyValuesLoaded(adapter)
    */
   private notifyValuesLoaded(adapter: ReplayDebugAdapter): void {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.valuesLoadedTimers.delete(timer)
       // A reader told late about a stop it no longer shows would drop the hint of the stop it does show.
       if (!this.stillPresentsLoadedValues(adapter)) return
       this.tellReader('values-loaded')
     }, REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS)
+    this.valuesLoadedTimers.add(timer)
   }
 
   /**
@@ -834,11 +838,14 @@ export class ReplayDebugger {
   }
 
   /**
-   * Disposes the adapter and every editor subscription of this owner; {@link dispose} runs it last, also when a wait before it failed.
+   * Disposes the adapter and every editor subscription of this owner, and drops the notices of {@link notifyValuesLoaded} that still wait for their paint allowance; {@link dispose} runs it last, also when a wait before it failed.
    * @example this.releaseAdapterAndListeners()
    */
   private releaseAdapterAndListeners(): void {
     this.adapter?.dispose()
     for (const disposable of this.disposables) disposable.dispose()
+    // A disposed owner tells its reader nothing more, so no timer of it keeps the event loop alive.
+    for (const timer of this.valuesLoadedTimers) clearTimeout(timer)
+    this.valuesLoadedTimers.clear()
   }
 }
