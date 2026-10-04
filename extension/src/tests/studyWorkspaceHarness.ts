@@ -569,6 +569,25 @@ export async function workspaceHarness(
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
   const pendingDisposedTabCloses: (() => void)[] = []
+  /** The fake editor's own timers that have not run yet (a disposed pane's tab close, a late reveal). The harness's `close` clears them, so no fake editor changes its groups or calls a listener after its test ended. */
+  const pendingEditorTimers = new Set<ReturnType<typeof setTimeout>>()
+  /**
+   * Runs one pending tab change of the fake editor by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS}, unless a layout read took it from `pendingDisposedTabCloses` first or the harness was closed; called for a disposed pane's tab close and for a late reveal.
+   * @param change - The change that was pushed to `pendingDisposedTabCloses`.
+   * @example
+   * pendingDisposedTabCloses.push(closeTab)
+   * applyByItselfLater(closeTab)
+   */
+  function applyByItselfLater(change: () => void): void {
+    const timer = setTimeout(() => {
+      pendingEditorTimers.delete(timer)
+      const index = pendingDisposedTabCloses.indexOf(change)
+      if (index < 0) return
+      pendingDisposedTabCloses.splice(index, 1)
+      change()
+    }, DISPOSED_TAB_CLOSE_DELAY_MS)
+    pendingEditorTimers.add(timer)
+  }
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
     settledLayout: unknown,
@@ -1271,12 +1290,7 @@ export async function workspaceHarness(
           }
           pendingDisposedTabCloses.push(applyReveal)
           // Without a layout read the reveal is reported by itself a moment later.
-          setTimeout(() => {
-            const index = pendingDisposedTabCloses.indexOf(applyReveal)
-            if (index < 0) return
-            pendingDisposedTabCloses.splice(index, 1)
-            applyReveal()
-          }, DISPOSED_TAB_CLOSE_DELAY_MS)
+          applyByItselfLater(applyReveal)
           return
         }
         panelReveals.push({ kind, column, preserveFocus })
@@ -1503,20 +1517,11 @@ export async function workspaceHarness(
         if (
           closeDisposedPanelTabsLater ||
           closeDisposedPanelTabsDuringLayoutRead
-        )
+        ) {
           pendingDisposedTabCloses.push(closeTab)
-        else closeTab()
-        // Without a layout read the worker closes the tab by itself a moment later.
-        if (
-          closeDisposedPanelTabsLater ||
-          closeDisposedPanelTabsDuringLayoutRead
-        )
-          setTimeout(() => {
-            const index = pendingDisposedTabCloses.indexOf(closeTab)
-            if (index < 0) return
-            pendingDisposedTabCloses.splice(index, 1)
-            closeTab()
-          }, DISPOSED_TAB_CLOSE_DELAY_MS)
+          // Without a layout read the worker closes the tab by itself a moment later.
+          applyByItselfLater(closeTab)
+        } else closeTab()
         for (const listener of disposed) listener()
       },
     }
@@ -3873,8 +3878,14 @@ export async function workspaceHarness(
     async close(): Promise<void> {
       await reader.retire(harness.service)
       await reader.dispose()
+      // The fake editor of a closed harness changes nothing any more: its pending tab closes and reveals are dropped with their timers.
+      for (const timer of pendingEditorTimers) clearTimeout(timer)
+      pendingEditorTimers.clear()
+      pendingDisposedTabCloses.length = 0
       await harness.close()
     },
+    /** Counts the fake editor's own timers that have not run yet: a disposed pane's tab close or a late reveal that waits for {@link DISPOSED_TAB_CLOSE_DELAY_MS}. @example harness.pendingEditorTimerCount() // => 2 right after a reader with two panes was closed in an editor that closes tabs later */
+    pendingEditorTimerCount: (): number => pendingEditorTimers.size,
   }
 }
 
