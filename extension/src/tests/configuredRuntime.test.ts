@@ -1174,7 +1174,7 @@ test('a browser stop the debugger binds at another column of its declared line i
     .events.find((event) => event.type === 'breakpoint.bound')
   assert.equal(
     JSON.stringify(bound?.detail),
-    '{"verified":true,"line":1,"column":7,"requested":{"line":1,"column":1}}',
+    '{"verified":true,"line":1,"column":7,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1}}',
   )
   assert.equal(stop.source.line, 1)
   assert.equal(stop.source.column, 7)
@@ -1757,7 +1757,7 @@ test('a browser stop the debugger binds on the next line of its citation is arme
     .events.find((event) => event.type === 'breakpoint.bound')
   assert.equal(
     JSON.stringify(bound?.detail),
-    '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1}}',
+    '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1}}',
   )
   assert.equal(stop.source.line, 2)
   assert.equal(stop.source.column, 1)
@@ -1981,7 +1981,7 @@ test('a browser stop the debugger binds two lines below, across a line the seale
     .events.find((event) => event.type === 'breakpoint.bound')
   assert.equal(
     JSON.stringify(bound?.detail),
-    '{"verified":true,"line":3,"column":1,"requested":{"line":1,"column":1}}',
+    '{"verified":true,"line":3,"column":1,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1}}',
   )
   assert.equal(stop.source.line, 3)
   assert.equal(stop.source.column, 1)
