@@ -84,20 +84,47 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+/**
+ * Every kind of error line the Study reader keeps, one line per kind, with what answers it.
+ * `retryable`: Retry storage / refresh can answer the line, so the pane offers Retry only while one of these is shown.
+ * `choiceRetired`: the line reports a refused pane choice, which the learner's next handled choice retires.
+ * {@link ReaderErrorKind}, {@link UNRETRYABLE_READER_ERROR_KINDS} and {@link CHOICE_RETIRED_ERROR_KINDS} derive from this table, so a new kind is classified where it is declared.
+ */
+export const READER_ERROR_KINDS = [
+  { kind: 'archive', retryable: true, choiceRetired: false },
+  { kind: 'citations', retryable: true, choiceRetired: false },
+  { kind: 'control', retryable: false, choiceRetired: true },
+  { kind: 'history-learning', retryable: true, choiceRetired: false },
+  { kind: 'history-position', retryable: true, choiceRetired: false },
+  { kind: 'layout', retryable: false, choiceRetired: false },
+  { kind: 'node-history-control', retryable: false, choiceRetired: true },
+  { kind: 'outline', retryable: true, choiceRetired: false },
+  { kind: 'playback-context', retryable: true, choiceRetired: false },
+  { kind: 'playback-preference', retryable: true, choiceRetired: false },
+  { kind: 'presentation', retryable: false, choiceRetired: false },
+  { kind: 'progress', retryable: true, choiceRetired: false },
+  { kind: 'reader', retryable: true, choiceRetired: false },
+  { kind: 'reading', retryable: false, choiceRetired: false },
+  { kind: 'replay-control', retryable: false, choiceRetired: false },
+  { kind: 'replay-debugger', retryable: true, choiceRetired: false },
+  { kind: 'replay-debugger-disposal', retryable: false, choiceRetired: false },
+  { kind: 'source', retryable: true, choiceRetired: false },
+] as const
+/** The key of one reader error line; the reader's `report` and its error map accept only these. */
+export type ReaderErrorKind = (typeof READER_ERROR_KINDS)[number]['kind']
 // The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
-export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<string> = new Set([
-  'layout',
-  'control',
-  'replay-control',
-  'node-history-control',
-  'reading',
-  'presentation',
-])
+export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<ReaderErrorKind> =
+  new Set(
+    READER_ERROR_KINDS.flatMap((entry) =>
+      entry.retryable ? [] : [entry.kind],
+    ),
+  )
 // The lines of a refused pane choice that the learner's next handled choice retires: the general one and the Node test history's own, which a Node history message accepted outside browser replay retires as well.
-export const CHOICE_RETIRED_ERROR_KINDS: ReadonlySet<string> = new Set([
-  'control',
-  'node-history-control',
-])
+export const CHOICE_RETIRED_ERROR_KINDS: ReadonlySet<ReaderErrorKind> = new Set(
+  READER_ERROR_KINDS.flatMap((entry) =>
+    entry.choiceRetired ? [entry.kind] : [],
+  ),
+)
 // The pane messages by which the learner chooses what the reader shows; one that is handled without an error retires the line of an earlier refused control.
 export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'history',

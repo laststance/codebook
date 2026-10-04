@@ -23,6 +23,7 @@ import {
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
+  type ReaderErrorKind,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
@@ -444,7 +445,7 @@ export class StudyWorkspace {
   private readonly removedStudyIds = new Set<string>()
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
   private answeredRunRefusalId?: string
-  private readonly errors = new Map<string, string>()
+  private readonly errors = new Map<ReaderErrorKind, string>()
   /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. */
   private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
   private readonly documents = new Map<string, string>()
@@ -9267,7 +9268,10 @@ export class StudyWorkspace {
    */
   private panelFailureKind(
     value: unknown,
-  ): 'replay-control' | 'node-history-control' | 'control' {
+  ): Extract<
+    ReaderErrorKind,
+    'replay-control' | 'node-history-control' | 'control'
+  > {
     const parsed = messageSchema.safeParse(value)
     if (!parsed.success) return 'control'
     if (parsed.data.type === 'playback') return 'replay-control'
@@ -10900,8 +10904,13 @@ export class StudyWorkspace {
     }
   }
 
-  /** Keeps storage, control and renderer failures distinct in the learner-facing status. @example this.report('archive', error) */
-  private report(kind: string, error: unknown): void {
+  /**
+   * Keeps storage, control and renderer failures distinct in the learner-facing status: one line per kind, published at once; every failure path of the reader calls it.
+   * @param kind - The line the failure replaces; {@link READER_ERROR_KINDS} says whether Retry storage / refresh or the learner's next choice answers it.
+   * @param error - The failure, shown as its string form.
+   * @example this.report('archive', error)
+   */
+  private report(kind: ReaderErrorKind, error: unknown): void {
     if (CHOICE_RETIRED_ERROR_KINDS.has(kind)) this.controlRefusals++
     this.errors.set(kind, String(error))
     if (kind === 'presentation') this.clearReadyReplayWarning()

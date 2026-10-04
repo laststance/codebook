@@ -7,6 +7,7 @@ import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
+import type { ReaderErrorKind } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -3872,9 +3873,11 @@ export function readerSeams(harness: {
     /** Counts the study checkpoints that wait to be written. */
     queuedStudyWrites: (): number => reader['pendingArchives'].size,
     /** Says whether the reader holds an error line of one kind. */
-    hasErrorOfKind: (kind: string): boolean => reader['errors'].has(kind),
+    hasErrorOfKind: (kind: ReaderErrorKind): boolean =>
+      reader['errors'].has(kind),
     /** Drops the reader's error line of one kind, as the action that retires it does. */
-    dropErrorOfKind: (kind: string): boolean => reader['errors'].delete(kind),
+    dropErrorOfKind: (kind: ReaderErrorKind): boolean =>
+      reader['errors'].delete(kind),
     isLoading: (): boolean => reader['loading'],
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],

@@ -2323,6 +2323,35 @@ test('a historical debugger that failed to stop stays reported after native valu
   }
 })
 
+// Value: protects=the Study pane not offering Retry storage / refresh for a line that Retry cannot retire; fails_when=the line of a historical debugger that failed to stop counts as retryable, so the pane shows Retry and pressing it leaves the line; why_new=Cycle 0045 SM-9 (the kind was missing from the unretryable set, which was a list of free strings); seam=ReplayDebugger.dispose replaced on the live owner
+test('a historical debugger that failed to stop is reported without offering Retry storage', async () => {
+  // Arrange: an opened recording without another error line, whose historical debugger will fail to stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    readerSeams(harness).dropErrorOfKind('layout')
+    const owner = harness.reader['replayDebugger']
+    assert.ok(owner)
+    owner.dispose = async (): Promise<void> => {
+      throw new Error('The historical debugger did not stop.')
+    }
+
+    // Act
+    await harness.reader['retireReplayDebugger'](owner)
+
+    // Assert: the one line shown is one Retry cannot answer, which is what keeps the pane from offering Retry.
+    const posted = harness.postedMessages().at(-1)!
+    assert.deepEqual(
+      [...posted.errors],
+      ['Error: The historical debugger did not stop.'],
+    )
+    assert.equal(posted.unretryableErrorCount, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a stale "native values did not update" error leaving the reader once the debugger notifies again, even with no Run and Debug hint showing; fails_when=the reader is published only when a hint or a Node stop changes, so the cleared error stays on screen; why_new=Cycle 0034 T3 (the failureCleared publish had no test without a hint); seam=none
 test('a handled native values notification clears an earlier notification failure while no Run and Debug hint is showing', async () => {
   // Arrange: native values are loaded, so no hint is showing, and one notification failed to be handled.
