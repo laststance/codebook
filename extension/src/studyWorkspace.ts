@@ -1940,6 +1940,9 @@ export class StudyWorkspace {
         assertRetainedPlacement?.()
         if (!this.opened) await this.open(signal, 'presentation')
         assertCurrent()
+        // The open entered a live run or a recording and arranged its two panes: no Study pane exists whose render the transfer below waits for.
+        if (this.liveComposition || this.summaryComposition)
+          return this.confirmEnteredComposition(input)
         assertRetainedPlacement ??= this.retainPresentationPlacement()
         this.presentationPoseRequest = undefined
         this.presentationPose = undefined
@@ -2176,6 +2179,35 @@ export class StudyWorkspace {
       this.presentationPose = undefined
       this.presentationPoseRestored = undefined
     }
+  }
+
+  /**
+   * Ends a selection whose {@link open} entered a live run or a recording, the way the live branch of {@link admitPresentation} ends one on an open reader; called by {@link performPresentation}, which would otherwise wait for a Study pane that this arrangement does not have.
+   * @param input - The admitted request; beside a live explanation or a replay only the Study workspace can be selected.
+   * @returns The state of the arranged live or replay panes, confirmed.
+   * @throws `PRESENTATION_UNAVAILABLE` for another mode, and when the arrangement the open made holds no layout receipt or its source is not shown.
+   * @example
+   * ```ts
+   * if (this.liveComposition || this.summaryComposition) return this.confirmEnteredComposition(input)
+   * ```
+   */
+  private confirmEnteredComposition(
+    input: PresentationIntent,
+  ): PresentationState {
+    this.assertCompositionAllows(input)
+    this.presentationConfirmed = Boolean(this.layoutReceipt)
+    this.requestedPresentation = undefined
+    const entered = this.presentationState()
+    // The open keeps what it could arrange; without its receipt the answer names the missing condition instead of a confirmed layout.
+    if (!entered.layoutConfirmed)
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        'The live Study layout could not be confirmed after Restore.',
+        entered.reason,
+      )
+    this.errors.delete('layout')
+    this.errors.delete('presentation')
+    return { ...entered, state: 'open' }
   }
 
   /** Captures only the displayed item's bounded reading state for {@link performPresentation}; it owns no runtime controls. @example await this.captureReadingPose(signal) */

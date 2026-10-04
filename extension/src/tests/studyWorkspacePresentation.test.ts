@@ -3816,3 +3816,39 @@ test('a selection after Close Study Workspace during a paused run opens the read
     await harness.close()
   }
 })
+
+// Value: protects=an agent's first presentation select during a paused run answering with the live panes arranged and confirmed; fails_when=the selection that opened a closed reader into the live arrangement still waits for a Study pane's render, which that arrangement does not have, and is refused after five seconds; why_new=Cycle 0045 NF-19: every selection test of a closed reader ran without a current run; seam=workspace harness with the controlled runtime
+test('the first presentation select during a paused live run with the reader closed arranges the live panes and answers a confirmed layout', async () => {
+  // Arrange: an agent's run is paused at its stop and the learner has not opened the Study workspace; the learner's file has the focus.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const draft = harness.focusMutableDraft()
+    await pauseLiveRun(harness)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(state.state, 'closed')
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.mode, 'study-workspace')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, undefined)
+    assert.equal(readerSeams(harness).isLiveArrangement(), true)
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(draft.tab),
+      true,
+    )
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    await harness.close()
+  }
+})
