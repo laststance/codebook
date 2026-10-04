@@ -916,7 +916,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link retainForeignTabFocus} and by the foreign-preview search of {@link readMainEditorGrid}.
+   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link isCodebookTabWithoutFocus} and by the foreign-preview search of {@link readMainEditorGrid}.
    * The view type alone cannot tell a live pane from one an earlier extension host left behind; the caller decides that from the panels it owns.
    * @param input - The `input` of an editor tab.
    * @param kinds - The registered view types to match; every Codebook pane when none is given.
@@ -2275,11 +2275,12 @@ export class StudyWorkspace {
   ): (() => Promise<void>) | undefined {
     if (this.hasActiveStudyPane() || vscode.window.activeTextEditor)
       return undefined
-    const group = vscode.window.tabGroups.activeTabGroup
-    const heldUri = this.textTabUriHeldByAnotherPart(group)
+    const group = vscode.window.tabGroups.activeTabGroup,
+      activeTab = group.activeTab
+    const heldUri = this.textTabUriHeldByAnotherPart(activeTab, group)
     const heldByAnotherPart = heldUri !== undefined
     const tab = this.foreignTabToReturnTo(
-      group.activeTab,
+      activeTab,
       activatedByClose,
       heldByAnotherPart,
     )
@@ -2349,20 +2350,48 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the document of the active tab when another editor part holds the keyboard over it; read by {@link retainForeignTabFocus} once no Study pane and no text editor is active.
+   * Names the document of a text tab; read by {@link textTabUriHeldByAnotherPart} for the tab the editor names as active.
+   * @param tab - The active tab, if any.
+   * @returns The document's URI as a string for a text tab, `undefined` for any other tab and for none.
+   * @example this.textTabUri(vscode.window.tabGroups.activeTabGroup.activeTab)
+   */
+  private textTabUri(tab: vscode.Tab | undefined): string | undefined {
+    return tab?.input instanceof vscode.TabInputText
+      ? tab.input.uri.toString()
+      : undefined
+  }
+
+  /**
+   * Says whether another editor part holds the keyboard over a text tab; asked by {@link textTabUriHeldByAnotherPart} once no Study pane and no text editor is active.
    * A text tab named as the active tab while its text editor is visible and no text editor is active: another editor part (the chat input) holds the keyboard, and the editor does not name that part's group. That holds for a learner's file and for the reader's own captured source. A text tab that has no text editor at all says nothing about another part.
+   * @param tab - The active tab, if any.
    * @param group - The group the editor names as active.
-   * @returns The document's URI as a string for a text tab whose text editor is visible in that group; `undefined` for any other tab, for a text tab without a text editor, and for an empty group.
-   * @example const heldUri = this.textTabUriHeldByAnotherPart(vscode.window.tabGroups.activeTabGroup)
+   * @returns `true` for a text tab whose text editor is visible in that group; `false` for any other tab, a text tab without a text editor, and no tab.
+   * @example this.isTextTabHeldByAnotherPart(group.activeTab, group)
+   */
+  private isTextTabHeldByAnotherPart(
+    tab: vscode.Tab | undefined,
+    group: vscode.TabGroup,
+  ): boolean {
+    return (
+      tab?.input instanceof vscode.TabInputText &&
+      this.hasVisibleTextEditor(tab.input.uri, group.viewColumn)
+    )
+  }
+
+  /**
+   * Names the document of the active tab when another editor part holds the keyboard over it; read by {@link retainForeignTabFocus} once no Study pane and no text editor is active.
+   * @param tab - The active tab, if any.
+   * @param group - The group the editor names as active.
+   * @returns The document's URI as a string when {@link isTextTabHeldByAnotherPart} holds; otherwise `undefined`.
+   * @example const heldUri = this.textTabUriHeldByAnotherPart(group.activeTab, group)
    */
   private textTabUriHeldByAnotherPart(
+    tab: vscode.Tab | undefined,
     group: vscode.TabGroup,
   ): string | undefined {
-    const input = group.activeTab?.input
-    return input instanceof vscode.TabInputText &&
-      this.hasVisibleTextEditor(input.uri, group.viewColumn)
-      ? input.uri.toString()
-      : undefined
+    const namedUri = this.textTabUri(tab)
+    return this.isTextTabHeldByAnotherPart(tab, group) ? namedUri : undefined
   }
 
   /**
@@ -8041,17 +8070,13 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a group shows a text tab of another document than the captured source; asked by {@link isFocusedGroupShowingOtherText} about the active group.
-   * @param group - The group to look at.
+   * Says whether a tab input is a text tab of another document than the captured source; asked by {@link isFocusedGroupShowingOtherText} about the active group's tab.
+   * @param shown - The input of the group's active tab, `undefined` for an empty group.
    * @param source - The captured source.
-   * @returns `true` when the group's active tab is a text tab of another document; `false` for the source itself, another kind of tab, or no tab.
-   * @example this.showsTextTabOtherThan(vscode.window.tabGroups.activeTabGroup, document.uri)
+   * @returns `true` for a text tab of another document; `false` for the source itself, another kind of tab, or no tab.
+   * @example this.isTextInputOtherThan(vscode.window.tabGroups.activeTabGroup.activeTab?.input, document.uri)
    */
-  private showsTextTabOtherThan(
-    group: vscode.TabGroup,
-    source: vscode.Uri,
-  ): boolean {
-    const shown = group.activeTab?.input
+  private isTextInputOtherThan(shown: unknown, source: vscode.Uri): boolean {
     return (
       shown instanceof vscode.TabInputText &&
       shown.uri.toString() !== source.toString()
@@ -8062,18 +8087,19 @@ export class StudyWorkspace {
    * Says whether the focused window's active group is the one the captured source is shown in and shows another text tab there; the first half of {@link replacesEditorFocusedByPause}.
    * @param column - The group the captured source is shown in.
    * @param source - The captured source.
-   * @returns `true` when the window is focused, the active group is at `column` and {@link showsTextTabOtherThan} holds for it.
+   * @returns `true` when the window is focused, the active group is at `column` and {@link isTextInputOtherThan} holds for its active tab.
    * @example this.isFocusedGroupShowingOtherText(targetColumn, document.uri)
    */
   private isFocusedGroupShowingOtherText(
     column: vscode.ViewColumn,
     source: vscode.Uri,
   ): boolean {
-    const group = vscode.window.tabGroups.activeTabGroup
+    const group = vscode.window.tabGroups.activeTabGroup,
+      shown = group.activeTab?.input
     return (
       vscode.window.state.focused &&
       group.viewColumn === column &&
-      this.showsTextTabOtherThan(group, source)
+      this.isTextInputOtherThan(shown, source)
     )
   }
 
@@ -10104,7 +10130,7 @@ export class StudyWorkspace {
           groups,
           retained,
           ownsExtraTabs,
-          mainGroupCount: grid.groups.length,
+          mainGroups: grid.groups,
         })
       ) {
         this.layoutReceipt = undefined
@@ -10128,15 +10154,16 @@ export class StudyWorkspace {
   }
 
   /**
-   * Finds the article-origin grid that was saved for a selection; read by {@link articleReturnStart} when an actual Return begins.
+   * Tells whether the saved article-origin grid is the one of a selection; asked by {@link articleReturnStart} when an actual Return begins.
+   * @param saved - The reader's saved article origin, if any.
    * @param selection - The article selection the Return goes back to.
    * @returns The saved origin when it is the reader's current repository origin and names that selection, otherwise `undefined`.
-   * @example const saved = this.articleOriginOf(selection)
+   * @example const saved = this.articleOriginOf(this.repositoryLayoutOrigin, selection)
    */
   private articleOriginOf(
+    saved: StudyWorkspace['repositoryLayoutOrigin'],
     selection: RepositorySelection,
   ): StudyWorkspace['repositoryLayoutOrigin'] {
-    const saved = this.repositoryLayoutOrigin
     return saved &&
       JSON.stringify(saved.origin) === JSON.stringify(this.repositoryOrigin) &&
       JSON.stringify(saved.origin.selection) === JSON.stringify(selection)
@@ -10145,12 +10172,14 @@ export class StudyWorkspace {
   }
 
   /**
-   * Finds the Study layout an actual Return leaves, and releases it when the learner changed its groups; read by {@link articleReturnStart} once the saved origin is known.
+   * Tells whether a layout receipt is the Study layout an actual Return leaves, and releases it when the learner changed its groups; asked by {@link articleReturnStart} once the saved origin is known.
+   * @param receipt - The reader's layout receipt, if any.
    * @returns The receipt of an arranged Study layout whose groups are unchanged; `undefined` when none is arranged, the article layout is arranged already, or the groups changed (the receipt is then released).
-   * @example const receipt = this.studyReceiptToLeave()
+   * @example const receipt = this.studyReceiptToLeave(this.layoutReceipt)
    */
-  private studyReceiptToLeave(): StudyWorkspace['layoutReceipt'] {
-    const receipt = this.layoutReceipt
+  private studyReceiptToLeave(
+    receipt: StudyWorkspace['layoutReceipt'],
+  ): StudyWorkspace['layoutReceipt'] {
     if (!receipt || receipt.mode === 'repository') return undefined
     // Already-observed learner group changes release ownership before any scope command can borrow focus.
     if (!this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)) {
@@ -10176,9 +10205,11 @@ export class StudyWorkspace {
         receipt: NonNullable<StudyWorkspace['layoutReceipt']>
       }
     | undefined {
-    const saved = this.articleOriginOf(selection)
+    const origin = this.repositoryLayoutOrigin,
+      arranged = this.layoutReceipt
+    const saved = this.articleOriginOf(origin, selection)
     if (!saved) return undefined
-    const receipt = this.studyReceiptToLeave()
+    const receipt = this.studyReceiptToLeave(arranged)
     return receipt && { saved, receipt }
   }
 
@@ -10207,9 +10238,9 @@ export class StudyWorkspace {
    * Says whether the main editor can contract to the saved article grid without taking anything of the learner's; the second half of {@link holdsArticleReturn}.
    * @param saved - The article origin the Return started from.
    * @param receipt - The Study receipt the Return started from.
-   * @param measured - The groups of the saved columns, whether every tab of the other groups is Codebook's, and the main editor's group count.
+   * @param measured - The groups of the saved columns, whether every tab of the other groups is Codebook's, and the main editor's groups.
    * @returns `true` when the saved groups and the Study panes are where they were, the extra groups hold only Codebook's tabs, and the other editor parts are preserved.
-   * @example this.canContractToArticle(saved, receipt, { retained, ownsExtraTabs: true, mainGroupCount: 3 })
+   * @example this.canContractToArticle(saved, receipt, { retained, ownsExtraTabs: true, mainGroups: grid.groups })
    */
   private canContractToArticle(
     saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
@@ -10217,14 +10248,14 @@ export class StudyWorkspace {
     measured: {
       retained: readonly vscode.TabGroup[]
       ownsExtraTabs: boolean
-      mainGroupCount: number
+      mainGroups: readonly vscode.TabGroup[]
     },
   ): boolean {
     return (
       this.sameEditorGroups(saved.groups, measured.retained) &&
       this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn) &&
       measured.ownsExtraTabs &&
-      saved.preservesOtherParts(measured.mainGroupCount)
+      saved.preservesOtherParts(measured.mainGroups.length)
     )
   }
 
@@ -10232,11 +10263,11 @@ export class StudyWorkspace {
    * Says whether an actual Return may still set the saved article grid, judged in the turn the main editor was measured; asked by {@link restoreRepositoryLayout}, which releases the receipt when it may not.
    * @param saved - The article origin the Return started from.
    * @param receipt - The Study receipt the Return started from.
-   * @param measured - What was read after the measurement: the grid layout, the tab groups, the groups of the saved columns, whether the other groups hold only Codebook's tabs, and the main editor's group count.
+   * @param measured - What was read after the measurement: the grid layout, the tab groups, the groups of the saved columns, whether the other groups hold only Codebook's tabs, and the main editor's groups.
    * @returns `true` when {@link isStudyLayoutUnchanged} and {@link canContractToArticle} both hold.
    * @example
    * ```ts
-   * if (!this.holdsArticleReturn(saved, receipt, { layout, groups, retained, ownsExtraTabs, mainGroupCount: grid.groups.length })) return
+   * if (!this.holdsArticleReturn(saved, receipt, { layout, groups, retained, ownsExtraTabs, mainGroups: grid.groups })) return
    * ```
    */
   private holdsArticleReturn(
@@ -10247,7 +10278,7 @@ export class StudyWorkspace {
       groups: readonly vscode.TabGroup[]
       retained: readonly vscode.TabGroup[]
       ownsExtraTabs: boolean
-      mainGroupCount: number
+      mainGroups: readonly vscode.TabGroup[]
     },
   ): boolean {
     return (
@@ -10794,7 +10825,7 @@ export class StudyWorkspace {
           ),
     }))
     /**
-     * Says whether the event opened or closed a group or changed how many there are; asked by {@link keepsEmptyGroups}.
+     * Says whether the event opened or closed a group or changed how many there are; asked by {@link replacedEveryGroupInPlace}.
      * @returns `true` when the set of groups changed, `false` when the event only changed groups that stay.
      * @example hasGroupSetChanged() // => false for a tab change that replaced three groups by three
      */
@@ -10803,24 +10834,31 @@ export class StudyWorkspace {
       Boolean(event?.closed.length) ||
       current.length !== previous.length
     /**
-     * Says whether this event lets a group without tabs stay the group of its column; asked by {@link emptySurvivor} for every group that is not yet known.
-     * @returns `true` when every group was replaced, none was opened or closed, and another group was recognized by its tabs.
-     * @example keepsEmptyGroups() // => true after Cursor replaced every group object for one opened tab
+     * Says whether the event replaced every group object while the set of groups stayed; the first condition of {@link emptySurvivor}.
+     * @returns `true` when every group was replaced and none was opened or closed.
+     * @example replacedEveryGroupInPlace() // => true after Cursor replaced every group object for one opened tab
      */
-    const keepsEmptyGroups = (): boolean =>
-      everyGroupReplaced &&
-      !hasGroupSetChanged() &&
+    const replacedEveryGroupInPlace = (): boolean =>
+      everyGroupReplaced && !hasGroupSetChanged()
+    /**
+     * Says whether another group of the event was recognized by its tabs; the last condition of {@link emptySurvivor}, asked only for a group without tabs.
+     * @returns `true` when a replaced group has exactly one match.
+     * @example hasRecognizedReplacement()
+     */
+    const hasRecognizedReplacement = (): boolean =>
       replacements.some(({ matches }) => matches.length === 1)
     /**
-     * Finds the group that alone stood in a column before the event and had no tabs; the survivor {@link emptySurvivor} names.
-     * @param column - The column of the group that is not yet known.
+     * Finds the group that alone stood in a group's column before the event and had no tabs; the survivor {@link emptySurvivor} names.
+     * @param group - The group that is not yet known.
      * @returns The only earlier group of that column when it was empty, otherwise `undefined`.
-     * @example soleEmptyGroupOf(vscode.ViewColumn.Two)
+     * @example soleEmptyGroupBefore(group)
      */
-    const soleEmptyGroupOf = (
-      column: vscode.ViewColumn,
+    const soleEmptyGroupBefore = (
+      group: vscode.TabGroup,
     ): (typeof previous)[number] | undefined => {
-      const sameColumn = previous.filter((entry) => entry.column === column)
+      const sameColumn = previous.filter(
+        (entry) => entry.column === group.viewColumn,
+      )
       return sameColumn.length === 1 && !sameColumn[0]!.group.tabs.length
         ? sameColumn[0]
         : undefined
@@ -10829,14 +10867,19 @@ export class StudyWorkspace {
      * Finds the earlier group that a group without tabs still is; asked by the loop below for every group that is neither opened nor known.
      * A group without tabs has nothing to be recognized by; it stays the same group when every group was replaced in its own column and another group of that event was recognized by its tabs.
      * @param group - A group of the editor's current model.
-     * @returns The earlier group of the same column, or `undefined` when the group has tabs or the event does not keep empty groups.
+     * @returns The earlier group of the same column, or `undefined` when the group has tabs, the event did not replace every group in place, or no other group was recognized by its tabs.
      * @example const emptyMatch = emptySurvivor(group)
      */
     const emptySurvivor = (
       group: vscode.TabGroup,
     ): (typeof previous)[number] | undefined => {
-      if (!keepsEmptyGroups() || group.tabs.length) return undefined
-      return soleEmptyGroupOf(group.viewColumn)
+      if (
+        !replacedEveryGroupInPlace() ||
+        group.tabs.length ||
+        !hasRecognizedReplacement()
+      )
+        return undefined
+      return soleEmptyGroupBefore(group)
     }
     for (const group of current) {
       if (event?.opened.includes(group)) {
