@@ -368,37 +368,45 @@ export function installWikiUpdateStatus(
     return done
   }
 
-  /** Takes in one answer of `api/update-status`. @returns Whether the run it describes just ended. */
+  /** Tells whether the last answer of the reader was a run in progress; asked by {@link noteAnswer} before it takes in the next answer, by {@link noteFailedRead} and by {@link nextLookDelayMs}. @returns true while the last answered state is "running", false for any other state and before the first answer. @example isRunLastAnswered() // => true between the answer that began a run and the one that ended it */
+  const isRunLastAnswered = (): boolean => lastAnswer?.state === 'running'
+  /** Tells whether an answer ends the wait a press of the update link began; asked by {@link weighAnswerAgainstPress} once the answer at the press is known. @param answer - The answer just read. @param answerText - Its serialized form. @returns true when the answer differs from the one the press started from or names a run in progress, false while the reader still answers what it answered at the press. @example isPressAnswered({ state: 'running', … }, answerText) // => true */
+  const isPressAnswered = (
+    answer: WikiUpdateStatus,
+    answerText: string,
+  ): boolean => answerText !== answerAtPress || answer.state === 'running'
+  /** Weighs one answer against the press of the update link the page still waits for; called by {@link noteAnswer} while that wait lasts. @param answer - The answer just read. @param answerText - Its serialized form. @returns Nothing; the wait ends when the answer changed or a run is active, and ends as "no update started" once the start wait passed. @example weighAnswerAgainstPress({ state: 'idle' }, '{"state":"idle"}') // the page says "No update started." 120 s after the press */
+  const weighAnswerAgainstPress = (
+    answer: WikiUpdateStatus,
+    answerText: string,
+  ): void => {
+    // A press before the first answer takes that answer as its starting point.
+    answerAtPress ??= answerText
+    // A run that is active is what the press waits for, also when it is the very answer the press started from: after lost contact the link was free during a run.
+    if (isPressAnswered(answer, answerText)) isAwaitingStart = false
+    else if (Date.now() >= awaitingStartUntilMs) {
+      isAwaitingStart = false
+      didStartWaitPass = true
+    }
+  }
+  /** Takes in one answer of `api/update-status`; called by {@link look} for every answer that names a state. @param answer - The answered run state, without the site's publish time, publication and source stamp. @returns Whether the run it describes just ended: true when the answer before it was a run in progress and this one is not. @example noteAnswer({ state: 'succeeded', … }) // => true right after a run */
   const noteAnswer = (answer: WikiUpdateStatus): boolean => {
     const answerText = JSON.stringify(answer)
-    const didRunEnd =
-      lastAnswer?.state === 'running' && answer.state !== 'running'
+    const didRunEnd = isRunLastAnswered() && answer.state !== 'running'
     failedReadCount = 0
     isUnreachable = false
-    if (isAwaitingStart) {
-      // A press before the first answer takes that answer as its starting point.
-      answerAtPress ??= answerText
-      // A run that is active is what the press waits for, also when it is the very answer the press started from: after lost contact the link was free during a run.
-      if (answerText !== answerAtPress || answer.state === 'running')
-        isAwaitingStart = false
-      else if (Date.now() >= awaitingStartUntilMs) {
-        isAwaitingStart = false
-        didStartWaitPass = true
-      }
-    } else if (answerText !== lastAnswerText) didStartWaitPass = false
+    if (isAwaitingStart) weighAnswerAgainstPress(answer, answerText)
+    else if (answerText !== lastAnswerText) didStartWaitPass = false
     lastAnswer = answer
     lastAnswerText = answerText
     return didRunEnd
   }
 
-  /** Takes in a read the reader did not answer. */
+  /** Takes in a read the reader did not answer; called by {@link look} when its request failed or its answer named no state. @returns Nothing; the page gives up on its reader when its status line says something and either no run is in progress or the run lost more reads than the retry limit. @example noteFailedRead() // the status line then says "Lost contact with the editor" once a shown result's reader is gone */
   const noteFailedRead = (): void => {
     failedReadCount += 1
     // A run in progress outlives a few lost reads before the page gives up on it.
-    if (
-      lastAnswer?.state === 'running' &&
-      failedReadCount <= settings.statusRetryLimit
-    )
+    if (isRunLastAnswered() && failedReadCount <= settings.statusRetryLimit)
       return
     // A page that says nothing has nothing to take back.
     if (!shownSignature) return
@@ -560,10 +568,13 @@ export function installWikiUpdateStatus(
     }
     statusRegion.after(...besideTheRegion)
   }
-  /** Holds the update link back while a run is active; it stays a focusable link, and its label and the status line say why. */
+  /** Chooses the text of the update link; asked by {@link showUpdateLink} before it compares the link's text. @param isRunning - Whether a run is active. @returns "Updating…" while a run is active, otherwise the label the page was published with. @example updateLinkText(false) // => 'Update LLM Wiki' */
+  const updateLinkText = (isRunning: boolean): string =>
+    isRunning ? 'Updating…' : updateLinkLabel
+  /** Holds the update link back while a run is active; it stays a focusable link, and its label and the status line say why. Called by {@link show} on every look and press. @param isRunning - Whether the sentence on the page is that of a run in progress. @returns Nothing; a page without the link is left alone. @example showUpdateLink(true) // the link reads "Updating…" and is `aria-disabled` */
   const showUpdateLink = (isRunning: boolean): void => {
     if (!updateLink) return
-    const label = isRunning ? 'Updating…' : updateLinkLabel
+    const label = updateLinkText(isRunning)
     if (updateLink.textContent !== label) updateLink.textContent = label
     if (isRunning) {
       updateLink.setAttribute('aria-disabled', 'true')
@@ -585,18 +596,20 @@ export function installWikiUpdateStatus(
     showUpdateLink(shown?.state === 'running')
   }
 
+  /** Chooses how long the page waits before it asks the reader again; asked by {@link scheduleNextLook} before it sets its timer. @returns The status poll interval while a press awaits its run or a run is active on a reader that answers, otherwise the idle poll interval. @example nextLookDelayMs() // => 2000 while a run is active, 15000 while nothing runs */
+  const nextLookDelayMs = (): number =>
+    isAwaitingStart || (isRunLastAnswered() && !isUnreachable)
+      ? settings.statusPollMs
+      : settings.idlePollMs
+  /** Sets the one timer of the next look, replacing the pending one; called by {@link look} after it showed an answer and by the press of the update link. @returns Nothing; a hidden tab gets no timer. @example scheduleNextLook() // the reader is asked again in 2 s during a run */
   const scheduleNextLook = (): void => {
     window.clearTimeout(pollTimer)
     // A hidden tab keeps no timer; showing it again looks at once.
     if (document.hidden) return
-    const isWatchingClosely =
-      isAwaitingStart || (lastAnswer?.state === 'running' && !isUnreachable)
-    pollTimer = window.setTimeout(
-      () => {
-        void look(false)
-      },
-      isWatchingClosely ? settings.statusPollMs : settings.idlePollMs,
-    )
+    const delayMs = nextLookDelayMs()
+    pollTimer = window.setTimeout(() => {
+      void look(false)
+    }, delayMs)
   }
   /** Asks the reader for the update state and shows it. @param isReturn - Whether the learner just loaded or came back to the page, when freshness may have changed too. */
   const look = async (isReturn: boolean): Promise<void> => {
