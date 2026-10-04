@@ -27,7 +27,6 @@ import {
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
-  WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
   WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
@@ -72,6 +71,8 @@ import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import { isWikiManifestOf } from './utils/isWikiManifestOf'
+import { isWikiUpdateTimeout } from './utils/isWikiUpdateTimeout'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
@@ -664,28 +665,6 @@ export function activate(
       outputDirectory: resolveDeepWikiDirectory(projectRoot, setting),
     }
   }
-  /**
-   * Says whether a parsed JSON object carries a field with exactly this value, for the two fields {@link isWikiManifestOf} reads.
-   * @param value - A parsed JSON object.
-   * @param key - The field's name.
-   * @param expected - The value the field must hold.
-   * @returns `true` when the field exists and holds that value; `false` when it is absent or holds another.
-   * @example holdsField({ schemaVersion: 1 }, 'schemaVersion', 1) // => true
-   */
-  const holdsField = (value: object, key: string, expected: unknown): boolean =>
-    key in value && Reflect.get(value, key) === expected
-  /**
-   * Says whether a parsed Wiki manifest is one of this schema that names the opened project, for {@link assertWikiOwner}.
-   * @param manifest - What the manifest file parsed to.
-   * @param projectRoot - Canonical opened project.
-   * @returns `true` for a JSON object with `schemaVersion` 1 and this `repositoryRoot`; `false` for anything else, a manifest of another checkout among them.
-   * @example isWikiManifestOf({ schemaVersion: 1, repositoryRoot: '/other' }, '/repo') // => false
-   */
-  const isWikiManifestOf = (manifest: unknown, projectRoot: string): boolean =>
-    typeof manifest === 'object' &&
-    manifest !== null &&
-    holdsField(manifest, 'schemaVersion', 1) &&
-    holdsField(manifest, 'repositoryRoot', projectRoot)
   /** Checks that the manifest of the Wiki folder names this opened project, before the browser entry or an update uses the folder. @throws When the manifest is no JSON object of this schema or names another checkout. @example await assertWikiOwner('/repo', '/repo/.codebook/wiki') */
   const assertWikiOwner = async (
     projectRoot: string,
@@ -880,18 +859,6 @@ export function activate(
         }
       },
     )
-  /**
-   * Tells {@link runCursorWikiAgent} whether the Cursor agent run ended because its bound passed, so the run is recorded as `timed-out` and not as a failure.
-   * @param agentError - What the agent run threw; `undefined` when it threw nothing.
-   * @returns `true` only for an error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME}, which {@link runCursorWikiUpdate} throws at the bound.
-   * @example
-   * isWikiUpdateTimeout(new Error('The Wiki update was cancelled.')) // => false
-   */
-  const isWikiUpdateTimeout = (agentError: unknown): boolean =>
-    typeof agentError === 'object' &&
-    agentError !== null &&
-    'name' in agentError &&
-    agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
   const runCursorWikiAgent = async (
     run: WikiRun,
