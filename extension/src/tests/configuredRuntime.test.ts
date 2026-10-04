@@ -195,6 +195,34 @@ test('a browser stop whose binding moved to another column after arming commits 
   )
 })
 
+// Value: protects=the 3 s bound of the wait for an accepted stop's own pause when the adapter does not answer the binding read of a held pause; fails_when=that read waits for the 20 s active bound, so the held pause is judged only then and the stop commits 17 s late; why_new=Cycle 0045 local review (runtime-1 #4: the read inside the wait had the default bound); seam=the harness's binding lookup, left unanswered once, and the capture bound replaced by 200 ms
+test('a held pause whose binding read the adapter does not answer is taken as the stop’s pause when the wait for the stop’s own pause has ended', async (context) => {
+  // Arrange: the stop is armed at 1:1; afterwards the adapter reports the breakpoint, and pauses, at 1:7, and leaves the first read of that binding without an answer. The capture bound, which is the wait's and the read's, is 200 ms.
+  const { run, bindFirstStopAt, leaveNextBindingLookupUnanswered } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA,MAAM',
+      runtimeConstants: { CAPTURE_TIMEOUT_MS: 200 },
+    })
+  await run.prepare()
+  bindFirstStopAt(1, 7)
+  leaveNextBindingLookupUnanswered()
+
+  // Act: the stop is given two seconds to commit, a tenth of the active bound.
+  run.action('unanswered-binding-read', 'repository-click')
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'stop committed after the wait ended',
+    2_000,
+  ).catch(() => undefined)
+  const failuresWhileWaiting = run.view().failures.join('; ')
+  await run.stop()
+
+  // Assert
+  assert.equal(failuresWhileWaiting, '')
+  assert.equal(stop?.source.line, 1)
+  assert.equal(stop?.source.column, 7)
+})
+
 // Cycle 0045 (T-4, 0042-SR14 stays): a pause at another column of the bound line whose binding, read again, still names the armed column is the debugger's own; red when such a pause is taken as the stop's at once (the stop then fails its frame check at 1:7).
 test('a pause held at another column of the bound line while the stop is announced keeps waiting when the binding read again did not move, and the stop is captured at its own column', async (context) => {
   // Arrange: the first stop is bound at 1:1; generated 0:6 is another statement of that line, at source 1:7. The debugger pauses there for itself, and its announcement of the declared stop is read before that pause is resumed.
@@ -3263,6 +3291,42 @@ test('a browser stop that still cannot be bound on its line after one new reques
   )
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=a paused stop's commit not waiting 20 s for an answer that only words its place; fails_when=the break locations listed after a pause, to name the column that pauses on the requested line, are requested with the active bound; why_new=Cycle 0045 local review (runtime-1 #4: the request added to the inspection had the default bound); seam=the harness's record of the bound each break location request carried
+test('the break locations listed at a pause only to name a moved stop’s column are requested with the 3 second capture bound', async (context) => {
+  // Arrange: the stop declared at 1:7 is armed there; afterwards the adapter reports the breakpoint, and pauses, at 2:1, and lists a break location at the start of line 1.
+  const {
+    run,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+    holdSourceBoundWait,
+    breakLocationRequestTimeoutsMs,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA;AACA',
+    fixture: { citationEndLine: 2, declaredColumn: 7 },
+  })
+  await run.prepare()
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  const sourceBoundWait = holdSourceBoundWait()
+
+  // Act
+  run.action('moved-after-arming', 'repository-click')
+  await waitUntil(
+    () => run.view().events.some((event) => event.type === 'dap.stopped'),
+    'stop announced',
+  )
+  sourceBoundWait.release()
+  await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the line the debugger moved it to')
+  await run.stop()
+
+  // Assert: the one request of this run is the one made at the pause.
+  assert.deepEqual(breakLocationRequestTimeoutsMs, [3_000])
 })
 
 // Cycle 0045 (CX-A1, ER-9): red while a browser pause adopted after the debugger moved its breakpoint past a line that can pause was accepted without a word about that line; ER-9 keeps it accepted (the program already stands there) and names the column.

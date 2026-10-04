@@ -1147,8 +1147,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     bound: { line: number; column: number },
   ): Promise<void> {
     if (bound.line <= stop.armed.line || !stop.script) return
-    const pausableColumns = await this.pausableColumns(stop, stop.armed.line)
-    // A requested line that cannot pause, or an adapter that cannot say, leaves nothing to tell.
+    // The answer only words the stop's place, so it gets the short capture bound: an adapter that does not answer delays the stop's commit by that bound and no longer.
+    const pausableColumns = await this.pausableColumns(
+      stop,
+      stop.armed.line,
+      CAPTURE_TIMEOUT_MS,
+    )
+    // A requested line that cannot pause, or an adapter that cannot say or does not answer in time, leaves nothing to tell.
     if (!this.hasPausableColumn(pausableColumns)) return
     this.evidence.record('breakpoint.slid-past-pausable-line', {
       participant: stop.participant,
@@ -1237,9 +1242,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * The request covers only the generated range the sealed map gives for the line; a map too large to scan completely is asked for the whole module, because a partial scan may have missed mappings of the line. Every answered location is mapped back, since the range can hold places of other lines.
    * @param stop - The stop; its module is parsed (`stop.script` is set).
    * @param line - One-based line of the stop's source.
+   * @param timeoutMs - How long the adapter's answer is waited for; left out while a stop is armed (the active bound), and the capture bound for {@link journalSlidePastPausableLine}, whose answer changes no decision.
    * @returns
    * - The one-based source columns of the line's break locations, ascending; empty when the debugger cannot pause on the line
-   * - `undefined` when the adapter cannot list break locations
+   * - `undefined` when the adapter cannot list break locations, or did not answer within the bound
    * @example
    * ```ts
    * await this.pausableColumns(stop, 22) // [3] for a line whose statement begins at column 3
@@ -1248,6 +1254,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private async pausableColumns(
     stop: PreparedStop,
     line: number,
+    timeoutMs?: number,
   ): Promise<number[] | undefined> {
     const { range, complete } = stop.verifier.generatedRangeOfLine(line)
     // A completely scanned map without a position on the line leaves the debugger no place to pause there.
@@ -1255,6 +1262,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const places = await this.mappedBreakLocations(
       stop,
       complete ? range : undefined,
+      timeoutMs,
     )
     return places
       ?.filter((place) => place.line === line)
@@ -1266,9 +1274,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Asks the debugger for the break locations of a stop's module and maps each back to the sealed original, for {@link pausableColumns} (one line's generated range) and {@link confirmRequestedPlace} (the whole module, when its map was too large to scan).
    * @param stop - The stop; its module is parsed (`stop.script` is set).
    * @param range - The generated range to ask for, with an exclusive `end`; without it the whole module is asked.
+   * @param timeoutMs - How long the adapter's answer is waited for; the request's own default (the active bound) when left out.
    * @returns
    * - The one-based source place of every answered location the sealed map puts in the stop's original; a location in unmapped code or in another original is left out
-   * - `undefined` when the adapter cannot list break locations
+   * - `undefined` when the adapter cannot list break locations, or did not answer within the bound
    * @example
    * ```ts
    * await this.mappedBreakLocations(stop) // [{ line: 22, column: 3 }, { line: 23, column: 5 }]
@@ -1279,6 +1288,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     range?: NonNullable<
       ReturnType<PreparedStop['verifier']['generatedRangeOfLine']>['range']
     >,
+    timeoutMs?: number,
   ): Promise<{ line: number; column: number }[] | undefined> {
     const scriptId = stop.script!.scriptId
     let locations: Protocol.Debugger.BreakLocation[]
@@ -1291,6 +1301,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
               end: { scriptId, ...range.end },
             }
           : { start: { scriptId, lineNumber: 0, columnNumber: 0 } },
+        timeoutMs,
       ))
     } catch {
       this.alive()
@@ -3083,7 +3094,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const participant = this.participants[stop.participant],
       location = this.heldLocationOnBoundLine(stop, held)
     if (!location) return undefined
-    // A binding that cannot be read now decides nothing: the pause stays held and the end of the wait judges it.
+    // A binding that cannot be read now decides nothing: the pause stays held and the end of the wait judges it. The read has the wait's own bound, so an adapter that does not answer cannot hold the wait past it.
     const binding = verifiedPlaceSchema.safeParse(
       await awaitResponse(
         participant.selected!.getDebugProtocolBreakpoint(
@@ -3091,6 +3102,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         ),
         'held browser binding',
         this.abort.signal,
+        CAPTURE_TIMEOUT_MS,
       ).catch(() => undefined),
     )
     // The pause may have been resumed while the binding was read.

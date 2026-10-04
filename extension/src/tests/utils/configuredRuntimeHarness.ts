@@ -166,6 +166,8 @@ export async function configuredRuntimeHarness(
   const sourceBoundWait = createSourceBoundWaitHold()
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
+  // Whether the adapter leaves the next binding lookup of an owned breakpoint without an answer.
+  let isNextBindingLookupUnanswered = false
   // The sentence the wait for the before conditions words its timeout with instead of its own.
   let beforeTimeoutSentence: string | undefined
   // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
@@ -177,6 +179,8 @@ export async function configuredRuntimeHarness(
   const mapScans: { startLine: number; endLine: number }[] = []
   // Every range the run asked break locations for, in order, as it sent them.
   const breakLocationRequests: { start: ScriptPlace; end?: ScriptPlace }[] = []
+  // The bound the run gave each of those requests, in the same order; `undefined` for a request left to the default.
+  const breakLocationRequestTimeoutsMs: (number | undefined)[] = []
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
     requiredValueObject = false,
@@ -294,6 +298,11 @@ export async function configuredRuntimeHarness(
         (candidate) => candidate.id === breakpoint.id,
       )
       if (owned && bindingLookupFailure) throw new Error(bindingLookupFailure)
+      // An adapter that does not answer: the lookup stays pending for as long as its caller waits.
+      if (owned && isNextBindingLookupUnanswered) {
+        isNextBindingLookupUnanswered = false
+        return new Promise<never>(() => {})
+      }
       // The first stop and every later one can each be reported at another position than requested; the learner's own breakpoint never is.
       let reported: { line: number; column: number } | undefined
       if (owned?.id === 'owned-breakpoint') reported = firstStopBinding
@@ -510,6 +519,7 @@ export async function configuredRuntimeHarness(
             ? { start: { ...start }, end: { ...end } }
             : { start: { ...start } },
         )
+        breakLocationRequestTimeoutsMs.push(timeout)
         return {
           locations: breakLocationsInRange(
             possibleBreakLocations,
@@ -831,6 +841,8 @@ export async function configuredRuntimeHarness(
     },
     /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
     breakLocationRequests,
+    /** The bound in milliseconds the run gave each of those requests, in the same order; `undefined` where the run left the request to its default bound. */
+    breakLocationRequestTimeoutsMs,
     /** Every scan of a sealed map the run made, by its line range, in order: preparation scans once per stop, and a binding failure scans the citation for its hints. */
     mapScans,
     /** Reports every later stop's verified binding, and its pause, at this position instead of the requested one. */
@@ -846,6 +858,10 @@ export async function configuredRuntimeHarness(
     /** Makes the adapter answer every binding lookup of an owned breakpoint with this failure instead of a binding. */
     failBindingLookup(message: string): void {
       bindingLookupFailure = message
+    },
+    /** Makes the adapter leave the next binding lookup of an owned breakpoint without an answer, as an adapter that is busy does; every later lookup is answered again. @example harness.leaveNextBindingLookupUnanswered() */
+    leaveNextBindingLookupUnanswered(): void {
+      isNextBindingLookupUnanswered = true
     },
     observeRecording(
       observer: () => ViewportRecordingObserver | undefined,
