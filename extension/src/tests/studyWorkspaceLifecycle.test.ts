@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -9,6 +10,7 @@ import { z } from 'zod'
 import type { PresentationPoseCapture } from '../presentationSchemas'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { withStorageLock } from '../utils/withStorageLock'
 
 import {
   workspaceHarness,
@@ -1431,22 +1433,45 @@ for (const dirty of [false, true])
     }
   })
 
-// Value: protects=closing the reader while learning storage holds a lock; fails_when=close() awaits the library queue without a bound and never finishes; why_new=Cycle 0044 (0033-O4); seam=LearningLibrary.flush held by the test
+// Value: protects=closing the reader while learning storage holds a lock, and the learner's write that was accepted before the close still reaching the disk; fails_when=close() awaits the library queue without a bound and never finishes, or the close drops the write that was waiting for the storage lock; why_new=Cycle 0044 (0033-O4), and Cycle 0045 X7-E1.3: the landing was asserted on a promise of the test itself, so a close that dropped a pending save passed; seam=the storage lock of the library's directory, held by the test as another writer of this process
 test('closing the reader finishes after the storage bound while a library write is still held, and that write still lands', async (context) => {
-  // Arrange: an opened reader whose library queue holds a write that does not return.
+  // Arrange: an opened reader, and a learner decision the library accepted but cannot write: another writer holds the storage lock of its directory.
   const harness = await workspaceHarness()
-  let releaseWrite = (): void => {},
-    writeLanded = false
+  let releaseLock = (): void => {}
   try {
     await harness.reader.open()
     const library = harness.reader['library']
     assert.ok(library)
-    const heldWrite = new Promise<void>((resolve) => {
-      releaseWrite = resolve
-    }).then(() => {
-      writeLanded = true
-    })
-    library.flush = (): Promise<void> => heldWrite
+    const progressFile = join(library.directory, 'progress.repository.v4.json')
+    /** Reads the learner decisions the progress file on disk holds; a file that was never written holds none. */
+    const savedDecisionIds = async (): Promise<string[]> => {
+      const saved = await readFile(progressFile, 'utf8').catch(() => undefined)
+      return saved === undefined
+        ? []
+        : z
+            .object({ decisions: z.array(z.object({ id: z.string() })) })
+            .parse(JSON.parse(saved))
+            .decisions.map((decision) => decision.id)
+    }
+    let lockTaken = false
+    const lockHeld = withStorageLock(
+      library.directory,
+      () =>
+        new Promise<void>((resolve) => {
+          lockTaken = true
+          releaseLock = resolve
+        }),
+    )
+    await waitUntil(() => lockTaken, 'the held storage lock', 1_000)
+    const decision = {
+      id: '0d0c1f6e-6f0b-4e0e-9f43-7f6f2f1c9a11',
+      item: 'repository/interface/theme',
+      sourceHash: 'a'.repeat(64),
+      understood: true,
+      at: '2026-10-04T09:00:00.000Z',
+    }
+    const written = library.decide(decision)
+    void written.catch(() => undefined)
     context.mock.timers.enable({ apis: ['setTimeout'] })
     let closed = false
 
@@ -1464,20 +1489,23 @@ test('closing the reader finishes after the storage bound while a library write 
     }
     const closedWhileWriteHeld = closed
     context.mock.timers.reset()
-    const landedWhenClosed = writeLanded
-    releaseWrite()
-    await heldWrite
+    const savedWhenClosed = await savedDecisionIds()
+    releaseLock()
+    await lockHeld
+    await written
     await closing
 
-    // Assert
+    // Assert: the decision is read back from the file on disk.
     assert.equal(closedWhileWriteHeld, true)
     assert.equal(elapsedMs, 5_000)
-    assert.equal(landedWhenClosed, false)
-    assert.equal(writeLanded, true)
+    assert.deepEqual(savedWhenClosed, [])
+    assert.deepEqual(await savedDecisionIds(), [
+      '0d0c1f6e-6f0b-4e0e-9f43-7f6f2f1c9a11',
+    ])
     assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
     context.mock.timers.reset()
-    releaseWrite()
+    releaseLock()
     await harness.close()
   }
 })
