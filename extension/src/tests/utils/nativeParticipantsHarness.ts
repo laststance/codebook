@@ -26,6 +26,10 @@ import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import {
+  loadConstantsWith,
+  type RuntimeConstantOverrides,
+} from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
@@ -66,6 +70,8 @@ export async function nativeParticipantsHarness(
     manualClock?: boolean
     /** Gives a participant's sealed map a second original, so a map such as 'AAAA;ACAA' puts generated line 1 in that other source. */
     otherOriginal?: Partial<Record<Participant, boolean>>
+    /** Replaces runtime bounds in the run and in the constants it reads ({@link loadConstantsWith}), so a test can move one bound and see which other bound follows it. */
+    runtimeConstants?: RuntimeConstantOverrides
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -673,6 +679,9 @@ export async function nativeParticipantsHarness(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
+      ...(options.runtimeConstants
+        ? await loadConstantsWith(options.runtimeConstants)
+        : {}),
       './ownedRepositoryBreakpoint': ownedBreakpoint,
       './runtimeSupport/cdp': {
         Cdp: {

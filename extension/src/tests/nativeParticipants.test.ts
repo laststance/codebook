@@ -3749,6 +3749,43 @@ test('a server pause no debugger stop announced that is resumed within three sec
   assert.equal(retiredPauses(harness).length, 1)
 })
 
+// Cycle 0045 (B-L8): red while the bound was 3,000 typed beside the capture bound; the run is loaded with a capture bound of 5 s, so a bound that does not follow it retires nothing after 5 s and names 3000 ms.
+test('a pause no stop announced counts as the adapter’s own for exactly as long as a stop’s own pause is awaited', async (context) => {
+  // Arrange: the wait for a stop's own pause is bounded by 5 s in this run; the first server stop is continued and the next one has not paused.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    {
+      ...TWO_LINE_SERVER_MODULE,
+      manualClock: true,
+      runtimeConstants: { CAPTURE_TIMEOUT_MS: 5_000 },
+    },
+  )
+  await harness.run.prepare()
+  harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  // Act: one pause of the adapter lasts exactly that bound, the next one a millisecond longer.
+  emitEntryBreakpointPause(harness)
+  harness.advance(5_000)
+  harness.emitResume('server')
+  const failuresAfterTheBound = harness.run.view().failures.join('; ')
+  const retiredAfterTheBound = retiredPauses(harness).length
+  emitEntryBreakpointPause(harness)
+  harness.advance(5_001)
+  harness.emitResume('server')
+  await harness.run.stop()
+  // Assert
+  assert.equal(failuresAfterTheBound, '')
+  assert.equal(retiredAfterTheBound, 1)
+  assert.equal(
+    harness.run.view().failures[0],
+    'Manual or competing resume invalidated live pause: the server pause at src/mode.ts:2 that no debugger stop announced was resumed after more than 5000 ms, longer than the debugger holds a pause of its own',
+  )
+  assert.equal(retiredPauses(harness).length, 1)
+})
+
 // Cycle 0044 review B-H1: red while the one-second bound of a stop that still waits for its own pause stayed in force after the last stop had been captured and continued, so the adapter's own pause in the after phase ended the run.
 test('a server pause the debugger makes for itself after the last stop was continued and resumes after more than a second, within its three seconds, is retired and the run does not fail', async (context) => {
   // Arrange: the only declared stop is captured and continued, the after conditions are still open, and the adapter pauses for itself.
