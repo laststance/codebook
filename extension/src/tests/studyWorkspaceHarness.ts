@@ -84,6 +84,16 @@ export async function workspaceHarness(
     'workbench.action.focusFirstEditorGroup',
     'workbench.action.focusActiveEditorGroup',
   ]
+  /** The editor's commands that give its second to eighth group the keyboard focus, in that order. */
+  const focusGroupAtColumnCommands = [
+    'workbench.action.focusSecondEditorGroup',
+    'workbench.action.focusThirdEditorGroup',
+    'workbench.action.focusFourthEditorGroup',
+    'workbench.action.focusFifthEditorGroup',
+    'workbench.action.focusSixthEditorGroup',
+    'workbench.action.focusSeventhEditorGroup',
+    'workbench.action.focusEighthEditorGroup',
+  ]
   /** The fake host's own Variables view for the presented stop, which the native commands of Show Variables act on; a view no test hides already lists the values. See `hideNativeVariables`. */
   const nativeVariables: {
     hiding?: NativeVariablesHiding
@@ -486,6 +496,8 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
+  let replacesGroupObjectsOnTabChanges = false
   /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
@@ -540,6 +552,28 @@ export async function workspaceHarness(
     displayedImage: string | undefined,
     sourceColumn = 2
   let nextImage: { wait: Promise<void>; entered(): void } | undefined
+  /**
+   * Gives every editor group a new TabGroup object, as Cursor 3.23.12 does whenever a tab opened, another tab of a group became active, a tab closed, or a group opened or closed (obs13 items 7 and 8: 19 of 19 events that name every group); a no-op unless `replaceGroupObjectsOnTabChanges` is on.
+   * The view columns, the tabs and the keyboard focus stay, and every holder of a group object is pointed at the new one. The Tab objects are kept: Cursor replaces them too and reports a tab of unknown input with `input` undefined.
+   * @param closed - Groups the same change closed; they are reported as closed and get no new object.
+   * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
+   */
+  function replaceGroupObjects(closed: typeof groups = []): void {
+    if (!replacesGroupObjectsOnTabChanges) return
+    const replacements = new Map(
+      groups.map((group) => [group, { ...group, tabs: [...group.tabs] }]),
+    )
+    /** Names the new object of a group that survived, and leaves a group that is gone as it is. */
+    const replaced = (group: (typeof groups)[number]) =>
+      replacements.get(group) ?? group
+    groups.splice(0, groups.length, ...groups.map(replaced))
+    activeTabGroup = replaced(activeTabGroup)
+    if (separateEditorPart)
+      separateEditorPart.group = replaced(separateEditorPart.group)
+    for (const editor of visibleSourceEditors)
+      editor.group = replaced(editor.group)
+    changedGroups({ opened: [], closed, changed: [...groups] })
+  }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
     const existing = groups.find(
@@ -581,6 +615,34 @@ export async function workspaceHarness(
           .filter((candidate) => candidate !== separateEditorPart?.group)
           .map(() => ({})),
       }
+    if (replacesGroupObjectsOnTabChanges) {
+      // Cursor names the opened group and gives every surviving group a new object in the same event.
+      const survivors = new Map(
+        groups
+          .filter((candidate) => candidate !== group)
+          .map((candidate) => [
+            candidate,
+            { ...candidate, tabs: [...candidate.tabs] },
+          ]),
+      )
+      groups.splice(
+        0,
+        groups.length,
+        ...groups.map((candidate) => survivors.get(candidate) ?? candidate),
+      )
+      activeTabGroup = survivors.get(activeTabGroup) ?? activeTabGroup
+      if (separateEditorPart)
+        separateEditorPart.group =
+          survivors.get(separateEditorPart.group) ?? separateEditorPart.group
+      for (const editor of visibleSourceEditors)
+        editor.group = survivors.get(editor.group) ?? editor.group
+      changedGroups({
+        opened: [group],
+        closed: [],
+        changed: [...survivors.values()],
+      })
+      return group
+    }
     changedGroups({ opened: [group], closed: [], changed: retained })
     return group
   }
@@ -818,7 +880,8 @@ export async function workspaceHarness(
         candidate.tabs.includes(retained.nativeTab),
       )?.viewColumn
     if (activeTabGroup === emptied) activeTabGroup = groups[0]!
-    changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
+    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([emptied])
+    else changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
   }
   /**
    * Closes tabs as the editor does, group by group, for the reader's `tabGroups.close` requests and for the Close Editor command.
@@ -832,7 +895,8 @@ export async function workspaceHarness(
   function closeTabs(tabs: Tab[]): boolean {
     let accepted = true,
       closedActiveLeftover = false
-    const emptiedByDeadPane: typeof groups = []
+    const emptiedByDeadPane: typeof groups = [],
+      groupCountBefore = groups.length
     for (const group of groups) {
       const requested = group.tabs.filter((tab) => tabs.includes(tab))
       if (!requested.length) continue
@@ -871,6 +935,12 @@ export async function workspaceHarness(
       }
       removeEmptiedGroup(emptied)
     }
+    // Cursor answers closed tabs with new group objects; a removed group above already came with them.
+    if (
+      groups.length === groupCountBefore &&
+      tabs.some((tab) => !groups.some((group) => group.tabs.includes(tab)))
+    )
+      replaceGroupObjects()
     if (closedActiveLeftover) {
       if (lateEditorAfterLeftoverClose || staleEditorAfterLeftoverClose) {
         // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
@@ -1275,6 +1345,8 @@ export async function workspaceHarness(
               for (const listener of viewChanged) listener()
             })
           }
+          // A pane that moved or came to the front changed a group's tabs; a reveal of the pane already in front did not.
+          if (!wasInFront) replaceGroupObjects()
           for (const listener of viewChanged) listener()
         }
         if (contextCoversSource && kind === 'codebook.studyContext')
@@ -1313,8 +1385,9 @@ export async function workspaceHarness(
             if (group.activeTab === nativeTab) group.activeTab = undefined
           }
           // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
-          if (closeDisposedPanelTabsLater)
+          if (closeDisposedPanelTabsLater && emptied.length)
             for (const group of emptied) removeEmptiedGroup(group)
+          else replaceGroupObjects()
         }
         // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
         if (closeDisposedPanelTabsLater) pendingDisposedTabCloses.push(closeTab)
@@ -1330,6 +1403,7 @@ export async function workspaceHarness(
       group.activeTab = nativeTab
       // The new pane is the editor its group shows now, with or without the keyboard focus.
       returnHiddenEditorArea()
+      replaceGroupObjects()
     }
     if (registered) register()
     else {
@@ -1805,6 +1879,28 @@ export async function workspaceHarness(
             maximizedEditorGroup = true
           // The activated group is in view before the command answers.
           if (focusGroupCommands.includes(name)) returnHiddenEditorArea()
+          const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
+          // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
+          if (focusedColumn > 1) {
+            const focusedGroup = groups.find(
+              (group) => group.viewColumn === focusedColumn,
+            )
+            if (focusedGroup && focusedGroup !== activeTabGroup) {
+              const previousGroup = activeTabGroup
+              returnHiddenEditorArea()
+              activeTabGroup = focusedGroup
+              innerFocusedPanel = undefined
+              if (separateEditorPart)
+                separateEditorPart.focused =
+                  focusedGroup === separateEditorPart.group
+              changedGroups({
+                opened: [],
+                closed: [],
+                changed: [previousGroup, focusedGroup],
+              })
+              activeTextEditorChanged(focusedSourceEditor())
+            }
+          }
           if (name === 'workbench.action.focusFirstEditorGroup') {
             const previousEditor = focusedSourceEditor(),
               previousGroup = activeTabGroup,
@@ -2120,6 +2216,7 @@ export async function workspaceHarness(
             group.viewColumn,
             group.activeTab !== tab || !options?.preserveFocus,
           )
+          const showsAnotherTab = group.activeTab !== tab
           group.activeTab = tab
           if (!options?.preserveFocus) {
             activeTabGroup = group
@@ -2168,6 +2265,8 @@ export async function workspaceHarness(
             },
           })
           visibleSourceEditors.push(visible)
+          // A tab that opened or became the one its group shows changed the tabs; the same tab shown again did not.
+          if (showsAnotherTab) replaceGroupObjects()
           if (!options?.preserveFocus)
             activeTextEditorChanged(focusedSourceEditor())
           const displayed = nextSourceDisplay
@@ -2806,6 +2905,14 @@ export async function workspaceHarness(
       cursorGroupWrappers = true
       cursorTwoEventContraction = twoEventContraction
     },
+    /**
+     * Makes the fake editor answer every tab change the way Cursor 3.23.12 does: whenever a tab opened, another tab of a group became active, a tab closed, or a group opened or closed, every TabGroup object is replaced by a new one in the same view column and all groups are reported as changed (obs13 items 7 and 8). A focus move between groups keeps the objects, as it does there.
+     * Off by default, which is VS Code: its group objects live as long as their groups. The Tab objects are kept in both modes.
+     * @example harness.replaceGroupObjectsOnTabChanges()
+     */
+    replaceGroupObjectsOnTabChanges(): void {
+      replacesGroupObjectsOnTabChanges = true
+    },
     useNativeLayout(layout: unknown): void {
       nativeLayout = true
       separateEditorPart = undefined
@@ -2860,6 +2967,19 @@ export async function workspaceHarness(
         focused: () => separateEditorPart?.focused,
         focus(): void {
           separateEditorPart!.focused = true
+          activeTextEditorChanged(undefined)
+        },
+        /** Gives the chat tab the keyboard focus the way Cursor reports it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. @example chat.focusTab() */
+        focusTab(): void {
+          const previous = activeTabGroup
+          activeTabGroup = separateEditorPart!.group
+          separateEditorPart!.focused = true
+          innerFocusedPanel = undefined
+          changedGroups({
+            opened: [],
+            closed: [],
+            changed: [previous, activeTabGroup],
+          })
           activeTextEditorChanged(undefined)
         },
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
