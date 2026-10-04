@@ -196,9 +196,6 @@ export function installWikiUpdateStatus(
   reloadButton.addEventListener('click', () => {
     location.reload()
   })
-  // The controls after the region are not announced with it, so the announced sentence ends with a clause that names them.
-  const followNote = document.createElement('span')
-  followNote.setAttribute('data-codebook-update-note', '')
 
   // A page this script runs in is served by Codebook: the offline text of the published page gives way to what happens until the first answer.
   if (freshnessLabel) freshnessLabel.textContent = 'Checking freshness…'
@@ -489,17 +486,22 @@ export function installWikiUpdateStatus(
     }
     const lead = document.createElement('strong')
     lead.textContent = shown.lead
-    followNote.textContent = ''
-    if (shown.offerReload) followNote.textContent = ' Reload is offered below.'
+    // The controls after the region are not announced with it, so the announced sentence ends with a clause that names them.
+    let followClause = ''
+    if (shown.offerReload) followClause = ' Reload is offered below.'
     else if (shown.detail.length > 0)
-      followNote.textContent =
+      followClause =
         shown.state === 'conflict'
           ? ' The full list is below.'
           : ' The full message is below.'
+    // The clause's element is made anew and goes in with the sentence, so the region changes once per sentence.
+    const followNote = document.createElement('span')
+    followNote.setAttribute('data-codebook-update-note', '')
+    followNote.textContent = followClause
     statusRegion.replaceChildren(
       lead,
       shown.rest,
-      ...(followNote.textContent ? [followNote] : []),
+      ...(followClause ? [followNote] : []),
     )
     statusRegion.setAttribute('data-state', shown.state)
     const besideTheRegion: HTMLElement[] = []

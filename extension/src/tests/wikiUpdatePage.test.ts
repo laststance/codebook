@@ -1821,3 +1821,55 @@ test('a missing parameter that is not a page path is shown as a missing page wit
     undefined,
   )
 })
+
+test('each new sentence changes the announced status region once, and a look that finds nothing new does not change it', async () => {
+  // Arrange: an idle page; the region's writes are counted the way a mutation log would list them.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+    { freshness: 'changed' },
+  )
+  const status = page.find('[data-codebook-update-status]')
+  const writes = (): number => status?.contentWriteCount ?? 0
+  const writesWhileIdle = writes()
+
+  // Act: the update runs, ends as Updated with a reload offered, and a later one fails with a long reported reason; each state is looked at again before the next.
+  page.reader.updateStatus = runningInVsCode
+  await page.advance(15_000)
+  const writesForRunning = writes() - writesWhileIdle
+  await page.advance(10_000)
+  const writesWhileRunningUnchanged = writes() - writesWhileIdle
+  page.reader.updateStatus = updatedAfterTheLoad.updateStatus
+  page.reader.publication = updatedAfterTheLoad.publication
+  page.reader.freshness = 'current'
+  await page.advance(2_000)
+  const writesForUpdated = writes() - writesWhileIdle
+  await page.advance(30_000)
+  const writesWhileUpdatedUnchanged = writes() - writesWhileIdle
+  page.reader.updateStatus = {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:20:00.000Z',
+    reason: `The editor agent reported ${'a very long explanation '.repeat(15)}and stopped it`,
+    site: 'kept',
+    ...output,
+  }
+  await page.advance(15_000)
+  const writesForFailed = writes() - writesWhileIdle
+  await page.advance(30_000)
+
+  // Assert
+  assert.deepEqual(
+    [
+      writesForRunning,
+      writesWhileRunningUnchanged,
+      writesForUpdated,
+      writesWhileUpdatedUnchanged,
+      writesForFailed,
+      writes() - writesWhileIdle,
+    ],
+    [1, 1, 2, 2, 3, 3],
+  )
+  assert.equal(status?.getAttribute('data-state'), 'failed')
+  assert.match(status?.textContent ?? '', / The full message is below\.$/)
+})
