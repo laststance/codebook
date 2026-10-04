@@ -168,14 +168,16 @@ type DebugParticipant = {
     /** Whether its observation was journaled; past the journal's cap of such pauses only their count is kept. */
     journaled: boolean
   }
-  /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. `journaled` tells whether its observation was journaled, so its resume is journaled or counted with it. */
-  instrumentationPause?: { journaled: boolean }
+  /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
+  instrumentationPaused?: boolean
   /** A stack refresh announced while the accepted stop's own pause was still awaited or had been adopted: {@link ConfiguredBrowserRun.inspect} judges that stop, so the refresh's re-announced stop is consumed without a check of its own. */
   deferredRefresh?: PauseIdentity
   /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
   scriptUrls: Map<string, string>
   /** The journal clock when the last pause was observed; cleared by its resume. */
   pauseObservedAtMs?: number
+  /** Whether the last observed pause was journaled or only counted; cleared by its resume. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled or counted with it. */
+  pauseJournaled?: boolean
   /** A DAP presentation refresh awaiting its matching stop and source check; the CDP target stays paused. */
   refresh?: {
     pause: PauseIdentity
@@ -265,7 +267,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private instrumentationPauseCount = 0
   /** How many idle `continued` events were read; journaled under the same cap. */
   private idleContinuedCount = 0
-  /** How many pauses, resumes of instrumentation pauses and idle `continued` events past their caps were left out of the journal; cleanup journals the count. */
+  /** How many pauses, resumes of pauses that were only counted and idle `continued` events past their caps were left out of the journal; cleanup journals the count. */
   private unjournaledAdapterEvents = 0
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
@@ -1442,6 +1444,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
       : this.isPauseOfStop(event, this.expectedStop(name)) ||
         this.offStopPauseCount++ < REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
+    participant.pauseJournaled = journaled
     if (journaled)
       this.evidence.record('cdp.pause-observed', {
         participant: name,
@@ -1457,7 +1460,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     else this.unjournaledAdapterEvents++
     // The runtime's own instrumentation pause is nobody's stop, but it is open until its resume and completion waits for that.
     if (isInstrumentation) {
-      participant.instrumentationPause = { journaled }
+      participant.instrumentationPaused = true
       return
     }
     if (!this.operation) return
@@ -1674,8 +1677,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       !this.transientBrowserPause &&
       !this.participants.server.unannouncedPause &&
       !this.participants.browser.unannouncedPause &&
-      !this.participants.server.instrumentationPause &&
-      !this.participants.browser.instrumentationPause
+      !this.participants.server.instrumentationPaused &&
+      !this.participants.browser.instrumentationPaused
     )
   }
 
@@ -2315,7 +2318,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       column: frame.column,
     })
   }
-  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of an instrumentation pause is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
+  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
     const participant = this.participants[name],
@@ -2323,14 +2326,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.pauseObservedAtMs,
         this.evidence.elapsedMs(),
       )
+    // Only a pause that was observed and left out of the journal is not journaled; a resume whose pause was never observed is journaled as before.
+    const isPauseOnlyCounted = participant.pauseJournaled === false
     participant.pauseObservedAtMs = undefined
-    const instrumentation = participant.instrumentationPause
+    participant.pauseJournaled = undefined
     // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
-    if (instrumentation) {
-      participant.instrumentationPause = undefined
-      if (instrumentation.journaled)
+    if (participant.instrumentationPaused) {
+      participant.instrumentationPaused = false
+      if (isPauseOnlyCounted) this.unjournaledAdapterEvents++
+      else
         this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
-      else this.unjournaledAdapterEvents++
       return
     }
     const transient = this.transientBrowserPause
@@ -2355,6 +2360,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     const stopped = participant.stopped
     participant.stopped = undefined
+    // A pause from before the action is held by nothing; past the journal's cap its resume is counted, as its observation was.
+    if (!stopped && isPauseOnlyCounted) {
+      this.unjournaledAdapterEvents++
+      return
+    }
     this.evidence.record('cdp.resumed', {
       participant: name,
       generation: stopped?.generation,

@@ -3752,6 +3752,31 @@ test('a debugger hook that pauses and resumes 130 times journals 100 of those pa
   )
 })
 
+// Cycle 0045 (found with B-M2): red while the resume of a pause from before the action, which nothing holds, was journaled as cdp.resumed without a cap although its observation was only counted past the cap (130 resumes instead of 100).
+test('130 pauses the debugger makes and resumes before the action are journaled up to the limit with their resumes, and the rest of both are counted', async (context) => {
+  // Arrange: the run is prepared and no input has been sent.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  // Act
+  for (let turn = 0; turn < 130; turn++) {
+    emitEntryBreakpointPause(harness)
+    harness.emitResume('server')
+  }
+  await harness.run.stop()
+  // Assert
+  assert.equal(journalDetails(harness, 'cdp.pause-observed').length, 100)
+  assert.equal(journalDetails(harness, 'cdp.resumed').length, 100)
+  // 30 pauses and their 30 resumes are counted instead of journaled.
+  assert.deepEqual(
+    journalDetails(harness, 'cdp.adapter-pauses-not-journaled'),
+    [{ count: 60, journalLimit: 100 }],
+  )
+})
+
 // Cycle 0045 (B-L4, DX-18): red while a failed read of the other participant's earlier pauses, made before any resume was requested, ended the run as "Continue uncertain: …".
 test('a continuation that cannot read the other participant’s earlier pauses ends saying that no resume was sent, not as an uncertain continuation', async (context) => {
   // Arrange: the server stop is captured; the browser stop is next, and the browser channel fails the read of its earlier pauses.
