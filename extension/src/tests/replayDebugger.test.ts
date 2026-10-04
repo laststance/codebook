@@ -8,6 +8,7 @@ import type * as vscode from 'vscode'
 import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
+  REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
 } from '../constants'
 import { ReplayDebugAdapter } from '../replayDebugAdapter'
 import { ReplayDebugger } from '../replayDebugger'
@@ -946,6 +947,8 @@ test('while Run and Debug loads no values, later recorded stops commit at once u
       delay(POLL_INTERVAL_MS * 4, 'still waiting for Run and Debug'),
     ])
     fixture.inspect()
+    // The reader is told once the paint allowance after the served values passed.
+    await delay(REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS + POLL_INTERVAL_MS)
     const changesAfterLoading = fixture.changes()
     let returnOutcome = 'pending'
     const returning = fixture.owner
@@ -1128,6 +1131,7 @@ test('values Run and Debug loads just before the grace deadline commit the stop 
     // Act
     fixture.inspect()
     await showing
+    context.mock.timers.tick(REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS)
 
     // Assert
     assert.equal(beforeValues, 'pending')
@@ -2563,8 +2567,9 @@ test('a reader listener and error channel that both throw when Run and Debug loa
     )
     readerFailing = true
 
-    // Act
+    // Act: the reader is told about the loaded values one paint allowance later, from a timer nothing may escape from either.
     const escapedOnValuesLoaded = escapedError(() => fixture.inspect())
+    await delay(REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS + POLL_INTERVAL_MS)
     const escapedOnSessionEnded = escapedError(() => fixture.terminate())
 
     // Assert
@@ -2758,6 +2763,69 @@ test('a wait for native Variables ends at once without the scopes when the learn
     // Assert
     assert.equal(outcome, false)
   } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the recorded values and the reader's dropped hint both reaching the screen after one press of Show Variables; fails_when=the reader is told in the same instant the adapter served the values, so its repaint lands within a few milliseconds of the native view's and, under WSLg, neither is shown until the pointer moves; why_new=Cycle 0044 (0031-U1 in VS Code 1.140 on WSLg: the first scope stayed open and empty and the hint stayed, although the editor held the values); seam=none
+test('the reader is told that Run and Debug loaded the values 150 ms after they were served, not in the same instant', async (context) => {
+  // Arrange: Variables is hidden, so the stop commits without its values.
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const showing = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded pause',
+    new AbortController().signal,
+  )
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    const committed = await showing
+
+    // Act: native Variables is shown and retrieves the stop's values.
+    fixture.inspect()
+    const toldWhenServed = fixture.changes()
+    context.mock.timers.tick(149)
+    const toldAfter149Ms = fixture.changes()
+    context.mock.timers.tick(1)
+
+    // Assert
+    assert.equal(committed, 'uninspected')
+    assert.equal(toldWhenServed, 0)
+    assert.equal(toldAfter149Ms, 0)
+    assert.equal(fixture.changes(), 1)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=the hint of the stop the reader shows now; fails_when=values served for a stop the recording left within the paint allowance are still reported, so the reader drops the hint of the moment it moved to; why_new=Cycle 0044 (the values-loaded notification is delivered late); seam=none
+test('values served for a stop the recording has left by the time the reader would be told are not reported', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(undefined, undefined, 0, false, true)
+  const showing = fixture.owner.present(
+    inspectedSnapshot,
+    'Recorded pause',
+    new AbortController().signal,
+  )
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await showing
+
+    // Act: the values are served, and a seek retires the displayed moment before the reader is told.
+    fixture.inspect()
+    fixture.owner.invalidate()
+    context.mock.timers.tick(150)
+
+    // Assert
+    assert.equal(fixture.changes(), 0)
+  } finally {
+    context.mock.timers.reset()
     await fixture.owner.dispose()
   }
 })

@@ -681,6 +681,8 @@ export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
+/** How long after the historical adapter served a stop's values the reader is told that Run and Debug loaded them. The adapter knows when it answered, not when native Variables drew the rows; a reader that drops its hint in the same instant repaints within a few milliseconds of that view, and the Linux editors under WSLg do not put a frame on the screen that follows another that closely until the window is repainted again (measured 2026-10-04: a change 4 ms after another stayed off the screen, one 30 ms after it was shown), which left the first scope open and empty and the hint in place. 100 ms is not enough: the Variables pane hides its scrollbar 500 ms after it is shown and loads a missed stop 400 ms after, so in Cursor 3.23 a reader told 100 ms later repainted on top of that scrollbar repaint and kept its hint on the screen. */
+export const REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS = 150
 /** Frames native Call Stack loads for a stop before the learner asks for more (VS Code: the top frame, then 19 more); it focuses the top frame when none of them has source. */
 export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
 /** What one owned replay settle allows for work that has no bound of its own before painting: reading the recording and the recording renderer's handshake. */

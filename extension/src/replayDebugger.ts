@@ -6,6 +6,7 @@ import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
   REPLAY_DEBUG_SESSION_NAME,
+  REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
   REPLAY_DEBUG_TYPE,
 } from './constants'
 import {
@@ -65,7 +66,7 @@ export class ReplayDebugger {
   /**
    * Registers the owned historical debug adapter for {@link StudyWorkspace}.
    * @param editor - VS Code API surface used to start, observe and stop the owned session.
-   * @param changed - Runs when native Run and Debug loads the selected stop's values or the learner ends the owned session, so the reader can drop a stale hint and re-enable Node Inspect.
+   * @param changed - Runs {@link REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS} after native Run and Debug loaded the selected stop's values, and when the learner ends the owned session, so the reader can drop a stale hint and re-enable Node Inspect.
    * @param failed - Receives an error the `changed` listener throws, while handling a values-loaded notification or while this owner gives up; the native session never sees it.
    * @example new ReplayDebugger(vscode, (reason) => this.replayDebuggerChanged(reason), (error) => this.report('replay-debugger', error))
    */
@@ -127,7 +128,7 @@ export class ReplayDebugger {
                   if (this.adapter !== adapter) return
                   this.valuesUnrequested = false
                   this.wakeInspection()
-                  this.changed('values-loaded')
+                  this.notifyValuesLoaded(adapter)
                 },
                 (error) => this.failed(error),
               ))
@@ -178,6 +179,38 @@ export class ReplayDebugger {
         }
       }),
     )
+  }
+
+  /**
+   * Tells the reader that native Run and Debug loaded the presented stop's values, {@link REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS} after the adapter served them; called by the adapter's `inspected` callback.
+   *
+   * The adapter knows when it answered the request, not when native Variables drew the rows, so the reader's own repaint (its hint
+   * leaving) is kept apart from that view's. A stop that is no longer the presented one by then is not reported, and a listener
+   * that throws reaches the reader's error channel, as it did from inside the adapter.
+   *
+   * @param adapter - The adapter that served the values.
+   * @example this.notifyValuesLoaded(adapter)
+   */
+  private notifyValuesLoaded(adapter: ReplayDebugAdapter): void {
+    setTimeout(() => {
+      // A reader told late about a stop it no longer shows would drop the hint of the stop it does show.
+      if (
+        this.closed ||
+        this.adapter !== adapter ||
+        !adapter.inspectionReady ||
+        !adapter.hasLoadableValues
+      )
+        return
+      try {
+        this.changed('values-loaded')
+      } catch (error) {
+        try {
+          this.failed(error)
+        } catch {
+          // The error channel failed as well; nothing may escape into the editor's timer queue.
+        }
+      }
+    }, REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS)
   }
 
   /** Reports whether playback may still present history; false after the learner stops the owned session, so an explicit replay reopen replaces this owner. @example if (!debuggerView.available) await debuggerView.dispose() */
