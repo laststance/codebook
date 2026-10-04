@@ -17,6 +17,47 @@ export type WikiUpdateNotice = {
 }
 
 /**
+ * Says whether an ending asks the learner for a step; called by {@link noticeOfSentence} to decide whether the notification must stay on screen.
+ * @param state - The state the update ended in.
+ * @returns `true` for `failed`, `timed-out` and `conflict`; `false` for every other state.
+ * @example
+ * asksForStep('conflict')  // => true
+ * asksForStep('cancelled') // => false
+ */
+function asksForStep(state: WikiUpdateStatus['state']): boolean {
+  return state === 'failed' || state === 'timed-out' || state === 'conflict'
+}
+
+/**
+ * Chooses how loud an ended update's notification is and which buttons it offers; called by {@link wikiUpdateNotice} with the sentence it wrote.
+ * @param state - The state the update ended in.
+ * @param sentence - The page's sentence as plain notification text.
+ * @returns
+ * - `succeeded`: an information notice that also says to reload the browser reader, without a button
+ * - An ending that asks for a step ({@link asksForStep}): an error notice with the button {@link OPEN_WIKI_ACTION}
+ * - Any other ending: an information notice without a button
+ * @example
+ * noticeOfSentence('cancelled', 'Update cancelled at 21:10. Cursor Agent was stopped. The last usable site is kept.')
+ * // => { severity: 'information', message: 'Update cancelled at 21:10. Cursor Agent was stopped. The last usable site is kept.', actions: [] }
+ */
+function noticeOfSentence(
+  state: WikiUpdateStatus['state'],
+  sentence: string,
+): WikiUpdateNotice {
+  if (state === 'succeeded')
+    return {
+      severity: 'information',
+      // The editor cannot reload the browser tab, so it says to.
+      message: `${sentence} Reload the browser reader to read the new pages.`,
+      actions: [],
+    }
+  // An update runs up to 15 minutes, so the learner is rarely looking when it ends: an ending that asks for a step must stay on screen.
+  if (asksForStep(state))
+    return { severity: 'error', message: sentence, actions: [OPEN_WIKI_ACTION] }
+  return { severity: 'information', message: sentence, actions: [] }
+}
+
+/**
  * Writes the editor notification for a Wiki update that ended, from the sentence the browser Wiki shows.
  *
  * Why: a run started from the Command Palette may have no browser tab open, and a notification that words the ending differently from the page contradicts it. The sentence comes from {@link describeWikiUpdate} with two differences: link syntax in it is taken apart by {@link plainNotificationText} (`](` becomes `] (`), so the two texts differ for a path or a reason that carries it; and it points to the freshness label "in the browser reader", since the editor has none above. The page's "Output:" line is left out, and a failure reason is never shortened here.
@@ -55,19 +96,5 @@ export function wikiUpdateNotice(
   if (!described) return undefined
   // The sentence carries paths, a candidate's name and an agent's own failure text; none of them may become a link the editor renders.
   const sentence = plainNotificationText(described.lead + described.rest)
-  if (status.state === 'succeeded')
-    return {
-      severity: 'information',
-      // The editor cannot reload the browser tab, so it says to.
-      message: `${sentence} Reload the browser reader to read the new pages.`,
-      actions: [],
-    }
-  // An update runs up to 15 minutes, so the learner is rarely looking when it ends: an ending that asks for a step must stay on screen.
-  if (
-    status.state === 'failed' ||
-    status.state === 'timed-out' ||
-    status.state === 'conflict'
-  )
-    return { severity: 'error', message: sentence, actions: [OPEN_WIKI_ACTION] }
-  return { severity: 'information', message: sentence, actions: [] }
+  return noticeOfSentence(status.state, sentence)
 }
