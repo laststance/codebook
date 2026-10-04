@@ -720,11 +720,18 @@ export function activate(
       notice.message,
       ...(onUpdateAnyway ? [UPDATE_ANYWAY_ACTION] : []),
       ...notice.actions,
-    ).then((choice) => {
-      if (choice === UPDATE_ANYWAY_ACTION) onUpdateAnyway?.()
-      else if (choice === OPEN_WIKI_ACTION)
-        void vscode.commands.executeCommand('codebook.openDeepWiki')
-    })
+    ).then(
+      (choice) => {
+        if (choice === UPDATE_ANYWAY_ACTION) onUpdateAnyway?.()
+        else if (choice === OPEN_WIKI_ACTION)
+          // The command's own handler tells the learner why the Wiki did not open; its rejection has nobody else to go to.
+          void vscode.commands
+            .executeCommand('codebook.openDeepWiki')
+            .then(undefined, () => undefined)
+      },
+      // A notification the editor could not show has nobody to report to either.
+      () => undefined,
+    )
   }
   /** Tells the learner that a second start was refused and where the first run's progress is. @example showWikiUpdateRunning() */
   const showWikiUpdateRunning = (): void => {

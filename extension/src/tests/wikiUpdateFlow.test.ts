@@ -1756,6 +1756,39 @@ test('a failed, refused or timed-out update’s notification is an error notice 
   }
 })
 
+// Value: protects=the extension host's log and error reporting when the learner presses "Open LLM Wiki" on an update notice and the Wiki cannot be opened; fails_when=the command's rejection, which its own handler already showed to the learner, is left unhandled by the notice that started it; why_new=Cycle 0045 local review runtime-2 #5; seam=the command that opens the Wiki, which is made to reject
+test('pressing Open LLM Wiki on an update notice leaves no unhandled rejection when the Wiki cannot be opened', async () => {
+  // Arrange: an update that fails, a learner who presses the notice's button, and a Wiki that does not open.
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  const wiki = await openWikiWindow({
+    chatFails: true,
+    openWikiFails:
+      'The DeepWiki manifest does not identify this opened project.',
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Open LLM Wiki'),
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+    // A rejection nobody handles is reported once the turn's promise jobs are done.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+
+    // Assert
+    assert.deepEqual(
+      wiki.offeredActions.map((offered) => offered.actions),
+      [['Open LLM Wiki']],
+    )
+    assert.deepEqual(unhandledRejections, [])
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await wiki.close()
+  }
+})
+
 test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there', async () => {
   // Arrange
   const projectRoot = await realpath(

@@ -57,6 +57,7 @@ export type HeldUpdateStep =
  * @param options.chooseAction - Presses a button of a notification: it gets the notification's text and its button labels and returns the label to press; no button is pressed when omitted.
  * @param options.workspaceState - The window's workspace state; two windows opened with the same map are one window before and after a reload.
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
+ * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
  * @returns What the window showed (chat requests, notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
  *
@@ -91,6 +92,7 @@ export async function openWikiUpdateWindow(options: {
   workspaceState?: Map<string, unknown>
   publishTokenReadFails?: string
   realFreshnessCheck?: boolean
+  openWikiFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   notices: string[]
@@ -188,6 +190,11 @@ export async function openWikiUpdateWindow(options: {
             return { dispose(): void {} }
           },
           executeCommand: async (name: string, argument?: unknown) => {
+            if (
+              name === 'codebook.openDeepWiki' &&
+              options.openWikiFails !== undefined
+            )
+              throw new Error(options.openWikiFails)
             if (options.chatFails)
               throw new Error(
                 options.chatFails === true
