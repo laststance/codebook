@@ -2113,10 +2113,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.acceptedStop = true
       const pause = participant.gate.stop(session.id, body.threadId!)
       this.status = `paused-${name}`
-      this.progressDeadline(
-        REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-        'Repository pause hold deadline exceeded',
-      )
+      this.holdPauseDeadline()
       this.evidence.record('dap.stopped', {
         participant: name,
         ...pause,
@@ -2305,10 +2302,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         'Native stack refresh changed the captured source location',
       )
     participant.refresh = undefined
-    this.progressDeadline(
-      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-      'Repository pause hold deadline exceeded',
-    )
+    this.holdPauseDeadline()
     this.evidence.record('dap.pause-refreshed', {
       participant: name,
       ...refresh.pause,
@@ -3304,10 +3298,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       return
     // No journal entry: a playing replay renews on every frame, and the bounded journal must keep its room for the run's own events.
-    this.progressDeadline(
-      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-      'Repository pause hold deadline exceeded',
-    )
+    this.holdPauseDeadline()
   }
   /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle. @example run.fail('source changed') */
   fail(reason: string): void {
@@ -3469,13 +3460,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     await this.evidence.flush()
   }
-  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
+  /**
+   * Starts the pause hold, the deadline of a pause that is kept for the learner, called when a declared stop is accepted ({@link onEvent}), when a stack refresh confirmed the retained pause ({@link verifyStackRefresh}) and by {@link renewPauseHold}.
+   * It is the only place that marks the running deadline as the hold, so what a deadline is for decides whether a replay may renew it, never its length.
+   * @example
+   * ```ts
+   * this.holdPauseDeadline() // the pause is released REPOSITORY_PAUSE_HOLD_TIMEOUT_MS from now unless renewed
+   * ```
+   */
+  private holdPauseDeadline(): void {
+    this.progressDeadline(
+      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
+      'Repository pause hold deadline exceeded',
+    )
+    this.holdingPause = true
+  }
+  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. Every deadline started here is no pause hold; {@link holdPauseDeadline} marks the one that is. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
   private progressDeadline(
     milliseconds: number,
     reason: string | (() => string),
   ): void {
     clearTimeout(this.progressTimer)
-    this.holdingPause = milliseconds === REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
+    this.holdingPause = false
     // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
     this.progressTimer = setTimeout(
       () => this.fail(this.expiredDeadlineText(reason, milliseconds)),

@@ -27,6 +27,10 @@ import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import {
+  loadConstantsWith,
+  type RuntimeConstantOverrides,
+} from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
@@ -64,6 +68,8 @@ export async function configuredRuntimeHarness(
       /** Column the first stop is declared at instead of column 1. */
       declaredColumn?: number
     }
+    /** Replaces runtime bounds in the run and in the constants it reads ({@link loadConstantsWith}), so a test can make two bounds equal and see what depends on their values. */
+    runtimeConstants?: RuntimeConstantOverrides
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -603,6 +609,9 @@ export async function configuredRuntimeHarness(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
+      ...(options.runtimeConstants
+        ? await loadConstantsWith(options.runtimeConstants)
+        : {}),
       './ownedRepositoryBreakpoint': breakpointModule,
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {

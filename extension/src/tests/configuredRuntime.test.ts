@@ -864,6 +864,34 @@ test('renewing a held pause for every replay frame adds no events to the run jou
   assert.equal(eventsAfterRenewals, eventsBeforeRenewals)
 })
 
+// Cycle 0045 (SM-2): red while a deadline counted as the pause hold when its length equalled the hold's; the run is loaded with an active bound of 300 s, the hold's own length, so only what the deadline is for can tell the two apart.
+test('a pending stack refresh is not renewed as a pause hold while a replay is read', async (context) => {
+  // Arrange: a held pause whose stack the debugger refreshes (continued without a resume) and never announces again.
+  const { run, advance, holdContinuation } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { runtimeConstants: { ACTIVE_TIMEOUT_MS: 300_000 } },
+  )
+  const debuggerEvents = holdContinuation()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => run.view().snapshots[0], 'held pause')
+  debuggerEvents.dap()
+  advance(100_000)
+
+  // Act: a replay moment is presented, then the refresh's own 300 s pass.
+  run.renewPauseHold()
+  advance(200_000)
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    run.view().failures.join('; '),
+    'Native stack refresh did not confirm the retained pause',
+  )
+})
+
 test('a late action cannot reset the original ten-minute run deadline', async (context) => {
   // Arrange
   const { run, advance } = await configuredRuntimeHarness(context)
