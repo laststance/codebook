@@ -1282,8 +1282,13 @@ export class StudyWorkspace {
           this.sourceUri?.toString())
     )
       return this.restoreStudyArrangement(input)
+    // A restore of the confirmed layout made while no Study pane and no text editor has the keyboard (an agent's call from the chat, right after its own selection) is answered like that selection: nothing is arranged again and the keyboard stays where it is.
     if (
-      input.action === 'select' &&
+      (input.action === 'select' ||
+        (input.action === 'restore' &&
+          !this.app?.active &&
+          !this.contextPanel?.active &&
+          !vscode.window.activeTextEditor)) &&
       input.mode === state.mode &&
       state.layoutConfirmed &&
       state.preference.status !== 'unknown'
@@ -1442,7 +1447,25 @@ export class StudyWorkspace {
         const layout = await this.readPassivePresentationLayout()
         this.assertLifetime(lifetime)
         transition.cancellation.signal.throwIfAborted()
-        // Beside a focused tab that is no text editor (an agent chat in its own editor part) nobody can focus the main editor first: the panes are arranged again below, which measures it.
+        const receipt = this.layoutReceipt
+        // Another editor part (an agent chat) has the keyboard, so the main grid cannot be measured without taking it: while no tab or group changed since the last arrangement, its confirmation is answered again, marked as not measured, as a status read answers it.
+        if (
+          layout === undefined &&
+          receipt &&
+          this.presentationState().layoutConfirmed &&
+          this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
+          this.sameStudyPanePositions(receipt.panes)
+        ) {
+          this.errors.delete('presentation')
+          this.presentationReason = undefined
+          this.requestedPresentation = undefined
+          return {
+            ...this.presentationState(),
+            state: 'open' as const,
+            layoutMeasured: false as const,
+          }
+        }
+        // Once a tab or group changed beside a focused tab of another editor part, nobody can focus the main editor first: the panes are arranged again below, which measures it.
         if (layout === undefined && !this.retainForeignTabFocus(undefined))
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
@@ -1969,8 +1992,11 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         foreignPreviewObstacle(this.editorTabName(activeTab), activeColumn),
       )
-    // A captured source the editor shows without a text editor (a leftover of an earlier session it would not close, or another workspace's) is told by what the tab is: its document is a captured source. It has no reading position to return to.
-    if (this.isCapturedSourceInput(activeTab.input))
+    // A captured source the editor shows without a text editor (a leftover of an earlier session it would not close, or another workspace's) is told by what the tab is: its document is a captured source. It has no reading position to return to. One whose text editor is visible is the reader's own source named beside another editor part that holds the keyboard (Cursor's chat input after a selection made from it): it stays as it is, like a learner's file in that state.
+    if (
+      this.isCapturedSourceInput(activeTab.input) &&
+      !this.hasVisibleTextEditor(activeTab.input.uri, activeColumn)
+    )
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         tabWithoutEditorObstacle(this.editorTabName(activeTab), activeColumn),
@@ -2003,12 +2029,20 @@ export class StudyWorkspace {
       return undefined
     const group = vscode.window.tabGroups.activeTabGroup,
       tab = group.activeTab
-    // The editor can still name a Study pane's tab as the active one while another editor part has the keyboard: that is no foreign tab to return to.
+    const namedUri =
+      tab?.input instanceof vscode.TabInputText
+        ? tab.input.uri.toString()
+        : undefined
+    // A text tab named as the active tab while its text editor is visible and no text editor is active: another editor part (the chat input) holds the keyboard, and the editor does not name that part's group. That holds for a learner's file and for the reader's own captured source. A text tab that has no text editor at all says nothing about another part.
+    const heldByAnotherPart =
+      tab?.input instanceof vscode.TabInputText &&
+      this.hasVisibleTextEditor(tab.input.uri, group.viewColumn)
+    // The editor can still name a Study pane's tab as the active one while another editor part has the keyboard: that is no foreign tab to return to. A captured source without a text editor has no focus that could be kept.
     if (
       !tab ||
       tab === activatedByClose ||
       tab.isPreview ||
-      this.isCapturedSourceInput(tab.input) ||
+      (this.isCapturedSourceInput(tab.input) && !heldByAnotherPart) ||
       (tab.input instanceof vscode.TabInputWebview &&
         isCodebookPaneViewType(
           tab.input.viewType,
@@ -2028,19 +2062,7 @@ export class StudyWorkspace {
     const showsThatTab = (candidate: vscode.TabGroup): boolean =>
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
-    const namedUri =
-      tab.input instanceof vscode.TabInputText
-        ? tab.input.uri.toString()
-        : undefined
-    // A learner's file named as the active tab while its text editor is visible and no text editor is active: another editor part (the chat input) holds the keyboard, and the editor does not name that part's group. A text tab that has no text editor at all says nothing about another part.
-    const heldByAnotherPart =
-        namedUri !== undefined &&
-        vscode.window.visibleTextEditors.some(
-          (editor) =>
-            editor.viewColumn === column &&
-            editor.document.uri.toString() === namedUri,
-        ),
-      heldUri = heldByAnotherPart ? namedUri : undefined
+    const heldUri = heldByAnotherPart ? namedUri : undefined
     const borrowsBefore = this.mainEditorFocusBorrows
     return async (): Promise<void> => {
       // Groups the arrangement opened or closed in the main editor shift the column of a group behind them.
@@ -2109,6 +2131,27 @@ export class StudyWorkspace {
     return count !== undefined && this.hasMainEditorFocus(count)
       ? count
       : undefined
+  }
+
+  /**
+   * Tells whether a text editor shows a document in an editor group now, for {@link capturePresentationFocus} and {@link retainForeignTabFocus}: a text tab the editor names as active without an active text editor has its editor visible while another editor part holds the keyboard, and has none when the editor could not load it.
+   * @param uri - The document of the named tab.
+   * @param column - The view column of the group that shows the tab.
+   * @returns `true` when one of the visible text editors shows that document in that column.
+   * @example
+   * ```ts
+   * this.hasVisibleTextEditor(tab.input.uri, group.viewColumn) // => true for "Captured-login-form.tsx" in group 2 while Cursor's chat input has the keyboard
+   * ```
+   */
+  private hasVisibleTextEditor(
+    uri: vscode.Uri,
+    column: vscode.ViewColumn,
+  ): boolean {
+    return vscode.window.visibleTextEditors.some(
+      (editor) =>
+        editor.viewColumn === column &&
+        editor.document.uri.toString() === uri.toString(),
+    )
   }
 
   /**

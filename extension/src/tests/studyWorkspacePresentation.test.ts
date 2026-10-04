@@ -4682,6 +4682,171 @@ test('a selection made while another editor part holds the keyboard, in an edito
   }
 })
 
+// Value: protects=an agent's restore right after its own selection from Cursor's chat being answered confirmed, with the keyboard left in the chat input and nothing arranged again; fails_when=the restore is refused with "… the focused tab "Captured-login-form.tsx" in editor group 2 has no text editor, so the focus could not be given back to it. …" because the editor names the reader's own captured source without an active text editor while the chat input has the keyboard; why_new=Cycle 0045 cause 12 (g) (obs15 R, a2-restore: refused after 172 ms; an agent that calls select and then restore got this); seam=workspace harness with a separate editor part that holds the keyboard, the fake Cursor's stale group name and its command log
+test("a restore made from Cursor's chat right after its own selection answers the confirmed layout and leaves the keyboard in the chat", async () => {
+  // Arrange: as the editor API reported it in Cursor after a selection made from the chat input: the three panes are arranged, the chat input has the keyboard again, and the editor names the reader's own captured source in group 2, whose text editor is visible, without an active text editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focus()
+    const closed = harness.reader.presentationState()
+    const selected = await harness.reader.changePresentation({
+      presentationId: closed.presentationId,
+      expectedRevision: closed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    const named = harness.editor.window.tabGroups.activeTabGroup,
+      namedInput: unknown = named.activeTab?.input
+    const stateBefore = {
+      namedColumn: named.viewColumn,
+      namedTabIsCapturedSource:
+        namedInput instanceof harness.editor.TabInputText &&
+        namedInput.uri.scheme === 'codebook-source',
+      hasActiveTextEditor: harness.editor.window.activeTextEditor !== undefined,
+      sourceEditorVisibleInColumn: harness.editor.window.visibleTextEditors
+        .filter((editor) => editor.document.uri.scheme === 'codebook-source')
+        .map((editor) => editor.viewColumn),
+      chatHasKeyboard: chat.focused(),
+    }
+    const commandsBefore = harness.commands.length,
+      tabsBefore = harness.groups.map((group) => [...group.tabs])
+    // Act
+    const restored = await harness.reader.changePresentation({
+      presentationId: selected.presentationId,
+      expectedRevision: selected.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+    // Assert
+    assert.deepEqual(stateBefore, {
+      namedColumn: 2,
+      namedTabIsCapturedSource: true,
+      hasActiveTextEditor: false,
+      sourceEditorVisibleInColumn: [2],
+      chatHasKeyboard: true,
+    })
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(restored.state, 'open')
+    assert.equal(restored.layoutConfirmed, true)
+    // The grid cannot be measured from the chat without taking its keyboard: the answer repeats the selection's confirmation and says so.
+    assert.equal(restored.layoutMeasured, false)
+    assert.equal(restored.reason, undefined)
+    assert.equal(restored.panes.appColumn, 1)
+    assert.equal(restored.panes.sourceColumn, 2)
+    assert.equal(restored.panes.contextColumn, 3)
+    // One layout read, as a status read makes it: nothing was arranged, focused or closed.
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'vscode.getEditorLayout',
+    ])
+    assert.deepEqual(
+      harness.groups.map((group) => [...group.tabs]),
+      tabsBefore,
+    )
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's restore from Cursor's chat being admitted and arranged when the learner resized the panes since its selection, while the editor names the reader's own captured source without an active text editor, and the chat having the keyboard again afterwards; fails_when=the reader's own current captured source is refused like a leftover one that no text editor shows ("… has no text editor, so the focus could not be given back to it. …"), which only a click into an editor clears, and an agent cannot click; why_new=Cycle 0045 cause 12 (g) (obs15 R, a2-restore); seam=workspace harness with a separate editor part that holds the keyboard, changeEditorLayout
+test("a restore made from Cursor's chat after the learner resized the panes arranges them again while the editor names the reader's captured source without an active text editor", async () => {
+  // Arrange: a selection from the chat input arranged the three panes; the learner then clicked into the captured source and dragged two sashes, a status read saw the changed grid, and the learner went back to the chat input, so the editor names the captured source in group 2 without an active text editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focus()
+    const closed = harness.reader.presentationState()
+    const selected = await harness.reader.changePresentation({
+      presentationId: closed.presentationId,
+      expectedRevision: closed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    const source = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.scheme === 'codebook-source',
+    )
+    assert.ok(source)
+    await harness.editor.window.showTextDocument(source.document, {
+      viewColumn: 2,
+    })
+    harness.changeEditorLayout({
+      orientation: 0,
+      groups: [
+        { size: 0.7, groups: [{ size: 0.3 }, { size: 0.7 }] },
+        { size: 0.3 },
+      ],
+    })
+    const unconfirmed = await harness.reader.readPresentationState()
+    chat.focus()
+    const named = harness.editor.window.tabGroups.activeTabGroup,
+      namedInput: unknown = named.activeTab?.input
+    const stateBefore = {
+      namedColumn: named.viewColumn,
+      namedTabIsCapturedSource:
+        namedInput instanceof harness.editor.TabInputText &&
+        namedInput.uri.scheme === 'codebook-source',
+      hasActiveTextEditor: harness.editor.window.activeTextEditor !== undefined,
+      chatHasKeyboard: chat.focused(),
+    }
+    // Act
+    const restored = await harness.reader.changePresentation({
+      presentationId: unconfirmed.presentationId,
+      expectedRevision: unconfirmed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+    // Assert
+    assert.deepEqual(stateBefore, {
+      namedColumn: 2,
+      namedTabIsCapturedSource: true,
+      hasActiveTextEditor: false,
+      chatHasKeyboard: true,
+    })
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(unconfirmed.layoutConfirmed, false)
+    assert.equal(
+      unconfirmed.reason,
+      'The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.',
+    )
+    assert.equal(restored.state, 'open')
+    assert.equal(restored.layoutConfirmed, true)
+    assert.equal(restored.reason, undefined)
+    assert.equal(restored.panes.appColumn, 1)
+    assert.equal(restored.panes.sourceColumn, 2)
+    assert.equal(restored.panes.contextColumn, 3)
+    // The grid has the sizes of the Study layout again; three groups of the main editor and the chat's, none of them empty.
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 0,
+      groups: [
+        { size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 0.45 },
+      ],
+    })
+    assert.equal(harness.groups.length, 4)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.length === 0),
+      false,
+    )
+    // The arrangement borrowed the keyboard for the main editor; the chat has it again through Cursor's own command.
+    assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=an agent's selection after the learner watched a replay and closed the Study workspace: the reader still holds that recording, and the selection arranges its panes and answers confirmed once the recorded source is shown; fails_when=the selection is answered while the recorded source is still opening, with "The live Study layout could not be confirmed after Restore." and the panes it opened left behind, again at every repeat; why_new=Cycle 0045 cause 12 (e) (obs15 P4: two selects refused after 473 ms and 446 ms with the cause "The recorded source is opening in its native pane."); seam=the recorded reader harness, focusMutableDraft
 test("a selection made on a closed reader that holds a recording arranges the recording's panes and answers confirmed once the recorded source is shown", async () => {
   // Arrange: a recording was opened and the Study workspace closed; the learner types in a file.

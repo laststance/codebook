@@ -905,25 +905,22 @@ for (const operation of ['read', 'reselect'] as const)
       assert.equal(state.layoutConfirmed, true)
       chat.focus()
       // Act
-      if (operation === 'read') {
-        const result = await harness.reader.readPresentationState()
-        // The main grid cannot be measured from the chat's part: the read repeats the last arrangement's confirmation and marks it as not measured (Cycle 0045 S1a-F1; it answered false with "… without changing focus" before).
-        assert.equal(result.layoutConfirmed, true)
-        assert.equal(result.layoutMeasured, false)
-        assert.equal(result.reason, undefined)
-        assert.equal(result.presentationControlRevision, 0)
-        assert.equal(result.presentationId, state.presentationId)
-      } else
-        await assert.rejects(
-          harness.reader.changePresentation({
-            presentationId: state.presentationId,
-            expectedRevision: state.presentationControlRevision,
-            mode: 'study-workspace',
-            action: 'select',
-          }),
-          /cannot be checked from the current editor part/,
-        )
+      const result =
+        operation === 'read'
+          ? await harness.reader.readPresentationState()
+          : await harness.reader.changePresentation({
+              presentationId: state.presentationId,
+              expectedRevision: state.presentationControlRevision,
+              mode: 'study-workspace',
+              action: 'select',
+            })
       // Assert
+      // The main grid cannot be measured from the chat's part: the read repeats the last arrangement's confirmation and marks it as not measured (Cycle 0045 S1a-F1; it answered false with "… without changing focus" before). A selection of that layout is answered the same way (Cycle 0045 cause 12 (g); it was refused with "… its layout cannot be checked from the current editor part." before).
+      assert.equal(result.layoutConfirmed, true)
+      assert.equal(result.layoutMeasured, false)
+      assert.equal(result.reason, undefined)
+      assert.equal(result.presentationControlRevision, 0)
+      assert.equal(result.presentationId, state.presentationId)
       assert.equal(chat.focused(), true)
       assert.deepEqual(harness.reader.presentationState(), state)
       assert.deepEqual(harness.editorLayout(), layout)
