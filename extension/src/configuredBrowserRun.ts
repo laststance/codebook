@@ -746,15 +746,39 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.abort.signal,
       )
     } catch (error) {
-      if (boundElsewhere)
-        throw this.bindingFailure(
-          stop,
-          this.refusedBindingText(stop, boundElsewhere),
-        )
-      // Cancellation and an adapter failure keep their own reason; only the expired wait gains the mapping hints.
-      if (pollFailure !== undefined || this.abort.signal.aborted) throw error
-      throw this.bindingFailure(stop, thrownMessage(error))
+      throw this.bindingWaitFailure(stop, error, boundElsewhere, pollFailure)
     }
+  }
+
+  /**
+   * Chooses what {@link verifiedBrowserBinding} throws when its wait ended without a verified binding on an accepted line, at the moment the wait ends.
+   * @param stop - The browser stop whose binding was waited for.
+   * @param error - What the wait threw.
+   * @param boundElsewhere - The verified place on a line the stop's rule refuses, when a poll found one.
+   * @param pollFailure - What a poll of the adapter threw, when one failed; `undefined` otherwise.
+   * @returns
+   * - The binding failure that names the refused place, for a binding on a refused line
+   * - `error` itself, for a failed poll and for a cancelled run: they keep their own reason
+   * - The binding failure with the wait's text and the mapping hints, for the expired wait
+   * @example
+   * ```ts
+   * throw this.bindingWaitFailure(stop, error, undefined, undefined)
+   * ```
+   */
+  private bindingWaitFailure(
+    stop: PreparedStop,
+    error: unknown,
+    boundElsewhere: z.infer<typeof verifiedPlaceSchema> | undefined,
+    pollFailure: unknown,
+  ): unknown {
+    if (boundElsewhere)
+      return this.bindingFailure(
+        stop,
+        this.refusedBindingText(stop, boundElsewhere),
+      )
+    // Cancellation and an adapter failure keep their own reason; only the expired wait gains the mapping hints.
+    if (pollFailure !== undefined || this.abort.signal.aborted) return error
+    return this.bindingFailure(stop, thrownMessage(error))
   }
 
   /**
@@ -806,20 +830,25 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const firstRequest = stop.armed,
       pausableColumns = await this.pausableColumns(stop, firstRequest.line)
     // An adapter that cannot list break locations, and a line that cannot pause, leave the binding to the line rule.
-    if (!pausableColumns?.length) return false
-    const column = pausableColumns.findLast(
-      (pausableColumn) => pausableColumn < firstRequest.column,
+    if (!this.hasPausableColumn(pausableColumns)) return false
+    const column = this.secondRequestColumn(
+      stop,
+      binding,
+      pausableColumns,
+      firstRequest.column,
     )
-    if (column === undefined) throw this.slideRefusal(stop, binding)
     try {
       await stop.breakpoint!.retire(
         this.participants[stop.participant].selected!,
         this.abort.signal,
       )
     } catch (error) {
-      if (this.abort.signal.aborted) throw error
-      throw new Error(
-        `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column} although line ${firstRequest.line} can pause at column ${column}, and its first breakpoint could not be retired before a second request there: ${thrownMessage(error)}`,
+      throw this.retirementFailure(
+        stop,
+        binding,
+        firstRequest.line,
+        column,
+        error,
       )
     }
     this.alive()
@@ -834,6 +863,73 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       firstBinding: { line: binding.line, column: binding.column },
     })
     return true
+  }
+
+  /**
+   * Says whether the debugger named at least one break location on a line, for {@link rearmOnRequestedLine} and {@link journalSlidePastPausableLine} right after they asked {@link pausableColumns}.
+   * @param columns - What the debugger answered for the line; `undefined` when the adapter cannot list break locations.
+   * @returns `true` for a line that can pause; `false` for a line that cannot, and when the adapter cannot say.
+   * @example
+   * ```ts
+   * this.hasPausableColumn([]) // false
+   * ```
+   */
+  private hasPausableColumn(
+    columns: number[] | undefined,
+  ): columns is number[] {
+    return Boolean(columns?.length)
+  }
+
+  /**
+   * Chooses the column of a stop's second request on the line it was requested on, for {@link rearmOnRequestedLine}: the line's last break location before the first requested column.
+   * @param stop - The stop being armed.
+   * @param binding - Where the debugger acknowledged the first request, on a later line.
+   * @param pausableColumns - The break locations of the requested line, ascending and not empty.
+   * @param requestedColumn - The column of the first request.
+   * @returns The column to request instead.
+   * @throws The slide refusal ({@link slideRefusal}) when no break location lies before the requested column.
+   * @example
+   * ```ts
+   * this.secondRequestColumn(stop, { line: 23, column: 5 }, [3, 20], 12) // 3
+   * ```
+   */
+  private secondRequestColumn(
+    stop: PreparedStop,
+    binding: { line: number; column: number },
+    pausableColumns: number[],
+    requestedColumn: number,
+  ): number {
+    const column = pausableColumns.findLast(
+      (pausableColumn) => pausableColumn < requestedColumn,
+    )
+    if (column === undefined) throw this.slideRefusal(stop, binding)
+    return column
+  }
+
+  /**
+   * Chooses what {@link rearmOnRequestedLine} throws when the first registration could not be retired before the second request.
+   * @param stop - The stop being armed.
+   * @param binding - Where the debugger acknowledged the first request.
+   * @param requestedLine - The line of the first request, which can pause.
+   * @param column - The column the second request would have taken on that line.
+   * @param error - What the retirement threw.
+   * @returns `error` itself for a cancelled run, otherwise the error that names the stop, the binding, the column and the retirement's reason.
+   * @example
+   * ```ts
+   * throw this.retirementFailure(stop, { line: 23, column: 5 }, 22, 3, error)
+   * ```
+   */
+  private retirementFailure(
+    stop: PreparedStop,
+    binding: { line: number; column: number },
+    requestedLine: number,
+    column: number,
+    error: unknown,
+  ): unknown {
+    if (this.abort.signal.aborted) return error
+    return new Error(
+      `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column} although line ${requestedLine} can pause at column ${column}, and its first breakpoint could not be retired before a second request there: ${thrownMessage(error)}`,
+    )
   }
 
   /**
@@ -993,17 +1089,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (bound.line <= stop.armed.line || !stop.script) return
     const pausableColumns = await this.pausableColumns(stop, stop.armed.line)
     // A requested line that cannot pause, or an adapter that cannot say, leaves nothing to tell.
-    if (!pausableColumns?.length) return
+    if (!this.hasPausableColumn(pausableColumns)) return
     this.evidence.record('breakpoint.slid-past-pausable-line', {
       participant: stop.participant,
       ...declaredAndArmedPlace(stop.source, stop.armed),
       bound: { line: bound.line, column: bound.column },
-      // The break location a second request would have taken: the nearest before the requested column, otherwise the line's first.
-      pausableColumn:
-        pausableColumns.findLast(
-          (pausableColumn) => pausableColumn < stop.armed.column,
-        ) ?? pausableColumns[0],
+      pausableColumn: this.nearestPausableColumn(
+        pausableColumns,
+        stop.armed.column,
+      ),
     })
+  }
+
+  /**
+   * Names the break location a second request would have taken on a requested line that can pause, for the journal entry of {@link journalSlidePastPausableLine}.
+   * @param pausableColumns - The break locations of the requested line, ascending and not empty.
+   * @param requestedColumn - The column the stop was requested at.
+   * @returns The nearest break location before the requested column, otherwise the line's first.
+   * @example
+   * ```ts
+   * this.nearestPausableColumn([3, 20], 2) // 3
+   * ```
+   */
+  private nearestPausableColumn(
+    pausableColumns: number[],
+    requestedColumn: number,
+  ): number | undefined {
+    return (
+      pausableColumns.findLast(
+        (pausableColumn) => pausableColumn < requestedColumn,
+      ) ?? pausableColumns[0]
+    )
   }
 
   /**
@@ -1031,16 +1147,29 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       secondRequest = firstRequest
         ? `, and a second request at ${armed.line}:${armed.column} was bound on line ${binding.line} again`
         : ''
-    const field = this.declaredField(stop)
-    // Codebook chose the column of a stop requested after its declared line, so the agent is told which line to declare.
-    const advice =
-      armed.line === source.line
-        ? `declare the column where the statement begins (${field}.column)`
-        : `declare the stop on line ${armed.line} at the column where its statement begins (${field})`
+    const advice = this.slideAdvice(stop)
     return this.bindingFailure(
       stop,
       `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
     )
+  }
+
+  /**
+   * Words what to declare instead, as the last part of the refusal {@link slideRefusal} builds.
+   * @param stop - The stop being armed.
+   * @returns For a stop requested on its declared line, the column to declare; for a stop requested after it, the line and column to declare. Both name the configuration field.
+   * @example
+   * ```ts
+   * this.slideAdvice(stop) // 'declare the column where the statement begins (configuration.source.column)'
+   * ```
+   */
+  private slideAdvice(stop: PreparedStop): string {
+    const { armed, source } = stop,
+      field = this.declaredField(stop)
+    // Codebook chose the column of a stop requested after its declared line, so the agent is told which line to declare.
+    return armed.line === source.line
+      ? `declare the column where the statement begins (${field}.column)`
+      : `declare the stop on line ${armed.line} at the column where its statement begins (${field})`
   }
 
   /**
@@ -1129,13 +1258,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    */
   private async confirmRequestedPlace(stop: PreparedStop): Promise<void> {
     const declaredLine = stop.source.line
-    // A complete scan, and a partial one that found the declared line, already chose the place.
-    if (
-      stop.scan.complete ||
-      stop.scan.positions.some((position) => position.line === declaredLine) ||
-      !stop.script
-    )
-      return
+    if (this.keepsPlaceUnasked(stop)) return
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!,
       first = (await this.mappedBreakLocations(stop))
         ?.filter(
@@ -1156,6 +1279,26 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     stop.acceptsBoundLine = rule.accepts
     stop.bindingRefusal = rule.refusal
+  }
+
+  /**
+   * Says whether a stop keeps the place its scan chose without the debugger being asked, as the first check of {@link confirmRequestedPlace}.
+   * @param stop - The stop being armed for the first time.
+   * @returns `true` for a complete scan and for a partial one that found the declared line (they already chose the place), and for a module that is not parsed yet (the debugger cannot be asked); `false` when the break locations must decide.
+   * @example
+   * ```ts
+   * this.keepsPlaceUnasked(stop) // true for a stop whose map was scanned completely
+   * ```
+   */
+  private keepsPlaceUnasked(stop: PreparedStop): boolean {
+    // A complete scan, and a partial one that found the declared line, already chose the place.
+    return (
+      stop.scan.complete ||
+      stop.scan.positions.some(
+        (position) => position.line === stop.source.line,
+      ) ||
+      !stop.script
+    )
   }
 
   /**
