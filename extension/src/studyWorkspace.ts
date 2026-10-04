@@ -916,7 +916,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link isCodebookTabWithoutFocus} and by the foreign-preview search of {@link readMainEditorGrid}.
+   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link isCodebookTabWithoutFocus}, by {@link isPaneTabWithoutOwner} and by the foreign-preview search of {@link readMainEditorGrid}.
    * The view type alone cannot tell a live pane from one an earlier extension host left behind; the caller decides that from the panels it owns.
    * @param input - The `input` of an editor tab.
    * @param kinds - The registered view types to match; every Codebook pane when none is given.
@@ -940,24 +940,51 @@ export class StudyWorkspace {
    */
   private rememberInheritedPanes(): void {
     const ownsWorkspacePane = Boolean(this.app || this.contextPanel),
-      // An embedder that does not tell is taken to own its Repository Wiki pane, so a live one is never closed.
-      ownsWikiPane = this.controls.repositoryWikiOpen?.() ?? true
+      ownsWikiPane = this.ownsRepositoryWikiPane()
     for (const tab of vscode.window.tabGroups.all.flatMap(
       (group) => group.tabs,
-    )) {
-      if (
-        !(tab.input instanceof vscode.TabInputWebview) ||
-        !isCodebookPaneViewType(tab.input.viewType)
-      )
-        continue
-      const ownsKind = isCodebookPaneViewType(
-        tab.input.viewType,
-        'codebook.repositoryWiki',
-      )
-        ? ownsWikiPane
-        : ownsWorkspacePane
-      if (!ownsKind) this.inheritedPaneTabs.add(tab)
-    }
+    ))
+      if (this.isPaneTabWithoutOwner(tab, ownsWorkspacePane, ownsWikiPane))
+        this.inheritedPaneTabs.add(tab)
+  }
+
+  /**
+   * Tells whether this host owns its Repository Wiki pane; asked once by every {@link rememberInheritedPanes}, before it reads the window's tabs.
+   * @returns What the embedder's `repositoryWikiOpen` answers, and `true` for an embedder that has no such control.
+   * @example
+   * ```ts
+   * const ownsWikiPane = this.ownsRepositoryWikiPane() // => true in an embedder without `repositoryWikiOpen`
+   * ```
+   */
+  private ownsRepositoryWikiPane(): boolean {
+    // An embedder that does not tell is taken to own its Repository Wiki pane, so a live one is never closed.
+    return this.controls.repositoryWikiOpen?.() ?? true
+  }
+
+  /**
+   * Tells whether a tab is a Codebook pane of a kind this host owns no pane of; asked of every tab in the window by {@link rememberInheritedPanes}.
+   * @param tab - A tab of the window.
+   * @param ownsWorkspacePane - Whether this host holds an Application or a Study pane.
+   * @param ownsWikiPane - Whether this host owns its Repository Wiki pane, from {@link ownsRepositoryWikiPane}.
+   * @returns `true` for a Repository Wiki tab while `ownsWikiPane` is `false` and for an Application or Study tab while `ownsWorkspacePane` is `false`; `false` for a pane of an owned kind and for a tab that is no Codebook pane.
+   * @example
+   * ```ts
+   * this.isPaneTabWithoutOwner(applicationTab, false, true) // => true: the Application tab is an earlier host's
+   * ```
+   */
+  private isPaneTabWithoutOwner(
+    tab: vscode.Tab,
+    ownsWorkspacePane: boolean,
+    ownsWikiPane: boolean,
+  ): boolean {
+    if (!this.isCodebookPaneInput(tab.input)) return false
+    const ownsKind = this.isCodebookPaneInput(
+      tab.input,
+      'codebook.repositoryWiki',
+    )
+      ? ownsWikiPane
+      : ownsWorkspacePane
+    return !ownsKind
   }
 
   /**
@@ -1087,13 +1114,38 @@ export class StudyWorkspace {
    */
   private assertCompositionAllows(input: PresentationIntent): void {
     if (
-      (this.liveComposition || this.summaryComposition) &&
+      this.hasComposition() &&
       (input.mode !== 'study-workspace' || input.action === 'save-preference')
     )
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         'Live and replay use one app/source layout with the chat or learning summary in the sidebar.',
       )
+  }
+
+  /**
+   * Says whether a live explanation or a replay owns the layout; asked by {@link assertCompositionAllows} before it weighs the requested mode, and by {@link assertSelectionOutlastsClose} before it asks for a focus to keep.
+   * @returns `true` during a live or a summary composition, `false` while the reader shows its own Study panes or none.
+   * @example
+   * ```ts
+   * this.hasComposition() // => true while a live explanation is arranged as app/source
+   * ```
+   */
+  private hasComposition(): boolean {
+    return this.liveComposition || this.summaryComposition
+  }
+
+  /**
+   * Says whether a tab is one of the tabs {@link leftoverTabs} lists, which are about to close; asked by {@link assertSelectionOutlastsClose} of the focused tab, and only for a selection no composition owns.
+   * @param tab - The active tab of the active group, `undefined` when that group shows none.
+   * @returns `true` for a leftover tab; `false` for any other tab, and for no tab, for which the leftover tabs are not listed at all.
+   * @example
+   * ```ts
+   * this.isLeftoverTab(vscode.window.tabGroups.activeTabGroup.activeTab) // => true while a dead Application pane has the focus
+   * ```
+   */
+  private isLeftoverTab(tab: vscode.Tab | undefined): boolean {
+    return Boolean(tab && this.leftoverTabs().includes(tab))
   }
 
   /**
@@ -1112,11 +1164,7 @@ export class StudyWorkspace {
     this.assertPresentationAdmission()
     const focusedTab = vscode.window.tabGroups.activeTabGroup.activeTab
     // Live and replay keep the focused pane by their own rule, and a focused tab that is about to close has no focus to keep; every other closed-reader selection must be able to give the focus back.
-    if (
-      !this.liveComposition &&
-      !this.summaryComposition &&
-      !(focusedTab && this.leftoverTabs().includes(focusedTab))
-    )
+    if (!this.hasComposition() && !this.isLeftoverTab(focusedTab))
       this.capturePresentationFocus(undefined)
   }
 
@@ -1147,14 +1195,13 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       this.assertSelectionOutlastsClose(input)
       closed = await this.closeLeftoverTabs()
-      if (closed.closedAny && !closed.deadPaneKept)
+      if (this.isEditorSettlingAfter(closed))
         await this.waitForEditorAfterClose(
           closed.closedSourceUris,
           transition.cancellation.signal,
         )
     } finally {
-      if (this.presentationTransition === transition)
-        this.presentationTransition = undefined
+      this.endPresentationTransition(transition)
     }
     this.assertLifetime(lifetime)
     // A dead pane that stays would pass for this reader's own Application or Study tab, so the selection ends here, before any panel exists.
@@ -1169,18 +1216,49 @@ export class StudyWorkspace {
       return this.admitPresentation(input, closed)
     } catch (error) {
       // Only the synchronous refusal gains the reason; later failures of the admitted change keep their own cause.
-      if (
-        closed.capturedSourceKept &&
-        error instanceof StudyError &&
-        error.code === 'PRESENTATION_UNAVAILABLE'
-      )
-        throw new StudyError(
-          error.code,
-          error.message,
-          'A leftover captured source tab could not be closed.',
-        )
-      throw error
+      throw this.refusalNamingKeptSource(error, closed)
     }
+  }
+
+  /**
+   * Says whether the editor still has to bring its tab model and its active text editor into agreement after leftover tabs closed; asked by {@link selectAfterClosingLeftoverTabs} right after the close, before it waits through {@link waitForEditorAfterClose}.
+   * @param closed - What {@link closeLeftoverTabs} reported.
+   * @returns `true` when a tab closed and no dead pane stayed; `false` when nothing closed, and when a dead pane stayed, because the selection then ends without an admission.
+   * @example
+   * ```ts
+   * this.isEditorSettlingAfter({ closedAny: true, closedSourceUris: [], capturedSourceKept: false, deadPaneKept: false }) // => true
+   * ```
+   */
+  private isEditorSettlingAfter(closed: LeftoverTabClose): boolean {
+    return closed.closedAny && !closed.deadPaneKept
+  }
+
+  /**
+   * Gives the error a selection ends with when its admission after the close refused; called by the failure handler of {@link selectAfterClosingLeftoverTabs} with what {@link admitPresentation} threw.
+   * @param error - What the admission threw synchronously.
+   * @param closed - What {@link closeLeftoverTabs} reported.
+   * @returns A new `PRESENTATION_UNAVAILABLE` refusal with the same message and the kept tab as its cause, when a captured-source tab stayed and the admission refused with that code; otherwise `error` itself.
+   * @example
+   * ```ts
+   * throw this.refusalNamingKeptSource(error, closed) // causeDetail: 'A leftover captured source tab could not be closed.'
+   * ```
+   */
+  private refusalNamingKeptSource(
+    error: unknown,
+    closed: LeftoverTabClose,
+  ): unknown {
+    // A refusal met while a captured-source tab stayed open names that tab as its cause.
+    if (
+      closed.capturedSourceKept &&
+      error instanceof StudyError &&
+      error.code === 'PRESENTATION_UNAVAILABLE'
+    )
+      return new StudyError(
+        error.code,
+        error.message,
+        'A leftover captured source tab could not be closed.',
+      )
+    return error
   }
 
   /**
@@ -1468,8 +1546,8 @@ export class StudyWorkspace {
   }
 
   /**
-   * Ends a presentation transition unless a newer one has replaced it; called by the composition branch of {@link admitPresentation} when its arrangement ended, successfully or not.
-   * @param transition - The transition that arrangement ran in.
+   * Ends a presentation transition unless a newer one has replaced it; called by the composition branch of {@link admitPresentation} when its arrangement ended, and by {@link selectAfterClosingLeftoverTabs} when its close of the leftover tabs ended, successfully or not.
+   * @param transition - The transition that arrangement or close ran in.
    * @example this.endPresentationTransition(transition)
    */
   private endPresentationTransition(
@@ -6690,7 +6768,7 @@ export class StudyWorkspace {
     await (signal ? untilAborted(retirement, signal) : retirement)
   }
 
-  /** Whether the replay reader's panes exist, for {@link PlaybackController}'s reload and control guards: open and not closing. @example this.replayReaderOpen */
+  /** Whether the replay reader's panes exist, for {@link PlaybackController}'s reload and control guards and for {@link showSavedStudy} before it asks whether the editor area is hidden: open and not closing. @example this.replayReaderOpen */
   private get replayReaderOpen(): boolean {
     return this.opened && !this.closing
   }
@@ -6706,7 +6784,7 @@ export class StudyWorkspace {
   private showRecordingLoadingOnLiveViewport(): void {
     if (!this.viewport) return
     // A recording renderer still holding the shared panel is kept: a new renderer's handshake would sit on the 2.0 s recovery path. The playback controller clears its frame, except for a reload of the recording on screen.
-    if (this.replayViewport && !this.replayNeedsReveal) return
+    if (this.isRecordingRendererHoldingPanel()) return
     // The live lease's loading page replaces the shared panel's document, so a recording renderer reused across this reload could never acknowledge a frame.
     this.dropReplayViewport()
     try {
@@ -6716,6 +6794,15 @@ export class StudyWorkspace {
     } catch {
       // A lease whose panel the editor already closed has no document to write; the recording loads into a new panel.
     }
+  }
+
+  /**
+   * Says whether a recording renderer still holds the shared Application panel; asked by {@link showRecordingLoadingOnLiveViewport} before it would release that renderer for the loading page.
+   * @returns `true` when a recording renderer exists and needs no new reveal; `false` when there is none, or when the one there has to reveal the panel again.
+   * @example this.isRecordingRendererHoldingPanel() // => true at a reload of the recording on screen
+   */
+  private isRecordingRendererHoldingPanel(): boolean {
+    return Boolean(this.replayViewport) && !this.replayNeedsReveal
   }
 
   /**
@@ -7939,9 +8026,23 @@ export class StudyWorkspace {
     isPlacement: boolean,
   ): Promise<StudyWorkspace['layoutReceipt']> {
     const receipt = this.layoutReceipt
-    if (isPlacement || this.arranging || receipt?.mode !== 'study')
+    if (!this.isStudyLayoutExposedToReveal(isPlacement, receipt))
       return undefined
     return (await this.editorAreaHidden()) ? receipt : undefined
+  }
+
+  /**
+   * Says whether a source reveal could distort an arranged Study layout that nothing else is about to measure; asked by {@link confirmedLayoutBehindHiddenArea} before it reads the editor's layout.
+   * @param isPlacement - Whether a presentation placement owns the layout.
+   * @param receipt - The layout receipt as it was read before the question.
+   * @returns `true` when no placement and no arrangement in flight owns the layout and the receipt is that of a Study layout; `false` otherwise, also when no layout was arranged.
+   * @example this.isStudyLayoutExposedToReveal(false, this.layoutReceipt) // => true on an arranged Study workspace at rest
+   */
+  private isStudyLayoutExposedToReveal(
+    isPlacement: boolean,
+    receipt: StudyWorkspace['layoutReceipt'],
+  ): boolean {
+    return !isPlacement && !this.arranging && receipt?.mode === 'study'
   }
 
   /**
@@ -11130,9 +11231,7 @@ export class StudyWorkspace {
     let isRejected = false
     try {
       await this.receive(value, origin, owner)
-      // A control refused while this message was being handled is newer than this message and stays.
-      if (this.controlRefusals === refusalsBefore)
-        this.retireControlRefusal(value)
+      this.retireControlRefusalUnlessNewer(value, refusalsBefore)
     } catch (error) {
       isRejected = true
       throw error
@@ -11172,7 +11271,26 @@ export class StudyWorkspace {
     }
   }
 
-  /** Retires the line of an earlier refused pane control once a later choice of an entry, a tab or an item was handled without an error, so a refusal does not stay through later runs; called by {@link receivePaneMessage}. @example this.retireControlRefusal({ type: 'history', revision: 4, studyId }) */
+  /**
+   * Retires an earlier control refusal after a pane message was handled without an error, unless a control was refused meanwhile; called by {@link receivePaneMessage} right after {@link receive} returned.
+   * @param value - The raw message that was handled.
+   * @param refusalsBefore - The count of control refusals read before the message was handled.
+   * @example this.retireControlRefusalUnlessNewer(message, refusalsBefore)
+   */
+  private retireControlRefusalUnlessNewer(
+    value: unknown,
+    refusalsBefore: number,
+  ): void {
+    // A control refused while this message was being handled is newer than this message and stays.
+    if (this.controlRefusals === refusalsBefore)
+      this.retireControlRefusal(value)
+  }
+
+  /**
+   * Retires the line of an earlier refused pane control once a later choice of an entry, a tab or an item was handled without an error, so a refusal does not stay through later runs; called by {@link retireControlRefusalUnlessNewer} for {@link receivePaneMessage}.
+   * @param value - The raw message that was handled; any message that is no such choice retires nothing.
+   * @example this.retireControlRefusal({ type: 'history', revision: 4, studyId })
+   */
   private retireControlRefusal(value: unknown): void {
     const parsed = messageSchema.safeParse(value)
     if (
@@ -11180,11 +11298,20 @@ export class StudyWorkspace {
       !CONTROL_RETIRING_MESSAGE_TYPES.has(parsed.data.type)
     )
       return
+    if (this.dropChoiceRetiredErrors()) this.publish()
+  }
+
+  /**
+   * Removes every reader line a handled choice retires; called by {@link retireControlRefusal} for a message that is such a choice.
+   * @returns `true` when at least one line was there and is gone, so the reader has to be published; `false` when none was.
+   * @example if (this.dropChoiceRetiredErrors()) this.publish()
+   */
+  private dropChoiceRetiredErrors(): boolean {
     // A Node test history's refusal has its own line (it is not a live-run control) and is as stale after the next handled choice.
     let isRetired = false
     for (const kind of CHOICE_RETIRED_ERROR_KINDS)
       isRetired = this.errors.delete(kind) || isRetired
-    if (isRetired) this.publish()
+    return isRetired
   }
 
   /**
@@ -12696,7 +12823,7 @@ export class StudyWorkspace {
     this.selectArchive(archive)
     this.studyAwaitingEditorArea = undefined
     // With the bottom panel maximized the editor area is hidden; showing the study's panes now would bring the area back and take the panel, where the learner is choosing, out of its maximized state.
-    if (this.opened && !this.closing && (await this.editorAreaHidden())) {
+    if (this.replayReaderOpen && (await this.editorAreaHidden())) {
       this.studyAwaitingEditorArea = {
         selectionRevision: this.readerSelectionRevision,
         arrange: this.needsReaderArrangement(),
