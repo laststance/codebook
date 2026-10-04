@@ -10,14 +10,14 @@ export interface BindingLineRule {
 
 /**
  * Decides once, at preparation, which lines the debugger may bind a declared stop's breakpoint on, so the pause handler and every later check never read the sealed map.
- * A debugger that cannot pause on a line binds the first place after it, so a later line is the declared stop when the article shows it and nothing that could run lies between: every line from the declared one up to the first later line the map has a position on. {@link ConfiguredBrowserRun} builds one rule per stop and asks it wherever a binding or a pause is compared with that stop.
+ * The rule is measured from the line the stop's breakpoint is requested on. A debugger that cannot pause at the requested place binds the first place after it, so a later line is the stop when the article shows it and nothing that could run lies between it and the requested line: accepted are the lines from the declared to the requested one, the line after the requested one, and every later line of the citation up to the first line after the requested one that the map has a position on. {@link ConfiguredBrowserRun} builds one rule per stop and asks it wherever a binding or a pause is compared with that stop.
  * @param declaredLine - One-based line the agent declared the stop on; it lies within the citation.
  * @param citation - The stop's article excerpt; only its last line is needed, because an accepted bound line is never before the declared one.
  * @param scan - The stop's one scan of its sealed map, from the declared line to the last line of its citation; the rule reads the first mapped line after the requested one from it.
  * @param requestedLine - The line the stop's breakpoint is requested on ({@link resolveArmedPlace}): the declared line, or, for a stop declared on a line without a mapped position, the first mapped line after it. The rule is measured from this line, because a debugger that cannot pause there either binds the first place after it, exactly as for a stop declared there.
  * @returns The rule:
  * - `accepts` is `true` from the declared line to the requested one, and on a later whole line within the citation with no mapped line between it and the requested line
- * - `refusal` names an earlier line, a line after the citation, the mapped line between, or a scan that stopped at its size limit
+ * - `refusal` names an earlier line, a line after the citation, the mapped line between the requested and the bound line, or a scan that stopped at its size limit, with the line to declare instead; the last two name the requested line the lines are counted from
  * @example
  * const rule = createBindingLineRule(22, { endLine: 95 }, verifier.mappedPositions(22, 95), 22)
  * rule.accepts(23) // => true: the debugger moved `return (` onto the `<form>` line
@@ -53,7 +53,7 @@ export function createBindingLineRule(
       return `line ${firstMappedLine} between ${requestedAt} and line ${line} has a mapped position`
     // A scan that stopped at its size limit proves nothing about the lines it did not reach.
     if (!scan.complete)
-      return `the sealed map was too large to scan completely, so lines ${requestedLine + 1} to ${line - 1} between the declared line and line ${line} may hold code`
+      return `the sealed map was too large to scan completely, so lines ${requestedLine + 1} to ${line - 1} between ${requestedAt} and line ${line} may hold code; declare the stop on line ${line}, where the debugger bound it`
     return undefined
   }
   return {

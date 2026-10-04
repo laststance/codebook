@@ -36,7 +36,8 @@ import {
 } from './constants'
 import { StudyError } from './errors'
 import {
-  OWNED_BREAKPOINT_REMOVED,
+  OwnedBreakpointMovedError,
+  OwnedBreakpointRemovedError,
   OwnedRepositoryBreakpoint,
   verifiedPlaceSchema,
 } from './ownedRepositoryBreakpoint'
@@ -128,13 +129,23 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   scan: MappedPositionsScan
   /** Where the stop's breakpoint is requested ({@link resolveArmedPlace}): the declared position, or the first mapped position after a declared line that has none. */
   armed: { line: number; column: number }
+  /** The place of the stop's first request, kept once {@link ConfiguredBrowserRun.rearmOnRequestedLine} requested the stop a second time, so a text can say which column the second request replaced. */
+  firstRequest?: { line: number; column: number }
   /** The debugger's verified binding, on the declared line or on a later line {@link PreparedStop.acceptsBoundLine} accepts; every later check, the saved observation and the display use it instead of the requested position. */
   bound?: { line: number; column: number }
-  /** Tells whether a line the debugger chose is this stop's place: the declared line, or a later line within the stop's citation with no mapped line between ({@link createBindingLineRule}). Every site that compares a binding or a pause with this stop asks it. */
+  /** Tells whether a line the debugger chose is this stop's place, measured from the line the stop is requested on ({@link createBindingLineRule}): the lines from the declared to the requested one, or a later line within the stop's citation with no mapped line between it and the requested line. Every site that compares a binding or a pause with this stop asks it. */
   acceptsBoundLine: (line: number) => boolean
   /** Names the condition that refuses a line as this stop's place, for the failure an agent reads; `undefined` for an accepted line. */
   bindingRefusal: (line: number) => string | undefined
 }
+/** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on, and the place when the adapter moved the breakpoint to a line the stop's rule refuses. */
+type RegistrationStatus =
+  | { status: 'pending' | 'bound' | 'unknown' }
+  | {
+      status: 'refused'
+      reason: string
+      movedTo?: { line: number; column: number }
+    }
 type DebugParticipant = {
   gate: PauseGate
   selected?: vscode.DebugSession
@@ -482,7 +493,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         // When the scan stopped at its size limit, the sealed source says whether the line holds code.
         (!scanComplete &&
           !isBlankOrCommentLine(stop.bundle.source, stop.source.line)) ||
-        // The debugger binds a line it cannot pause on at the first place after it, which the stop's rule accepts within its citation; only a stop with no such place can never bind.
+        // The debugger verifies nothing on a line without a mapped position, so such a stop is requested at the first mapped position after it within its citation; only a stop with no such place can never bind.
         this.canLaterLineBind(
           stop,
           this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
@@ -579,9 +590,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Arms the next expected stop before any input or resume can reach it, called by {@link prepareOwned} for the first stop and by {@link continue} for each later one.
-   * The declared position is a request: a browser stop records the debugger's verified binding as its position, on the declared line or on a later line the stop's rule accepts, and a server stop's owned breakpoint is given the same rule for its acknowledgement.
+   * The breakpoint is requested at {@link PreparedStop.armed}: the declared position, or, because the debugger verifies nothing on a line without a mapped position, the first mapped position after such a declared line ({@link resolveArmedPlace}). The stop's rule is measured from that requested line. The requested column is a preference: a browser stop records the debugger's verified binding as its position, on the requested line or on a line the rule accepts, and a server stop's owned breakpoint is given the same rule for its acknowledgement.
+   * For both participants, a binding acknowledged on a later line although the requested line can pause is answered with one more request, at that line's break location before the requested column ({@link rearmOnRequestedLine}); the stop is refused only when the second request is bound on a later line again, or no break location lies before the requested column.
    * @param stop - The declared stop that is next in order.
-   * @throws When a browser binding lands on a line the rule refuses or never verifies, or a server registration is refused; each failure names the declared stop.
+   * @throws When a browser binding lands on a line the rule refuses or never verifies, a server registration is refused, or a second request is bound past its line again; each failure names the declared stop.
    * @example
    * ```ts
    * await this.armStop(this.stops[0]!)
@@ -723,7 +735,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           return parsed.data
         },
-        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${this.requestedAt(stop)}); choose an executable statement reached by the requested action`,
+        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${this.requestedAt(stop)}); declare the stop on an executable statement the action reaches (${this.declaredField(stop)})`,
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
@@ -739,14 +751,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
 
-  /** Names where a stop's breakpoint is requested, for the text of a binding that never verifies: the declared column, the first mapped position after an unmapped declared line, or the place of a second request on the declared line. @example this.requestedAt(stop) // 'requested column 9' */
+  /**
+   * Names where a stop's breakpoint is requested, for the text of a binding that never verifies ({@link verifiedBrowserBinding}), so an agent sees the place the debugger was asked for and how Codebook chose it.
+   * @param stop - The stop whose binding did not verify.
+   * @returns
+   * - `requested column C` for a stop requested where it was declared
+   * - `requested at L:C, the first mapped position after the declared line` for a declared line without a mapped position ({@link resolveArmedPlace})
+   * - `requested at L:C, the first place the debugger can pause at after the declared line` when the map was too large to scan and the break locations chose the place ({@link confirmRequestedPlace})
+   * - `requested again at L:c, the line's break location before the first requested column C` after a second request ({@link rearmOnRequestedLine})
+   * @example
+   * ```ts
+   * this.requestedAt(stop) // 'requested column 9'
+   * ```
+   */
   private requestedAt(stop: PreparedStop): string {
-    const { armed, source } = stop
-    if (armed.line !== source.line)
-      return `requested at ${armed.line}:${armed.column}, the first mapped position after the declared line`
-    return armed.column === source.column
-      ? `requested column ${source.column}`
-      : `requested again at column ${armed.column}, the line's break location before the declared column ${source.column}`
+    const { armed, source, firstRequest } = stop
+    // A second request names the column it replaced on its line.
+    if (firstRequest)
+      return `requested again at ${armed.line}:${armed.column}, the line's break location before the first requested column ${firstRequest.column}`
+    if (armed.line === source.line) return `requested column ${source.column}`
+    // A map too large to scan left the place to the debugger's break locations.
+    const chosenBy = stop.scan.complete
+      ? 'the first mapped position after the declared line'
+      : 'the first place the debugger can pause at after the declared line'
+    return `requested at ${armed.line}:${armed.column}, ${chosenBy}`
   }
 
   /**
@@ -790,6 +818,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     this.alive()
     stop.armed = { line: firstRequest.line, column }
+    stop.firstRequest = firstRequest
     stop.breakpoint = this.requestBreakpoint(stop)
     this.evidence.record('breakpoint.rearmed-on-requested-line', {
       participant: stop.participant,
@@ -830,18 +859,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Words a refused or lost registration for {@link registeredStop} and for the synchronous receipt check before input in {@link dispatchInput}, so each place the run reads the receipt names the declared stop.
    * @param stop - The declared server stop whose registration failed.
    * @param error - What the tracker threw.
-   * @returns The error to throw; a removed breakpoint gets no mapping hints, because another line would not help.
+   * @returns The error to throw. A refusal names the next step (a new run, then another statement of the citation) and the configuration field of the stop, followed by the mapping hints; a removed breakpoint gets neither, because another line would not help. A breakpoint the adapter moved to a line the stop's rule refuses is worded as every refused binding ({@link refusedBindingText}): the place and the rule's reason.
    * @example
    * ```ts
-   * throw this.registrationFailure(stop, error) // 'Declared stop app/lib/actions.ts:36 was not registered: …'
+   * throw this.registrationFailure(stop, error) // 'Declared stop app/lib/actions.ts:36 was not registered: …. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.source). Frozen source map positions …'
    * ```
    */
   private registrationFailure(stop: PreparedStop, error: unknown): Error {
+    // The adapter's later news put the acknowledged breakpoint on a line the stop's rule refuses.
+    if (error instanceof OwnedBreakpointMovedError)
+      return this.bindingFailure(
+        stop,
+        this.refusedBindingText(stop, error.place),
+      )
     const reason = thrownMessage(error),
       message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
-    return reason === OWNED_BREAKPOINT_REMOVED
+    // A removed breakpoint is told by its type, not by its text.
+    return error instanceof OwnedBreakpointRemovedError
       ? new Error(message)
-      : this.bindingFailure(stop, message)
+      : this.bindingFailure(
+          stop,
+          `${message}. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (${this.declaredField(stop)})`,
+        )
+  }
+
+  /** Names the configuration field that holds a declared stop's position, for the refusals that tell the agent what to change ({@link registrationFailure}, {@link slideRefusal}). @example this.declaredField(stop) // 'configuration.source' for the first stop */
+  private declaredField(stop: PreparedStop): string {
+    return configuredStopFields(
+      this.definition.configuration.version,
+      this.stops.indexOf(stop),
+    ).source
   }
 
   /** Names a declared stop by its file and line in the failures an agent reads, so it can tell which of its stops to change; stops that share one line (a line that runs twice) are told apart by their place in the declared order. @example this.declaredAt(stop) // 'app/lib/actions.ts:36', or 'app/lib/actions.ts:36 (stop 2 of 3)' when another stop names that line */
@@ -859,7 +906,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Tells whether a line after a declared stop's line, within its citation, can carry a position, so a stop declared on a line without one is refused before any input only when the debugger has nowhere to bind it.
+   * Tells whether a line after a declared stop's line, within its citation, can carry a position, so a stop declared on a line without one is refused before any input only when there is no later place to request it at: the debugger verifies nothing on the declared line itself, and the stop is requested at the first mapped position after it ({@link resolveArmedPlace}), from which its rule is measured.
    * Called by the declared-line check of preparation. The sealed map decides when it was scanned completely; when it is too large to scan, the sealed source text decides, so a small and an oversized map follow one rule.
    * @param stop - The declared stop whose own line has no position.
    * @param endLine - The last line of the stop's citation; a binding after it is refused by the stop's rule anyway.
@@ -877,7 +924,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       return true
     if (stop.scan.complete) return false
-    // The scan stopped at its size limit before it found a later position: any remaining line that could hold code may be where the debugger binds.
+    // The scan stopped at its size limit before it found a later position: any remaining line that could hold code may be where the stop is requested, which the debugger's break locations decide when it is armed.
     for (let line = stop.source.line + 1; line <= endLine; line++)
       if (!isBlankOrCommentLine(stop.bundle.source, line)) return true
     return false
@@ -978,10 +1025,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       secondRequest = firstRequest
         ? `, and a second request at ${armed.line}:${armed.column} was bound on line ${binding.line} again`
         : ''
-    const field = configuredStopFields(
-      this.definition.configuration.version,
-      this.stops.indexOf(stop),
-    ).source
+    const field = this.declaredField(stop)
     // Codebook chose the column of a stop requested after its declared line, so the agent is told which line to declare.
     const advice =
       armed.line === source.line
@@ -1153,8 +1197,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (moved)
       return `${opening}: declared stop ${this.declaredAt(stop)} ${this.boundAt(moved)} ${notHit}; the bound line, not the declared one, must execute after the input`
     if (stop.participant === 'server') {
-      const requested = this.requestedElsewhere(stop)
-      return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${this.registrationStatus(stop)}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
+      const requested = this.requestedElsewhere(stop),
+        registration = this.registrationStatus(stop)
+      // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop, so its line is not the reason.
+      if (
+        registration.status === 'refused' ||
+        registration.status === 'unknown'
+      )
+        return `${opening}: declared server stop ${this.declaredAt(stop)}${requested ? ` (${requested})` : ''} ${notHit}; ${this.unacknowledgedText(stop, registration)}`
+      return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${registration.status}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
     }
     return `${opening}: declared stop ${this.declaredAt(stop)} ${notHit}; its line must execute after the input`
   }
@@ -1175,17 +1226,61 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       : undefined
   }
 
-  /** Names a server stop's registration for the two deadline texts without throwing, so neither claims more than the adapter said: `pending` until its module loads, `bound` once verified, `refused` when the adapter refused it or the breakpoint is gone, `unknown` when no current receipt can be read (a newer registration request is unanswered, or no session is selected). @example this.registrationStatus(stop) // 'pending' */
-  private registrationStatus(
-    stop: PreparedStop,
-  ): 'pending' | 'bound' | 'refused' | 'unknown' {
+  /**
+   * Reads a server stop's registration for the two deadline texts without throwing, so neither claims more than the adapter said; {@link unreachedFirstStopReason} and {@link unreachedNextStopReason} call it when their deadline expires.
+   * @param stop - The declared server stop that was not reached.
+   * @returns
+   * - `pending` until the stop's module loads, `bound` once the adapter verified it
+   * - `refused` with the reason the registration read threw, when the adapter refused or revoked it or the breakpoint is gone; and with `movedTo` when the adapter moved it to a place the stop's rule refuses
+   * - `unknown` when no current receipt can be read: a newer registration request is unanswered, or no session is selected
+   * @example
+   * ```ts
+   * this.registrationStatus(stop) // { status: 'refused', reason: 'Owned breakpoint was removed before registration' }
+   * ```
+   */
+  private registrationStatus(stop: PreparedStop): RegistrationStatus {
     const session = this.participants[stop.participant].selected
-    if (!session || !stop.breakpoint) return 'unknown'
+    if (!session || !stop.breakpoint) return { status: 'unknown' }
     try {
-      return stop.breakpoint.registration(session)?.status ?? 'unknown'
-    } catch {
-      return 'refused'
+      const receipt = stop.breakpoint.registration(session)
+      return receipt ? { status: receipt.status } : { status: 'unknown' }
+    } catch (error) {
+      return {
+        status: 'refused',
+        reason: thrownMessage(error),
+        ...(error instanceof OwnedBreakpointMovedError
+          ? { movedTo: error.place }
+          : {}),
+      }
     }
+  }
+
+  /**
+   * Words what both deadline texts say for a server stop whose breakpoint the adapter does not hold acknowledged where the stop can use it; {@link unreachedFirstStopReason} and {@link unreachedNextStopReason} append it.
+   * @param stop - The declared server stop that was not reached.
+   * @param registration - What {@link registrationStatus} read: refused, or without a current receipt.
+   * @returns
+   * - For a breakpoint the adapter moved to a line the stop's rule refuses: the place, the rule's reason, and that the bound place is what to declare, because a new run would bind it there again
+   * - Otherwise what was read, and that only a new run helps, because no other declaration would
+   * @example
+   * ```ts
+   * this.unacknowledgedText(stop, { status: 'unknown' }) // 'the debugger no longer acknowledged its breakpoint (no current registration receipt could be read), so the stop could not pause. Stop this run and start a new one.'
+   * ```
+   */
+  private unacknowledgedText(
+    stop: PreparedStop,
+    registration: RegistrationStatus,
+  ): string {
+    // The adapter moved the acknowledged breakpoint to a refused line: the declaration, not the run, is what to change.
+    if (registration.status === 'refused' && registration.movedTo) {
+      const { line, column } = registration.movedTo
+      return `the debugger moved its breakpoint to ${line}:${column}, refused: ${stop.bindingRefusal(line) ?? 'the binding rule refused that line'}, so the stop could not be captured there. Declare the bound place instead (${this.declaredField(stop)}), in a citation that covers it.`
+    }
+    const read =
+      registration.status === 'refused'
+        ? registration.reason
+        : 'no current registration receipt could be read'
+    return `the debugger no longer acknowledged its breakpoint (${read}), so the stop could not pause. Stop this run and start a new one.`
   }
 
   /**
@@ -1215,11 +1310,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       requested = this.requestedElsewhere(stop),
       // A server stop that was requested at another place than declared says so, because that place is where its breakpoint waits.
       serverOpening = requested ? `${opening} (${requested})` : opening
-    if (registration === 'pending')
-      return `${serverOpening} ${within}; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation`
+    if (registration?.status === 'pending')
+      return `${serverOpening} ${within}; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.`
     // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop.
-    if (registration === 'refused' || registration === 'unknown')
-      return `${serverOpening} ${within}; the debugger no longer acknowledged its breakpoint, so the stop could not pause`
+    if (
+      registration?.status === 'refused' ||
+      registration?.status === 'unknown'
+    )
+      return `${serverOpening} ${within}; ${this.unacknowledgedText(stop, registration)}`
     return `${opening} ${within}; its line must execute after the preceding continuation`
   }
 

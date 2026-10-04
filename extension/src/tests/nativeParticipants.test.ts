@@ -767,8 +767,33 @@ test('server registration revoked during the final DOM check prevents the mouse 
   // The synchronous receipt check before the input names the declared stop, like the two awaited checks.
   assert.equal(
     harness.run.view().failures[0],
-    'Error: Declared stop src/mode.ts:1 (stop 1 of 3) was not registered: Selected adapter did not acknowledge the declared breakpoint registration (declared 1:1, answered no line:no column unverified): {"responseSuccess":false,"responseCount":1,"expectedCount":1,"expectedLine":1,"expectedColumn":1,"selectedId":12,"selectedVerified":false,"selectedReason":null,"selectedLine":null,"selectedColumn":null,"selectedSourceMatches":null}. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+    'Error: Declared stop src/mode.ts:1 (stop 1 of 3) was not registered: Selected adapter did not acknowledge the breakpoint registration (requested 1:1, answered no line:no column unverified): {"responseSuccess":false,"responseCount":1,"expectedCount":1,"expectedLine":1,"expectedColumn":1,"selectedId":12,"selectedVerified":false,"selectedReason":null,"selectedLine":null,"selectedColumn":null,"selectedSourceMatches":null}. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.source). Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
   )
+})
+
+// Cycle 0045 (X7-A.1): red while the adapter's news of a refused place was ignored: the receipt stayed pending, the last check before the input passed, and the click was sent for a stop that could not be captured.
+test('a server stop the adapter reports verified on a line its rule refuses after acknowledging it ends the action before any input is sent, naming that place and why it is refused', async (context) => {
+  // Arrange: the stop is declared at 1:1 and its citation is line 1; the adapter acknowledged it as pending and then reports it verified at 2:1.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.announceBreakpointVerified('server', 2, 1)
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the action failed or reached its stop')
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Declared stop src/mode.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
 })
 
 // Value: protects=a run stopped while a later stop is still being armed inside a continuation; fails_when=the cancelled arming goes on to resume the paused server, or ends as a binding failure with mapping hints instead of the cancellation; why_new=Cycle 0036 C07d (only an adapter failure during arming was tested); seam=holdBindingLookup keeps the adapter's binding answer back
@@ -1279,11 +1304,11 @@ test('a later server stop whose registration is acknowledged on another line end
   // Assert
   assert.match(
     cause,
-    /^Error: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration \(declared 1:1, answered 2:1 verified\): \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
+    /^Error: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the breakpoint registration \(requested 1:1, answered 2:1 verified\): \{.*"expectedLine":1,.*"selectedLine":2,"selectedColumn":1,.*\}\. Start a new run; if the registration is refused again, declare this stop on another statement of its citation \(configuration\.additionalStops\[0\]\.source\)\. Frozen source map positions in the selected citation: 1:1\. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them\.$/,
   )
   assert.match(
     harness.run.view().failures[0] ?? '',
-    /^Next declared stop was not armed and no resume was sent: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the declared breakpoint registration \(declared 1:1, answered 2:1 verified\): /,
+    /^Next declared stop was not armed and no resume was sent: Declared stop src\/mode\.ts:1 \(stop 2 of 2\) was not registered: Selected adapter did not acknowledge the breakpoint registration \(requested 1:1, answered 2:1 verified\): /,
   )
   assert.equal(
     harness.commands.some((command) => command.method === 'continue'),
@@ -2256,7 +2281,7 @@ test('a later browser stop the debugger binds on the next line of its citation i
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
 })
 
-// Value: protects=a later server stop in a module that is already loaded going on when the adapter acknowledges its registration on the next line; fails_when=the owned breakpoint refuses that acknowledgement ("was not registered: Selected adapter did not acknowledge the declared breakpoint registration"), or its pause reaches the stop only when the 3 s wait for the stop's own pause ends; why_new=the owner accepted the declared line only (Cycle 0043, criterion 4, ER4, ER5); seam=the run's wait for the accepted stop's own pause, held open by the harness
+// Value: protects=a later server stop in a module that is already loaded going on when the adapter acknowledges its registration on the next line; fails_when=the owned breakpoint refuses that acknowledgement ("was not registered: Selected adapter did not acknowledge the breakpoint registration"), or its pause reaches the stop only when the 3 s wait for the stop's own pause ends; why_new=the owner accepted the declared line only (Cycle 0043, criterion 4, ER4, ER5); seam=the run's wait for the accepted stop's own pause, held open by the harness
 test('a later server stop whose registration the adapter acknowledges on the next line is accepted and captured there without waiting for a pause on the declared line', async (context) => {
   // Arrange: the second stop is registered after the module loaded and the adapter verifies it at 2:1.
   const harness = await nativeParticipantsHarness(
@@ -2734,6 +2759,150 @@ test('a server stop declared on a line the sealed map has no position on is requ
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
 })
 
+// Cycle 0045 (ST-19, class B): every test put the unmapped line on the first stop. Green today; the control of this test and the next requests a later stop at its declared position.
+test('a later server stop declared on an unmapped line in a module that is already loaded is requested at the first mapped position after it inside the continuation and captured there', async (context) => {
+  // Arrange: line 1 of the server module has no mapping, line 2 has one, so both stops declared at 1:1 are requested at 2:1. The first is captured; the module is loaded then, so the adapter verifies the second registration where it is requested.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    {
+      mappings: { server: ';AACA' },
+      fixture: { server: { citationEndLine: 2 } },
+    },
+  )
+  await harness.run.prepare()
+  harness.pauseAt('server', 1, 0)
+  harness.bindAt('server', 2, 1)
+  harness.movePausedFrame(2)
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsWith((requested) => requested)
+
+  // Act
+  await harness.run.continue('server', first.pause)
+  const requestedSecond = harness.breakpoints.map(
+    (breakpoint) => breakpoint.location.range.start,
+  )
+  const second = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1]
+  }, 'later server stop captured at the first mapped position after its declared line')
+  await harness.run.continue('server', second.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after a later stop requested after its declared line',
+  )
+  await harness.run.stop()
+
+  // Assert: one owned breakpoint, requested on line 2 (zero-based 1) inside the continuation.
+  assert.deepEqual(
+    requestedSecond.map((start) => ({
+      line: start.line,
+      character: start.character,
+    })),
+    [{ line: 1, character: 0 }],
+  )
+  const view = harness.run.view()
+  assert.deepEqual(
+    view.events
+      .filter((event) => event.type === 'breakpoint.armed-after-declared-line')
+      .map((event) => JSON.parse(JSON.stringify(event.detail))),
+    [
+      {
+        participant: 'server',
+        declared: { line: 1, column: 1 },
+        armed: { line: 2, column: 1 },
+      },
+      {
+        participant: 'server',
+        declared: { line: 1, column: 1 },
+        armed: { line: 2, column: 1 },
+      },
+    ],
+  )
+  assert.equal(
+    JSON.stringify(
+      view.events
+        .filter((event) => event.type === 'breakpoint.registered')
+        .map((event) => JSON.parse(JSON.stringify(event.detail)).status),
+    ),
+    '["pending","bound"]',
+  )
+  assert.equal(second.source.line, 2)
+  assert.equal(second.source.column, 1)
+  assert.equal(view.failures.length, 0)
+  assert.equal(view.finalOutcome, 'demonstrated')
+})
+
+// Cycle 0045 (ST-19, class B): the refusal of such a request inside the continuation; green today.
+test('a later server stop declared on an unmapped line whose request the adapter refuses answers that the next declared stop was not armed and no resume was sent', async (context) => {
+  // Arrange: as above, but the adapter verifies the second registration on line 3, after the stop's citation.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    {
+      mappings: { server: ';AACA' },
+      fixture: { server: { citationEndLine: 2 } },
+    },
+  )
+  await harness.run.prepare()
+  harness.pauseAt('server', 1, 0)
+  harness.bindAt('server', 2, 1)
+  harness.movePausedFrame(2)
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsWith(() => ({ line: 3, column: 1 }))
+
+  // Act
+  const answer = await harness.run.continue('server', first.pause).then(
+    () => 'continued',
+    (error: unknown) => String(error),
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    answer,
+    'Error: Declared stop src/mode.ts:1 (stop 2 of 2) was not registered: Selected adapter did not acknowledge the breakpoint registration (requested 2:1, answered 3:1 verified): {"responseSuccess":true,"responseCount":1,"expectedCount":1,"expectedLine":2,"expectedColumn":1,"selectedId":13,"selectedVerified":true,"selectedReason":null,"selectedLine":3,"selectedColumn":1,"selectedSourceMatches":null}. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.additionalStops[0].source). Frozen source map positions in the selected citation: 2:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(
+    harness.run.view().failures[0],
+    'Next declared stop was not armed and no resume was sent: Declared stop src/mode.ts:1 (stop 2 of 2) was not registered: Selected adapter did not acknowledge the breakpoint registration (requested 2:1, answered 3:1 verified): {"responseSuccess":true,"responseCount":1,"expectedCount":1,"expectedLine":2,"expectedColumn":1,"selectedId":13,"selectedVerified":true,"selectedReason":null,"selectedLine":3,"selectedColumn":1,"selectedSourceMatches":null}. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.additionalStops[0].source). Frozen source map positions in the selected citation: 2:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method === 'continue'),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
+
+// Cycle 0045 (ST-21, SM-19): red while the refusal called the place the breakpoint was requested at "declared" ("declared 2:1" for a stop declared at 1:1) and named no next step.
+test('a server stop requested after its unmapped declared line whose registration the adapter refuses names the place it was requested at, not a declared place', async (context) => {
+  // Arrange: line 1 of the server module has no mapping, line 2 has one, so the stop declared at 1:1 is requested at 2:1; the adapter answers that request as failed.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: ';AACA' },
+    fixture: { server: { citationEndLine: 2 } },
+  })
+  harness.failRegistration()
+  // Act
+  let refusal = ''
+  await assert.rejects(harness.run.prepare(), (error: unknown) => {
+    refusal = String(error)
+    return true
+  })
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    refusal,
+    'Error: Declared stop src/mode.ts:1 was not registered: Selected adapter did not acknowledge the breakpoint registration (requested 2:1, answered no line:no column unverified): {"responseSuccess":false,"responseCount":1,"expectedCount":1,"expectedLine":2,"expectedColumn":1,"selectedId":12,"selectedVerified":false,"selectedReason":null,"selectedLine":null,"selectedColumn":null,"selectedSourceMatches":null}. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.source). Frozen source map positions in the selected citation: 2:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+})
+
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the first server stop declared at actions.ts 30:3 was requested at 31:3, paused at 32:11 and the run ended "bound at 32:11, refused: line 31 between the declared line 30 and line 32 has a mapped position" (native).
 test('a server stop requested after its unmapped declared line that pauses on the line after the requested one is captured there', async (context) => {
   // Arrange: line 1 has no mapping, lines 2 and 3 have one; the breakpoint requested on line 2 binds at 3:1 and the runtime pauses there.
@@ -2884,7 +3053,7 @@ test('a server stop the debugger binds and pauses two lines below fails when the
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    `Error: Declared stop src/mode.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line and line 3 may hold code. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
+    `Error: Declared stop src/mode.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line 1 and line 3 may hold code; declare the stop on line 3, where the debugger bound it. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
@@ -2914,9 +3083,132 @@ test('a later server stop whose registration is still pending when its deadline 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.',
   )
   assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-4): red while the deadline dropped the reason the registration read gave and named no next step ("the debugger no longer acknowledged its breakpoint, so the stop could not pause").
+test('a later server stop whose breakpoint was removed after its continuation ends the run at the deadline saying the debugger no longer acknowledged it', async (context) => {
+  // Arrange: the first stop is captured and continued, which arms the second; its owned breakpoint is then removed from the editor and no pause arrives.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+  harness.breakpoints.splice(0, harness.breakpoints.length)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'server stop without its breakpoint not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; the debugger no longer acknowledged its breakpoint (Owned breakpoint was removed before registration), so the stop could not pause. Stop this run and start a new one.',
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-4): the same deadline when no current receipt can be read; red while the text gave no reason and no next step.
+test('a later server stop whose newer registration request the adapter left unanswered ends the run at the deadline saying no current receipt could be read', async (context) => {
+  // Arrange: the second stop is armed inside the continuation; the editor then sends its breakpoint list again and the adapter does not answer.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+  harness.leaveRegistrationUnansweredAtColumn(1)
+  harness.resendServerRegistration()
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'server stop without a current receipt not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; the debugger no longer acknowledged its breakpoint (no current registration receipt could be read), so the stop could not pause. Stop this run and start a new one.',
+  )
+  assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-4): the first stop's deadline said "registration refused" and then that the request may still be running; red while a removed breakpoint was explained by the action.
+test('a first server stop whose breakpoint was removed after the input ends the run at the deadline saying the debugger no longer acknowledged it', async (context) => {
+  // Arrange: the input is sent and the stop's pause is held back; the owned breakpoint is then removed from the editor.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  harness.breakpoints.splice(0, harness.breakpoints.length)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'first server stop without its breakpoint not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository input reached no verified pause: declared server stop src/mode.ts:1 was not hit within 20 s of the accepted action; the debugger no longer acknowledged its breakpoint (Owned breakpoint was removed before registration), so the stop could not pause. Stop this run and start a new one.',
+  )
+})
+
+// Cycle 0045 (X7-A.1 with ST-4): red while a breakpoint the adapter moved to a refused line after the input ended the run with "the debugger no longer acknowledged its breakpoint (…). Stop this run and start a new one.": a new run binds it there again, so the declaration is what to change.
+test('a server stop whose breakpoint the adapter moves to a refused line after the input ends the run at the deadline naming that place, why it is refused and what to declare', async (context) => {
+  // Arrange: the stop is declared at 1:1 and its citation is line 1; the input is sent and the stop's pause is held back, then the adapter reports the breakpoint verified at 2:1.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  harness.announceBreakpointVerified('server', 2, 1)
+
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'server stop moved to a refused line not hit',
+  )
+  await harness.run.stop()
+
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository input reached no verified pause: declared server stop src/mode.ts:1 was not hit within 20 s of the accepted action; the debugger moved its breakpoint to 2:1, refused: line 2 is after the last line 1 of the citation, so the stop could not be captured there. Declare the bound place instead (configuration.source), in a citation that covers it.',
+  )
 })
 
 // Cycle 0045 (NF-29 b): the later stop's twin of the first stop's deadline text; red while only the declared place was named.
@@ -2949,7 +3241,7 @@ test('the deadline text of a later server stop requested after its declared line
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) (requested at 2:1) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) (requested at 2:1) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.',
   )
 })
 
@@ -3106,7 +3398,7 @@ test('a continuation that reaches no next stop while the server stays paused at 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. The server is paused at src/mode.ts:2 without a debugger stop.',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop. The server is paused at src/mode.ts:2 without a debugger stop.',
   )
   assert.equal(harness.run.view().snapshots.length, 1)
 })
@@ -3333,7 +3625,7 @@ test('a deadline whose paused place cannot be read still fails the run with its 
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation (where a participant is paused could not be read: sealed map unreadable)',
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop. (where a participant is paused could not be read: sealed map unreadable)',
   )
 })
 

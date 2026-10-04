@@ -1146,7 +1146,7 @@ test('an unbound stop in a 120-line citation lists the first 20 mapped lines, th
   // Assert
   assert.equal(
     refusal,
-    'Timed out waiting for a verified binding of declared stop src/theme.ts:60 on its declared line or a later line its binding rule accepts (requested column 1); choose an executable statement reached by the requested action. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:1, 5:1, 6:1, 7:1, 8:1, 9:1, 10:1, 11:1, 12:1, 13:1, 14:1, 15:1, 16:1, 17:1, 18:1, 19:1, 20:1, 40:1, 41:1, 42:1, 43:1, 44:1, 45:1, 46:1, 47:1, 48:1, 49:1, 50:1, 51:1, 52:1, 53:1, 54:1, 55:1, 56:1, 57:1, 58:1, 59:1, 60:1, 61:1, 62:1, 63:1, 64:1, 65:1, 66:1, 67:1, 68:1, 69:1, 70:1, 71:1, 72:1, 73:1, 74:1, 75:1, 76:1, 77:1, 78:1, 79:1, 101:1, 102:1, 103:1, 104:1, 105:1, 106:1, 107:1, 108:1, 109:1, 110:1, 111:1, 112:1, 113:1, 114:1, 115:1, 116:1, 117:1, 118:1, 119:1, 120:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+    'Timed out waiting for a verified binding of declared stop src/theme.ts:60 on its declared line or a later line its binding rule accepts (requested column 1); declare the stop on an executable statement the action reaches (configuration.source). Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:1, 5:1, 6:1, 7:1, 8:1, 9:1, 10:1, 11:1, 12:1, 13:1, 14:1, 15:1, 16:1, 17:1, 18:1, 19:1, 20:1, 40:1, 41:1, 42:1, 43:1, 44:1, 45:1, 46:1, 47:1, 48:1, 49:1, 50:1, 51:1, 52:1, 53:1, 54:1, 55:1, 56:1, 57:1, 58:1, 59:1, 60:1, 61:1, 62:1, 63:1, 64:1, 65:1, 66:1, 67:1, 68:1, 69:1, 70:1, 71:1, 72:1, 73:1, 74:1, 75:1, 76:1, 77:1, 78:1, 79:1, 101:1, 102:1, 103:1, 104:1, 105:1, 106:1, 107:1, 108:1, 109:1, 110:1, 111:1, 112:1, 113:1, 114:1, 115:1, 116:1, 117:1, 118:1, 119:1, 120:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
   )
 })
 
@@ -1992,7 +1992,7 @@ test('a browser stop the debugger binds two lines below is refused when the seal
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line and line 3 may hold code. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line 1 and line 3 may hold code; declare the stop on line 3, where the debugger bound it. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
@@ -2224,6 +2224,102 @@ test('a browser stop the debugger moves to another line after it was armed fails
     'Error: Declared stop src/theme.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
   )
   assert.equal(run.view().snapshots.length, 0)
+})
+
+// Cycle 0045 (ST-19, class B): every test put the unmapped line on the first stop; this is the browser twin of the server test for a later one. Green today; its control requests a later stop at its declared position.
+test('a later browser stop declared on an unmapped line is requested at the first mapped position after it inside the continuation and captured there', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches and line 2 the statement; both stops are declared at 1:1, and the debugger verifies a breakpoint on line 2 only.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(
+      context,
+      undefined,
+      [
+        {
+          line: 1,
+          column: 1,
+          inspections: [{ path: 'enabled', mode: 'value', required: true }],
+        },
+      ],
+      {
+        mappings: ';AACA',
+        fixture: {
+          source: '// toggles the theme\nconst nextTheme = "dark";\n',
+          citationEndLine: 2,
+        },
+      },
+    )
+  verifyBreakpointsOnlyOnLines([2])
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+
+  // Act
+  await run.continue('browser', first.pause)
+  const requestedSecond = breakpoints.find((breakpoint) =>
+    breakpoint.id.startsWith('owned-breakpoint-'),
+  )?.location.range.start
+  const second = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1]
+  }, 'later stop captured at the first mapped position after its declared line')
+  const armings = run
+    .view()
+    .events.filter(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+  await run.stop()
+
+  // Assert: the second request was made on line 2 (zero-based 1), inside the continuation.
+  assert.equal(requestedSecond?.line, 1)
+  assert.equal(requestedSecond?.character, 0)
+  assert.deepEqual(armings, [
+    {
+      participant: 'browser',
+      declared: { line: 1, column: 1 },
+      armed: { line: 2, column: 1 },
+    },
+    {
+      participant: 'browser',
+      declared: { line: 1, column: 1 },
+      armed: { line: 2, column: 1 },
+    },
+  ])
+  assert.equal(second.source.line, 2)
+  assert.equal(second.source.column, 1)
+})
+
+// Cycle 0045 (ST-16, class B): the binding timeout of a stop requested after its declared line had no test; its control takes the "requested column" branch for every stop. The sentence is asserted through the seam that ends the binding wait (PC-2.8: the harness clock does not drive that wait).
+test('a stop requested after its unmapped declared line whose binding never verifies times out naming the place it was requested at', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches and line 2 the statement, so the stop declared at 1:1 is requested at 2:1; the debugger never verifies a binding.
+  const { run, rejectBreakpointBinding, bindingWaitBudgetsMs, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: ';AACA',
+      fixture: {
+        source: '// toggles the theme\nconst nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    })
+  rejectBreakpointBinding()
+
+  // Act
+  const refusal = await run.prepare().then(
+    () => 'prepared',
+    (error: unknown) => thrownMessage(error),
+  )
+  await run.stop()
+
+  // Assert: the wait the seam ended was given the 20 s of every active wait.
+  assert.deepEqual(bindingWaitBudgetsMs, [20_000])
+  assert.equal(
+    refusal,
+    'Timed out waiting for a verified binding of declared stop src/theme.ts:1 on its declared line or a later line its binding rule accepts (requested at 2:1, the first mapped position after the declared line); declare the stop on an executable statement the action reaches (configuration.source). Frozen source map positions in the selected citation: 2:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(mouse.length, 0)
 })
 
 // Cycle 0044 (0041-N10-1b): red while a stop declared on a line the sealed map has no position on was requested on that line. A debugger verifies no breakpoint there (seen natively: the run was admitted and then lost after 20 s), so the first declaration was lost.

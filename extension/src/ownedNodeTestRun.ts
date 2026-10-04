@@ -322,7 +322,7 @@ export class OwnedNodeTestRun {
       this.ownedBreakpointId = registered.breakpointId
       // A pending reply names no position, so the adapter is asked once more while the test is still paused.
       if (registered.status === 'pending')
-        await this.breakpoint.assertBoundAsDeclared(bound.session)
+        await this.breakpoint.assertBoundAsDeclared(bound.session, signal)
       // The learner can resume or step while retirement and registration are awaited.
       await this.assertAcceptedPause(previous, 'the next declared stop')
       const fromIndex = this.stops.length

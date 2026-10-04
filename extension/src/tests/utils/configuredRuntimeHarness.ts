@@ -124,6 +124,7 @@ export async function configuredRuntimeHarness(
     listeners = new Map<string, (event: unknown) => void>()
   const clock = createManualClock()
   let requestSequence = 0
+  const bindingWaitBudgetsMs: (number | undefined)[] = []
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -257,11 +258,19 @@ export async function configuredRuntimeHarness(
         listeners.get('Debugger.resumed')?.({})
         const next = additionalStops[stopCount - 1]
         if (next) {
+          // A debugger that verifies only some lines pauses a later stop where its breakpoint was requested.
+          const requestedLater = verifiableLines
+            ? breakpoints.find((candidate) =>
+                candidate.id.startsWith('owned-breakpoint-'),
+              )?.location.range.start
+            : undefined
           // A line that ran only before its breakpoint existed never pauses again.
           if (emitNextPause)
             emitPause(
-              laterStopBinding?.column ?? next.column,
-              laterStopBinding?.line,
+              laterStopBinding?.column ??
+                (requestedLater ? requestedLater.character + 1 : next.column),
+              laterStopBinding?.line ??
+                (requestedLater ? requestedLater.line + 1 : undefined),
             )
         } else inputResolve()
         return {}
@@ -691,6 +700,8 @@ export async function configuredRuntimeHarness(
             rejectBinding &&
             description.startsWith('a verified binding of declared stop')
           ) {
+            // The wait ends at once here, so the budget the run asked for is kept for the test to read.
+            bindingWaitBudgetsMs.push(timeoutMs)
             signal?.throwIfAborted()
             await read()
             signal?.throwIfAborted()
@@ -773,11 +784,13 @@ export async function configuredRuntimeHarness(
     rejectBreakpointBinding(): void {
       rejectBinding = true
     },
+    /** The budget the run gave each binding wait that {@link rejectBreakpointBinding} ended at once, in milliseconds. */
+    bindingWaitBudgetsMs,
     /** Makes the page report other executed bytes for the selected module than the sealed bundle holds, as a rebuild between sealing and arming does. */
     replaceExecutedModule(scriptSource: string): void {
       executedScriptSource = scriptSource
     },
-    /** Makes the adapter verify a breakpoint only when it is requested on one of these source lines, and pause the first stop where its breakpoint was requested: a request on a line without a mapped position is never verified, as natively. @example harness.verifyBreakpointsOnlyOnLines([2]) */
+    /** Makes the adapter verify a breakpoint only when it is requested on one of these source lines, and pause every stop where its breakpoint was requested: a request on a line without a mapped position is never verified, as natively. @example harness.verifyBreakpointsOnlyOnLines([2]) */
     verifyBreakpointsOnlyOnLines(lines: number[]): void {
       verifiableLines = lines
     },

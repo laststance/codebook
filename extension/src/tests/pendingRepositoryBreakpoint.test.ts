@@ -14,7 +14,7 @@ import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 async function breakpointHarness(
   acknowledgedAt?: 'declared-line' | 'declared-column',
   /** The owner's rule for a verified reply on another line; without it such a reply is refused. */
-  acceptsLaterLine?: (line: number) => boolean,
+  acceptsOtherLine?: (line: number) => boolean,
   /** One-based column the owned breakpoint is requested at on line 20. */
   requestedColumn = 5,
 ) {
@@ -76,7 +76,7 @@ async function breakpointHarness(
     20,
     requestedColumn,
     acknowledgedAt,
-    acceptsLaterLine,
+    acceptsOtherLine,
   )
   const request = (
     sequence = 1,
@@ -114,6 +114,8 @@ async function breakpointHarness(
     response,
     signal: new AbortController().signal,
     editorBreakpoints: breakpoints,
+    OwnedBreakpointRemovedError: module.OwnedBreakpointRemovedError,
+    OwnedBreakpointMovedError: module.OwnedBreakpointMovedError,
   }
 }
 
@@ -215,7 +217,7 @@ test('a registration the adapter verifies on another line blocks continuation an
   await assert.rejects(breakpoint.registered(session, signal), (error) => {
     assert.match(
       String(error),
-      /Selected adapter did not acknowledge the declared breakpoint registration/,
+      /Selected adapter did not acknowledge the breakpoint registration/,
     )
     assert.match(String(error), /"expectedLine":20/)
     assert.match(String(error), /"selectedLine":21/)
@@ -330,6 +332,44 @@ test('removed or ambiguous requested positions revoke earlier pending registrati
   breakpoint.onResponse(session, response(3))
   breakpoint.remove()
   await assert.rejects(breakpoint.registered(session, signal), /removed/)
+})
+
+// Cycle 0045 (SM-4): red while the removal was a plain error that the run told from an adapter's refusal by comparing its text.
+test('a registration read after the owned breakpoint was removed fails with the removed-breakpoint error, which the run tells from an adapter refusal by its type', async () => {
+  // Arrange: one owner whose acknowledged breakpoint is removed from the editor, and one whose registration the adapter verified on another line.
+  const removed = await breakpointHarness()
+  removed.breakpoint.onRequest(removed.session, removed.request())
+  removed.breakpoint.onResponse(removed.session, removed.response())
+  removed.breakpoint.remove()
+  const refused = await breakpointHarness()
+  refused.breakpoint.onRequest(refused.session, refused.request())
+  refused.breakpoint.onResponse(
+    refused.session,
+    refused.response(1, { id: 8, verified: true, line: 21, column: 5 }),
+  )
+  // Act
+  let removal: unknown, refusal: unknown
+  try {
+    removed.breakpoint.registration(removed.session)
+  } catch (error) {
+    removal = error
+  }
+  try {
+    refused.breakpoint.registration(refused.session)
+  } catch (error) {
+    refusal = error
+  }
+  // Assert
+  assert.equal(removal instanceof removed.OwnedBreakpointRemovedError, true)
+  assert.equal(
+    String(removal),
+    'Error: Owned breakpoint was removed before registration',
+  )
+  assert.match(
+    String(refusal),
+    /^Error: Selected adapter did not acknowledge the breakpoint registration \(requested 20:5, answered 21:5 verified\): /,
+  )
+  assert.equal(refusal instanceof refused.OwnedBreakpointRemovedError, false)
 })
 
 test('conditional logpoint and modified-source requests cannot qualify the frozen unconditional stop', async () => {
@@ -490,6 +530,32 @@ test('a retirement reply that still lists the owned breakpoint id does not count
   assert.equal(breakpoint.retired, false)
 })
 
+// Cycle 0045 (A-L2): the request half of the retirement check had no test; it compares the requested position only, because an owner the adapter never acknowledged was verified nowhere.
+test('retiring an owned breakpoint the adapter never acknowledged fails at once when the replacement request still names the declared position', async () => {
+  // Arrange: the adapter never answered the registration, so the owned breakpoint has no adapter id.
+  const { breakpoint, session, request, signal } = await breakpointHarness()
+  breakpoint.onRequest(session, request())
+
+  // Act: the editor's replacement after the removal still holds a breakpoint on 20:5 (a learner's), and the adapter's reply lists it.
+  const retiring = breakpoint.retire(session, signal)
+  breakpoint.onRequest(session, request(2, [{ line: 20, column: 5 }]))
+  breakpoint.onResponse(session, {
+    seq: 102,
+    type: 'response',
+    command: 'setBreakpoints',
+    request_seq: 2,
+    success: true,
+    body: { breakpoints: [{ verified: true, line: 20, column: 5 }] },
+  })
+
+  // Assert: the request decided it, before the adapter's reply was read.
+  await assert.rejects(retiring, {
+    message:
+      'A breakpoint still targets the selected position; owned removal cannot retire learner breakpoints.',
+  })
+  assert.equal(breakpoint.retired, false)
+})
+
 test('without breakpoint ids in the adapter reply, a breakpoint left on the owned position still blocks retirement', async () => {
   // Arrange
   const { breakpoint, session, request, response, signal } =
@@ -553,11 +619,11 @@ for (const verified of [true, false])
       verified
         ? {
             message:
-              'Selected adapter did not acknowledge the declared breakpoint registration (declared 20:5, answered 20:12 verified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":true,"selectedReason":null,"selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
+              'Selected adapter did not acknowledge the breakpoint registration (requested 20:5, answered 20:12 verified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":true,"selectedReason":null,"selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
           }
         : {
             message:
-              'Selected adapter did not acknowledge the declared breakpoint registration (declared 20:5, answered 20:12 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
+              'Selected adapter did not acknowledge the breakpoint registration (requested 20:5, answered 20:12 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":20,"selectedColumn":12,"selectedSourceMatches":null}',
           },
     )
   })
@@ -606,7 +672,7 @@ test('an owner that captures at the declared column accepts a registration verif
       withoutColumn.session,
       withoutColumn.signal,
     ),
-    /Selected adapter did not acknowledge the declared breakpoint registration/,
+    /Selected adapter did not acknowledge the breakpoint registration/,
   )
 })
 
@@ -648,7 +714,7 @@ test('a registration the adapter verifies on a line the owner’s rule refuses b
   await assert.rejects(breakpoint.registered(session, signal), (error) => {
     assert.match(
       String(error),
-      /Selected adapter did not acknowledge the declared breakpoint registration/,
+      /Selected adapter did not acknowledge the breakpoint registration/,
     )
     assert.match(String(error), /"expectedLine":20/)
     assert.match(String(error), /"selectedLine":22/)
@@ -720,7 +786,7 @@ test('a pending registration that names a later line the owner’s rule accepts 
   // Assert
   await assert.rejects(breakpoint.registered(session, signal), {
     message:
-      'Selected adapter did not acknowledge the declared breakpoint registration (declared 20:5, answered 21:7 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":21,"selectedColumn":7,"selectedSourceMatches":null}',
+      'Selected adapter did not acknowledge the breakpoint registration (requested 20:5, answered 21:7 unverified): {"responseSuccess":true,"responseCount":2,"expectedCount":2,"expectedLine":20,"expectedColumn":5,"selectedId":8,"selectedVerified":false,"selectedReason":"pending","selectedLine":21,"selectedColumn":7,"selectedSourceMatches":null}',
   })
   assert.equal(breakpoint.movedTo(session), undefined)
 })
@@ -848,6 +914,58 @@ test('a pending registration that the adapter later reports verified on a later 
     JSON.stringify(breakpoint.movedTo(session)),
     '{"line":21,"column":7}',
   )
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',
+  )
+})
+
+// Cycle 0045 (X7-A.1): red while an event that named a refused place was ignored, so the earlier receipt still authorized the input for a stop that could not be captured.
+test('a registration the adapter later reports verified on a line the owner’s rule refuses no longer authorizes input, and does again once the adapter reports an accepted place', async () => {
+  // Arrange: the owner requested 20:5 and its rule accepts line 21; the registration is acknowledged as pending.
+  const { breakpoint, session, request, response, OwnedBreakpointMovedError } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(session, response())
+  // Act: the adapter reports the breakpoint verified at 30:1, and afterwards at 21:7.
+  breakpoint.onEvent(session, {
+    seq: 200,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 30, column: 1 },
+    },
+  })
+  let refusal: unknown
+  try {
+    breakpoint.registration(session)
+  } catch (error) {
+    refusal = error
+  }
+  const verifiedWhileRefused = breakpoint.verifiedPlace(session)
+  breakpoint.onEvent(session, {
+    seq: 201,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 21, column: 7 },
+    },
+  })
+  const receipt = breakpoint.registration(session)
+  // Assert
+  assert.equal(
+    String(refusal),
+    'Error: Selected adapter moved the acknowledged breakpoint to 30:1 (requested 20:5), a place its owner does not accept',
+  )
+  assert.equal(
+    refusal instanceof OwnedBreakpointMovedError
+      ? JSON.stringify(refusal.place)
+      : 'another error',
+    '{"line":30,"column":1}',
+  )
+  assert.equal(verifiedWhileRefused, undefined)
   assert.equal(
     JSON.stringify(receipt),
     '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',

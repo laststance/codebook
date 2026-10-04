@@ -279,6 +279,21 @@ test('a saved stop at another column of its declared line is rejected when it ha
   )
 })
 
+// Cycle 0045 (AD-2, class B): pins that the rule "a saved observation's column lies at most one past its line's end" needs no allowance for older studies: a run could always commit a stop one past its line's end, and such a study still opens. Green today; its control lowers the bound by one.
+test('a study saved by 0.2.27 whose stop sits one past its line’s end still opens', () => {
+  // Arrange: line 1 of the cited source holds 25 characters; the stop was declared and committed at column 26, and its observation carries no binding receipt, as in every study saved by 0.2.27 and older.
+  const archive = createConfiguredStudy()
+  archive.configuration.source.column = 26
+  archive.configurationHash = sha256(JSON.stringify(archive.configuration))
+  archive.observations[0]!.source.column = 26
+  // Act
+  const decoded = decodeConfiguredStudy(archive, workspaceKey)
+  // Assert
+  assert.equal(archive.observations[0]!.source.binding, undefined)
+  assert.equal(decoded.observations[0]?.source.line, 1)
+  assert.equal(decoded.observations[0]?.source.column, 26)
+})
+
 test('undeclared, missing, unavailable or invented interpretation facts are rejected instead of becoming observed values', () => {
   // Arrange
   const archive = createConfiguredStudy(),
