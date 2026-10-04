@@ -245,6 +245,39 @@ test('clicking an element the fake Wiki page does not have fails the test instea
   })
 })
 
+// Value: protects=a page test that holds an answer back and releases it stating an order that happened; fails_when=`release` succeeds although the page never made the held request, so the test's "answer arrives late" step delivers nothing and a request made afterwards is answered at once; why_new=review of Cycle 0045, tests-1 #5; seam=none
+test('releasing a held answer the fake Wiki page has not asked for fails the test, and the hold stays for the request that comes later', async () => {
+  // Arrange: a page whose script asks for freshness only when the window gets focus; the test holds that answer back.
+  const page = await openFakeWikiPage(
+    [
+      "window.addEventListener('focus', function () {",
+      "  fetch('/w/fake-reader-token/api/freshness').then(function () {",
+      "    document.body.setAttribute('data-freshness-answered', 'yes')",
+      '  })',
+      '})',
+    ].join('\n'),
+    'no-rail',
+  )
+  page.holdNext('api/freshness')
+
+  // Act: the release comes before the page asked; then the page asks, and the answer is released again.
+  const releasedBeforeTheRequest = await page.release('api/freshness').then(
+    () => 'released',
+    (error: unknown) => String(error),
+  )
+  await page.focusWindow()
+  const answeredWhileHeld = page.body.getAttribute('data-freshness-answered')
+  await page.release('api/freshness')
+
+  // Assert
+  assert.equal(
+    releasedBeforeTheRequest,
+    'Error: The fake page has not asked for api/freshness since its answer was to be held back, so there is no answer to release.',
+  )
+  assert.equal(answeredWhileHeld, null)
+  assert.equal(page.body.getAttribute('data-freshness-answered'), 'yes')
+})
+
 // Value: protects=a page test standing at the faked time it asked for, between two of the page's timers; fails_when=an advance is rounded up to whole seconds, so a test that advances 1,200 ms already sees what the page does at 2,000 ms; why_new=Cycle 0045 D-L6; seam=none
 test("the fake Wiki page's clock moves exactly the time asked for: a timer due after 1,500 ms has not fired after an advance of 1,200 ms", async () => {
   // Arrange: the page script sets one timer that notes how long after the load it fired.
