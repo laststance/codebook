@@ -124,6 +124,7 @@ export async function configuredRuntimeHarness(
     listeners = new Map<string, (event: unknown) => void>()
   const clock = createManualClock()
   let requestSequence = 0
+  const bindingWaitBudgetsMs: (number | undefined)[] = []
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -691,6 +692,8 @@ export async function configuredRuntimeHarness(
             rejectBinding &&
             description.startsWith('a verified binding of declared stop')
           ) {
+            // The wait ends at once here, so the budget the run asked for is kept for the test to read.
+            bindingWaitBudgetsMs.push(timeoutMs)
             signal?.throwIfAborted()
             await read()
             signal?.throwIfAborted()
@@ -773,6 +776,8 @@ export async function configuredRuntimeHarness(
     rejectBreakpointBinding(): void {
       rejectBinding = true
     },
+    /** The budget the run gave each binding wait that {@link rejectBreakpointBinding} ended at once, in milliseconds. */
+    bindingWaitBudgetsMs,
     /** Makes the page report other executed bytes for the selected module than the sealed bundle holds, as a rebuild between sealing and arming does. */
     replaceExecutedModule(scriptSource: string): void {
       executedScriptSource = scriptSource
