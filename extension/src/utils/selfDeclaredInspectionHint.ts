@@ -81,6 +81,21 @@ function declarationHead(lineText: string): string | undefined {
 }
 
 /**
+ * Says whether a line declares a binding with an initializer; called by {@link selfDeclaredInspectionHint} for the stopped line and the inspection's binding.
+ * @param lineText - One line of source.
+ * @param binding - The name the inspection reads first.
+ * @returns `true` when the first `const` or `let` declaration with an initializer on the line binds that name; `false` otherwise, also for a `var`, which is hoisted and readable as undefined.
+ * @example
+ * declaresBinding('const { user, id: userId } = await load()', 'userId') // => true
+ * declaresBinding('return user', 'user')                                 // => false
+ */
+function declaresBinding(lineText: string, binding: string): boolean {
+  // The head of the declaration ends at its initializer; a `var` is hoisted and readable as undefined, so it is no case.
+  const head = declarationHead(lineText)
+  return head ? declaredNames(head).includes(binding) : false
+}
+
+/**
  * Tells the editor agent why a required inspection had no value when the stopped line itself declares that binding, called by {@link ConfiguredBrowserRun} when it words that failure.
  * The debugger pauses before the line runs, so a `const` or `let` it declares is not initialized yet; the agent cannot see that from "unavailable".
  * @param source - The sealed original source of the stop.
@@ -101,8 +116,6 @@ export function selfDeclaredInspectionHint(
 ): string {
   const lineText = source.split(/\r\n?|\n/)[line - 1] ?? '',
     binding = inspectionPath.split('.')[0] ?? ''
-  // The head of the declaration ends at its initializer; a `var` is hoisted and readable as undefined, so it is no case.
-  const head = declarationHead(lineText)
-  if (!head || !declaredNames(head).includes(binding)) return ''
+  if (!declaresBinding(lineText, binding)) return ''
   return ` Line ${line} declares ${binding}, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.`
 }
