@@ -9,28 +9,6 @@ type RememberedSearch = {
 }
 
 /**
- * Says whether a remembered search still answers the same question without another search of the PATH; called by the lookup of {@link createChromeExecutableLookup} for the search it remembers.
- * @param remembered - The last search's answer and when it was given.
- * @param now - The monotonic clock in milliseconds that bounds how long "no Chrome found" is reused.
- * @param isExecutable - The caller's own probe, by which a remembered executable is checked once.
- * @returns
- * - "No Chrome found": `true` within {@link CHROME_NOT_FOUND_REUSE_MS} of the answer, `false` afterwards; nothing is probed
- * - A remembered executable: `true` while the probe still finds it, `false` when it is gone
- * @example
- * await isRememberedSearchStillTrue({ executable: undefined, answeredAtMs: 0 }, () => 10, isExecutable) // => true
- */
-async function isRememberedSearchStillTrue(
-  remembered: RememberedSearch,
-  now: () => number,
-  isExecutable: (path: string) => Promise<boolean>,
-): Promise<boolean> {
-  // "No Chrome found" holds for a bounded time: a browser installed since then is found afterwards.
-  if (remembered.executable === undefined)
-    return now() - remembered.answeredAtMs < CHROME_NOT_FOUND_REUSE_MS
-  return await isExecutable(remembered.executable)
-}
-
-/**
  * Makes a Chrome lookup that remembers the last search of the PATH, so that the prerequisite check behind every `codebook_status` and run start does not probe every name in every PATH directory again; created once by {@link createEnvironment}.
  *
  * Only an answer that cost a probe is remembered: a configured value and the macOS bundle path are given again for nothing. A remembered executable is
@@ -52,11 +30,14 @@ export function createChromeExecutableLookup(
   return async (configured, platform, searchPath, isExecutable) => {
     const question = JSON.stringify([configured, platform, searchPath])
     const remembered = lastSearch.get(question)
-    if (
-      remembered &&
-      (await isRememberedSearchStillTrue(remembered, now, isExecutable))
-    )
-      return remembered.executable
+    if (remembered) {
+      // "No Chrome found" holds for a bounded time: a browser installed since then is found afterwards.
+      if (remembered.executable === undefined) {
+        if (now() - remembered.answeredAtMs < CHROME_NOT_FOUND_REUSE_MS)
+          return undefined
+      } else if (await isExecutable(remembered.executable))
+        return remembered.executable
+    }
     let didProbe = false
     const executable = await resolveChromeExecutable(
       configured,
