@@ -79,11 +79,6 @@ export async function workspaceHarness(
   ]
   /** Commands this host does not register; see `removeHostCommands`. */
   const absentHostCommands = new Set<string>()
-  /** The commands the reader runs to give an editor group the keyboard focus; each activates its group, which brings a hidden editor area back. */
-  const focusGroupCommands = [
-    'workbench.action.focusFirstEditorGroup',
-    'workbench.action.focusActiveEditorGroup',
-  ]
   /** The editor's commands that give its second to eighth group the keyboard focus, in that order. */
   const focusGroupAtColumnCommands = [
     'workbench.action.focusSecondEditorGroup',
@@ -795,7 +790,7 @@ export async function workspaceHarness(
   /**
    * Brings the hidden editor area back, as VS Code 1.140 does while the bottom panel is maximized whenever a group shows another editor or is activated: the panel leaves its maximized state.
    * The area was laid out without height, so every stacked group comes back at its minimum height and the last group of each stack takes the height that is left, whichever group the trigger acted on: of two stacked groups the first is a 70 px strip.
-   * Called by {@link revealIntoHiddenEditorArea} (a reveal, a shown text document), a panel's registration, the focus-group commands, the tab closes and `vscode.setEditorLayout`, whose own layout then replaces these sizes.
+   * Called by {@link revealIntoHiddenEditorArea} (a reveal, a shown text document), a panel's registration, the commands that focus another group, the tab closes and `vscode.setEditorLayout`, whose own layout then replaces these sizes. The command that focuses the group that is already active is not among them: it brings the area back with the sizes the groups had.
    * @example returnHiddenEditorArea() // groupHeightPx(1) => 70 and groupHeightPx(2) => 770 for two stacked groups
    */
   function returnHiddenEditorArea(): void {
@@ -1877,8 +1872,12 @@ export async function workspaceHarness(
             maximizedEditorGroup = !maximizedEditorGroup
           if (name === 'workbench.action.maximizeEditorHideSidebar')
             maximizedEditorGroup = true
-          // The activated group is in view before the command answers.
-          if (focusGroupCommands.includes(name)) returnHiddenEditorArea()
+          // The activated group is in view before the command answers: another group that takes the focus comes back at the minimum heights.
+          if (name === 'workbench.action.focusFirstEditorGroup')
+            returnHiddenEditorArea()
+          // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
+          if (name === 'workbench.action.focusActiveEditorGroup')
+            panelMaximized = false
           const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
           if (focusedColumn > 1) {

@@ -3787,7 +3787,7 @@ test('the fake editor brings the editor area back for every trigger VS Code brin
   }
 })
 
-// Value: protects=reader tests with a maximized bottom panel meeting the same editor for the other focus-group command the reader runs; fails_when=the fake editor brings the area back for the focus-first-group command only, so the reader's focus on the active group behind a maximized panel is not seen; why_new=Cycle 0045 D-M2 (both focus-group commands of the reader go through one place of the fake editor); seam=the workspace harness's fake editor
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader focuses the group that is already the active one; fails_when=the fake editor keeps the area hidden for that command, or brings it back with the first group as a 70 px strip as it does for a command that activates another group, so a focus hand-off that leaves the rows as they were looks like a collapse; why_new=Cycle 0045 D-M2, open again after the second native round (VS Code 1.140.0 on 2026-10-04, owed check 5: the area returned with the rows at 344 and 343 px, the sizes they had before the panel was maximized); seam=the workspace harness's fake editor
 test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the command that focuses the active editor group', async () => {
   // Arrange
   const harness = await twoStackedGroupsEditor()
@@ -3799,10 +3799,10 @@ test('the fake editor brings the editor area back for every trigger VS Code brin
       'workbench.action.focusActiveEditorGroup',
     )
 
-    // Assert
+    // Assert: the rows have the heights they had before the panel was maximized.
     assert.equal(harness.isPanelMaximized(), false)
-    assert.equal(harness.groupHeightPx(1), 70)
-    assert.equal(harness.groupHeightPx(2), 770)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(harness.groupHeightPx(2), 420)
   } finally {
     await harness.close()
   }
