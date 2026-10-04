@@ -148,6 +148,30 @@ test('a held wait with an abort signal looks until the run is cancelled', async 
   assert.equal(looks, 5)
 })
 
+// Cycle 0045 (X7-D.1): red while the held wait returned a truthy read although its signal had been aborted during that read; the real waitUntil reads the signal again after the read and throws.
+test('a held wait whose run is cancelled during a look that finds the pause rejects with the cancellation, as the real wait does', async () => {
+  // Arrange
+  const hold = createSourceBoundWaitHold(),
+    cancellation = new AbortController()
+  hold.hold()
+  // Act: the look that finds the pause is the one during which the run is cancelled.
+  const outcome = await hold
+    .wait(
+      () => {
+        cancellation.abort(new Error('run stopped'))
+        return 'paused'
+      },
+      'source-bound CDP stop',
+      cancellation.signal,
+    )
+    .then(
+      (value) => `returned ${value}`,
+      (error: unknown) => String(error),
+    )
+  // Assert
+  assert.equal(outcome, 'Error: run stopped')
+})
+
 // Value: protects=a test acting while the wait for a stop's own pause is open and then letting it expire; fails_when=a released hold keeps looking until the run is cancelled; why_new=Cycle 0044 merge of 0042-SR15/SR31 (their tests release the hold) with R9 (the handle had no user before); seam=none
 test('a held wait that the test releases ends as a timeout although its run is not cancelled', async () => {
   // Arrange
