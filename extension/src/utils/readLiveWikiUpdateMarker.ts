@@ -22,6 +22,40 @@ const wikiUpdateMarkerSchema = z.object({
 export type WikiUpdateMarker = z.infer<typeof wikiUpdateMarkerSchema>
 
 /**
+ * Parses the bytes of a marker file; called by {@link readLiveWikiUpdateMarker} for the file it found.
+ * @param bytes - The bytes of `<output>.update-run.json`.
+ * @returns The marker, or `undefined` for bytes that are no JSON or do not have the marker's shape.
+ * @example
+ * parseWikiUpdateMarker(Buffer.from('{"pid":4242,"windowId":"3f6c","host":"vscode","startedAtMs":1790000000000}'))
+ * // => { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 }
+ */
+function parseWikiUpdateMarker(bytes: Buffer): WikiUpdateMarker | undefined {
+  let content: unknown
+  try {
+    content = JSON.parse(bytes.toString('utf8'))
+  } catch {
+    return undefined
+  }
+  const marker = wikiUpdateMarkerSchema.safeParse(content)
+  return marker.success ? marker.data : undefined
+}
+
+/**
+ * Says whether a marker stands for an update that still counts against the asking window; called by {@link readLiveWikiUpdateMarker} for a readable marker.
+ * @param marker - The marker beside the Wiki.
+ * @param ownWindowId - The asking window's own id.
+ * @returns `false` for this window's own marker (a leftover of a run that already ended; its process is not asked for) and for a marker whose process is gone; `true` for another window's marker whose process still runs.
+ * @example
+ * isLiveMarkerOfAnotherWindow({ pid: process.pid, windowId: 'other', host: 'vscode', startedAtMs: 1790000000000 }, 'own') // => true
+ */
+function isLiveMarkerOfAnotherWindow(
+  marker: WikiUpdateMarker,
+  ownWindowId: string,
+): boolean {
+  return marker.windowId !== ownWindowId && !isProcessGone(marker.pid)
+}
+
+/**
  * Reads the marker another editor window's running update left beside the Wiki, so a second window does not start a second update of the same Wiki.
  *
  * Why: each window holds its own run state, and until the first window's agent stages a candidate nothing else on disk shows its run. A marker whose process is gone was left by a killed editor and counts for nothing.
@@ -47,15 +81,7 @@ export async function readLiveWikiUpdateMarker(
     outputDirectory + WIKI_UPDATE_RUN_MARKER_SUFFIX,
   )
   if (!markerFile) return undefined
-  let content: unknown
-  try {
-    content = JSON.parse(markerFile.bytes.toString('utf8'))
-  } catch {
-    return undefined
-  }
-  const marker = wikiUpdateMarkerSchema.safeParse(content)
-  if (!marker.success) return undefined
-  return marker.data.windowId === ownWindowId || isProcessGone(marker.data.pid)
-    ? undefined
-    : marker.data
+  const marker = parseWikiUpdateMarker(markerFile.bytes)
+  if (!marker) return undefined
+  return isLiveMarkerOfAnotherWindow(marker, ownWindowId) ? marker : undefined
 }
