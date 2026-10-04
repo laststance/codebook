@@ -3895,6 +3895,52 @@ test('a selection after Close Study Workspace during a paused run opens the read
   }
 })
 
+// Value: protects=a presentation select answering with the opened reader after a first entry during a paused run was refused; fails_when=the refused entry keeps the live arrangement flag of a reader that is not open, so the next select arranges two rows in a window that holds no Codebook pane and is refused until Open Study Workspace, Open replay or Close; why_new=Cycle 0045 local review study-1 #2 (NF-21 reset the flags in Close only); seam=workspace harness with the controlled runtime and failNextPanelCreation
+test('a selection after a first entry that was refused during a paused run opens the reader in the live arrangement', async () => {
+  // Arrange: an agent's run is paused, the reader is closed and the learner's file has the focus; the first selection is refused inside the entry, after the entry chose the live arrangement.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft()
+    await pauseLiveRun(harness)
+    const closed = harness.reader.presentationState()
+    harness.failNextPanelCreation('codebook.scopedBrowser')
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: closed.presentationId,
+        expectedRevision: closed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      }),
+    )
+    const refused = {
+      state: harness.reader.presentationState().state,
+      live: readerSeams(harness).isLiveArrangement(),
+      panels: harness.counts().panels,
+    }
+    const state = harness.reader.presentationState()
+
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+
+    // Assert
+    assert.deepEqual(refused, { state: 'closed', live: false, panels: 0 })
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(readerSeams(harness).isLiveArrangement(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
 /** The editor commands that hide or show a side bar; a reading whose side bars could not be measured runs none of them. */
 const SIDE_BAR_COMMANDS = [
   'workbench.action.closeSidebar',

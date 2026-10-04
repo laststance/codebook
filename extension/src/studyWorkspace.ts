@@ -5245,9 +5245,29 @@ export class StudyWorkspace {
         await returnForeignFocus?.().catch(() => undefined)
       throw error
     } finally {
+      // A first entry that ended without an open reader leaves no live or recording arrangement behind.
+      if (firstOpen && request === this.readerOpenNumber && !this.opened)
+        this.forgetUnopenedComposition()
       if (request === this.readerOpenNumber) this.releaseSourceEntry()
       signal?.removeEventListener('abort', cancel)
     }
+  }
+
+  /**
+   * Drops the live or recording arrangement a first entry chose when that entry ended without an open reader (refused, failed or cancelled); called by {@link open} as its last step.
+   * {@link admitPresentation} arranges the two rows for a selection while one of the two flags is set, without asking whether the reader is open: kept by a failed entry, they would send the next selection to arrange panes that do not exist, and refuse it until Open Study Workspace, Open replay or Close. With them goes the layout receipt of that arrangement, as when the arrangement changes.
+   * @returns Nothing; a reader in neither arrangement is left as it is.
+   * @example
+   * ```ts
+   * if (firstOpen && request === this.readerOpenNumber && !this.opened) this.forgetUnopenedComposition()
+   * ```
+   */
+  private forgetUnopenedComposition(): void {
+    if (!this.hasComposition()) return
+    this.liveComposition = false
+    this.summaryComposition = false
+    this.layoutReceipt = undefined
+    this.presentationConfirmed = false
   }
 
   /**
