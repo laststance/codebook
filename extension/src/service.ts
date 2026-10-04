@@ -1765,8 +1765,10 @@ export class StudyService {
     const holdsHistory =
       historyExclusionState(record.historyExcluded) !== 'ended'
     // A run that reached its result and saved no learning summary would be saved without a summary and a sequence: say so where the agent reads after the result.
+    // Only once the run is released: until then this resource has no terminalReference to cite, and an explanation is refused as busy.
     const lacksLearningSummary =
       holdsHistory &&
+      record.stopped &&
       runtime?.status === 'completed' &&
       finalOutcome === 'demonstrated' &&
       ![...record.explanations.values()].some(
