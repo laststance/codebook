@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
@@ -759,6 +759,31 @@ test('the Cursor update request carries the same contract but asks for no report
       `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.`,
     ])
   } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the request an agent gets in a project without Git (it must not be asked for a commit hash, and must be told not to create a repository in the learner's project); fails_when=the freshness check reports the missing repository on its `current` answer only, so every run that starts is worded for a Git repository; why_new=Cycle 0045 local review wiki-1 #1 (the window's fake freshness hid it); seam=none
+test('the update request for a project without a Git repository asks for no revision and tells the chat not to create a repository', async () => {
+  // Arrange: the real freshness check runs, on a project folder that is in no Git repository and whose indexed source is gone.
+  const ceilingBefore = process.env.GIT_CEILING_DIRECTORIES
+  const wiki = await openWikiWindow({ realFreshnessCheck: true })
+  // An enclosing repository of the temporary folder, if a machine has one, must not answer for the project.
+  process.env.GIT_CEILING_DIRECTORIES = dirname(wiki.projectRoot)
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.chatRequests, [
+      {
+        name: 'workbench.action.chat.open',
+        query: `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk. This folder has no Git repository: record no revision and do not create one. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.`,
+      },
+    ])
+  } finally {
+    if (ceilingBefore === undefined) delete process.env.GIT_CEILING_DIRECTORIES
+    else process.env.GIT_CEILING_DIRECTORIES = ceilingBefore
     await wiki.close()
   }
 })

@@ -183,6 +183,8 @@ test('an indexed source outside the project keeps freshness unknown and is named
       reason: 'An indexed source could not be checked: ../outside.ts.',
       uncheckedPath: '../outside.ts',
       unknownCause: 'unchecked-source',
+      // The folder of this test is in no Git repository.
+      addedFilesUnchecked: true,
     })
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -287,6 +289,42 @@ test('a Wiki of a project without a Git repository is current when every indexed
     assert.deepEqual(result, {
       status: 'current',
       changedPaths: [],
+      addedPaths: [],
+      addedFilesUnchecked: true,
+    })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the update request of a folder without Git (the extension words it by this note, and a start only happens when the answer is not `current`); fails_when=the note is set on the `current` answer alone, so a changed Wiki in a folder without Git is asked for a commit hash; why_new=Cycle 0045 local review wiki-1 #1; seam=none
+test('a Wiki of a project without a Git repository whose indexed source was edited is changed and still says that added files were not checked', async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-freshness-no-git-'),
+  )
+  const root = await realpath(directory)
+  await writeFile(join(root, 'source.ts'), 'export const answer = 2;\n')
+  try {
+    // Act
+    const result = await inspectDeepWikiFreshness(
+      root,
+      [
+        {
+          path: 'source.ts',
+          sha256: createHash('sha256')
+            .update('export const answer = 1;\n')
+            .digest('hex'),
+        },
+      ],
+      undefined,
+      [],
+    )
+
+    // Assert
+    assert.deepEqual(result, {
+      status: 'changed',
+      changedPaths: ['source.ts'],
       addedPaths: [],
       addedFilesUnchecked: true,
     })
@@ -670,6 +708,8 @@ test(
       reason: 'An indexed source could not be checked: source.ts.',
       uncheckedPath: 'source.ts',
       unknownCause: 'unchecked-source',
+      // The folder of this test is in no Git repository.
+      addedFilesUnchecked: true,
     })
   },
 )
