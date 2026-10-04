@@ -915,6 +915,21 @@ export class StudyWorkspace {
   }
 
   /**
+   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link retainForeignTabFocus} and by the foreign-preview search of {@link readMainEditorGrid}.
+   * The view type alone cannot tell a live pane from one an earlier extension host left behind; the caller decides that from the panels it owns.
+   * @param input - The `input` of an editor tab.
+   * @param kinds - The registered view types to match; every Codebook pane when none is given.
+   * @returns `true` for a webview input whose view type {@link isCodebookPaneViewType} matches, `false` for any other input.
+   * @example this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser', 'codebook.studyContext')
+   */
+  private isCodebookPaneInput(input: unknown, ...kinds: string[]): boolean {
+    return (
+      input instanceof vscode.TabInputWebview &&
+      isCodebookPaneViewType(input.viewType, ...kinds)
+    )
+  }
+
+  /**
    * Remembers every Codebook pane tab that is in the window while this host owns no pane of its kind: such a tab belongs to an earlier extension host. Called by the constructor, by {@link deadPaneTabs} and before this host creates a pane.
    * A view type cannot tell a live pane from a dead one, so a tab is known as dead only from the moment it was seen without an owner, and stays known after this host creates its own pane.
    * @example
@@ -7447,25 +7462,44 @@ export class StudyWorkspace {
         this.publish()
       })
     this.rendering = pending.catch((error) => {
-      if (
-        revision !== this.revision ||
-        this.closing ||
-        this.pendingHistory !== undefined
-      )
-        return
+      if (this.isRenderSuperseded(revision)) return
       // A render that ended without its source also ends its loading state: the pane shows the reason with Retry, not "Loading the selected observation…".
       this.loading = false
       if (signal?.aborted) {
         this.lastSelectionKey = undefined
         return
       }
-      // The next refresh renders a selection that failed once again. One that failed twice in a row waits for Retry or another selection, so the reader's timer cannot keep revealing its tab.
-      if (this.failedSelectionKey !== selectionKey)
-        this.lastSelectionKey = undefined
-      this.failedSelectionKey = selectionKey
-      this.report('reader', error)
+      this.reportFailedSelection(selectionKey, error)
     })
     return this.rendering
+  }
+
+  /**
+   * Says whether a render no longer speaks for the reader; asked by the failure handler of {@link renderSelection} before it ends the loading state.
+   * @param revision - The rendering revision the render took.
+   * @returns `true` when a newer render took a revision, the reader is closing, or a saved study is being opened.
+   * @example if (this.isRenderSuperseded(revision)) return
+   */
+  private isRenderSuperseded(revision: number): boolean {
+    return (
+      revision !== this.revision ||
+      this.closing ||
+      this.pendingHistory !== undefined
+    )
+  }
+
+  /**
+   * Reports a render that failed as the reader's `reader` line and remembers its selection; the last step of the failure handler of {@link renderSelection}, for a render that was neither superseded nor cancelled.
+   * @param selectionKey - The key of the selection the render was for.
+   * @param error - What the render threw.
+   * @example this.reportFailedSelection(selectionKey, error)
+   */
+  private reportFailedSelection(selectionKey: string, error: unknown): void {
+    // The next refresh renders a selection that failed once again. One that failed twice in a row waits for Retry or another selection, so the reader's timer cannot keep revealing its tab.
+    if (this.failedSelectionKey !== selectionKey)
+      this.lastSelectionKey = undefined
+    this.failedSelectionKey = selectionKey
+    this.report('reader', error)
   }
 
   /**
@@ -7501,30 +7535,83 @@ export class StudyWorkspace {
     receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
     onlyCollapsed = false,
   ): Promise<void> {
-    if (
-      receipt !== this.layoutReceipt ||
-      this.arranging ||
-      !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) ||
-      !this.sameStudyPanePositions(receipt.panes)
-    )
-      return
+    const reapplication = this.reapplicationOf(receipt, onlyCollapsed)
+    if (reapplication === 'leave') return
     // The collapse of the owned Application group is read on its own: the other groups of an unconfirmed layout may have any size.
     if (
-      (onlyCollapsed || !this.presentationConfirmed) &&
-      !(
-        receipt.panes.appColumn !== undefined &&
-        isCollapsedEditorGroup(
-          await vscode.commands.executeCommand<unknown>(
-            'vscode.getEditorLayout',
-          ),
-          receipt.panes.appColumn,
-        )
+      reapplication === 'when-collapsed' &&
+      !this.isApplicationGroupCollapsed(
+        await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+        receipt,
       )
     )
       return
     await vscode.commands.executeCommand(
       'vscode.setEditorLayout',
       JSON.parse(receipt.signature),
+    )
+  }
+
+  /**
+   * Says whether a layout receipt still describes the editor: it is the reader's receipt, no arrangement is running, and the groups and the Study panes are where it recorded them; the first question of {@link reapplicationOf}.
+   * @param receipt - The layout that was arranged before a source reveal.
+   * @returns `true` when the receipt may be applied again; `false` when panes or groups changed meanwhile.
+   * @example this.isLayoutStillArranged(receipt)
+   */
+  private isLayoutStillArranged(
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+  ): boolean {
+    return (
+      receipt === this.layoutReceipt &&
+      !this.arranging &&
+      this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
+      this.sameStudyPanePositions(receipt.panes)
+    )
+  }
+
+  /**
+   * Says whether a reapplication only undoes a collapsed Application group instead of applying the grid unconditionally; the second question of {@link reapplicationOf}.
+   * @param onlyCollapsed - What the caller of {@link reapplyConfirmedLayout} asked for.
+   * @returns `true` when the caller asked for it or the layout is no longer confirmed.
+   * @example this.repairsOnlyCollapsedGroup(false) // => true while the presentation is unconfirmed
+   */
+  private repairsOnlyCollapsedGroup(onlyCollapsed: boolean): boolean {
+    return onlyCollapsed || !this.presentationConfirmed
+  }
+
+  /**
+   * Decides, before any layout is read, what {@link reapplyConfirmedLayout} does with a receipt.
+   * @param receipt - The layout that was arranged before a source reveal.
+   * @param onlyCollapsed - `true` to apply the grid only when the Application group sits at its minimum height beside a taller group.
+   * @returns
+   * - `'leave'` when the receipt no longer describes the editor, or only a collapsed Application group is repaired and the receipt has no Application column
+   * - `'apply'` when the confirmed grid is applied as it is
+   * - `'when-collapsed'` when the editor's layout is read first and the grid is applied only for a collapsed Application group
+   * @example const reapplication = this.reapplicationOf(receipt, false) // => 'apply' for a confirmed, unchanged layout
+   */
+  private reapplicationOf(
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    onlyCollapsed: boolean,
+  ): 'leave' | 'apply' | 'when-collapsed' {
+    if (!this.isLayoutStillArranged(receipt)) return 'leave'
+    if (!this.repairsOnlyCollapsedGroup(onlyCollapsed)) return 'apply'
+    return receipt.panes.appColumn === undefined ? 'leave' : 'when-collapsed'
+  }
+
+  /**
+   * Says whether the Application group of a receipt is a strip of its tab row in the layout the editor just reported; asked by {@link reapplyConfirmedLayout} in the turn that layout arrived.
+   * @param layout - The answer of `vscode.getEditorLayout`.
+   * @param receipt - The layout receipt whose Application column is looked at.
+   * @returns `true` when the receipt has an Application column and {@link isCollapsedEditorGroup} finds its group collapsed.
+   * @example this.isApplicationGroupCollapsed(layout, receipt)
+   */
+  private isApplicationGroupCollapsed(
+    layout: unknown,
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+  ): boolean {
+    return (
+      receipt.panes.appColumn !== undefined &&
+      isCollapsedEditorGroup(layout, receipt.panes.appColumn)
     )
   }
 
@@ -7554,13 +7641,57 @@ export class StudyWorkspace {
   ): boolean {
     if (this.recordingActive || vscode.debug.activeStackItem === undefined)
       return false
-    const group = vscode.window.tabGroups.activeTabGroup,
-      shown = group.activeTab?.input
+    return (
+      this.isFocusedGroupShowingOtherText(column, source) &&
+      this.hasEditorFocusedOnBreak(column)
+    )
+  }
+
+  /**
+   * Says whether a group shows a text tab of another document than the captured source; asked by {@link isFocusedGroupShowingOtherText} about the active group.
+   * @param group - The group to look at.
+   * @param source - The captured source.
+   * @returns `true` when the group's active tab is a text tab of another document; `false` for the source itself, another kind of tab, or no tab.
+   * @example this.showsTextTabOtherThan(vscode.window.tabGroups.activeTabGroup, document.uri)
+   */
+  private showsTextTabOtherThan(
+    group: vscode.TabGroup,
+    source: vscode.Uri,
+  ): boolean {
+    const shown = group.activeTab?.input
+    return (
+      shown instanceof vscode.TabInputText &&
+      shown.uri.toString() !== source.toString()
+    )
+  }
+
+  /**
+   * Says whether the focused window's active group is the one the captured source is shown in and shows another text tab there; the first half of {@link replacesEditorFocusedByPause}.
+   * @param column - The group the captured source is shown in.
+   * @param source - The captured source.
+   * @returns `true` when the window is focused, the active group is at `column` and {@link showsTextTabOtherThan} holds for it.
+   * @example this.isFocusedGroupShowingOtherText(targetColumn, document.uri)
+   */
+  private isFocusedGroupShowingOtherText(
+    column: vscode.ViewColumn,
+    source: vscode.Uri,
+  ): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup
     return (
       vscode.window.state.focused &&
       group.viewColumn === column &&
-      shown instanceof vscode.TabInputText &&
-      shown.uri.toString() !== source.toString() &&
+      this.showsTextTabOtherThan(group, source)
+    )
+  }
+
+  /**
+   * Says whether the editor's debugger focused the text editor of a group at the pause; the second half of {@link replacesEditorFocusedByPause}.
+   * @param column - The group the captured source is shown in.
+   * @returns `true` when the active text editor is in that group and `debug.focusEditorOnBreak` is not turned off.
+   * @example this.hasEditorFocusedOnBreak(targetColumn)
+   */
+  private hasEditorFocusedOnBreak(column: vscode.ViewColumn): boolean {
+    return (
       vscode.window.activeTextEditor?.viewColumn === column &&
       vscode.workspace
         .getConfiguration('debug')
@@ -7674,32 +7805,70 @@ export class StudyWorkspace {
       learnerTabVisited = false
     const openedGroups: vscode.TabGroup[] = [],
       closedGroups: vscode.TabGroup[] = []
-    /** Says whether the editor has corrected a stale name: Cursor names another editor part's group (the chat's) while a text editor of the main editor has the keyboard, and the next tab change names that editor's group instead. That is no choice of the learner. */
-    const namesFocusedEditorGroup = (active: vscode.TabGroup): boolean =>
+    /**
+     * Says whether the tab the editor named before the registration is neither a webview nor a text tab: the tab of another editor part (Cursor's chat), or none; the first condition of {@link namesFocusedEditorGroup}.
+     * @returns `true` when the named tab is neither, `false` for a webview or a text tab.
+     * @example namedTabOfAnotherPart() // => true while Cursor names the chat's group
+     */
+    const namedTabOfAnotherPart = (): boolean =>
       focusedWebview === undefined &&
-      !(focusedTab?.input instanceof vscode.TabInputText) &&
+      !(focusedTab?.input instanceof vscode.TabInputText)
+    /**
+     * Says whether the editor has corrected a stale name: Cursor names another editor part's group (the chat's) while a text editor of the main editor has the keyboard, and the next tab change names that editor's group instead. That is no choice of the learner. Asked by {@link isCorrectedName}.
+     * @param active - The group the editor names as active now.
+     * @returns `true` when the editor named another part's group before and now names the group of the text editor that had the keyboard.
+     * @example namesFocusedEditorGroup(vscode.window.tabGroups.activeTabGroup)
+     */
+    const namesFocusedEditorGroup = (active: vscode.TabGroup): boolean =>
+      namedTabOfAnotherPart() &&
       focusedSourceColumn !== undefined &&
       focusedSourceColumn !== focusedColumn &&
       active.viewColumn === focusedSourceColumn
+    /**
+     * Says whether a newly named tab is only the editor's corrected name for the text editor that had the keyboard; asked by {@link isLearnerChoice}.
+     * @param active - The group the editor names as active now.
+     * @param selected - The tab that group shows.
+     * @returns `true` when {@link namesFocusedEditorGroup} holds and `selected` is the text tab of the document that had the keyboard.
+     * @example isCorrectedName(active, selected)
+     */
+    const isCorrectedName = (
+      active: vscode.TabGroup,
+      selected: vscode.Tab,
+    ): boolean =>
+      namesFocusedEditorGroup(active) &&
+      selected.input instanceof vscode.TabInputText &&
+      selected.input.uri.toString() === focusedSource
+    /**
+     * Says whether the tab that was named before the registration is still open, or none was named; asked by {@link isLearnerChoice}.
+     * @returns `true` when no tab was named or a group still holds that tab.
+     * @example isFocusedTabStillOpen()
+     */
+    const isFocusedTabStillOpen = (): boolean =>
+      !focusedTab ||
+      vscode.window.tabGroups.all.some((group) =>
+        group.tabs.includes(focusedTab),
+      )
+    /**
+     * Says whether the tab the editor names now is a choice of the learner; asked by {@link noticeLearnerTab} for every tab or group change during the registration.
+     * @param active - The group the editor names as active now.
+     * @param selected - The tab that group shows.
+     * @returns `true` for a tab other than the one named before that is not Codebook's Application, is not a corrected name, and was chosen while the tab named before is still open.
+     * @example if (selected && isLearnerChoice(active, selected)) learnerTabVisited = true
+     */
+    const isLearnerChoice = (
+      active: vscode.TabGroup,
+      selected: vscode.Tab,
+    ): boolean =>
+      selected !== focusedTab &&
+      !owned(selected) &&
+      !isCorrectedName(active, selected) &&
+      isFocusedTabStillOpen()
     /** Records a newer tab choice during app registration so {@link open} cannot claim a focus roundtrip. @example noticeLearnerTab() */
     const noticeLearnerTab = (): void => {
       const active = vscode.window.tabGroups.activeTabGroup,
         selected = active.activeTab
       // Codebook may select its new Application; another retained tab is a learner decision even after a roundtrip.
-      if (
-        selected &&
-        selected !== focusedTab &&
-        !owned(selected) &&
-        !(
-          namesFocusedEditorGroup(active) &&
-          selected.input instanceof vscode.TabInputText &&
-          selected.input.uri.toString() === focusedSource
-        ) &&
-        (!focusedTab ||
-          vscode.window.tabGroups.all.some((group) =>
-            group.tabs.includes(focusedTab),
-          ))
-      )
+      if (selected && isLearnerChoice(active, selected))
         learnerTabVisited = true
     }
     const changes = [
@@ -7886,16 +8055,38 @@ export class StudyWorkspace {
       if (panel.active) this.lastActiveRegion = 'app'
       if (visible === panel.visible) return
       visible = panel.visible
-      // Only visibility of the replay surface pauses playback; runtime/debugger exit is unrelated.
-      if (this.recordingActive && !this.placingPresentation) {
-        this.replayNeedsReveal = true
-        // A tab the learner opened over the pane hides a moment that is recorded; the retired moment is labelled as covered, not as missing.
-        this.replayApplicationCovered =
-          !visible && this.isApplicationCoveredByTab(panel)
-        if (visible) this.playback?.reveal()
-        else this.playback?.hide()
-      }
+      this.followReplaySurfaceVisibility(panel, visible)
     })
+  }
+
+  /**
+   * Pauses or resumes a recording's replay when its Application pane became hidden or visible; called by the view-state listener of {@link bindApplicationPanel} for each change of the pane's visibility.
+   * Nothing happens outside a recording or while Codebook itself places the presentation.
+   * @param panel - The Application pane that reported the change.
+   * @param isVisible - Whether the pane is visible now.
+   * @example this.followReplaySurfaceVisibility(panel, panel.visible)
+   */
+  private followReplaySurfaceVisibility(
+    panel: vscode.WebviewPanel,
+    isVisible: boolean,
+  ): void {
+    // Only visibility of the replay surface pauses playback; runtime/debugger exit is unrelated.
+    if (!this.recordingActive || this.placingPresentation) return
+    this.replayNeedsReveal = true
+    // A tab the learner opened over the pane hides a moment that is recorded; the retired moment is labelled as covered, not as missing.
+    this.replayApplicationCovered =
+      !isVisible && this.isApplicationCoveredByTab(panel)
+    this.revealOrHidePlayback(isVisible)
+  }
+
+  /**
+   * Tells the playback that its surface is visible again or hidden; the last step of {@link followReplaySurfaceVisibility}.
+   * @param isVisible - Whether the Application pane is visible now.
+   * @example this.revealOrHidePlayback(false) // the playback pauses at its position
+   */
+  private revealOrHidePlayback(isVisible: boolean): void {
+    if (isVisible) this.playback?.reveal()
+    else this.playback?.hide()
   }
 
   /**
@@ -8268,6 +8459,47 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether a Learning summary view is still the reader's and is shown, or hidden, as asked; the visibility listener {@link installReaders} gives each summary view asks it twice, before and after it publishes.
+   * @param view - The summary view whose visibility changed.
+   * @param isVisible - The visibility to ask for.
+   * @returns `true` when `view` is the reader's summary view and its visibility is `isVisible`; `false` for a replaced view.
+   * @example if (this.isSummaryViewInState(view, false)) this.releaseHiddenSummaryFocus()
+   */
+  private isSummaryViewInState(
+    view: vscode.WebviewView,
+    isVisible: boolean,
+  ): boolean {
+    return this.summaryView === view && Boolean(view.visible) === isVisible
+  }
+
+  /**
+   * Says whether the text editor that became active shows a file of the running application while the reader is open: the editor's debugger opened it over the captured source. Asked by the active-editor listener of {@link installReaders}.
+   * @param editor - The editor that became active, if any.
+   * @returns `true` only for an open reader and an editor whose file is one of the runtime's source paths.
+   * @example this.showsRuntimeSourceInOpenReader(vscode.window.activeTextEditor)
+   */
+  private showsRuntimeSourceInOpenReader(
+    editor: vscode.TextEditor | undefined,
+  ): boolean {
+    return Boolean(
+      this.opened &&
+      editor &&
+      this.runtimeSourcePaths.has(editor.document.uri.fsPath),
+    )
+  }
+
+  /**
+   * Says whether the captured source is not shown again over a runtime file right now; asked by the active-editor listener of {@link installReaders} after {@link showsRuntimeSourceInOpenReader}.
+   * @returns `true` while such a restore is already running, a presentation is being placed, or no captured source is selected.
+   * @example if (this.isSourceRestoreHeldBack()) return
+   */
+  private isSourceRestoreHeldBack(): boolean {
+    return Boolean(
+      this.restoringSource || this.presentationTransition || !this.sourceUri,
+    )
+  }
+
+  /**
    * Registers native readers once, keeping checkbox persistence under explicit learner control; the constructor calls it at activation.
    * In Cursor it also turns on the context key that shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette for the whole editor session, so the step stays reachable when the offer's notification is gone.
    * @example this.installReaders()
@@ -8415,11 +8647,11 @@ export class StudyWorkspace {
             })
             view.onDidChangeVisibility(() => {
               // Collapsing the summary never moves the playhead or borrows a live debugger.
-              if (this.summaryView === view && view.visible) {
+              if (this.isSummaryViewInState(view, true)) {
                 this.lastPublished = undefined
                 this.publish()
               }
-              if (this.summaryView === view && !view.visible)
+              if (this.isSummaryViewInState(view, false))
                 this.releaseHiddenSummaryFocus()
             })
             if (this.recordingActive && this.summaryComposition) {
@@ -8483,12 +8715,8 @@ export class StudyWorkspace {
         if (editor?.document.uri.scheme === STUDY_SOURCE_SCHEME)
           this.lastActiveRegion = 'source'
         if (
-          !this.opened ||
-          !editor ||
-          !this.runtimeSourcePaths.has(editor.document.uri.fsPath) ||
-          this.restoringSource ||
-          this.presentationTransition ||
-          !this.sourceUri
+          !this.showsRuntimeSourceInOpenReader(editor) ||
+          this.isSourceRestoreHeldBack()
         )
           return
         const region = this.lastActiveRegion
@@ -8800,14 +9028,29 @@ export class StudyWorkspace {
       }
       let didLearnerChangePrimaryTab = false
       const namedColumn = vscode.window.tabGroups.activeTabGroup.viewColumn
-      /** Cursor reports the first group's text editor as the active text editor after the focus command and keeps naming the group it named before (the chat's) as the active tab group until a tab or group changes: that report is the main editor's focus too. */
+      /**
+       * Tells that a text editor is the first group's editor of the primary editor's document; asked by {@link primaryEditorReported} about the active text editor.
+       * @param focused - The active text editor, if the editor reports one.
+       * @param primary - The text editor the first group showed before the focus command.
+       * @returns `true` when `focused` is in the first group and shows the document of `primary`.
+       * @example isFirstGroupEditorOf(vscode.window.activeTextEditor, primaryEditor)
+       */
+      const isFirstGroupEditorOf = (
+        focused: vscode.TextEditor | undefined,
+        primary: vscode.TextEditor,
+      ): boolean =>
+        focused?.viewColumn === vscode.ViewColumn.One &&
+        focused.document.uri.toString() === primary.document.uri.toString()
+      /**
+       * Cursor reports the first group's text editor as the active text editor after the focus command and keeps naming the group it named before (the chat's) as the active tab group until a tab or group changes: that report is the main editor's focus too. Asked by the wait for the primary focus below.
+       * @returns `true` when the active text editor is the first group's and the editor still names the other group it named before the command.
+       * @example firstFocused() || primaryEditorReported() || sourceEditorReported()
+       */
       const primaryEditorReported = (): boolean => {
         const focused = vscode.window.activeTextEditor
         return Boolean(
           primaryEditor &&
-          focused?.viewColumn === vscode.ViewColumn.One &&
-          focused.document.uri.toString() ===
-            primaryEditor.document.uri.toString() &&
+          isFirstGroupEditorOf(focused, primaryEditor) &&
           namedColumn !== vscode.ViewColumn.One &&
           vscode.window.tabGroups.activeTabGroup.viewColumn === namedColumn,
         )
@@ -8914,14 +9157,8 @@ export class StudyWorkspace {
           .find(
             ({ tab }) =>
               tab.isPreview &&
-              !(
-                tab.input instanceof vscode.TabInputWebview &&
-                isCodebookPaneViewType(tab.input.viewType)
-              ) &&
-              !(
-                tab.input instanceof vscode.TabInputText &&
-                tab.input.uri.scheme === STUDY_SOURCE_SCHEME
-              ),
+              !this.isCodebookPaneInput(tab.input) &&
+              !this.isCapturedSourceInput(tab.input),
           )
         // Only the expired wait is renamed; a learner focus change keeps its own refusal.
         if (didLearnerChangePrimaryTab) throw error
@@ -9439,22 +9676,9 @@ export class StudyWorkspace {
     await this.withLayout(signal, async (lifetime, assertCurrent) => {
       // Actual Return must validate its original focus after queueing, before any early exit or native operation.
       focus?.begin()
-      const saved = this.repositoryLayoutOrigin,
-        receipt = this.layoutReceipt
-      if (
-        !saved ||
-        JSON.stringify(saved.origin) !==
-          JSON.stringify(this.repositoryOrigin) ||
-        JSON.stringify(saved.origin.selection) !== JSON.stringify(selection) ||
-        !receipt ||
-        receipt.mode === 'repository'
-      )
-        return
-      // Already-observed learner group changes release ownership before any scope command can borrow focus.
-      if (!this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)) {
-        this.layoutReceipt = undefined
-        return
-      }
+      const start = this.articleReturnStart(selection)
+      if (!start) return
+      const { saved, receipt } = start
       const grid = await this.readMainEditorGrid(
           signal,
           assertCurrent,
@@ -9482,23 +9706,18 @@ export class StudyWorkspace {
         ),
       )
       if (
-        saved !== this.repositoryLayoutOrigin ||
-        receipt !== this.layoutReceipt ||
-        JSON.stringify(layout) !== receipt.signature ||
-        !this.sameEditorGroups(receipt.groups, groups) ||
-        !this.sameEditorGroups(saved.groups, retained) ||
-        !this.sameStudyPanePositions(
-          receipt.panes,
-          receipt.sourceTargetColumn,
-        ) ||
-        !ownsExtraTabs ||
-        !saved.preservesOtherParts(grid.groups.length)
+        !this.holdsArticleReturn(saved, receipt, {
+          layout,
+          groups,
+          retained,
+          ownsExtraTabs,
+          mainGroupCount: grid.groups.length,
+        })
       ) {
         this.layoutReceipt = undefined
         return
       }
-      // A cancelled reservation has not moved Context yet; retain its previously verified Study destination for the next visit.
-      const before = receipt.pendingPanes ?? this.studyPanePositions()
+      const before = this.studyPanesBeforeReturn(receipt)
       this.layoutReceipt = undefined
       await vscode.commands.executeCommand(
         'vscode.setEditorLayout',
@@ -9510,42 +9729,218 @@ export class StudyWorkspace {
         'vscode.getEditorLayout',
       )
       this.assertLifetime(lifetime)
-      // Native minimum sizes can expand the editor area; certify the saved split proportions, then retain exact returned pixels.
-      if (
-        !isProportionalEditorLayout(saved.layout, restoredLayout) ||
-        !this.sameEditorGroups(
-          saved.groups,
-          vscode.window.tabGroups.all.filter((group) =>
-            saved.groups.some((entry) => entry.column === group.viewColumn),
-          ),
-        ) ||
-        !saved.preservesOtherParts(saved.groups.length) ||
-        !this.sameStudyPanePositions(after)
-      ) {
-        this.report(
-          'layout',
-          new Error(
-            'The editor could not restore the saved reading layout. Arrange the reading panes manually.',
-          ),
-        )
-        assertCurrent()
-        return
-      }
-      this.repositoryLayoutRestored = {
-        signature: JSON.stringify(restoredLayout),
-        studyLayout: layout,
-        groups: vscode.window.tabGroups.all.map((group) => ({
-          group,
-          column: group.viewColumn,
-        })),
-        before,
-        after,
-      }
-      this.sourceGroup = this.repositoryLayoutRestored.after.sourceGroup
-      this.errors.delete('layout')
-      this.publish()
+      this.settleArticleReturn(saved, restoredLayout, layout, before, after)
       assertCurrent()
     })
+  }
+
+  /**
+   * Finds the article-origin grid that was saved for a selection; read by {@link articleReturnStart} when an actual Return begins.
+   * @param selection - The article selection the Return goes back to.
+   * @returns The saved origin when it is the reader's current repository origin and names that selection, otherwise `undefined`.
+   * @example const saved = this.articleOriginOf(selection)
+   */
+  private articleOriginOf(
+    selection: RepositorySelection,
+  ): StudyWorkspace['repositoryLayoutOrigin'] {
+    const saved = this.repositoryLayoutOrigin
+    return saved &&
+      JSON.stringify(saved.origin) === JSON.stringify(this.repositoryOrigin) &&
+      JSON.stringify(saved.origin.selection) === JSON.stringify(selection)
+      ? saved
+      : undefined
+  }
+
+  /**
+   * Finds the Study layout an actual Return leaves, and releases it when the learner changed its groups; read by {@link articleReturnStart} once the saved origin is known.
+   * @returns The receipt of an arranged Study layout whose groups are unchanged; `undefined` when none is arranged, the article layout is arranged already, or the groups changed (the receipt is then released).
+   * @example const receipt = this.studyReceiptToLeave()
+   */
+  private studyReceiptToLeave(): StudyWorkspace['layoutReceipt'] {
+    const receipt = this.layoutReceipt
+    if (!receipt || receipt.mode === 'repository') return undefined
+    // Already-observed learner group changes release ownership before any scope command can borrow focus.
+    if (!this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)) {
+      this.layoutReceipt = undefined
+      return undefined
+    }
+    return receipt
+  }
+
+  /**
+   * Finds what an actual Return starts from; asked by {@link restoreRepositoryLayout} after its focus handoff and before any native operation.
+   * @param selection - The article selection the Return goes back to.
+   * @returns The saved article origin and the Study receipt to leave, or `undefined` when either is missing; nothing is released unless an origin was saved for the selection.
+   * @example
+   * ```ts
+   * const start = this.articleReturnStart(selection)
+   * if (!start) return
+   * ```
+   */
+  private articleReturnStart(selection: RepositorySelection):
+    | {
+        saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>
+        receipt: NonNullable<StudyWorkspace['layoutReceipt']>
+      }
+    | undefined {
+    const saved = this.articleOriginOf(selection)
+    if (!saved) return undefined
+    const receipt = this.studyReceiptToLeave()
+    return receipt && { saved, receipt }
+  }
+
+  /**
+   * Says whether the measured Study layout is still the one its receipt and the saved origin describe; the first half of {@link holdsArticleReturn}.
+   * @param saved - The article origin the Return started from.
+   * @param receipt - The Study receipt the Return started from.
+   * @param measured - The grid layout and the tab groups read after the measurement.
+   * @returns `true` when origin and receipt are still the reader's, and the layout and the groups are the receipt's.
+   * @example this.isStudyLayoutUnchanged(saved, receipt, { layout, groups })
+   */
+  private isStudyLayoutUnchanged(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    measured: { layout: unknown; groups: readonly vscode.TabGroup[] },
+  ): boolean {
+    return (
+      saved === this.repositoryLayoutOrigin &&
+      receipt === this.layoutReceipt &&
+      JSON.stringify(measured.layout) === receipt.signature &&
+      this.sameEditorGroups(receipt.groups, measured.groups)
+    )
+  }
+
+  /**
+   * Says whether the main editor can contract to the saved article grid without taking anything of the learner's; the second half of {@link holdsArticleReturn}.
+   * @param saved - The article origin the Return started from.
+   * @param receipt - The Study receipt the Return started from.
+   * @param measured - The groups of the saved columns, whether every tab of the other groups is Codebook's, and the main editor's group count.
+   * @returns `true` when the saved groups and the Study panes are where they were, the extra groups hold only Codebook's tabs, and the other editor parts are preserved.
+   * @example this.canContractToArticle(saved, receipt, { retained, ownsExtraTabs: true, mainGroupCount: 3 })
+   */
+  private canContractToArticle(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    measured: {
+      retained: readonly vscode.TabGroup[]
+      ownsExtraTabs: boolean
+      mainGroupCount: number
+    },
+  ): boolean {
+    return (
+      this.sameEditorGroups(saved.groups, measured.retained) &&
+      this.sameStudyPanePositions(receipt.panes, receipt.sourceTargetColumn) &&
+      measured.ownsExtraTabs &&
+      saved.preservesOtherParts(measured.mainGroupCount)
+    )
+  }
+
+  /**
+   * Says whether an actual Return may still set the saved article grid, judged in the turn the main editor was measured; asked by {@link restoreRepositoryLayout}, which releases the receipt when it may not.
+   * @param saved - The article origin the Return started from.
+   * @param receipt - The Study receipt the Return started from.
+   * @param measured - What was read after the measurement: the grid layout, the tab groups, the groups of the saved columns, whether the other groups hold only Codebook's tabs, and the main editor's group count.
+   * @returns `true` when {@link isStudyLayoutUnchanged} and {@link canContractToArticle} both hold.
+   * @example
+   * ```ts
+   * if (!this.holdsArticleReturn(saved, receipt, { layout, groups, retained, ownsExtraTabs, mainGroupCount: grid.groups.length })) return
+   * ```
+   */
+  private holdsArticleReturn(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    measured: {
+      layout: unknown
+      groups: readonly vscode.TabGroup[]
+      retained: readonly vscode.TabGroup[]
+      ownsExtraTabs: boolean
+      mainGroupCount: number
+    },
+  ): boolean {
+    return (
+      this.isStudyLayoutUnchanged(saved, receipt, measured) &&
+      this.canContractToArticle(saved, receipt, measured)
+    )
+  }
+
+  /**
+   * Gives the Study pane positions an actual Return remembers as the ones before it; read by {@link restoreRepositoryLayout} just before it releases the receipt and sets the article grid.
+   * @param receipt - The Study receipt the Return leaves.
+   * @returns The destination a cancelled reservation had verified, otherwise the positions the panes have now.
+   * @example const before = this.studyPanesBeforeReturn(receipt)
+   */
+  private studyPanesBeforeReturn(
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+  ): ReturnType<StudyWorkspace['studyPanePositions']> {
+    // A cancelled reservation has not moved Context yet; retain its previously verified Study destination for the next visit.
+    return receipt.pendingPanes ?? this.studyPanePositions()
+  }
+
+  /**
+   * Says whether the editor restored the saved article grid; asked by {@link settleArticleReturn} with the layout the editor returned.
+   * @param saved - The article origin that was set.
+   * @param restoredLayout - The layout the editor reports after the set.
+   * @param after - The Study pane positions read right after the set.
+   * @returns `true` when the split proportions are the saved ones, the saved groups are in their columns, the other editor parts are preserved and the panes did not move since.
+   * @example this.isArticleLayoutRestored(saved, restoredLayout, after)
+   */
+  private isArticleLayoutRestored(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    restoredLayout: unknown,
+    after: ReturnType<StudyWorkspace['studyPanePositions']>,
+  ): boolean {
+    return (
+      isProportionalEditorLayout(saved.layout, restoredLayout) &&
+      this.sameEditorGroups(
+        saved.groups,
+        vscode.window.tabGroups.all.filter((group) =>
+          saved.groups.some((entry) => entry.column === group.viewColumn),
+        ),
+      ) &&
+      saved.preservesOtherParts(saved.groups.length) &&
+      this.sameStudyPanePositions(after)
+    )
+  }
+
+  /**
+   * Records the outcome of an actual Return once the editor answered with its layout: the restored article grid, or the layout error that asks the learner to arrange the panes; called by {@link restoreRepositoryLayout}, which checks its cancellation right after.
+   * @param saved - The article origin that was set.
+   * @param restoredLayout - The layout the editor reports after the set.
+   * @param studyLayout - The Study grid measured before the set, kept for the next visit.
+   * @param before - The Study pane positions before the set.
+   * @param after - The Study pane positions read right after the set.
+   * @example this.settleArticleReturn(saved, restoredLayout, layout, before, after)
+   */
+  private settleArticleReturn(
+    saved: NonNullable<StudyWorkspace['repositoryLayoutOrigin']>,
+    restoredLayout: unknown,
+    studyLayout: unknown,
+    before: ReturnType<StudyWorkspace['studyPanePositions']>,
+    after: ReturnType<StudyWorkspace['studyPanePositions']>,
+  ): void {
+    // Native minimum sizes can expand the editor area; certify the saved split proportions, then retain exact returned pixels.
+    if (!this.isArticleLayoutRestored(saved, restoredLayout, after)) {
+      this.report(
+        'layout',
+        new Error(
+          'The editor could not restore the saved reading layout. Arrange the reading panes manually.',
+        ),
+      )
+      return
+    }
+    this.repositoryLayoutRestored = {
+      signature: JSON.stringify(restoredLayout),
+      studyLayout,
+      groups: vscode.window.tabGroups.all.map((group) => ({
+        group,
+        column: group.viewColumn,
+      })),
+      before,
+      after,
+    }
+    this.sourceGroup = this.repositoryLayoutRestored.after.sourceGroup
+    this.errors.delete('layout')
+    this.publish()
   }
 
   /** Switches explicit reader entry between owned layouts without merging groups or replacing manual arrangements. @example await this.arrange(signal, 'repository', true) */
@@ -9617,11 +10012,33 @@ export class StudyWorkspace {
               )
             ? 'group'
             : 'gone'
-      /** Measures the main editor, and measures it again when the editor closed the retired pane's tab or its emptied group while the measurement waited: Cursor does both a moment after the pane was disposed. */
+      /**
+       * Reads how far the retirement is when a measurement begins; asked by {@link measure} before it reads the grid.
+       * @returns The stage {@link retirementStage} names while a context pane is being retired, `undefined` when none is.
+       * @example const stage = retirementStageAtStart() // => 'tab' right after the pane was disposed
+       */
+      const retirementStageAtStart = ():
+        ReturnType<typeof retirementStage> | undefined =>
+        retiredContextGroup && retirementStage()
+      /**
+       * Says whether a failed measurement keeps its refusal; asked by {@link measure} in the turn the measurement threw.
+       * @param stage - The stage {@link retirementStageAtStart} read before the measurement.
+       * @returns `true` when no pane is being retired or the retirement did not advance meanwhile, `false` when the editor closed the retired tab or group during the measurement.
+       * @example if (hasRetirementStayedAt(stage)) throw error
+       */
+      const hasRetirementStayedAt = (
+        stage: ReturnType<typeof retirementStageAtStart>,
+      ): boolean => stage === undefined || stage === retirementStage()
+      /**
+       * Measures the main editor, and measures it again when the editor closed the retired pane's tab or its emptied group while the measurement waited: Cursor does both a moment after the pane was disposed.
+       * @returns The grid {@link readMainEditorGrid} measured.
+       * @throws What the measurement threw, when the retirement did not advance while it waited.
+       * @example const grid = await measure()
+       */
       const measure = async (): ReturnType<
         StudyWorkspace['readMainEditorGrid']
       > => {
-        const stage = retiredContextGroup && retirementStage()
+        const stage = retirementStageAtStart()
         try {
           return await this.readMainEditorGrid(
             signal,
@@ -9632,7 +10049,7 @@ export class StudyWorkspace {
         } catch (error) {
           assertCurrent()
           // Any other change during the measurement is the learner's and keeps its refusal.
-          if (stage === undefined || stage === retirementStage()) throw error
+          if (hasRetirementStayedAt(stage)) throw error
           return measure()
         }
       }
@@ -9983,25 +10400,50 @@ export class StudyWorkspace {
               ),
           ),
     }))
-    // A group without tabs has nothing to be recognized by; it stays the same group when every group was replaced in its own column and another group of that event was recognized by its tabs.
-    const emptySurvivor = (
-      group: vscode.TabGroup,
+    /**
+     * Says whether the event opened or closed a group or changed how many there are; asked by {@link keepsEmptyGroups}.
+     * @returns `true` when the set of groups changed, `false` when the event only changed groups that stay.
+     * @example hasGroupSetChanged() // => false for a tab change that replaced three groups by three
+     */
+    const hasGroupSetChanged = (): boolean =>
+      Boolean(event?.opened.length) ||
+      Boolean(event?.closed.length) ||
+      current.length !== previous.length
+    /**
+     * Says whether this event lets a group without tabs stay the group of its column; asked by {@link emptySurvivor} for every group that is not yet known.
+     * @returns `true` when every group was replaced, none was opened or closed, and another group was recognized by its tabs.
+     * @example keepsEmptyGroups() // => true after Cursor replaced every group object for one opened tab
+     */
+    const keepsEmptyGroups = (): boolean =>
+      everyGroupReplaced &&
+      !hasGroupSetChanged() &&
+      replacements.some(({ matches }) => matches.length === 1)
+    /**
+     * Finds the group that alone stood in a column before the event and had no tabs; the survivor {@link emptySurvivor} names.
+     * @param column - The column of the group that is not yet known.
+     * @returns The only earlier group of that column when it was empty, otherwise `undefined`.
+     * @example soleEmptyGroupOf(vscode.ViewColumn.Two)
+     */
+    const soleEmptyGroupOf = (
+      column: vscode.ViewColumn,
     ): (typeof previous)[number] | undefined => {
-      if (
-        !everyGroupReplaced ||
-        event?.opened.length ||
-        event?.closed.length ||
-        current.length !== previous.length ||
-        group.tabs.length ||
-        !replacements.some(({ matches }) => matches.length === 1)
-      )
-        return undefined
-      const sameColumn = previous.filter(
-        (entry) => entry.column === group.viewColumn,
-      )
+      const sameColumn = previous.filter((entry) => entry.column === column)
       return sameColumn.length === 1 && !sameColumn[0]!.group.tabs.length
         ? sameColumn[0]
         : undefined
+    }
+    /**
+     * Finds the earlier group that a group without tabs still is; asked by the loop below for every group that is neither opened nor known.
+     * A group without tabs has nothing to be recognized by; it stays the same group when every group was replaced in its own column and another group of that event was recognized by its tabs.
+     * @param group - A group of the editor's current model.
+     * @returns The earlier group of the same column, or `undefined` when the group has tabs or the event does not keep empty groups.
+     * @example const emptyMatch = emptySurvivor(group)
+     */
+    const emptySurvivor = (
+      group: vscode.TabGroup,
+    ): (typeof previous)[number] | undefined => {
+      if (!keepsEmptyGroups() || group.tabs.length) return undefined
+      return soleEmptyGroupOf(group.viewColumn)
     }
     for (const group of current) {
       if (event?.opened.includes(group)) {
@@ -10047,6 +10489,22 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether two tabs carry the same label and the same dirty, preview and pinned flags: what a tab without a known input is described by; asked by {@link retainsEditorTabs} when it counts the equal tabs that precede one.
+   * @param candidate - A tab of the same group.
+   * @param tab - The tab that is being named.
+   * @returns `true` when the label and the three flags are equal.
+   * @example this.hasSameTabState(secondChatTab, firstChatTab) // => true for two chat tabs labelled alike
+   */
+  private hasSameTabState(candidate: vscode.Tab, tab: vscode.Tab): boolean {
+    return (
+      candidate.label === tab.label &&
+      candidate.isDirty === tab.isDirty &&
+      candidate.isPreview === tab.isPreview &&
+      candidate.isPinned === tab.isPinned
+    )
+  }
+
+  /**
    * Recognizes surviving tab order during wrapper replacement, allowing additions from group contraction but rejecting ambiguous inputs; called by {@link observeEditorGroups} for every replaced group object.
    * @param before - The group object the editor replaced, with the tabs it held last.
    * @param after - A new group object of the same event.
@@ -10087,12 +10545,15 @@ export class StudyWorkspace {
         tab.isPreview,
         tab.isPinned,
       ])
+      /**
+       * Says whether the description of the named tab fits another tab of its group too; the filter of the tabs that precede it.
+       * @param candidate - A tab of the same group.
+       * @returns `true` for a tab without a known input that has the same label and state.
+       * @example tabs.slice(0, tabs.indexOf(tab)).filter(describes).length // => 1 for the second of two equal tabs
+       */
       const describes = (candidate: vscode.Tab): boolean =>
         knownKey(candidate) === undefined &&
-        candidate.label === tab.label &&
-        candidate.isDirty === tab.isDirty &&
-        candidate.isPreview === tab.isPreview &&
-        candidate.isPinned === tab.isPinned
+        this.hasSameTabState(candidate, tab)
       return `foreign:${description}:${tabs.slice(0, tabs.indexOf(tab)).filter(describes).length}`
     }
     const foreignKey = (tab: vscode.Tab, tabs: readonly vscode.Tab[]) => {
@@ -11001,8 +11462,19 @@ export class StudyWorkspace {
     return (
       receipt?.status === 'saved' &&
       receipt.signature === signature &&
-      !this.pendingArchives.has(studyId) &&
-      !this.archiveWrites.has(studyId)
+      this.hasNoArchiveWriteOutstanding(studyId)
+    )
+  }
+
+  /**
+   * Says whether this window has no write of a study waiting or running; asked by {@link isSavedUnchanged} once the receipt says `saved` for the same material.
+   * @param studyId - The study a checkpoint is asked for.
+   * @returns `true` when neither a pending archive nor a running write of that study exists.
+   * @example this.hasNoArchiveWriteOutstanding(studyId) // => false while its archive is being written
+   */
+  private hasNoArchiveWriteOutstanding(studyId: string): boolean {
+    return (
+      !this.pendingArchives.has(studyId) && !this.archiveWrites.has(studyId)
     )
   }
 
@@ -11188,11 +11660,20 @@ export class StudyWorkspace {
    * @example await this.copyStudyFiles(message.studyId)
    */
   private async copyStudyFiles(studyId: string): Promise<void> {
-    const files =
-      this.studyRemoval?.studyId === studyId
-        ? this.studyRemoval.files
-        : undefined
+    const files = this.removalFilesOf(studyId)
     if (files?.length) await vscode.env.clipboard.writeText(files.join('\n'))
+  }
+
+  /**
+   * Gives the files the reader listed for the removal by hand of one study; read by {@link copyStudyFiles} before it writes the clipboard.
+   * @param studyId - The study the pane shows the list of.
+   * @returns The reader's list when its removal state is of that study; `undefined` when that state is of another study, or there is no state or no list.
+   * @example const files = this.removalFilesOf(studyId)
+   */
+  private removalFilesOf(studyId: string): StudyRemovalView['files'] {
+    return this.studyRemoval?.studyId === studyId
+      ? this.studyRemoval.files
+      : undefined
   }
 
   /**
@@ -11618,9 +12099,21 @@ export class StudyWorkspace {
    * @example void this.answerRefusedRunAfterLimitChange()
    */
   private async answerRefusedRunAfterLimitChange(): Promise<void> {
-    if (!this.library || !this.refusedRunAwaitingRoom()) return
-    const usage = await this.library.usage().catch(() => undefined)
+    const library = this.libraryOfRefusedRun()
+    if (!library) return
+    const usage = await library.usage().catch(() => undefined)
     if (usage && this.answerRefusedRunIfRoom(usage)) this.publish()
+  }
+
+  /**
+   * Gives the library whose room decides about the run it refused; read by {@link answerRefusedRunAfterLimitChange} before it asks for the library's usage.
+   * @returns The library while a refused run waits for room; `undefined` when no library is open or no refused run waits.
+   * @example const library = this.libraryOfRefusedRun()
+   */
+  private libraryOfRefusedRun(): LearningLibrary | undefined {
+    return this.library && this.refusedRunAwaitingRoom()
+      ? this.library
+      : undefined
   }
 
   /**
@@ -11695,6 +12188,26 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the learner or an agent acted on the reader while the neighbour of a removed study was read, so that the neighbour is not shown; asked by {@link showRemovalNeighbour} in the turn that read has settled.
+   * @param studyId - The study that was moved.
+   * @param request - The history request number the neighbour's read took.
+   * @param choiceGeneration - The count of study choices before the read.
+   * @returns `true` when a study was chosen meanwhile, or a later request moved the reader off the removed study or back to the current run; `false` when the neighbour is still due.
+   * @example if (this.hasReaderMovedOnFrom(removedStudyId, request, choiceGeneration)) return
+   */
+  private hasReaderMovedOnFrom(
+    studyId: string,
+    request: number,
+    choiceGeneration: number,
+  ): boolean {
+    // An item chosen on the removed study takes a number too and leaves the reader on that study; the neighbour is then still due.
+    const hasReaderMovedOn =
+      request !== this.historyRequest &&
+      (this.selection.studyId !== studyId || this.selection.follow)
+    return this.studyChoices !== choiceGeneration || hasReaderMovedOn
+  }
+
+  /**
    * Shows the nearest remaining saved study after the shown one was removed, or no study when none can be opened; called by {@link showAfterRemoval} when nothing was chosen during the removal.
    * A study the learner chooses while the neighbour is read wins and never finds the removed study still selected; so does a return to the current run or repository evidence opened meanwhile, which take a history request number of their own and move the reader off the removed study. A reader that is closing, or has closed, renders nothing and remembers the neighbour.
    * @param studyId - The study that was moved.
@@ -11709,11 +12222,7 @@ export class StudyWorkspace {
     const request = ++this.historyRequest
     const choiceGeneration = this.studyChoices
     const shown = await this.firstReadableStudy(neighbours)
-    // An item chosen on the removed study takes a number too and leaves the reader on that study; the neighbour is then still due.
-    const hasReaderMovedOn =
-      request !== this.historyRequest &&
-      (this.selection.studyId !== studyId || this.selection.follow)
-    if (this.studyChoices !== choiceGeneration || hasReaderMovedOn) {
+    if (this.hasReaderMovedOnFrom(studyId, request, choiceGeneration)) {
       if (this.selection.studyId === studyId) await this.leaveRemovedSelection()
       return
     }
