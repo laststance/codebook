@@ -157,3 +157,45 @@ test('the pane DOM check runs its flow inside the case keeper and gives that one
   // The keeper's text is run outside Node's module system: it may name nothing of its file.
   assert.doesNotMatch(runFlowKeepingCases.toString(), /\bimport\b|\brequire\b/)
 })
+
+// Value: protects=the measured case of the Wiki reader's right rail in the Reader DOM check (the unit suites read the shell's style sheet, never its layout); fails_when=the check stops laying out the shell, or lays it out at a width where the rail is no row; why_new=Cycle 0045 local review other-1 #6; seam=none
+test('the pane DOM check lays out the Wiki reader’s shell at a width where its right rail is a row and measures the open control and the outline', async () => {
+  // Arrange
+  const script = await readFile(scriptUrl, 'utf8')
+  const shell = await readFile(
+    new URL('../../skills/codebook/reader-shell.html', import.meta.url),
+    'utf8',
+  )
+
+  // Act: the fields the shell names and the fields the check's page has a text for.
+  const shellFields = [
+    ...new Set(
+      [...shell.matchAll(/\{\{([A-Z_]+)\}\}/g)].map(([, name]) => name),
+    ),
+  ].toSorted()
+  const pageFields = [
+    ...script
+      .slice(
+        script.indexOf('function wikiShellPage(shell) {'),
+        script.indexOf('return shell.replace('),
+      )
+      .matchAll(/^ {4}([A-Z_]+):/gm),
+  ]
+    .map(([, name]) => name)
+    .toSorted()
+
+  // Assert
+  assert.deepEqual(pageFields, shellFields)
+  assert.ok(
+    script.includes(
+      "name: 'in the Wiki reader at 720 px the open control of the right rail keeps its label on one line, and the outline is no narrower than it',",
+    ),
+    'the case of the right rail is gone',
+  )
+  assert.ok(
+    script.includes(
+      '  await page.setViewportSize({ width: 720, height: 720 })\n  await page.goto(options.url)\n  await page.setContent(options.wikiShell)\n',
+    ),
+    'the shell is no longer laid out at 720 px',
+  )
+})

@@ -3215,6 +3215,76 @@ async function check(page, options, collected) {
       Number.isInteger(firstRequestOfSecondDocument) &&
       firstRequestOfSecondDocument > lastRequestOfFirstDocument,
   })
+  // Arrange: a page of the Wiki reader at 720 px, where its right rail is a row (701 to 1000 px) and an outline entry that cannot break leaves the row short of room.
+  await page.setViewportSize({ width: 720, height: 720 })
+  await page.goto(options.url)
+  await page.setContent(options.wikiShell)
+  // Act: the open control's label is measured line by line, the outline by its width.
+  const railRow = await page.evaluate(() => {
+    const openLink = document.querySelector('.open-in-editor a')
+    const label = document.createRange()
+    label.selectNodeContents(openLink)
+    return {
+      railDisplay: getComputedStyle(document.querySelector('.right-rail'))
+        .display,
+      // A range answers one box per line of its text.
+      openLabelLines: label.getClientRects().length,
+      openControlWidth: Math.round(openLink.getBoundingClientRect().width),
+      outlineWidth: Math.round(
+        document.querySelector('.right-rail nav').getBoundingClientRect().width,
+      ),
+    }
+  })
+  await page
+    .locator('.right-rail')
+    .screenshot({ path: `${options.output}/wiki-rail-row.png` })
+  // Assert
+  cases.push({
+    name: 'in the Wiki reader at 720 px the open control of the right rail keeps its label on one line, and the outline is no narrower than it',
+    actual: railRow,
+    passed:
+      railRow.railDisplay === 'flex' &&
+      railRow.openLabelLines === 1 &&
+      railRow.outlineWidth >= railRow.openControlWidth,
+  })
+}
+
+/**
+ * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
+ * @param shell - The text of `skills/codebook/reader-shell.html`.
+ * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control the publisher prints.
+ * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
+ * @example
+ * wikiShellPage('<title>{{TITLE}}</title>') // => '<title>Overview</title>'
+ */
+function wikiShellPage(shell) {
+  const fields = {
+    TITLE: 'Overview',
+    REPOSITORY: 'sample',
+    DATE: '5 Oct 2026',
+    REVISION: 'a1b2c3d',
+    ROOT: '/home/learner/sample',
+    FULL_REVISION: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+    INDEX_TIME: '5 Oct 2026, 12:00',
+    SOURCE_COUNT: '12',
+    EXCLUSIONS: 'none',
+    OUTPUT: '/home/learner/sample/.codebook/wiki',
+    OUTPUT_LABEL: '.codebook/wiki',
+    NAVIGATION:
+      '<ul><li><a href="index.html" aria-current="page">Overview</a></li></ul>',
+    SOURCES: '<li>src/a.ts</li>',
+    ARTICLE: '<h2 id="rendering">Rendering</h2><p>How a page is rendered.</p>',
+    UPDATE: '#update',
+    OUTLINE:
+      '<li><a href="#rendering">Rendering</a></li><li><a href="#preparation">createConfiguredBrowserRunPreparationForReplay</a></li>',
+    OPEN_SOURCE:
+      '<p class="open-in-editor"><a href="#source">Open in VS Code</a></p>',
+    SETTINGS: '#settings',
+  }
+  return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
+    assert.ok(Object.hasOwn(fields, name), `no text for the field ${field}`)
+    return fields[name]
+  })
 }
 
 const report = {
@@ -3241,6 +3311,9 @@ try {
     `async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(
       {
         html: { context: studyHtml('context'), moments: studyHtml('moments') },
+        wikiShell: wikiShellPage(
+          await readFile('extension/skills/codebook/reader-shell.html', 'utf8'),
+        ),
         message,
         output,
         url: `http://127.0.0.1:${server.address().port}/`,
