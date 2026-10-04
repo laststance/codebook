@@ -4403,7 +4403,9 @@ test('a run started while the reader shows a saved study is refused before any i
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
     const shown = harness.reader.presentationState(),
-      runtimesBefore = harness.runtimes.length
+      runtimesBefore = harness.runtimes.length,
+      library = await harness.reader.learningStorage(),
+      savedStudiesBefore = await library.savedStudyCount()
     // Act
     refused = service.start({
       instanceId: service.instanceId,
@@ -4426,6 +4428,10 @@ test('a run started while the reader shows a saved study is refused before any i
     // No runtime was created: the application was not started and got no input.
     assert.equal(refusedRecord.runtime, undefined)
     assert.equal(harness.runtimes.length, runtimesBefore)
+    // The refused run left nothing behind: no study was saved for it.
+    assert.equal(refusedRecord.historyExcluded, 'refused-at-admission')
+    assert.equal(await library.savedStudyCount(), savedStudiesBefore)
+    assert.equal(savedStudiesBefore, 1)
     // The step the text names makes the next start possible.
     const returned = await harness.reader.returnToCurrent({
       presentationId: shown.presentationId,

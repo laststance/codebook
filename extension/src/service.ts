@@ -2021,11 +2021,14 @@ export class StudyService {
         if (
           presentation?.state === 'open' &&
           !presentation.reader.followingCurrentRun
-        )
+        ) {
+          // The run had no effect: no study is saved for it, as for a run the library refused.
+          record.historyExcluded = 'refused-at-admission'
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
             readerNotFollowingRunRefusal(presentation.reader.contentRevision),
           )
+        }
         // The admission precedes every awaited read, so no reader checkpoint captures a run the library will refuse.
         await this.admitStudy(record)
         if (this.stopping || record.stopping) return
