@@ -116,6 +116,7 @@ import {
 } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
 import type { StudyRecord, StudyService } from './service'
@@ -7039,8 +7040,7 @@ export class StudyWorkspace {
         try {
           await viewport.present(image, label)
         } catch (error) {
-          if (String(error) !== `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`)
-            throw error
+          if (!(error instanceof ViewportAckTimeoutError)) throw error
           signal.throwIfAborted()
           const firstAttempt = this.drainReplayDelivery()
           // A native pane handoff can lose one paint receipt; re-handshake this read-only renderer before retrying the same frame.
@@ -7060,7 +7060,7 @@ export class StudyWorkspace {
             const retry = this.drainReplayDelivery()
             // Name both attempts so Recording error details separate a second lost receipt from another retry failure.
             throw new Error(
-              String(retryError) === `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`
+              retryError instanceof ViewportAckTimeoutError
                 ? `${VIEWPORT_ACK_TIMEOUT_REASON} again after one same-frame retry. First attempt: ${firstAttempt}. Retry: ${retry}.`
                 : `${VIEWPORT_ACK_TIMEOUT_REASON}; the same-frame retry then failed: ${String(retryError)}. First attempt: ${firstAttempt}. Retry: ${retry}.`,
             )

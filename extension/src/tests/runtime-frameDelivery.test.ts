@@ -7,6 +7,7 @@ import {
   type FrameMessage,
   type ViewFrame,
 } from '../runtimeSupport/frameDelivery'
+import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 
 const live: ViewFrame = {
   data: 'pixels',
@@ -356,5 +357,41 @@ test('a nearly exhausted hidden paint budget waits quietly and still expires on 
   } finally {
     delivery.dispose()
     await capture
+  }
+})
+
+// Value: protects=the owners of a frame telling its acknowledgement timeout from every other rejection: the live run's "The capture was not shown ..." sentence and the replay's same-frame retry; fails_when=the timeout is a plain error that can only be recognised by its words, so a reworded reason or a wrapped error loses both silently; why_new=Cycle 0045 local review runtime-1 #6 (the timeout was told by comparing `String(error)`); seam=a frame delivery with a 30 ms paint budget and a renderer that never acknowledges
+test('a frame whose paint is not acknowledged within its budget is rejected with the acknowledgement timeout type, and a replaced frame with a plain error', async () => {
+  // Arrange: the renderer accepts every frame and acknowledges none.
+  const delivery = new FrameDelivery(
+    () => Promise.resolve(true),
+    () => undefined,
+    30,
+  )
+  delivery.begin('view')
+  try {
+    // Act: the first live frame is in flight; a second waits and is replaced by a third.
+    const expired = delivery.offer(live).then(
+        () => undefined,
+        (error: unknown) => error,
+      ),
+      replaced = delivery.offer(live).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+    void delivery.offer(live).catch(() => undefined)
+    const timeout = await expired,
+      coalesced = await replaced
+
+    // Assert
+    assert.equal(timeout instanceof ViewportAckTimeoutError, true)
+    assert.equal(
+      String(timeout),
+      'Error: Viewport frame acknowledgement timed out',
+    )
+    assert.equal(coalesced instanceof ViewportAckTimeoutError, false)
+    assert.equal(String(coalesced), 'Error: Live frame coalesced')
+  } finally {
+    delivery.dispose()
   }
 })

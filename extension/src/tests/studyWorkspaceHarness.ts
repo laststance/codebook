@@ -24,8 +24,8 @@ import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
 import type { ConfiguredRuntimeView } from '../runtime'
-import { VIEWPORT_ACK_TIMEOUT_REASON } from '../runtimeSupport/constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
 import type { StudyViewMessage } from '../ui/studyHtml'
@@ -1754,7 +1754,7 @@ export async function workspaceHarness(
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
       // No renderer acknowledges a frame once another writer replaced this viewport's document; the real delivery then runs out of its paint budget.
       if (this.mode === 'recording' && !this.rendererInPlace())
-        throw new Error(VIEWPORT_ACK_TIMEOUT_REASON)
+        throw new ViewportAckTimeoutError()
       const held = nextImage
       nextImage = undefined
       if (held) {

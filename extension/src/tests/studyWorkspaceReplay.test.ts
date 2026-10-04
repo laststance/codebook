@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import { RecordingStore } from '../recordingStore'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bookObservationHash } from '../utils/bookObservationHash'
 import { citationContext } from '../utils/citationContext'
@@ -921,8 +922,7 @@ test('saved replay survives one recorded viewport paint loss without rerunning t
     let presentations = 0
     viewport.present = async (image): Promise<void> => {
       presentations++
-      if (presentations === 1)
-        throw new Error('Viewport frame acknowledgement timed out')
+      if (presentations === 1) throw new ViewportAckTimeoutError()
       await originalPresent(image)
     }
 
@@ -951,6 +951,51 @@ test('saved replay survives one recorded viewport paint loss without rerunning t
   }
 })
 
+// Value: protects=the replay painting a frame once more after its first paint was not acknowledged, whatever words the timeout carries, and not retrying a failure that only reads like one; fails_when=the reader recognises the timeout by comparing its text with one constant, so a reworded or wrapped timeout skips the retry and the recording shows an error for one lost receipt; why_new=Cycle 0045 local review runtime-1 #6 (the retry compared `String(error)`); seam=the recorded reader harness's viewport, whose first paint rejects
+for (const first of ['a timeout in other words', 'another error'] as const)
+  test(`a recorded frame whose first paint fails with ${first} is ${first === 'another error' ? 'not painted again although its text reads like the timeout' : 'painted once more'}`, async () => {
+    // Arrange
+    const harness = await recordedReaderHarness(true)
+    try {
+      await harness.reader.openRecording(harness.studyId)
+      await harness.controller.settle()
+      const viewport = harness.viewportInstances.find(
+        (candidate) => candidate.mode === 'recording',
+      )
+      assert.ok(viewport)
+      const originalPresent = viewport.present.bind(viewport)
+      let presentations = 0
+      viewport.present = async (image): Promise<void> => {
+        presentations++
+        if (presentations === 1)
+          throw first === 'another error'
+            ? new Error('Viewport frame acknowledgement timed out')
+            : Object.assign(new ViewportAckTimeoutError(), {
+                message: 'The renderer did not answer in time',
+              })
+        await originalPresent(image)
+      }
+
+      // Act
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs: 100,
+      })
+      await harness.controller.settle()
+
+      // Assert
+      assert.equal(presentations, first === 'another error' ? 1 : 2)
+      assert.equal(
+        harness.controller.state().readiness,
+        first === 'another error' ? 'failed' : 'ready',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 test('saved replay reports a second viewport paint loss without advancing the saved position', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
@@ -964,7 +1009,7 @@ test('saved replay reports a second viewport paint loss without advancing the sa
     let presentations = 0
     viewport.present = async () => {
       presentations++
-      throw new Error('Viewport frame acknowledgement timed out')
+      throw new ViewportAckTimeoutError()
     }
 
     // Act
@@ -1120,7 +1165,7 @@ test('a repeated recorded paint loss names each attempt’s renderer progress in
         phase: 'Recorded · 0.10 s',
         reason: 'Viewport frame acknowledgement timed out',
       })
-      throw new Error('Viewport frame acknowledgement timed out')
+      throw new ViewportAckTimeoutError()
     }
 
     // Act
@@ -1180,7 +1225,7 @@ test('a failed renderer re-handshake after a recorded paint loss keeps the first
         phase: 'Recorded · 0.10 s',
         reason: 'Viewport frame acknowledgement timed out',
       })
-      throw new Error('Viewport frame acknowledgement timed out')
+      throw new ViewportAckTimeoutError()
     }
 
     // Act
