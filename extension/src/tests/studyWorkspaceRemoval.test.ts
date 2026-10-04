@@ -5748,11 +5748,17 @@ test('a refused pane control is counted as not retryable and its line is gone on
     const refused = structuredClone(harness.reader.inspect().view!)
     // Act
     sendFromPane(harness, { type: 'history', studyId: second.id })
+    // The refusal's line is retired after the choice itself was handled and published, so the wait is for the retired line too: a read between the two publishes still holds it.
     await waitUntil(
-      () =>
-        harness.reader.inspect().view!.model.selection.studyId === second.id &&
-        !harness.reader.inspect().view!.loading,
-      'the chosen saved study',
+      () => {
+        const handled = harness.reader.inspect().view!
+        return (
+          handled.model.selection.studyId === second.id &&
+          !handled.loading &&
+          handled.errors.length === 0
+        )
+      },
+      'the chosen saved study without the refused control’s line',
       1_000,
     )
     // Assert
