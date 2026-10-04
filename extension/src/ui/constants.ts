@@ -135,6 +135,8 @@ export const STUDY_UI_OPTIONS = {
     '#node-history-playhead',
     '#node-history-moment-previous',
     '#node-history-moment-next',
+    // A history with a single event has no usable transport control: its selected event's own control takes the focus, which sends nothing when pressed.
+    '#node-history-events [aria-pressed="true"]',
   ],
 }
 export const STUDY_STYLES = `

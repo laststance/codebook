@@ -1939,11 +1939,12 @@ async function check(page, options) {
           'node-history-moment-previous',
           'node-history-moment-next',
         ].every((id) => document.getElementById(id).disabled),
-        focused: document.activeElement.id,
+        focused: document.activeElement.textContent,
+        focusedSequence: document.activeElement.dataset.nodeHistorySequence,
       }))
       // Assert
       cases.push({
-        name: 'when Play cannot be used as Show Variables leaves, focus goes to the first transport control that can: at the end of a recording, while a moment loads and in a history with a single event',
+        name: "when Play cannot be used as Show Variables leaves, focus goes to the first transport control that can: at the end of a recording and while a moment loads; in a history with a single event it goes to that event's own control",
         actual: {
           focusAtRecordingEnd,
           focusWhileLoading,
@@ -1955,7 +1956,8 @@ async function check(page, options) {
           focusWhileLoading.focused === 'playback-toggle' &&
           focusWhileLoading.label === 'Pause' &&
           focusWithSingleEvent.transportDisabled &&
-          focusWithSingleEvent.focused === 'node-history-understood',
+          focusWithSingleEvent.focused === 'Selected event' &&
+          focusWithSingleEvent.focusedSequence === '2',
       })
       await publish({ ...replay, revision: revisionAt(10) })
     } else {

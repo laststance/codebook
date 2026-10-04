@@ -2921,6 +2921,11 @@ export async function workspaceHarness(
       visibleSourceEditors
         .find((editor) => editor.document.uri.fsPath === path)
         ?.document.getText(),
+    /** Gives the one-based line each visible source editor's cursor stands on, which is the line the reader highlighted there. @example harness.displayedSourceLines() // => [2] */
+    displayedSourceLines: (): number[] =>
+      visibleSourceEditors.map(
+        (editor) => (editor.selections[0]?.active.line ?? 0) + 1,
+      ),
     panelReveals: () => [...panelReveals],
     suppressNativeInnerFocus(): void {
       suppressNativeInnerFocus = true
