@@ -175,7 +175,16 @@ export class OwnedNodeTestRun {
     const launch = (this.launch = await prepareNodeTestLaunch(
       this.workspace,
       this.configuration,
-      (request) => listVitestTestFiles({ ...request, node: this.node, signal }),
+      (request) =>
+        listVitestTestFiles({
+          ...request,
+          node: this.node,
+          signal,
+          // The listing's own outcome decides the run; what a failed release left behind is journaled with its group and folder.
+          onReleaseFailed: (failure) => {
+            this.record('node-test.vitest-listing-not-released', failure)
+          },
+        }),
     ))
     signal.throwIfAborted()
     this.outputTerminal = new NodeTestOutputTerminal(this.id, vscode, () => {

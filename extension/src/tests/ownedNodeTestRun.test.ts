@@ -12,6 +12,10 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import type * as OwnedNodeTestRunModule from '../ownedNodeTestRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type {
+  ListVitestTestFilesRequest,
+  VitestListingReleaseFailure,
+} from '../utils/listVitestTestFiles'
 
 import { loadModule } from './utils/loadModule'
 import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
@@ -36,6 +40,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.neverReachStop - The test keeps running after the entry pause without reaching a declared stop.
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
+ * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
  *
  * @example
  * ```ts
@@ -57,6 +62,7 @@ async function nodeRunHarness({
   acknowledgements,
   bindingReportedLater,
   bindingReadUnanswered,
+  listingNotReleased,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -83,6 +89,7 @@ async function nodeRunHarness({
   bindingReportedLater?: { verified: boolean; line: number; column: number }
   /** The adapter never answers when it is asked where an owned breakpoint is bound. */
   bindingReadUnanswered?: boolean
+  listingNotReleased?: VitestListingReleaseFailure
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -380,7 +387,29 @@ async function nodeRunHarness({
       './ownedRepositoryBreakpoint': trackerModule,
       './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
       './utils/prepareNodeTestLaunch': {
-        prepareNodeTestLaunch: async () => launch,
+        prepareNodeTestLaunch: async (
+          _workspace: string,
+          _configuration: NodeTestConfiguration,
+          listTestFiles: (request: ListVitestTestFilesRequest) => unknown,
+        ) => {
+          // Only a test of the listing's release asks for the listing; every other test gets its launch at once.
+          if (listingNotReleased)
+            await listTestFiles({
+              program: 'vitest',
+              workspace: directory,
+              filter: 'theme.test.ts',
+              excludes: [],
+            })
+          return launch
+        },
+      },
+      './utils/listVitestTestFiles': {
+        listVitestTestFiles: async (request: {
+          onReleaseFailed?: (failure: VitestListingReleaseFailure) => void
+        }) => {
+          if (listingNotReleased) request.onReleaseFailed?.(listingNotReleased)
+          return []
+        },
       },
       './utils/launchNodeTest': {
         launchNodeTest: async () => ({
@@ -951,6 +980,42 @@ test('a cited test that ends before its first declared stop fails at once with t
     assert.ok(
       performance.now() - startedAt < 5_000,
       'the ended session fails the run instead of waiting for the attach deadline',
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0045 (AD-12, C-L2): red while a failed release of the listing reached nobody.
+test('a Vitest listing whose process group could not be released is journaled by the run with the group, the folder it left and the reason', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    listingNotReleased: {
+      processGroup: 4141,
+      directory: '/tmp/codebook-vitest-list-left',
+      reason: 'Error: Timed out waiting for Vitest listing process group exit',
+    },
+  })
+  try {
+    // Act
+    await harness.run.prepare()
+    // Assert
+    assert.deepEqual(
+      harness.events.filter(
+        (event) => event.type === 'node-test.vitest-listing-not-released',
+      ),
+      [
+        {
+          type: 'node-test.vitest-listing-not-released',
+          detail: {
+            processGroup: 4141,
+            directory: '/tmp/codebook-vitest-list-left',
+            reason:
+              'Error: Timed out waiting for Vitest listing process group exit',
+          },
+        },
+      ],
     )
   } finally {
     await harness.run.stop()

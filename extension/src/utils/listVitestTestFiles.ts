@@ -12,6 +12,7 @@ import {
   VITEST_LIST_ERROR_LIMIT_CHARS,
 } from '../constants'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
+import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
@@ -26,6 +27,12 @@ export type ListVitestTestFilesRequest = {
   workspace: string
   filter: string
   excludes: string[]
+}
+/** What a listing left behind when its release failed: the group that may still have a member, the folder that was kept for it, and the release's error as text. `processGroup` is `undefined` when the listing process never started. */
+export type VitestListingReleaseFailure = {
+  processGroup: number | undefined
+  directory: string
+  reason: string
 }
 
 const listedFilesSchema = z.array(
@@ -46,8 +53,11 @@ const listedFilesSchema = z.array(
  * @param request.excludes - Escaped absolute paths passed as `--exclude=` globs.
  * @param request.signal - The run's cancellation.
  * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
- * @returns Every file entry Vitest reports, in Vitest's order.
- * @throws When Vitest fails, times out, is cancelled or writes no readable list.
+ * @param request.onReleaseFailed - Told once when the listing's process group could not be confirmed as ended, whatever the listing's own outcome; the owned Node test run journals it.
+ * @returns Every file entry Vitest reports, in Vitest's order. A listing that finished is still returned when the only release failure is the bounded wait for
+ * its group's end running out (members that exited and are not reaped yet); its folder is then kept and the failure reported.
+ * @throws When Vitest fails, times out, is cancelled or writes no readable list; that reason is kept also when the release fails. When a listing that finished
+ * could not be released for another reason than the wait running out (a signal or a probe the system refused), with that refusal as the cause.
  * @example
  * ```ts
  * await listVitestTestFiles({ node, program, workspace: '/repo', filter: 'src/a.test.ts', excludes: [], signal })
@@ -59,6 +69,7 @@ export async function listVitestTestFiles(
     node: string
     signal: AbortSignal
     timeoutMs?: number
+    onReleaseFailed?: (failure: VitestListingReleaseFailure) => void
   },
 ): Promise<VitestListedFile[]> {
   const timeoutMs = request.timeoutMs ?? VITEST_FILE_LIST_TIMEOUT_MS
@@ -66,6 +77,9 @@ export async function listVitestTestFiles(
   const directory = await mkdtemp(join(tmpdir(), 'codebook-vitest-list-'))
   const output = join(directory, 'files.json')
   let release: (() => Promise<void>) | undefined
+  let listingProcessGroup: number | undefined
+  let files: VitestListedFile[]
+  let refusedRelease: Error | undefined
   try {
     const child = spawn(
       request.node,
@@ -88,6 +102,7 @@ export async function listVitestTestFiles(
     const closed = new Promise<void>((resolve) =>
       child.once('close', () => resolve()),
     )
+    listingProcessGroup = child.pid
     release = async (): Promise<void> => {
       const processGroup = child.pid
       if (processGroup === undefined) {
@@ -155,18 +170,34 @@ export async function listVitestTestFiles(
     )
     if (!listed.success)
       throw new Error('Vitest wrote an unreadable test file list.')
-    return listed.data.map((entry) =>
+    files = listed.data.map((entry) =>
       entry.projectName === undefined
         ? { file: entry.file }
         : { file: entry.file, projectName: entry.projectName },
     )
   } finally {
-    // A release that cannot confirm the group ended keeps the listing's own outcome (its files or the run's reason) instead of replacing it.
-    const isReleased = await (release?.() ?? Promise.resolve()).then(
-      () => true,
-      () => false,
+    const failedRelease = await (release?.() ?? Promise.resolve()).then(
+      () => undefined,
+      (error: unknown) => ({ error }),
     )
     // Never remove the listing destination while an owned process may still be writing it.
-    if (isReleased) await rm(directory, { recursive: true, force: true })
+    if (!failedRelease) await rm(directory, { recursive: true, force: true })
+    else {
+      const reason = String(failedRelease.error)
+      request.onReleaseFailed?.({
+        processGroup: listingProcessGroup,
+        directory,
+        reason,
+      })
+      // A wait for the group's end that only ran out keeps the listing's own outcome; a signal or a probe the system refused means a member may still run.
+      if (!(failedRelease.error instanceof WaitTimeoutError))
+        refusedRelease = new Error(
+          `Vitest listed the test files, but Codebook could not end the listing's process group ${listingProcessGroup} (${reason}), so a process of that group may still run. The test was not started, and the listing's folder ${directory} is kept. Start the run again.`,
+          { cause: failedRelease.error },
+        )
+    }
   }
+  // Reached only by a listing that finished: its own failure left through the `finally` above and keeps its reason.
+  if (refusedRelease) throw refusedRelease
+  return files
 }
