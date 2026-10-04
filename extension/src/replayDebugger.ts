@@ -151,15 +151,7 @@ export class ReplayDebugger {
     this.disposables.push(
       this.editor.debug.onDidTerminateDebugSession((session) => {
         if (session.id !== this.session?.id) return
-        // A replacement adapter starts empty, so the next presentation must select its stop again.
-        this.adapter?.dispose()
-        this.adapter = undefined
-        this.session = undefined
-        this.detached = true
-        this.startupExpired = false
-        this.selected = undefined
-        // A wait on the ended adapter fails now instead of at its deadline.
-        this.wakeInspection()
+        this.forgetEndedSession()
         // Codebook retiring its own session to change stops keeps the learner's Run and Debug layout, so values stay unrequested and the hint stays.
         if (session.id === this.retiringSessionId) {
           this.detached = false
@@ -167,18 +159,44 @@ export class ReplayDebugger {
           return
         }
         this.valuesUnrequested = false
-        // The reader's listener and its error channel may both throw; neither may escape into the editor's event loop.
-        try {
-          this.changed('session-ended')
-        } catch (error) {
-          try {
-            this.failed(error)
-          } catch {
-            // The error channel failed as well; the owner is already detached, which is the signal that remains.
-          }
-        }
+        // The reader's listener and its error channel may both throw; neither may escape into the editor's event loop. When both do, the owner is already detached, which is the signal that remains.
+        this.tellReader('session-ended')
       }),
     )
+  }
+
+  /**
+   * Drops everything this owner held of its native session once the editor reports that session terminated, so nothing presents on the ended adapter; called by the termination listener of the constructor before it tells Codebook's own retirement from the learner's stop.
+   * @example this.forgetEndedSession() // this.session === undefined, this.detached === true
+   */
+  private forgetEndedSession(): void {
+    // A replacement adapter starts empty, so the next presentation must select its stop again.
+    this.adapter?.dispose()
+    this.adapter = undefined
+    this.session = undefined
+    this.detached = true
+    this.startupExpired = false
+    this.selected = undefined
+    // A wait on the ended adapter fails now instead of at its deadline.
+    this.wakeInspection()
+  }
+
+  /**
+   * Tells the reader of a change from inside an editor callback, where nothing may be thrown: the termination listener of the constructor and the timer of {@link notifyValuesLoaded} call it.
+   * A listener that throws reaches the reader's error channel, and an error channel that throws as well is swallowed.
+   * @param change - What the reader is told.
+   * @example this.tellReader('values-loaded')
+   */
+  private tellReader(change: ReplayDebuggerChange): void {
+    try {
+      this.changed(change)
+    } catch (error) {
+      try {
+        this.failed(error)
+      } catch {
+        // The error channel failed as well; nothing may escape into the editor's event loop or its timer queue.
+      }
+    }
   }
 
   /**
@@ -194,23 +212,24 @@ export class ReplayDebugger {
   private notifyValuesLoaded(adapter: ReplayDebugAdapter): void {
     setTimeout(() => {
       // A reader told late about a stop it no longer shows would drop the hint of the stop it does show.
-      if (
-        this.closed ||
-        this.adapter !== adapter ||
-        !adapter.inspectionReady ||
-        !adapter.hasLoadableValues
-      )
-        return
-      try {
-        this.changed('values-loaded')
-      } catch (error) {
-        try {
-          this.failed(error)
-        } catch {
-          // The error channel failed as well; nothing may escape into the editor's timer queue.
-        }
-      }
+      if (!this.stillPresentsLoadedValues(adapter)) return
+      this.tellReader('values-loaded')
     }, REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS)
+  }
+
+  /**
+   * Says whether the stop whose values an adapter served is still the presented one when the paint allowance has passed; asked by the timer of {@link notifyValuesLoaded} before it tells the reader.
+   * @param adapter - The adapter that served the values.
+   * @returns `true` while this owner is open, still uses that adapter, and the adapter's presented stop has its loadable values inspected; `false` otherwise.
+   * @example this.stillPresentsLoadedValues(adapter) // => false after the owner was disposed
+   */
+  private stillPresentsLoadedValues(adapter: ReplayDebugAdapter): boolean {
+    return (
+      !this.closed &&
+      this.adapter === adapter &&
+      adapter.inspectionReady &&
+      adapter.hasLoadableValues
+    )
   }
 
   /** Reports whether playback may still present history; false after the learner stops the owned session, so an explicit replay reopen replaces this owner. @example if (!debuggerView.available) await debuggerView.dispose() */
