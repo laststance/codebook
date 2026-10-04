@@ -2567,36 +2567,171 @@ test('a stop declared on a blank line with only blank or comment lines after it 
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
 
-// Value: protects=the first admitted run of a stop declared on a blank line above its statement going on in a module whose map is too large to scan; fails_when=preparation refuses every blank or comment-only declared line of an oversized map, although a later line of the citation holds code the debugger binds; why_new=Cycle 0044 merge of 0041-N10-1b with R3 (one rule whatever the map's size: the source text decides when the map cannot); seam=none
+// Value: protects=the first admitted run of a stop declared on a blank line above its statement going on in a module whose map is too large to scan; fails_when=preparation refuses every blank or comment-only declared line of an oversized map, or the stop is requested on its declared line, where a debugger verifies nothing; why_new=Cycle 0044 merge of 0041-N10-1b with R3; Cycle 0045 (ST-20, NF-29 a): the debugger of this test verified a request on the blank line, which the native run disproved; seam=the adapter's possible break locations
 test('a stop declared on a blank line with a code line after it in its citation is armed, also when the sealed map is too large to scan completely', async (context) => {
-  // Arrange: line 2 is blank and line 3 is the statement; the scan stops at its segment limit on generated line 0, before the mapping of line 3, and the debugger verifies the binding at 3:1.
-  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
-    context,
-    undefined,
-    [],
-    {
-      mappings: `${'A,'.repeat(200_000)}A;;AAEA`,
-      fixture: {
-        source: '// toggles the theme\n\nconst nextTheme = "dark";\n',
-        citationEndLine: 3,
-        declaredLine: 2,
-      },
+  // Arrange: line 2 is blank and line 3 is the statement; the scan stops at its segment limit on generated line 0, before the mapping of line 3. The debugger verifies a breakpoint on line 3 only and lists its one break location there.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;;AAEA`,
+    fixture: {
+      source: '// toggles the theme\n\nconst nextTheme = "dark";\n',
+      citationEndLine: 3,
+      declaredLine: 2,
     },
-  )
-  bindFirstStopAt(3, 1)
+  })
+  verifyBreakpointsOnlyOnLines([3])
+  listPossibleBreakLines([2])
   // Act
   await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
   run.action('oversized-map', 'repository-click')
   const snapshot = await waitUntil(() => {
     const view = run.view()
     if (view.failures.length) throw new Error(view.failures.join('; '))
     return view.snapshots[0]
   }, 'stop captured at the bound line')
+  const armed = run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
   await run.stop()
-  // Assert
+  // Assert: the stop is requested on line 3, the first line from its declared one that can pause.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 2, character: 0 },
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(armed?.detail)), {
+    participant: 'browser',
+    declared: { line: 2, column: 1 },
+    armed: { line: 3, column: 1 },
+  })
   assert.equal(snapshot.source.line, 3)
   assert.equal(snapshot.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot.source.binding)), {
+    declaredLine: 2,
+    requestedLine: 3,
+    boundLine: 3,
+    mappedLinesBetween: 0,
+  })
   assert.equal(mouse.length, 2)
+})
+
+// Cycle 0045 (NF-29 a, PC-2.2): a line that only looks like code in the text is never requested; red while a partly scanned stop was requested on its declared line.
+test('a stop declared on the first line of a block comment in a partly scanned module is requested on the first line after the comment that can pause, not on the comment’s body', async (context) => {
+  // Arrange: lines 1 to 3 are one block comment, whose body on line 2 reads like code line by line; line 4 is the statement. The scan stops at its segment limit before the mapping of line 4, and the debugger lists its one break location there.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;;;AAGA`,
+    fixture: {
+      source: '/* toggles\n   the theme\n*/\nconst nextTheme = "dark";\n',
+      citationEndLine: 4,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([4])
+  listPossibleBreakLines([3])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured after the comment')
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 3, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 4)
+  assert.equal(snapshot.source.column, 1)
+})
+
+test('a stop declared on an opening tag in a partly scanned module is requested on the first later line that can pause, not on the line that holds only the tag’s closing bracket', async (context) => {
+  // Arrange: line 1 opens a tag, line 2 holds only its `>`, line 3 is the first line the debugger can pause on. The scan stops at its segment limit before the mapping of line 3.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;;AAEA`,
+    fixture: {
+      source: '<form\n>\n<input name="theme" />\n',
+      citationEndLine: 3,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([3])
+  listPossibleBreakLines([2])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on the first line that can pause')
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 2, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 3)
+  assert.equal(snapshot.source.column, 1)
+})
+
+// Cycle 0045 (NF-29 a, PC-1.6): "not found in a partial scan" is not "absent", and a line the partial scan found needs no question.
+test('a stop whose declared line a partial scan found, or the debugger can pause on, is requested on its declared line', async (context) => {
+  // Arrange: in the first module the scan reads the mapping of line 1 before it stops at its segment limit. In the second it stops on generated line 0, before the mappings of generated lines 1 and 2, which hold source lines 1 and 2; the debugger lists a break location on each.
+  const found = await configuredRuntimeHarness(context, undefined, [], {
+      mappings: `AAAA,${'A,'.repeat(200_000)}A;AACA`,
+      fixture: { citationEndLine: 2 },
+    }),
+    notFound = await configuredRuntimeHarness(context, undefined, [], {
+      mappings: `${'A,'.repeat(200_000)}A;AAAA;AACA`,
+      fixture: {
+        source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
+        citationEndLine: 2,
+      },
+    })
+  found.listPossibleBreakLines([0, 1])
+  notFound.listPossibleBreakLines([1, 2])
+  // Act
+  await found.run.prepare()
+  await notFound.run.prepare()
+  const requested = [found, notFound].map(
+    (harness) =>
+      harness.breakpoints.find(
+        (breakpoint) => breakpoint.id === 'owned-breakpoint',
+      )?.location.range.start.line,
+  )
+  await found.run.stop()
+  await notFound.run.stop()
+  // Assert: the found line is requested without asking the debugger; the other after one question about the whole module.
+  assert.deepEqual(requested, [0, 0])
+  assert.deepEqual(found.breakLocationRequests, [])
+  assert.deepEqual(notFound.breakLocationRequests, [
+    { start: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 } },
+  ])
 })
 
 // Value: protects=a later line being taken as the stop only when the debugger could not pause on the declared line, not when the requested column lay after the declared statement; fails_when=a binding slid to the next line is accepted although the declared line has a break location; why_new=Cycle 0043 R12(b); seam=the adapter's possible break locations

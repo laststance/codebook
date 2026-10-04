@@ -55,3 +55,19 @@ test('a map too large to scan completely leaves the stop requested where it was 
   // Assert
   assert.equal(armed, declared)
 })
+
+// Cycle 0045 (NF-29 a, PC-1.6): a guard; a position a partial scan found is a position.
+test('a stop whose declared line a partial scan found is requested where it was declared', () => {
+  // Arrange: the scan stopped at its size limit after it had read a mapping of the declared line 38.
+  const declared = { line: 38, column: 5 }
+  // Act
+  const armed = resolveArmedPlace(declared, {
+    positions: [
+      { line: 38, column: 9 },
+      { line: 41, column: 5 },
+    ],
+    complete: false,
+  })
+  // Assert
+  assert.equal(armed, declared)
+})

@@ -6,7 +6,7 @@ import type { MappedPositionsScan } from './sourceMapMappedPositions'
  * @param declared - The one-based position the agent declared the stop at.
  * @param scan - The stop's one scan of its sealed map, from the declared line to the last line of its citation; a place after the citation is never the stop.
  * @returns
- * - `declared` itself when its line has a mapped position, when no later line of the citation has one, and when the map was too large to scan completely (a partial scan may have missed an earlier mapped line)
+ * - `declared` itself when its line has a mapped position (found by a complete or a partial scan), when no later line of the citation has one, and when the map was too large to scan completely: a partial scan may have missed the declared line or an earlier mapped line, so the run decides that stop's place from the debugger's break locations when it arms it
  * - The first mapped position of the first later mapped line of the citation otherwise
  * @example
  * resolveArmedPlace({ line: 38, column: 1 }, { positions: [{ line: 39, column: 9 }], complete: true }) // => { line: 39, column: 9 } for a blank line 38

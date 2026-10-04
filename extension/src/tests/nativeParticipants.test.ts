@@ -2919,6 +2919,40 @@ test('a later server stop whose registration is still pending when its deadline 
   assert.equal(harness.run.view().finalOutcome, 'not-demonstrated')
 })
 
+// Cycle 0045 (NF-29 b): the later stop's twin of the first stop's deadline text; red while only the declared place was named.
+test('the deadline text of a later server stop requested after its declared line names the requested place', async (context) => {
+  // Arrange: line 1 of the server module has no mapping, line 2 has one, so both stops declared at 1:1 are requested at 2:1; the first is captured there, the second stays pending and no pause arrives.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    {
+      mappings: { server: ';AACA' },
+      fixture: { server: { citationEndLine: 2 } },
+      manualClock: true,
+    },
+  )
+  await harness.run.prepare()
+  harness.pauseAt('server', 1, 0)
+  harness.bindAt('server', 2, 1)
+  harness.movePausedFrame(2)
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.holdNextPause()
+  await harness.run.continue('server', first.pause)
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'pending server stop not hit',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Repository continuation reached no next declared pause: declared stop src/mode.ts:1 (stop 2 of 2) (requested at 2:1) was not hit within 20 s; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation',
+  )
+})
+
 // Value: protects=the deadline telling an agent which line has to run when a later server stop the adapter acknowledged on the next line lies in a branch the action skips; fails_when=the deadline reads a moved place only from the binding the run records at a pause, which an unreached server stop never has, so the text names the declared line alone; why_new=the deadline tests reach a browser stop only, and the owner's moved place is read only in the owner's own test (Cycle 0043, ER7, O1); seam=the harness clock
 test('a later server stop in a loaded module that the adapter acknowledged on the next line and that is not reached ends the run naming the bound place and that this line must run', async (context) => {
   // Arrange: the second stop is registered after the module loaded, the adapter verifies it at 2:1 and that line never runs.
@@ -3688,6 +3722,35 @@ test('a pending first server stop that the click does not reach within 20 s ends
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    "Repository input reached no verified pause: declared server stop src/mode.ts:1 (registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input",
+    "Repository input reached no verified pause: declared server stop src/mode.ts:1 (registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.",
+  )
+})
+
+// Cycle 0045 (NF-29 b): red while the deadline text of a server stop named only its declared place, although its breakpoint waits where it was requested.
+test('the deadline text of a server stop requested after its declared line names the requested place', async (context) => {
+  // Arrange: line 1 of the server module has no mapping, line 2 has one, so the stop declared at 1:1 is requested at 2:1; the click reaches no stop.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: ';AACA' },
+    fixture: { server: { citationEndLine: 2 } },
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  // Act
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'first server stop not hit',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository input reached no verified pause: declared server stop src/mode.ts:1 (requested at 2:1, registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.",
   )
 })
