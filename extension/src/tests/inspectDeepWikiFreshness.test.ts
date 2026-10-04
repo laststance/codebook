@@ -8,7 +8,7 @@ import { join, resolve, win32 } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
-import * as freshnessModule from '../utils/inspectDeepWikiFreshness'
+import type * as freshnessModule from '../utils/inspectDeepWikiFreshness'
 import { inspectDeepWikiFreshness } from '../utils/inspectDeepWikiFreshness'
 
 import { loadModule } from './utils/loadModule'

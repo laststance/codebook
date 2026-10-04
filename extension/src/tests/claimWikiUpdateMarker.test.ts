@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
-import * as claimModule from '../utils/claimWikiUpdateMarker'
+import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { readLiveWikiUpdateMarker } from '../utils/readLiveWikiUpdateMarker'
 
@@ -154,7 +154,7 @@ test('of two windows that start on a killed editor’s marker at the same moment
     host: 'vscode' as const,
     startedAtMs,
   }
-  let firstClaim: claimModule.WikiUpdateMarkerClaim | undefined
+  let firstWindowClaim: Promise<claimModule.WikiUpdateMarkerClaim> | undefined
   const { claimWikiUpdateMarker: claimAsSecondWindow } = await loadModule<
     typeof claimModule
   >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
@@ -168,10 +168,11 @@ test('of two windows that start on a killed editor’s marker at the same moment
           ownWindowId,
         )
         // Once: right after the second window saw the stale marker, the first window removes it and writes its own.
-        firstClaim ??= await claimWikiUpdateMarker(
+        firstWindowClaim ??= claimWikiUpdateMarker(
           wiki.outputDirectory,
           firstWindow,
         )
+        await firstWindowClaim
         return looked
       },
     },
@@ -184,6 +185,8 @@ test('of two windows that start on a killed editor’s marker at the same moment
       host: 'vscode',
       startedAtMs,
     })
+
+    const firstClaim = await firstWindowClaim
 
     // Assert
     assert.ok(firstClaim && 'release' in firstClaim)
