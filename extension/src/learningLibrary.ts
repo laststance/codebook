@@ -82,6 +82,12 @@ type StudyRemovalChanges = {
   ledgerBytesBefore?: Buffer | null
 }
 
+/** One study of the library directory as {@link LearningLibrary.entries} lists it: its id, the path, the format and the format number of its newest archive. */
+type LibraryEntry = Awaited<ReturnType<LearningLibrary['entries']>>[number]
+
+/** The stat of a bounded regular archive, as {@link LearningLibrary.archiveStat} reads it. */
+type ArchiveStat = Awaited<ReturnType<LearningLibrary['archiveStat']>>
+
 /** Retains learner choices and bounded sealed studies across editor restarts without restoring runtime authority. @example const library = new LearningLibrary(directory, workspaceKey) */
 export class LearningLibrary {
   private writes: Promise<unknown> = Promise.resolve()
@@ -119,24 +125,11 @@ export class LearningLibrary {
     ).flatMap(({ entry, stat }) => (stat ? [{ entry, stat }] : []))
     const catalog = await Promise.all(
       present.map(async ({ entry, stat }) => {
-        // A study of a newer Codebook is listed with the sentence that says so; none of its bytes are read.
-        if (entry.format === 'newer')
-          return this.newerEntry(entry.id, stat.mtime, entry.version)
-        if (entry.format !== 'v3' && entry.format !== 'v4')
-          return {
-            id: entry.id,
-            savedAt: stat.mtime.toISOString(),
-            format: entry.format,
-            metadata: 'unavailable' as const,
-            outcome: 'Unsupported historical format; original file preserved',
-          }
+        const unread = this.entryListedUnread(entry, stat)
+        if (unread) return unread
         try {
           const metadata = await this.readMetadata(entry.id, entry.version)
-          if (
-            metadata.archive.byteLength !== stat.size ||
-            metadata.archive.modifiedMs !== stat.mtimeMs
-          )
-            throw new Error('Archive changed after its catalog checkpoint.')
+          this.assertArchiveUnchanged(metadata.archive, stat)
           return {
             id: entry.id,
             profile: metadata.profile,
@@ -146,25 +139,94 @@ export class LearningLibrary {
             outcome: metadata.finalOutcome,
           }
         } catch (error) {
-          // A sidecar a newer Codebook wrote under a known file name is that study's note, not a catalog Retry storage could repair.
-          if (error instanceof NewerStudyFormatError)
-            return this.newerEntry(entry.id, stat.mtime, error.savedFormat)
-          // Missing or stale metadata never falls back to legacy history or certifies success.
-          return {
-            id: entry.id,
-            profile: undefined,
-            savedAt: stat.mtime.toISOString(),
-            format: entry.format,
-            metadata: 'unavailable' as const,
-            outcome: 'unverified',
-            reason: `Catalog unavailable; retry storage. ${String(error)}`,
-          }
+          return this.entryWithoutCheckpoint(entry, stat, error)
         }
       }),
     )
     return catalog.sort((left, right) =>
       right.savedAt.localeCompare(left.savedAt),
     )
+  }
+
+  /**
+   * Says whether an archive format keeps a catalog checkpoint beside the archive, so {@link list} reads one and {@link reconcile} repairs one only for such a study.
+   * @param format - The format of a study's newest archive.
+   * @returns `true` for `v3` and `v4`; `false` for the historical formats and for a newer Codebook's.
+   * @example this.keepsCheckpoint('v2') // => false
+   */
+  private keepsCheckpoint(format: LibraryEntry['format']): boolean {
+    return format === 'v3' || format === 'v4'
+  }
+
+  /**
+   * Builds the catalog entry of a study whose checkpoint is never read, before {@link list} reads any metadata: a study of a newer Codebook, and one in a historical format.
+   * @param entry - The study as the library directory lists it.
+   * @param stat - The stat of its newest archive; its modification time is shown as the saved time.
+   * @returns The entry with `metadata: 'unavailable'`, or `undefined` for a study whose checkpoint is read.
+   * @example this.entryListedUnread({ id, path, format: 'v2', version: 2 }, stat)?.outcome // => 'Unsupported historical format; original file preserved'
+   */
+  private entryListedUnread(
+    entry: LibraryEntry,
+    stat: ArchiveStat,
+  ): StudyCatalogEntry | undefined {
+    // A study of a newer Codebook is listed with the sentence that says so; none of its bytes are read.
+    if (entry.format === 'newer')
+      return this.newerEntry(entry.id, stat.mtime, entry.version)
+    if (!this.keepsCheckpoint(entry.format))
+      return {
+        id: entry.id,
+        savedAt: stat.mtime.toISOString(),
+        format: entry.format,
+        metadata: 'unavailable',
+        outcome: 'Unsupported historical format; original file preserved',
+      }
+    return undefined
+  }
+
+  /**
+   * Refuses a catalog checkpoint that was written for other bytes than the archive now holds, so {@link list} never shows a validated outcome for a changed archive.
+   * @param checkpointed - The archive's size and modification time as the checkpoint recorded them.
+   * @param stat - The stat of the archive now.
+   * @throws When the size or the modification time differs.
+   * @example this.assertArchiveUnchanged({ byteLength: 10, modifiedMs: 1 }, { size: 11, mtimeMs: 1 }) // throws 'Archive changed after its catalog checkpoint.'
+   */
+  private assertArchiveUnchanged(
+    checkpointed: { byteLength: number; modifiedMs: number },
+    stat: Pick<ArchiveStat, 'size' | 'mtimeMs'>,
+  ): void {
+    if (
+      checkpointed.byteLength !== stat.size ||
+      checkpointed.modifiedMs !== stat.mtimeMs
+    )
+      throw new Error('Archive changed after its catalog checkpoint.')
+  }
+
+  /**
+   * Builds the catalog entry of a study whose checkpoint could not be read or no longer matches its archive; called by {@link list} with what the read threw.
+   * @param entry - The study as the library directory lists it.
+   * @param stat - The stat of its newest archive; its modification time is shown as the saved time.
+   * @param error - What reading or comparing the checkpoint threw.
+   * @returns The `newer` entry for a sidecar a newer Codebook wrote, otherwise the `unverified` entry whose reason carries the error.
+   * @example this.entryWithoutCheckpoint(entry, stat, new Error('Catalog metadata is not a regular file.')).outcome // => 'unverified'
+   */
+  private entryWithoutCheckpoint(
+    entry: LibraryEntry,
+    stat: ArchiveStat,
+    error: unknown,
+  ): StudyCatalogEntry {
+    // A sidecar a newer Codebook wrote under a known file name is that study's note, not a catalog Retry storage could repair.
+    if (error instanceof NewerStudyFormatError)
+      return this.newerEntry(entry.id, stat.mtime, error.savedFormat)
+    // Missing or stale metadata never falls back to legacy history or certifies success.
+    return {
+      id: entry.id,
+      profile: undefined,
+      savedAt: stat.mtime.toISOString(),
+      format: entry.format,
+      metadata: 'unavailable',
+      outcome: 'unverified',
+      reason: `Catalog unavailable; retry storage. ${String(error)}`,
+    }
   }
 
   /**
@@ -614,17 +676,9 @@ export class LearningLibrary {
       const progress = await this.readProgress().catch(() => undefined)
       if (!progress) return []
       const kept = new Set((await this.entries()).map((entry) => entry.id))
-      const absent = [
-        ...new Set(
-          [progress.selection?.studyId, progress.repositoryReturn?.studyId]
-            .filter((studyId) => studyId !== undefined)
-            .filter((studyId) => !kept.has(studyId)),
-        ),
-      ]
+      const absent = this.absentStudyReferences(progress, kept)
       if (!absent.length) return []
-      let ledger: LearnerProgress = progress
-      for (const studyId of absent)
-        ledger = withoutStudyReferences(ledger, studyId) ?? ledger
+      const ledger = this.ledgerWithoutStudies(progress, absent)
       await atomicPrivateWrite(
         join(this.directory, PROGRESS_REPOSITORY_FILE),
         ledger,
@@ -632,6 +686,43 @@ export class LearningLibrary {
       )
       return absent
     })
+  }
+
+  /**
+   * Finds the studies the ledger still refers to although the library no longer holds them, for {@link forgetAbsentStudies}.
+   * @param progress - The ledger as read.
+   * @param kept - The ids of the studies the library holds.
+   * @returns The absent study of the selection and of the repository return, each once and in that order; empty when both name kept studies or none.
+   * @example this.absentStudyReferences(progress, new Set()) // => ['<instance>_<run>'] for a ledger whose selection names that study
+   */
+  private absentStudyReferences(
+    progress: LearnerProgress,
+    kept: ReadonlySet<string>,
+  ): string[] {
+    return [
+      ...new Set(
+        [progress.selection?.studyId, progress.repositoryReturn?.studyId]
+          .filter((studyId) => studyId !== undefined)
+          .filter((studyId) => !kept.has(studyId)),
+      ),
+    ]
+  }
+
+  /**
+   * Drops every reference to the given studies from a ledger, for {@link forgetAbsentStudies} before it writes the ledger back.
+   * @param progress - The ledger as read.
+   * @param studyIds - The absent studies.
+   * @returns The ledger without their selection and repository return; a study the ledger does not refer to changes nothing.
+   * @example this.ledgerWithoutStudies(progress, ['<instance>_<run>']).selection // => undefined
+   */
+  private ledgerWithoutStudies(
+    progress: LearnerProgress,
+    studyIds: string[],
+  ): LearnerProgress {
+    let ledger: LearnerProgress = progress
+    for (const studyId of studyIds)
+      ledger = withoutStudyReferences(ledger, studyId) ?? ledger
+    return ledger
   }
 
   /**
@@ -772,7 +863,7 @@ export class LearningLibrary {
   reconcile(): Promise<void> {
     return this.locked(async () => {
       for (const entry of await this.entries()) {
-        if (entry.format !== 'v3' && entry.format !== 'v4') continue
+        if (!this.keepsCheckpoint(entry.format)) continue
         // Explicit Retry verifies content too; a matching stat cannot repair or certify a wrong checkpoint hash.
         const checkpoint = await this.readCheckpoint(entry.id)
         if (checkpoint.status === 'failed')
