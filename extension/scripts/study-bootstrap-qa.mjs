@@ -2092,6 +2092,29 @@ async function check(page, options) {
   await page.waitForFunction(() =>
     window.sent.some((message) => message.type === 'ready'),
   )
+  // Arrange: a fresh document in a page that has the focus (NF-17: the host has no other way to learn the pane's focus).
+  const focusReports = () =>
+    page.evaluate(() =>
+      window.sent
+        .filter((message) => message.type === 'pane-focus')
+        .map((message) => message.focused),
+    )
+  const reportsAtLoad = await focusReports()
+  // Act: the document loses the focus (the learner goes to another part of the editor) and gains it again.
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+  const reportsAfterLeaving = await focusReports()
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const reportsAfterReturning = await focusReports()
+  // Assert
+  cases.push({
+    name: 'the pane reports to the host when its document gains and when it loses the keyboard focus',
+    actual: { reportsAtLoad, reportsAfterLeaving, reportsAfterReturning },
+    passed:
+      JSON.stringify(reportsAtLoad) === JSON.stringify([true]) &&
+      JSON.stringify(reportsAfterLeaving) === JSON.stringify([true, false]) &&
+      JSON.stringify(reportsAfterReturning) ===
+        JSON.stringify([true, false, true]),
+  })
   const savedStudy = (id, overrides = {}) => ({
       id,
       savedAt: '2026-09-20T00:00:10.000Z',

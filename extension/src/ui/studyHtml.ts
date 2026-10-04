@@ -2369,5 +2369,12 @@ function studyClient(
         : {}),
     })
   })
+  // The host cannot ask a webview view whether it holds the keyboard focus, so this document says when it gains and when it loses it; the host reads the Learning summary's last report when that view is hidden.
+  const reportFocus = (focused: boolean): void =>
+    api.postMessage({ type: 'pane-focus', focused })
+  window.addEventListener('focus', () => reportFocus(true))
+  window.addEventListener('blur', () => reportFocus(false))
   api.postMessage({ type: 'ready' })
+  // A document loaded into a pane that already has the focus gets no focus event.
+  if (document.hasFocus()) reportFocus(true)
 }
