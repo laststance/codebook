@@ -16,6 +16,7 @@ import { startServer } from '../server'
 
 import {
   workspaceHarness,
+  configuredWorkspaceHarness,
   openRetainedStudy,
   readerSeams,
   recordedReaderHarness,
@@ -2530,6 +2531,46 @@ const capturedSourceTabs = (
         'uri' in tab.input &&
         String(tab.input.uri).startsWith('codebook-source://'),
     ).length
+
+// Value: protects=a captured-source tab the learner pinned to keep an earlier run's source in view; fails_when=the one-tab-per-file rule closes every captured tab of the file without reading isPinned, so the pinned tab disappears when the same article runs again; why_new=Cycle 0045 CX-S1 (the filter compared only the URI); seam=the harness tab is pinned as the editor's Pin command marks it
+test('a captured-source tab the learner pinned stays open when another run of the same file is shown', async () => {
+  // Arrange: a first run stopped in src/theme.ts, and the learner pinned its captured-source tab.
+  const harness = await configuredWorkspaceHarness()
+  try {
+    await harness.start()
+    await harness.reader.action('click')
+    await harness.reader.action('stop')
+    const pinnedTab = harness.groups
+      .flatMap((group) => group.tabs)
+      .find(
+        (tab) =>
+          'uri' in tab.input &&
+          tab.input.uri.path.endsWith('/Captured-theme.ts'),
+      )
+    assert.ok(pinnedTab)
+    pinnedTab.isPinned = true
+
+    // Act: a second run stops in the same file.
+    await harness.start()
+    await harness.reader.action('click')
+
+    // Assert: the pinned capture stays beside the second run's own.
+    const capturedThemeTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .filter(
+        (tab) =>
+          'uri' in tab.input &&
+          tab.input.uri.path.endsWith('/Captured-theme.ts'),
+      )
+    assert.equal(capturedThemeTabs.includes(pinnedTab), true)
+    assert.deepEqual(
+      capturedThemeTabs.map((tab) => Boolean(tab.isPinned)),
+      [true, false],
+    )
+  } finally {
+    await harness.close()
+  }
+})
 
 test('selecting a presentation on a closed reader closes a leftover captured-source tab that has no text editor and keeps the learner’s own tab', async () => {
   // Arrange: after a host restart the active tab is a captured source of this workspace, beside a learner draft and another workspace's captured source.

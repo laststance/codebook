@@ -123,6 +123,8 @@ import {
 } from './ui/studyHtml'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { capturedAppHtml } from './utils/capturedAppHtml'
+import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
+import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
@@ -474,8 +476,6 @@ export class StudyWorkspace {
   private readonly disposables: vscode.Disposable[] = []
   private highlight?: vscode.TextEditorDecorationType
   private sourceUri?: vscode.Uri
-  /** The repository path declared for the captured source that {@link sourceUri} shows; none for a source-derived placeholder. Captured tabs are named by base name only, so this tells an earlier capture of the same file from another file of that name. */
-  private sourceDeclaredPath?: string
   private sourceGroup?: vscode.TabGroup
   private opened = false
   private sourceEntryPending = false
@@ -572,6 +572,8 @@ export class StudyWorkspace {
     presentationMode?: PresentationMode
   }
   private lastSelectionKey?: string
+  /** The selection whose last source render failed; {@link renderSelection} lets the next refresh render it once more and, after a second failure in a row, leaves it to Retry or another selection. */
+  private failedSelectionKey?: string
   private lastApplicationKey?: string
   private lastPublished?: string
   private outlineRendering: Promise<void> = Promise.resolve()
@@ -4863,7 +4865,6 @@ export class StudyWorkspace {
       this.repositoryLayoutOrigin = undefined
       this.repositoryLayoutRestored = undefined
       this.sourceUri = undefined
-      this.sourceDeclaredPath = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.lastSelectionKey = undefined
@@ -6582,7 +6583,21 @@ export class StudyWorkspace {
       })
   }
 
-  /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
+  /**
+   * Shows the selected captured source in its native tab and commits source, application and context together; entry, selection, the reader's refresh, playback and the pane's Source and Retry controls call it.
+   *
+   * Source opens are serialized, and obsolete selection work is invalidated before it can qualify context/app correspondence. An unchanged
+   * selection is not rendered again unless `forceSource` is set or its last render failed once (see {@link failedSelectionKey}). Showing a
+   * source closes the unpinned captured tabs that earlier runs or studies left for the same declared file.
+   *
+   * @param preserveFocus - Whether the keyboard focus stays where it is; `false` moves it into the source.
+   * @param forceSource - Renders also when the selection did not change.
+   * @param signal - The caller's cancellation; an aborted render ends its loading state without an error line.
+   * @param placement - The column an arrangement gives the source, or the layout receipt a reentry may restore it into.
+   * @returns Once the source is shown, the render was superseded, or its failure was reported as the reader's `reader` line with the loading state ended.
+   * @throws The signal's reason when it aborted before the render was queued, or the lifetime error when the reader closed meanwhile.
+   * @example await this.renderSelection(true, !this.sourceReady(), signal)
+   */
   private async renderSelection(
     preserveFocus = true,
     forceSource = false,
@@ -6633,6 +6648,8 @@ export class StudyWorkspace {
     this.loading = true
     this.sourceRevision = undefined
     this.lastRendered = undefined
+    // The line of an earlier failed render describes an attempt this one replaces; the pane never reads "Loading…" beside it.
+    this.errors.delete('reader')
     this.publish()
     if (!initial.model.selection.follow)
       this.presentApplication({ ...initial, loading: true })
@@ -6653,9 +6670,6 @@ export class StudyWorkspace {
         const declaredSourcePosition =
           study &&
           configuredObservationPosition(study, message.model.observation?.id)
-        const filename = declaredSourcePosition
-          ? basename(declaredSourcePosition.path)
-          : `${itemId.split('/').at(-1)}.mts`
         // Pre-observation placeholders are transient; retaining them would pull replay back to an obsolete source pane.
         const retainedSource = study?.descriptor?.sources.some(
           (captured) =>
@@ -6665,7 +6679,16 @@ export class StudyWorkspace {
         const uri = vscode.Uri.from({
           scheme: STUDY_SOURCE_SCHEME,
           authority: this.library!.workspaceKey,
-          path: `/${message.model.observation || retainedSource ? study!.id : 'source-derived'}/${encodeURIComponent(itemId)}/${source.hash}/Captured-${filename}`,
+          path: capturedSourceUriPath({
+            owner:
+              message.model.observation || retainedSource
+                ? study!.id
+                : 'source-derived',
+            itemId,
+            hash: source.hash,
+            declaredPath: declaredSourcePosition?.path,
+            fallbackName: `${itemId.split('/').at(-1)}.mts`,
+          }),
         })
         this.documents.set(uri.toString(), source.text)
         // Native documents retain their own visible bytes; the provider cache must remain bounded across edits.
@@ -6779,10 +6802,8 @@ export class StudyWorkspace {
           throw new Error(
             'Displayed captured source does not match the selected observation.',
           )
-        const previousUri = this.sourceUri,
-          previousDeclaredPath = this.sourceDeclaredPath
+        const previousUri = this.sourceUri
         this.sourceUri = uri
-        this.sourceDeclaredPath = declaredSourcePosition?.path
         // Every visible copy of the same immutable source describes the same selected stop.
         if (this.highlight)
           for (const visibleEditor of vscode.window.visibleTextEditors) {
@@ -6794,20 +6815,38 @@ export class StudyWorkspace {
                   : [new vscode.Range(position, position)],
               )
           }
-        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab. The file is the declared path: two routes' `page.tsx` share a tab name and keep a tab each.
-        if (
-          previousUri &&
+        // Replace the transient source-derived revision shown before and every earlier capture of the same file (another run or study, also one shown several studies ago), so each source keeps one captured tab. The file is the declared path: two routes' `page.tsx` share a tab name and keep a tab each. A tab the learner pinned stays.
+        const declaredPath = declaredSourcePosition?.path
+        const replacesPreviousPlaceholder =
+          previousUri !== undefined &&
           previousUri.toString() !== uri.toString() &&
-          (previousUri.path.startsWith('/source-derived/') ||
-            (previousDeclaredPath !== undefined &&
-              previousDeclaredPath === declaredSourcePosition?.path))
-        ) {
+          previousUri.path.startsWith('/source-derived/')
+        const obsoleteUris = new Set(
+          vscode.window.tabGroups.all
+            .flatMap((group) => group.tabs)
+            .flatMap((tab) =>
+              tab.input instanceof vscode.TabInputText &&
+              this.ownsCapturedSourceTab(tab) &&
+              tab.input.uri.toString() !== uri.toString() &&
+              ((replacesPreviousPlaceholder &&
+                tab.input.uri.toString() === previousUri.toString()) ||
+                (declaredPath !== undefined &&
+                  capturedSourceDeclaredPath(tab.input.uri.path) ===
+                    declaredPath))
+                ? [tab.input.uri.toString()]
+                : [],
+            ),
+        )
+        if (replacesPreviousPlaceholder)
+          obsoleteUris.add(previousUri.toString())
+        if (obsoleteUris.size) {
           const obsolete = vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
             .filter(
               (tab) =>
+                !tab.isPinned &&
                 tab.input instanceof vscode.TabInputText &&
-                tab.input.uri.toString() === previousUri.toString(),
+                obsoleteUris.has(tab.input.uri.toString()),
             )
           if (
             obsolete.length &&
@@ -6815,7 +6854,18 @@ export class StudyWorkspace {
           )
             throw new Error('Obsolete source-derived reader could not close.')
           signal?.throwIfAborted()
-          this.documents.delete(previousUri.toString())
+          // A pinned tab keeps showing its capture, so its bytes stay with the provider.
+          const stillShown = new Set(
+            vscode.window.tabGroups.all
+              .flatMap((group) => group.tabs)
+              .flatMap((tab) =>
+                tab.input instanceof vscode.TabInputText
+                  ? [tab.input.uri.toString()]
+                  : [],
+              ),
+          )
+          for (const obsoleteUri of obsoleteUris)
+            if (!stillShown.has(obsoleteUri)) this.documents.delete(obsoleteUri)
         }
         if (
           revision !== this.revision ||
@@ -6827,6 +6877,7 @@ export class StudyWorkspace {
         if (revision !== this.revision || this.closing) return
         this.sourceRevision = revision
         this.loading = false
+        this.failedSelectionKey = undefined
         this.errors.delete('reader')
         this.publish()
       })
@@ -6837,11 +6888,16 @@ export class StudyWorkspace {
         this.pendingHistory !== undefined
       )
         return
+      // A render that ended without its source also ends its loading state: the pane shows the reason with Retry, not "Loading the selected observation…".
+      this.loading = false
       if (signal?.aborted) {
         this.lastSelectionKey = undefined
-        this.loading = false
         return
       }
+      // The next refresh renders a selection that failed once again. One that failed twice in a row waits for Retry or another selection, so the reader's timer cannot keep revealing its tab.
+      if (this.failedSelectionKey !== selectionKey)
+        this.lastSelectionKey = undefined
+      this.failedSelectionKey = selectionKey
       this.report('reader', error)
     })
     return this.rendering

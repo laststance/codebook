@@ -151,6 +151,8 @@ export const AGENT_STORAGE_DIRECTORY = 'agent'
 export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
 export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
+/** What the file name of every captured-source document starts with, so its tab reads apart from the editable workspace file of the same name. */
+export const CAPTURED_SOURCE_NAME_PREFIX = 'Captured-'
 export const STUDY_REFRESH_INTERVAL_MS = 250
 export const STUDY_EDITOR_GROUP_COUNT = 3
 export const LIVE_EDITOR_GROUP_COUNT = 2

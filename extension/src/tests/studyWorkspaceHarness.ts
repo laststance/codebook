@@ -3901,6 +3901,8 @@ export function readerSeams(harness: {
     dropErrorOfKind: (kind: ReaderErrorKind): boolean =>
       reader['errors'].delete(kind),
     isLoading: (): boolean => reader['loading'],
+    /** Says whether the selected captured source reached an active native tab, as the reader requires before a control or a reveal succeeds. */
+    isSourceShown: (): boolean => reader['sourceReady'](),
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */

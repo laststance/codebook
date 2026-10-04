@@ -1552,6 +1552,86 @@ test('a saved study that stops in another file of the same name keeps the earlie
   }
 })
 
+// Value: protects=one captured-source tab per source file while a learner goes through Saved studies; fails_when=only the capture shown immediately before is closed, so a capture of the same file from two studies back stays and each further study adds a tab (four studies left Captured-login-form.tsx and Captured-auth.ts twice each); why_new=Cycle 0045 NF-30; seam=none
+test('a saved study that stops in a file shown two studies earlier leaves one captured-source tab for that file', async () => {
+  // Arrange: three saved studies; the first and the third stop in app/a/page.tsx, the second in app/b/page.tsx.
+  const harness = await workspaceHarness(false)
+  try {
+    const library = await harness.reader.learningStorage()
+    const saveStudyDeclaredAt = async (path: string, runId: string) => {
+      const study = createConfiguredStudy(),
+        descriptor = study.descriptor!
+      for (const observation of study.observations)
+        observation.snapshotUri = observation.snapshotUri.replace(
+          study.runId,
+          runId,
+        )
+      study.workspaceKey = library.workspaceKey
+      study.runId = runId
+      study.id = `${study.instanceId}_${runId}`
+      study.configuration.source.path = path
+      study.configurationHash = sha256(JSON.stringify(study.configuration))
+      descriptor.anchors[0]!.path = path
+      descriptor.sources[0]!.path = path
+      descriptor.citationContext = citationContext(descriptor.anchors)
+      await library.saveStudy(study)
+      return study
+    }
+    const chooseStudy = async (studyId: string): Promise<void> => {
+      harness.receive({
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.model.selection.studyId === studyId &&
+          !harness.reader.inspect().view!.loading,
+        'the chosen saved study',
+        1_000,
+      )
+    }
+    const first = await saveStudyDeclaredAt(
+        'app/a/page.tsx',
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      ),
+      second = await saveStudyDeclaredAt(
+        'app/b/page.tsx',
+        'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      ),
+      third = await saveStudyDeclaredAt(
+        'app/a/page.tsx',
+        'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      )
+    await harness.reader.open()
+    await chooseStudy(first.id)
+    await chooseStudy(second.id)
+
+    // Act
+    await chooseStudy(third.id)
+
+    // Assert: the first study's capture of app/a/page.tsx is gone, the other file's capture stays.
+    const capturedPageTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .flatMap((tab) => {
+        if (
+          !('uri' in tab.input) ||
+          !tab.input.uri.path.endsWith('/Captured-page.tsx')
+        )
+          return []
+        // The document path is the study, the item, the source hash and then the declared file.
+        const [, studyId, , , ...declaredFile] = tab.input.uri.path.split('/')
+        return [`${studyId}: ${declaredFile.join('/')}`]
+      })
+    assert.deepEqual(capturedPageTabs, [
+      '11111111-1111-4111-8111-111111111111_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb: app/b/Captured-page.tsx',
+      '11111111-1111-4111-8111-111111111111_cccccccc-cccc-4ccc-8ccc-cccccccccccc: app/a/Captured-page.tsx',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
 test('configured history rejects learner Run and only a fresh agent request creates another run without dispatching input', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness()
