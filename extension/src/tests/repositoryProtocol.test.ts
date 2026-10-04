@@ -479,3 +479,161 @@ test('foreign identities, changed workspace ownership and malformed repository U
     await harness.close()
   }
 })
+
+/** One article node that cites the tracked file of {@link repositoryProtocolHarness}; an agent's smallest valid node. @example citedNode('entry') */
+const citedNode = (id: string) => ({
+  id,
+  title: 'Price',
+  sections: [{ title: 'Value', text: 'The module exports the price.' }],
+  anchors: [{ path: 'module.ts', hash: sourceHash, startLine: 1, endLine: 1 }],
+  observations: [],
+})
+
+/** The text of a tool result an MCP client received, as an agent reads it. @example toolText(await harness.client.callTool({ name: 'codebook_publish_book', arguments })) */
+const toolText = (result: unknown): string =>
+  z
+    .object({ content: z.array(z.object({ text: z.string() })).min(1) })
+    .parse(result).content[0]!.text
+
+// Value: protects=an agent's first publish of an article that describes no relationships; fails_when=a document without the member edges is refused by the input validation, after which the VS Code agent of the second native round ran on an article it had not written; why_new=Cycle 0045 finding R2-F1 (DX-1 a); seam=none
+test('a document published without edges is published as one without relationships', async () => {
+  // Arrange: a complete document that has no member edges.
+  const harness = await repositoryProtocolHarness()
+  try {
+    const publication = {
+      instanceId: harness.service.instanceId,
+      bookId: 'price',
+      key: 'first',
+      expectedRevision: 0,
+      document: {
+        title: 'Price',
+        summary: 'Where the price comes from.',
+        nodes: [citedNode('entry')],
+      },
+    }
+
+    // Act
+    const published = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: publication,
+    })
+    const repeatedWithEmptyList = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        ...publication,
+        document: { ...publication.document, edges: [] },
+      },
+    })
+
+    // Assert: the revision is saved with an empty list, and the same publication with the list written out is the same one.
+    assert.equal(published.isError, undefined, JSON.stringify(published))
+    const saved = z
+      .object({
+        revisions: z.array(
+          z.object({
+            revision: z.number(),
+            document: z.object({ edges: z.array(z.unknown()) }),
+          }),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            join(harness.library.directory, 'price.book.v2.json'),
+            'utf8',
+          ),
+        ),
+      )
+    assert.deepEqual(saved.revisions, [
+      { revision: 1, document: { edges: [] } },
+    ])
+    assert.deepEqual(
+      repeatedWithEmptyList.structuredContent,
+      published.structuredContent,
+    )
+    assert.deepEqual(
+      (await harness.service.repository!.readDefinition('price', 1)).revision
+        .document.edges,
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the refusal of a relationship that names no node of its document, which a default for edges must not loosen; fails_when=such a document is published, or the refusal stops naming the relationship; why_new=Cycle 0045 finding R2-F1 (the guard of its tolerance); seam=none
+test('a document with a relationship whose endpoint names no node is still refused naming that relationship', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const refused = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'price',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Price',
+          summary: 'Where the price comes from.',
+          nodes: [citedNode('entry')],
+          edges: [
+            {
+              from: 'entry',
+              to: 'missing',
+              relationship: 'calls',
+              explanation:
+                'The entry calls a node this document does not have.',
+            },
+          ],
+        },
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(
+      toolText(refused),
+      'MCP error -32602: Input validation error: Invalid arguments for tool codebook_publish_book: Both relationship endpoints must name nodes in this document. at document.edges[0]',
+    )
+    await assert.rejects(
+      readFile(join(harness.library.directory, 'price.book.v2.json')),
+      /ENOENT/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent reading, where it reads last before it publishes, which members a document has and that edges may be left out; fails_when=the document of the publish tool's input schema carries no description, or still lists edges as required; why_new=Cycle 0045 finding R2-F1 (DX-1 b); seam=none
+test('the input schema of codebook_publish_book names the members of a document and does not require edges', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const tools = await harness.client.listTools()
+
+    // Assert
+    const document = z
+      .object({
+        properties: z.object({
+          document: z.object({
+            description: z.string(),
+            required: z.array(z.string()),
+          }),
+        }),
+      })
+      .parse(
+        tools.tools.find((tool) => tool.name === 'codebook_publish_book')
+          ?.inputSchema,
+      ).properties.document
+    assert.equal(
+      document.description,
+      'A document has the members title, summary, nodes (at least one) and edges, the relationships between its nodes; a document without relationships may leave edges out or give an empty list.',
+    )
+    assert.deepEqual(document.required, ['title', 'summary', 'nodes'])
+  } finally {
+    await harness.close()
+  }
+})

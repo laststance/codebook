@@ -34,3 +34,49 @@ for (const kind of ['context', 'moments'] as const)
       true,
     )
   })
+
+// Value: protects=the Study pane saying beside an explanation it shows ahead of its saved time when that explanation was saved; fails_when=the pane's document no longer carries the three sentences, or no longer writes one under such an explanation; why_new=Cycle 0045 cause 10 (rule 3; the reader's DOM cases belong to the Reader DOM check); seam=none
+test('the Study pane carries the three sentences that say when an explanation shown before its saved time was saved, and writes one under such an explanation', () => {
+  // Act
+  const readerHtml = studyHtml('context')
+
+  // Assert
+  assert.equal(
+    readerHtml.includes(
+      'This explanation was saved while this pause was held.',
+    ),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes('This explanation was saved after the run continued.'),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes(
+      'This explanation was saved after the recording ended.',
+    ),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes('note.textContent = savedNote(value.savedLater)'),
+    true,
+  )
+})
+
+// Value: protects=a recorded stop the agent never explained still saying so, and the later explanations keeping their own section; fails_when=the sentence for a stop without an explanation or the Later annotations section leaves the pane; why_new=Cycle 0045 cause 10 (rules 4 and 6, a guard: green before the change, its control is the mutation that removes either text); seam=none
+test('the Study pane still says that no explanation was available at a recorded time and keeps the Later annotations section', () => {
+  // Act
+  const readerHtml = studyHtml('context')
+
+  // Assert
+  assert.equal(
+    readerHtml.includes('No explanation was available by this recorded time.'),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes(
+      '<details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>',
+    ),
+    true,
+  )
+})

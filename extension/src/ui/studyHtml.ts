@@ -20,7 +20,9 @@ import type { StudyCatalogEntry } from '../studySchemas'
 import type { StudyDescriptor } from '../utils/describeStudy'
 import { installShortcutHelp } from '../utils/installShortcutHelp'
 import type { projectLearningSummary } from '../utils/projectLearningSummary'
+import type { ShownInterpretation } from '../utils/projectRecording'
 import type { OpenRequestSettled } from '../utils/readOpenRequest'
+import { savedLaterNote } from '../utils/savedLaterNote'
 import { savedStudyLabel } from '../utils/savedStudyLabel'
 
 import { STUDY_STYLES, STUDY_UI_OPTIONS, STUDY_SHORTCUTS } from './constants'
@@ -159,7 +161,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden>This saved study cannot be opened. It can still be deleted.</p><p id="study-repairable" class="muted" hidden>This saved study's catalog checkpoint is missing or out of date. Use Retry storage / refresh to repair it; it can also be deleted.</p><div id="delete-study-row" class="row" hidden><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p></section>
 <section id="recording-transport" aria-label="Recorded playback" hidden><div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p id="playback-hint" class="muted" role="status" aria-live="polite"></p><button id="playback-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button></section>
 </main>
-<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()})</script></body></html>`
+<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()})</script></body></html>`
 }
 
 /** Keeps control DOM stable on state updates so native webview messages do not discard keyboard focus. @example studyClient() */
@@ -167,6 +169,7 @@ function studyClient(
   options: typeof STUDY_UI_OPTIONS,
   installFocus: typeof installWebviewFocus | undefined,
   studyLabel: typeof savedStudyLabel,
+  savedNote: typeof savedLaterNote,
 ): void {
   const api = acquireVsCodeApi(),
     visited = new Set(api.getState()?.visited ?? [])
@@ -1538,14 +1541,20 @@ function studyClient(
         ? 'Current source unavailable — historical understanding retained.'
         : `${model.understoodCount} of ${model.progressByItem.length} understood for current source · ${model.reviewCount} needs review`,
     )
-    const interpretations = model.observation?.interpretations ?? []
+    // In a replay the selected observation is the projection's: an explanation shown before its saved time says when it was saved.
+    const interpretations: ShownInterpretation[] =
+      model.observation?.interpretations ?? []
     replace('interpretations', [Boolean(recording), interpretations], () =>
       interpretations.length
-        ? interpretations.map((value) => {
+        ? interpretations.flatMap((value) => {
             const paragraph = document.createElement('p')
             paragraph.className = 'interpretation'
             paragraph.textContent = value.text
-            return paragraph
+            if (!value.savedLater) return [paragraph]
+            const note = document.createElement('p')
+            note.className = 'muted'
+            note.textContent = savedNote(value.savedLater)
+            return [paragraph, note]
           })
         : [
             document.createTextNode(
