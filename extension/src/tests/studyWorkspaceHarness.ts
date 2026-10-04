@@ -493,6 +493,9 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
+  let revealsPanelsLater = false,
+    applyingLaterReveal = false
   // Cursor 3.23.12 closes a disposed panel's tab, and a moment later the group it left empty, while a layout read is pending.
   let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
@@ -1195,6 +1198,32 @@ export async function workspaceHarness(
         )
       },
       reveal(column?: number, preserveFocus?: boolean): void {
+        // The pane comes to the front of its group, with the tab events of that, one turn after this call returned.
+        if (
+          revealsPanelsLater &&
+          !applyingLaterReveal &&
+          column === undefined &&
+          !groups.some((group) => group.activeTab === nativeTab)
+        ) {
+          const applyReveal = (): void => {
+            if (!panels.has(value)) return
+            applyingLaterReveal = true
+            try {
+              value.reveal(column, preserveFocus)
+            } finally {
+              applyingLaterReveal = false
+            }
+          }
+          pendingDisposedTabCloses.push(applyReveal)
+          // Without a layout read the reveal is reported by itself a moment later.
+          setTimeout(() => {
+            const index = pendingDisposedTabCloses.indexOf(applyReveal)
+            if (index < 0) return
+            pendingDisposedTabCloses.splice(index, 1)
+            applyReveal()
+          }, DISPOSED_TAB_CLOSE_DELAY_MS)
+          return
+        }
         panelReveals.push({ kind, column, preserveFocus })
         const previousColumn = value.viewColumn,
           previousFocusedGroup = activeTabGroup
@@ -1989,7 +2018,10 @@ export async function workspaceHarness(
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
             // The disposed panels' tabs close one task after this read is answered.
             const dueTabCloses = pendingDisposedTabCloses.splice(0)
-            if (dueTabCloses.length && closeDisposedPanelTabsDuringLayoutRead) {
+            if (
+              dueTabCloses.length &&
+              (closeDisposedPanelTabsDuringLayoutRead || revealsPanelsLater)
+            ) {
               // Cursor's closes arrive while the read is pending: the reader's listeners see them before the answer.
               await new Promise<void>((resolve) => setImmediate(resolve))
               for (const close of dueTabCloses) close()
@@ -2977,6 +3009,13 @@ export async function workspaceHarness(
      */
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
+     * @example harness.revealPanelsLater()
+     */
+    revealPanelsLater(): void {
+      revealsPanelsLater = true
     },
     /**
      * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group and the first group shows a tab that is no text editor (the Application pane, twice in the second native round of Cycle 0045): that tab takes the keyboard, layout reads are answered for the main editor from then on, and the editor reports nothing: no group event, and the chat's group stays the active tab group. The numbered focus command for the chat's group then gives the keyboard back. A first group that shows a text editor is reported as before (natively seen for a click into it and a double-click on its tab; for the command it is the model's assumption).

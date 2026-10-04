@@ -4340,8 +4340,33 @@ export class StudyWorkspace {
           (origin === 'repository' && !this.recordingActive)) &&
         request === this.readerOpenNumber &&
         historyRequest === this.historyRequest
-      )
-        this.app?.reveal(undefined, true)
+      ) {
+        const app = this.app
+        app?.reveal(undefined, true)
+        // The editor reports the reveal a moment later; the arrangement below would read that report as a change the learner made, so it waits, bounded, until the pane is the tab its group shows.
+        if (app)
+          await waitUntil(
+            () =>
+              this.app !== app ||
+              vscode.window.tabGroups.all.some(
+                (group) =>
+                  group.viewColumn === app.viewColumn &&
+                  group.activeTab?.input instanceof vscode.TabInputWebview &&
+                  isCodebookPaneViewType(
+                    group.activeTab.input.viewType,
+                    'codebook.scopedBrowser',
+                  ),
+              ),
+            'the revealed Application pane',
+            PRESENTATION_READY_TIMEOUT_MS,
+            signal,
+          ).catch(() => {
+            // A pane the editor keeps behind another tab is no reason to end the entry; only the caller's own cancellation is.
+            signal?.throwIfAborted()
+          })
+        this.assertLifetime(lifetime)
+        signal?.throwIfAborted()
+      }
       if (origin !== 'presentation' && this.contextPanel) {
         const panel = this.contextPanel
         // Reentry without a retained layout cannot arrange anything; already manual groups must remain usable.

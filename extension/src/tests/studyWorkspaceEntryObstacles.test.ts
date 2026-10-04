@@ -189,3 +189,32 @@ test('a presentation selection refused for a learner preview names that tab, its
     await harness.close()
   }
 })
+
+// Value: protects=Open replay opening the recording at the first click while the learner's file is the tab in front of the live Application pane; fails_when=the entry reveals the Application pane and starts its arrangement before the editor has reported that reveal, so its own reveal reads as a change the learner made and the click ends with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0045 NF-20 (Cursor: the first click failed whenever a preview or kept tab was in front of the pane, the second opened it); seam=the recorded reader harness, focusMutableDraft, and the fake editor reporting a pane's reveal one turn later
+test("Open replay with the learner's file in front of the live Application pane opens the recording at the first click", async () => {
+  // Arrange: the reader is open, and the file the learner (or the debugger) opened in the Application's group is in front of the pane with the keyboard focus.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const learnerFile = harness.focusMutableDraft('login-form.tsx', 1)
+    harness.revealPanelsLater()
+
+    // Act: one click on Open replay.
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(harness.controller.state().reason, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 1)
+        ?.tabs.includes(learnerFile.tab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
