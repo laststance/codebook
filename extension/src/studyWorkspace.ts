@@ -8862,13 +8862,12 @@ export class StudyWorkspace {
           return measure()
         }
       }
-      let grid = await measure()
-      // The editor closes a disposed pane's tab a moment after dispose(); a grid it measured before that still counts the retired Study group as occupied.
+      // The editor closes a disposed pane's tab a moment after dispose(); a grid measured before that would still count the retired Study group as occupied, so the one measurement waits for it.
       if (retiredContextGroup && this.hasRetiredStudyPaneTab()) {
         await this.retiredStudyPaneClosed(signal)
         assertCurrent()
-        grid = await measure()
       }
+      const grid = await measure()
       const groupCount = this.studyGroupCount()
       // Cursor gives every group a new object with each tab change, so the retired group is known by its identity as well as by its object.
       const lastGroup = grid.groups.at(-1)

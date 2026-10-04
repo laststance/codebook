@@ -1940,6 +1940,54 @@ test('a live entry from the Study layout arranges the application above the sour
   }
 })
 
+for (const besideChat of [false, true])
+  // Value: protects=a live entry measuring the editor grid only after the editor closed the retired Study pane's tab, and still measuring again after the focus hand-over a measurement beside another editor part needs; fails_when=the grid is measured before the wait for that tab and once more after it, which costs one layout read (and beside the chat one more focus hand-over) for a grid the entry then discards; why_new=Cycle 0045 SP-5 with PC-3.8 (`arrange` measured, waited for the retired tab, then measured again); seam=workspace harness closing a disposed panel's tab a moment later, its command log
+  test(`a live entry that waits for the retired Study pane's tab measures the editor grid once, after the tab closed${besideChat ? ', and beside a chat that has the keyboard once more after the one focus hand-over' : ''}`, async () => {
+    // Arrange
+    const harness = await workspaceHarness()
+    try {
+      harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+      const chat = besideChat ? harness.addSeparateEditorPart() : undefined
+      await harness.reader.open()
+      harness.closeDisposedPanelTabsLater()
+      harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await [...harness.service.records.values()][0]!.preparation
+      chat?.focus()
+      const commandsBefore = harness.commands.length
+
+      // Act
+      await harness.reader.open()
+
+      // Assert: the commands of the entry up to the grid it applied.
+      const entry = harness.commands.slice(commandsBefore),
+        untilApplied = entry.slice(0, entry.indexOf('runCommands'))
+      assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+      assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
+      assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+      assert.deepEqual(
+        untilApplied.filter(
+          (command) =>
+            command === 'vscode.getEditorLayout' ||
+            command === 'workbench.action.focusFirstEditorGroup',
+        ),
+        besideChat
+          ? [
+              'vscode.getEditorLayout',
+              'workbench.action.focusFirstEditorGroup',
+              'vscode.getEditorLayout',
+            ]
+          : ['vscode.getEditorLayout'],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the layout confirmation of a live run surviving Cursor's habit of giving every editor group a new object with each tab change; fails_when=a replaced group object without a known tab (the Agent chat's group) or without any tab counts as another group, so the receipt the entry took no longer matches and the run reaches ready with "The native editor layout receipt no longer matches the Study panes."; why_new=Cycle 0045 NF-6 (observed on candidate 13 in Cursor 3.23.12: five such events during one entry, no receipt at ready); seam=workspace harness with a separate editor part and the fake editor's group object replacement
 test('a live entry in Cursor stays confirmed when the editor rebuilds the source group as its placeholder source tab closes', async () => {
   // Arrange: Cursor: the Agent chat is a tab of its own editor part, and every tab that opens, closes or comes to the front gives all editor groups new objects. The reader shows the confirmed Study layout.

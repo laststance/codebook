@@ -41,6 +41,8 @@ import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 const NATIVE_VARIABLES_REFRESH_MS = 400
 /** How long the fake host's Variables view, opened for the first time in the editor session, needs before its tree holds the rows that list commands act on; VS Code 1.140 took about 60 ms. */
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
+/** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
+const DISPOSED_TAB_CLOSE_DELAY_MS = 20
 /**
  * How the fake host's Variables view missed the presented stop, as observed in VS Code 1.140:
  * - `'never-opened'`: Run and Debug was not opened in this editor session; the view asks for the stop's scopes as soon as it is shown, fills its tree a moment later and expands nothing by itself
@@ -1386,14 +1388,17 @@ export async function workspaceHarness(
           // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
           if (closeDisposedPanelTabsDuringLayoutRead) {
             const emptiedColumns = emptied.map((group) => group.viewColumn)
-            // The tab's close gives every group a new object; the emptied group's close, which follows it, does so again.
+            // The tab's close gives every group a new object; the emptied group's close, which follows it while a layout read is pending, does so again.
             replaceGroupObjects()
-            for (const group of groups.filter(
-              (candidate) =>
-                candidate !== separateEditorPart?.group &&
-                emptiedColumns.includes(candidate.viewColumn),
-            ))
-              removeEmptiedGroup(group)
+            pendingDisposedTabCloses.push(() => {
+              for (const group of groups.filter(
+                (candidate) =>
+                  candidate !== separateEditorPart?.group &&
+                  emptiedColumns.includes(candidate.viewColumn) &&
+                  !candidate.tabs.length,
+              ))
+                removeEmptiedGroup(group)
+            })
           } else if (closeDisposedPanelTabsLater && emptied.length)
             for (const group of emptied) removeEmptiedGroup(group)
           else replaceGroupObjects()
@@ -1405,6 +1410,17 @@ export async function workspaceHarness(
         )
           pendingDisposedTabCloses.push(closeTab)
         else closeTab()
+        // Without a layout read the worker closes the tab by itself a moment later.
+        if (
+          closeDisposedPanelTabsLater ||
+          closeDisposedPanelTabsDuringLayoutRead
+        )
+          setTimeout(() => {
+            const index = pendingDisposedTabCloses.indexOf(closeTab)
+            if (index < 0) return
+            pendingDisposedTabCloses.splice(index, 1)
+            closeTab()
+          }, DISPOSED_TAB_CLOSE_DELAY_MS)
         for (const listener of disposed) listener()
       },
     }
@@ -1977,6 +1993,8 @@ export async function workspaceHarness(
               // Cursor's closes arrive while the read is pending: the reader's listeners see them before the answer.
               await new Promise<void>((resolve) => setImmediate(resolve))
               for (const close of dueTabCloses) close()
+              // A tab that closed in this read is followed by its emptied group in the same read.
+              for (const close of pendingDisposedTabCloses.splice(0)) close()
               await new Promise<void>((resolve) => setImmediate(resolve))
             } else if (dueTabCloses.length)
               setImmediate(() => {
@@ -2931,7 +2949,7 @@ export async function workspaceHarness(
     /** The height of one editor group in a fake editor area of 840 px, by view column. @example harness.groupHeightPx(1) // 420 */
     groupHeightPx,
     /**
-     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
+     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
      * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
      * @example harness.closeDisposedPanelTabsLater()
      */
@@ -2939,7 +2957,7 @@ export async function workspaceHarness(
       closeDisposedPanelTabsLater = true
     },
     /**
-     * Makes the fake editor close a disposed panel's tab, and then the group that tab left empty, while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). The reader's listeners see both closes before the read they interrupt is answered. That both fall into one layout read is the model's choice of moment: the trace gives their order and their distance of 11 ms, not what the reader awaited.
+     * Makes the fake editor close a disposed panel's tab a moment after the disposal ({@link DISPOSED_TAB_CLOSE_DELAY_MS}), and the group that tab left empty while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). A layout read that arrives before the tab closed is interrupted by both closes. The reader's listeners see a close before the read it interrupts is answered. That the group's close falls into a layout read is the model's choice of moment: the trace gives the order of the two closes and their distance of 11 ms, not what the reader awaited.
      * @example
      * harness.replaceGroupObjectsOnTabChanges()
      * harness.closeDisposedPanelTabsDuringLayoutRead()
