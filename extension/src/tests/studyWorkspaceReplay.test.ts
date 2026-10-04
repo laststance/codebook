@@ -2477,7 +2477,7 @@ test('pressing Recording after the historical session ended presents the saved m
 })
 
 // Value: protects=a second explicit open while the editor is still stopping the replaced historical debugger; fails_when=the replacement clears its owner before the disposal ends, so the newer open registers a second descriptor factory for the debug type; why_new=Cycle 0034 O1 (the harness never rejected a second live registration); seam=TestReplayDebugger models the one-factory rule and a held disposal
-test('another explicit open while the editor is still stopping the replaced historical debugger waits for it and then presents', async () => {
+test('another explicit open while the editor is still stopping the replaced historical debugger waits for it and then presents', async (context) => {
   // Arrange
   const harness = await recordedReaderHarness(true, true)
   let releaseDisposal = (): void => {}
@@ -2498,29 +2498,33 @@ test('another explicit open while the editor is still stopping the replaced hist
     await harness.reader.openRecording(harness.studyId)
     await disposal.started
 
-    // Act: the learner pauses the stuck open and opens the recording again.
+    // Act: the learner pauses the stuck open and opens the recording again; 200 faked ms pass while the editor is still stopping.
+    enableFakeClock(context)
     harness.controller.command({
       action: 'pause',
       studyId: harness.studyId,
       expectedRevision: harness.controller.state().revision,
     })
     await harness.reader.openRecording(harness.studyId)
-    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    await advanceClockUntil(
+      context,
+      () => harness.controller.state().readiness !== 'loading',
+      200,
+    )
     const whileStopping = harness.controller.state()
-    const releasedAtMs = performance.now()
     disposal.release()
-    await harness.controller.settle()
-    const committedAfterMs = performance.now() - releasedAtMs
+    const committedAfterFakeMs = await advanceClockUntilSettled(
+      context,
+      harness.controller.settle(),
+      250,
+    )
+    resetFakeClock(context)
 
-    // Assert
+    // Assert: the commit takes one 50 ms poll for the Context pane's receipt and no wait of its own.
     const view = harness.postedMessages().slice(-1)[0]!
     assert.equal(whileStopping.readiness, 'loading')
+    assert.equal(committedAfterFakeMs, 50)
     assert.equal(view.recording?.readiness, 'ready')
-    assert.equal(
-      committedAfterMs < 250,
-      true,
-      `committed ${committedAfterMs} ms after the release`,
-    )
     assert.equal(harness.historicalDebuggers.length, 2)
     assert.equal(harness.historicalDebuggers[1]!.available, true)
     assert.equal(
@@ -2528,13 +2532,14 @@ test('another explicit open while the editor is still stopping the replaced hist
       false,
     )
   } finally {
+    resetFakeClock(context)
     releaseDisposal()
     await harness.close()
   }
 })
 
-// Value: protects=a different recording opened while the editor is still stopping the replaced historical debugger; fails_when=the newer open registers a second descriptor factory during that disposal, or does not commit promptly once the stop is released; why_new=Cycle 0044 (0034-PA1: the O1 tests reopened only the same recording and never timed the 250 ms); seam=TestReplayDebugger models the one-factory rule and a held disposal
-test('a different recording opened while the editor is still stopping the replaced historical debugger commits within 250 ms of the stop being released', async () => {
+// Value: protects=a different recording opened while the editor is still stopping the replaced historical debugger; fails_when=the newer open registers a second descriptor factory during that disposal, or waits on a timer of its own before it commits once the stop is released; why_new=Cycle 0044 (0034-PA1: the O1 tests reopened only the same recording and never timed the commit); seam=TestReplayDebugger models the one-factory rule and a held disposal, and node:test setTimeout mock
+test('a different recording opened while the editor is still stopping the replaced historical debugger commits as soon as the stop is released', async (context) => {
   // Arrange: two saved recordings; the first is open and its historical debugger ended.
   const harness = await recordedReaderHarness(true, true)
   let releaseDisposal = (): void => {}
@@ -2574,36 +2579,41 @@ test('a different recording opened while the editor is still stopping the replac
     await harness.reader.openRecording(harness.studyId)
     await disposal.started
 
-    // Act: the learner pauses the stuck open and opens the other recording.
+    // Act: the learner pauses the stuck open and opens the other recording; 200 faked ms pass while the editor is still stopping.
+    enableFakeClock(context)
     harness.controller.command({
       action: 'pause',
       studyId: harness.studyId,
       expectedRevision: harness.controller.state().revision,
     })
     await harness.reader.openRecording(otherStudyId)
-    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    await advanceClockUntil(
+      context,
+      () => harness.controller.state().readiness !== 'loading',
+      200,
+    )
     const whileStopping = harness.controller.state()
-    const releasedAtMs = performance.now()
     disposal.release()
-    await harness.controller.settle()
-    const committedAfterMs = performance.now() - releasedAtMs
+    const committedAfterFakeMs = await advanceClockUntilSettled(
+      context,
+      harness.controller.settle(),
+      250,
+    )
+    resetFakeClock(context)
 
-    // Assert
+    // Assert: the commit takes one 50 ms poll for the Context pane's receipt and no wait of its own.
     const view = harness.postedMessages().slice(-1)[0]!
     assert.equal(otherStudyId === harness.studyId, false)
     assert.equal(whileStopping.readiness, 'loading')
+    assert.equal(committedAfterFakeMs, 50)
     assert.equal(view.recording?.readiness, 'ready')
     assert.equal(view.model.selection.studyId, otherStudyId)
-    assert.equal(
-      committedAfterMs < 250,
-      true,
-      `committed ${committedAfterMs} ms after the release`,
-    )
     assert.equal(
       view.errors.some((error) => error.includes('registered once')),
       false,
     )
   } finally {
+    resetFakeClock(context)
     releaseDisposal()
     await harness.close()
   }
