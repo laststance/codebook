@@ -1057,7 +1057,7 @@ export function activate(
       return { tokenAtStart, publicationAtStart, before }
     }
     /**
-     * Decides whether another window's live marker refuses this start; asked by {@link findOtherRunRefusal} right after the marker was read.
+     * Decides whether another window's live marker refuses this start; asked by {@link refuseOtherRun} right after the marker was read.
      * @param otherWindow - The marker another window wrote for its run.
      * @returns The refusal without an override for a run that is active there; the refusal with "Update anyway" for a watch that window stopped, while its bound has not passed and the leftover is not ignored; undefined when the marker does not refuse.
      * @example const refusal = otherWindowRefusal(otherWindow)
@@ -1081,7 +1081,7 @@ export function activate(
       return undefined
     }
     /**
-     * Gives the record of this window's last run when it was a run of this output; read by {@link findOtherRunRefusal} before the candidates are listed.
+     * Gives the record of this window's last run when it was a run of this output; read by {@link refuseOtherRun} before the candidates are listed.
      * @returns The record, or undefined when there is none or it belongs to another output.
      * @example const lastRun = lastRunOfOutput()
      */
@@ -1111,7 +1111,7 @@ export function activate(
       return undefined
     }
     /**
-     * Decides whether an earlier chat's leftover refuses the start, once the candidates beside the Wiki are listed; asked by {@link findOtherRunRefusal} unless the learner chose "Update anyway".
+     * Decides whether an earlier chat's leftover refuses the start, once the candidates beside the Wiki are listed; asked by {@link refuseOtherRun} unless the learner chose "Update anyway".
      * @param candidates - The staged candidates beside the Wiki.
      * @param nowMs - The time the leftover checks began, read before the candidates were listed.
      * @param lastRun - This window's last run of this output, read at the same time.
@@ -1136,25 +1136,38 @@ export function activate(
       return stoppedWatchRefusal(lastRun, nowMs)
     }
     /**
-     * Looks for another run of this Wiki: another window's running update, which nothing overrides, and then an earlier chat's leftover, which "Update anyway" overrides; the second step of every attempt ({@link readUncontestedWiki}).
-     * @returns What to refuse the start with, or undefined when no other run stands in the way.
-     * @example const refusal = await findOtherRunRefusal()
+     * Records the refusal a decision arrived at, in the turn the decision was made; called by {@link refuseOtherRun} for each of its two decisions.
+     * @param refusal - What {@link otherWindowRefusal} or {@link leftoverRefusal} decided; undefined when it does not refuse.
+     * @returns `true` after the refusal was recorded and the learner told; `false` when there was none.
+     * @example if (refuseWith(leftoverRefusal(candidates, nowMs, lastRun))) return true
      */
-    const findOtherRunRefusal = async (): Promise<Refusal | undefined> => {
+    const refuseWith = (refusal: Refusal | undefined): boolean => {
+      if (!refusal) return false
+      refuse(...refusal)
+      return true
+    }
+    /**
+     * Looks for another run of this Wiki and refuses the start for it: another window's running update, which nothing overrides, and then an earlier chat's leftover, which "Update anyway" overrides; the second step of every attempt ({@link readUncontestedWiki}).
+     * @returns `true` after the refusal was recorded; `false` when no other run stands in the way.
+     * @example if (await refuseOtherRun()) return undefined
+     */
+    const refuseOtherRun = async (): Promise<boolean> => {
       // Each window holds its own run state; the marker is the trace of another window's run before its agent has staged anything.
       const otherWindow = await readLiveWikiUpdateMarker(
         outputDirectory,
         wikiWindowId,
       )
-      const refusal = otherWindow && otherWindowRefusal(otherWindow)
-      if (refusal) return refusal
-      if (isLeftoverIgnored) return undefined
+      if (refuseWith(otherWindow && otherWindowRefusal(otherWindow)))
+        return true
+      if (isLeftoverIgnored) return false
       const nowMs = Date.now()
       const lastRun = lastRunOfOutput()
-      return leftoverRefusal(
-        await listWikiCandidates(outputDirectory),
-        nowMs,
-        lastRun,
+      return refuseWith(
+        leftoverRefusal(
+          await listWikiCandidates(outputDirectory),
+          nowMs,
+          lastRun,
+        ),
       )
     }
     /**
@@ -1168,8 +1181,7 @@ export function activate(
     > => {
       const published = await readPublishedWiki()
       if (!published) return undefined
-      const refusal = await findOtherRunRefusal()
-      if (refusal) return refuse(...refusal)
+      if (await refuseOtherRun()) return undefined
       return published
     }
     /**
@@ -1232,45 +1244,6 @@ export function activate(
       if (outcome !== 'republished') return outcome
     }
     return undefined
-  }
-  /**
-   * Names this window's editor as the host of a Wiki update, for the start that {@link updateDeepWiki} makes.
-   * @returns `'cursor'` in Cursor, `'vscode'` in any other editor.
-   * @example const host = wikiUpdateHost()
-   */
-  const wikiUpdateHost = (): WikiUpdateHost =>
-    isCursorHost ? 'cursor' : 'vscode'
-  /**
-   * Makes the start checks of an update and, when one throws, records the failed start before the error goes on; called by {@link updateDeepWiki} for every start.
-   * @param projectRoot - Canonical opened project.
-   * @param wikiOutput - Resolved Wiki folder and its label.
-   * @param host - Editor host that was asked.
-   * @param isLeftoverIgnored - Whether the learner chose "Update anyway".
-   * @returns What {@link checkWikiUpdateStart} returns: what the run begins with, or undefined after a refusal or a notice.
-   * @throws What a check threw, after the failed start was recorded with its reason.
-   * @example const start = await checkWikiUpdateStartOrRefuse('/repo', wikiOutput, 'vscode', false)
-   */
-  const checkWikiUpdateStartOrRefuse = async (
-    projectRoot: string,
-    wikiOutput: WikiUpdateOutput,
-    host: WikiUpdateHost,
-    isLeftoverIgnored: boolean,
-  ): Promise<WikiUpdateStart | undefined> => {
-    try {
-      return await checkWikiUpdateStart(
-        projectRoot,
-        wikiOutput,
-        host,
-        isLeftoverIgnored,
-      )
-    } catch (error) {
-      // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence.
-      wikiUpdateRun.refuseStart(host, wikiOutput, {
-        kind: 'failed',
-        reason: thrownMessage(error),
-      })
-      throw error
-    }
   }
   /**
    * Builds what one update run carries from its start to its end, with its own abort; called by {@link launchWikiRun} once the start checks passed and the window is not closing.
@@ -1351,44 +1324,6 @@ export function activate(
     })
   }
   /**
-   * Opens VS Code's chat with a run's request and keeps the run reachable for the closing window while the chat opens; called by {@link startVsCodeWikiUpdate}.
-   * @param run - The run that began.
-   * @param query - The request for the chat.
-   * @returns Whether the chat opened within {@link WIKI_CHAT_OPEN_TIMEOUT_MS}; undefined when the command threw, after the run was ended with that failure.
-   * @example const didChatOpen = await openWikiChat(run, query)
-   */
-  const openWikiChat = async (
-    run: WikiRun,
-    query: string,
-  ): Promise<boolean | undefined> => {
-    // While the chat opens, the closing window finds this run and aborts it.
-    const opening = {
-      controller: run.controller,
-      settled: Promise.resolve(),
-    }
-    activeWikiRun = opening
-    try {
-      // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
-      return await settledWithin(
-        Promise.race([
-          vscode.commands.executeCommand('workbench.action.chat.open', {
-            query,
-            isPartialQuery: false,
-          }),
-          once(run.controller.signal, 'abort'),
-        ]),
-        WIKI_CHAT_OPEN_TIMEOUT_MS,
-      )
-    } catch (error) {
-      await finishWikiUpdate(run, {
-        failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
-      })
-      return undefined
-    } finally {
-      if (activeWikiRun === opening) activeWikiRun = undefined
-    }
-  }
-  /**
    * Decides whether a run ends before its watch starts, read by {@link startVsCodeWikiUpdate} in the turn the chat's opening has settled.
    * @param run - The run that began.
    * @param didChatOpen - Whether the chat opened within its bound.
@@ -1409,18 +1344,44 @@ export function activate(
     return undefined
   }
   /**
-   * Asks VS Code's chat for a run and starts the watch for its publish; called by {@link launchWikiRun} in every editor but Cursor.
+   * Opens VS Code's chat with a run's request and starts the watch for its publish; called by {@link launchWikiRun} in every editor but Cursor.
+   * The run stays reachable for the closing window while the chat opens, and what is decided once the opening has settled is decided in that same turn.
    * @param run - The run that began.
    * @param query - The request for the chat.
-   * @returns Once the watch has started, or the run was ended because the chat did not open or the window is closing; the watch itself outlives this call.
+   * @returns Once the watch has started, or the run was ended because the chat could not be opened, did not open within {@link WIKI_CHAT_OPEN_TIMEOUT_MS}, or the window is closing; the watch itself outlives this call.
    * @example await startVsCodeWikiUpdate(run, query)
    */
   const startVsCodeWikiUpdate = async (
     run: WikiRun,
     query: string,
   ): Promise<void> => {
-    const didChatOpen = await openWikiChat(run, query)
-    if (didChatOpen === undefined) return
+    // While the chat opens, the closing window finds this run and aborts it.
+    const opening = {
+      controller: run.controller,
+      settled: Promise.resolve(),
+    }
+    activeWikiRun = opening
+    let didChatOpen: boolean
+    try {
+      // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
+      didChatOpen = await settledWithin(
+        Promise.race([
+          vscode.commands.executeCommand('workbench.action.chat.open', {
+            query,
+            isPartialQuery: false,
+          }),
+          once(run.controller.signal, 'abort'),
+        ]),
+        WIKI_CHAT_OPEN_TIMEOUT_MS,
+      )
+    } catch (error) {
+      await finishWikiUpdate(run, {
+        failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
+      })
+      return
+    } finally {
+      if (activeWikiRun === opening) activeWikiRun = undefined
+    }
     const ending = endingBeforeWatch(run, didChatOpen)
     if (ending) {
       await finishWikiUpdate(run, ending)
@@ -1430,7 +1391,7 @@ export function activate(
     void trackWikiRun(run, watchVsCodeWikiUpdate(run))
   }
   /**
-   * Begins the run of an update whose start checks passed and hands it to its host's agent; the last step of {@link updateDeepWiki}.
+   * Begins the run of an update whose start checks passed and hands it to its host's agent; the last step of {@link startCheckedWikiUpdate}.
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
    * @param host - Editor host that was asked.
@@ -1452,6 +1413,47 @@ export function activate(
     }
     await trackWikiRun(run, runCursorWikiAgent(run, query))
   }
+  /**
+   * Makes the start checks of an update and, when they let it begin, launches its run in the turn they answered; called by {@link updateDeepWiki} for every start once the Wiki's location is known.
+   * A check that throws is recorded as a failed start before the error goes on, and a window that began to close while the checks ran starts no run.
+   * @param projectRoot - Canonical opened project.
+   * @param wikiOutput - Resolved Wiki folder and its label.
+   * @param host - Editor host that was asked.
+   * @param isLeftoverIgnored - Whether the learner chose "Update anyway".
+   * @returns Once the start was refused or needed no update, the claimed marker was released for a closing window, or {@link launchWikiRun} returned.
+   * @throws What a check threw, after the failed start was recorded with its reason.
+   * @example await startCheckedWikiUpdate('/repo', wikiOutput, 'vscode', false)
+   */
+  const startCheckedWikiUpdate = async (
+    projectRoot: string,
+    wikiOutput: WikiUpdateOutput,
+    host: WikiUpdateHost,
+    isLeftoverIgnored: boolean,
+  ): Promise<void> => {
+    let start: WikiUpdateStart | undefined
+    try {
+      start = await checkWikiUpdateStart(
+        projectRoot,
+        wikiOutput,
+        host,
+        isLeftoverIgnored,
+      )
+    } catch (error) {
+      // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence.
+      wikiUpdateRun.refuseStart(host, wikiOutput, {
+        kind: 'failed',
+        reason: thrownMessage(error),
+      })
+      throw error
+    }
+    if (!start) return
+    // The checks above take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
+    if (isExtensionStopping) {
+      await start.releaseMarker().catch(() => undefined)
+      return
+    }
+    await launchWikiRun(projectRoot, wikiOutput, host, start)
+  }
   /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param override - Given when the learner pressed "Update anyway" on a refusal that named an earlier chat's leftover; another window's running update still refuses the start. @example await updateDeepWiki() */
   const updateDeepWiki = async (
     override?: typeof UPDATE_ANYWAY_ACTION,
@@ -1470,20 +1472,13 @@ export function activate(
       const { projectRoot, outputDirectory } = await wikiLocation()
       const outputLabel = wikiOutputLabel(projectRoot, outputDirectory)
       const wikiOutput = { outputDirectory, outputLabel }
-      const host = wikiUpdateHost()
-      const start = await checkWikiUpdateStartOrRefuse(
+      const host: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
+      await startCheckedWikiUpdate(
         projectRoot,
         wikiOutput,
         host,
         override === UPDATE_ANYWAY_ACTION,
       )
-      if (!start) return
-      // The checks above take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
-      if (isExtensionStopping) {
-        await start.releaseMarker().catch(() => undefined)
-        return
-      }
-      await launchWikiRun(projectRoot, wikiOutput, host, start)
     })()
     wikiUpdate = attempt
     try {
