@@ -47,11 +47,31 @@ export function pausedIntervalBoundary(
       (event) =>
         event.elapsedMs >= observation.elapsedMs &&
         PAUSED_INTERVAL_END_EVENT_TYPES.has(event.type) &&
-        (event.type !== 'cdp.resumed' || isResumeOf(observation, event)) &&
-        (event.type !== 'session.terminated' ||
-          isEndOfSessionOf(observation, event)),
+        isEndingOfOwnPause(observation, event),
     )
     .sort((left, right) => left.elapsedMs - right.elapsedMs)[0]
+}
+
+/**
+ * Tells whether an ending event ends the given stop's own pause and not another participant's or another session's; called by {@link pausedIntervalBoundary} for each event that can end a paused interval.
+ * @param observation - The committed stop.
+ * @param event - A journal event of one of the ending kinds.
+ * @returns
+ * - `false` for a `cdp.resumed` that is no resume of the stop's pause ({@link isResumeOf}) and for a `session.terminated` of another session ({@link isEndOfSessionOf})
+ * - `true` for every other event
+ * @example
+ * isEndingOfOwnPause(serverStop, { type: 'cdp.resumed', detail: { participant: 'browser' }, ... }) // => false
+ * isEndingOfOwnPause(serverStop, { type: 'continue.accepted', detail: {}, ... })                   // => true
+ */
+function isEndingOfOwnPause(
+  observation: PausedObservation,
+  event: RecordedEvent,
+): boolean {
+  return (
+    (event.type !== 'cdp.resumed' || isResumeOf(observation, event)) &&
+    (event.type !== 'session.terminated' ||
+      isEndOfSessionOf(observation, event))
+  )
 }
 
 /** Tells whether a `cdp.resumed` entry resumes the given stop's own pause. @example isResumeOf(serverStop, { type: 'cdp.resumed', detail: { participant: 'browser' } }) // false */
