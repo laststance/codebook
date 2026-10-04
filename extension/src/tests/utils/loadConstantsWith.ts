@@ -19,6 +19,7 @@ export type RuntimeConstantOverrides = Partial<
 /**
  * Evaluates the product's `constants` module again over replaced runtime bounds, for a harness that loads a module with {@link loadModule}.
  * The module is evaluated, not copied, so every constant it derives from a replaced bound follows it; a test can then make two bounds equal, or move one, and see which behavior depends on the value.
+ * The replacement reaches the module the harness loads and nothing below it: every module that one requires (the owned breakpoint, `waitUntil`) loads the real constants through the real `require` and keeps the real bound.
  * @param overrides - The runtime bounds to replace; every other one keeps its value.
  * @returns The dependencies to hand to {@link loadModule}: the loaded module's `./constants` and `./runtimeSupport/constants`.
  * @example

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { assertConstantsReadBy } from './utils/assertConstantsReadBy'
 import { createManualClock } from './utils/createManualClock'
 import { createSourceBoundWaitHold } from './utils/createSourceBoundWaitHold'
 import {
@@ -11,10 +12,18 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import {
+  createFakeFileWatching,
+  FakeRelativePattern,
+} from './utils/fakeFileWatching'
 import { openFakeWikiPage } from './utils/fakeWikiPage'
+import { keptListingFolderOf } from './utils/keptListingFolderOf'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
+import type * as WikiOpeningWindowModule from './utils/wikiOpeningWindow'
+import { openWikiOpeningWindow } from './utils/wikiOpeningWindow'
+import { openWikiUpdateWindow } from './utils/wikiUpdateWindow'
 
 // Value: protects=deadline tests firing a run's timers as real time would; fails_when=a timer cleared by an earlier callback of the same advance still fires, or timers fire in the order they were set instead of the order they fall due; why_new=Cycle 0043 R15 (the clock fired a snapshot in insertion order); seam=none
 test('a manual clock fires due timers in the order they fall due and never one an earlier callback cleared', () => {
@@ -69,6 +78,76 @@ test('advanceClockUntil moves the clock no further than its limit: a timer set 2
   // Assert
   assert.equal(reachedAfterMs, undefined)
   assert.deepEqual(fired, ['at the limit'])
+})
+
+// Value: protects=a test that replaces a constant of a loaded module proving something about that constant; fails_when=a harness accepts a replacement the loaded module never reads, so the modules it requires run with the real value and the test passes or fails for another reason; why_new=review of Cycle 0045, tests-1 #4 (this cycle widened the replaceable names from two to every numeric constant); seam=a compiled module written for this test
+test('a replaced constant the loaded module never reads is refused by name, while one it reads passes also when its name begins another constant', async () => {
+  // Arrange: a compiled module that reads one constant itself and requires a utility that reads another.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-constants-read-'))
+  try {
+    const modulePath = join(directory, 'window.js')
+    await writeFile(
+      modulePath,
+      [
+        'const constants_1 = require("./constants");',
+        'const isLeftEmpty_1 = require("./utils/isLeftEmpty");',
+        'exports.poll = () => setTimeout(look, constants_1.WIKI_UPDATE_WATCH_POLL_MS);',
+      ].join('\n'),
+    )
+
+    // Act
+    const readByTheModule = await assertConstantsReadBy(modulePath, [
+      'WIKI_UPDATE_WATCH_POLL_MS',
+    ]).then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
+    const readOnlyBelow = await assertConstantsReadBy(modulePath, [
+      'WIKI_UPDATE_WATCH_POLL_MS',
+      'STORAGE_LOCK_UNWRITTEN_GRACE_MS',
+      'WIKI_UPDATE_WATCH',
+    ]).then(
+      () => 'accepted',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(readByTheModule, 'accepted')
+    assert.equal(
+      readOnlyBelow,
+      'Error: window.js does not read STORAGE_LOCK_UNWRITTEN_GRACE_MS, WIKI_UPDATE_WATCH itself, and the modules it requires keep the real constants, so the replacement changes nothing. Replace a constant window.js reads, or load the module that reads it.',
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a Wiki update test that shortens a bound really running with the shorter bound; fails_when=the update window accepts a replaced constant that only a utility below the extension reads (the storage lock's grace), loads the extension and lets the test run with the real value; why_new=review of Cycle 0045, tests-1 #4; seam=none
+test('an update window asked to replace a constant the extension itself never reads fails its arrangement instead of opening with the real value', async () => {
+  // Arrange
+  const projectRoot = await mkdtemp(join(tmpdir(), 'codebook-update-window-'))
+  try {
+    // Act: a window that opens after all is closed again, so the test ends either way.
+    const opening = await openWikiUpdateWindow({
+      projectRoot,
+      openReader: false,
+      constants: { STORAGE_LOCK_UNWRITTEN_GRACE_MS: 1 },
+    }).then(
+      async (window) => {
+        await window.close()
+        return 'opened'
+      },
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      opening,
+      'Error: extension.js does not read STORAGE_LOCK_UNWRITTEN_GRACE_MS itself, and the modules it requires keep the real constants, so the replacement changes nothing. Replace a constant extension.js reads, or load the module that reads it.',
+    )
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true })
+  }
 })
 
 // Value: protects=a module under test cancelling its own timer after the test faked the clock; fails_when=the loaded module's clearTimeout reaches only the faked timers, so a real timer it armed before the clock was faked still fires; why_new=Cycle 0045 D-L1; seam=a module written for this test, loaded as the suites load compiled boundary modules
@@ -193,6 +272,60 @@ test('a held wait that the test releases ends as a timeout although its run is n
   assert.equal(looks, 3)
 })
 
+// Value: protects=the working directory and every other folder of the machine against the cleanup of a listing test; fails_when=the cleanup takes the third recorded argument as the listing's output whatever it is, so with another argument order the folder of a filter (for `src/a.test.ts` that is `.`) is deleted with everything in it; why_new=local CodeRabbit review of Cycle 0045, finding 5 (`removeKeptListingFolder` in listVitestTestFiles.test.ts); seam=none
+test('the cleanup of a kept Vitest listing names only a listing folder directly in the temporary directory, wherever the output argument stands', () => {
+  // Arrange: the recorded starts of four stand-in Vitest runs.
+  const starts = {
+    outputThird: [
+      'list',
+      '--filesOnly',
+      '--json=/tmp/codebook-vitest-list-Ab12Cd/files.json',
+      'src/a.test.ts',
+    ],
+    outputLast: [
+      'list',
+      '--filesOnly',
+      'src/a.test.ts',
+      '--json=/tmp/codebook-vitest-list-Ab12Cd/files.json',
+    ],
+    outputInAnotherFolder: [
+      'list',
+      '--filesOnly',
+      '--json=/home/learner/project/files.json',
+    ],
+    outputInANestedFolder: [
+      'list',
+      '--filesOnly',
+      '--json=/tmp/other/codebook-vitest-list-Ab12Cd/files.json',
+    ],
+    noOutput: ['list', '--filesOnly', 'src/a.test.ts'],
+  }
+
+  // Act
+  const folders = {
+    outputThird: keptListingFolderOf(starts.outputThird, '/tmp'),
+    outputLast: keptListingFolderOf(starts.outputLast, '/tmp'),
+    outputInAnotherFolder: keptListingFolderOf(
+      starts.outputInAnotherFolder,
+      '/tmp',
+    ),
+    outputInANestedFolder: keptListingFolderOf(
+      starts.outputInANestedFolder,
+      '/tmp',
+    ),
+    noOutput: keptListingFolderOf(starts.noOutput, '/tmp'),
+  }
+
+  // Assert
+  assert.deepEqual(folders, {
+    outputThird: '/tmp/codebook-vitest-list-Ab12Cd',
+    outputLast: '/tmp/codebook-vitest-list-Ab12Cd',
+    outputInAnotherFolder: undefined,
+    outputInANestedFolder: undefined,
+    noOutput: undefined,
+  })
+})
+
 // Value: protects=a page test that looks for an element by a selector the fake page cannot evaluate failing instead of passing on the wrong element; fails_when=a bracket group that is neither `[attribute]` nor `[attribute=value]` is dropped from the selector, so it matches every element and the first one is returned; why_new=Cycle 0045 D-L4 (the fake said such selectors throw and matched everything); seam=none
 test('the fake Wiki page refuses an attribute selector with an operator instead of matching every element', async () => {
   // Arrange: a page whose update link has an href that starts with "vscode://".
@@ -241,6 +374,60 @@ test('clicking an element the fake Wiki page does not have fails the test instea
   })
 })
 
+// Value: protects=a page rule that compares the time it reads with an interval being tested at the time its timer fell due; fails_when=the page's `Date.now()` already stands at the end of the step that reaches a timer, so a timer due at 2,000 ms reads 2,200 ms; why_new=review of Cycle 0045, tests-1 #6 (D-L3 made the manual clock run a callback at its due time and D-L6 allowed steps shorter than a second; the page's own clock followed neither); seam=none
+test('a timer of the fake Wiki page reads the time it fell due at, not the end of the advance that reached it: one due after 2,000 ms reads 2,000 ms when two advances of 1,200 ms pass it', async () => {
+  // Arrange: the page script sets one timer that notes how long after the load it read the clock.
+  const page = await openFakeWikiPage(
+    [
+      'var loadedAtMs = Date.now()',
+      'window.setTimeout(function () {',
+      "  document.body.setAttribute('data-read-after-ms', String(Date.now() - loadedAtMs))",
+      '}, 2000)',
+    ].join('\n'),
+    'no-rail',
+  )
+
+  // Act: the second advance ends at 2,400 ms, 400 ms past the timer.
+  await page.advance(1_200)
+  await page.advance(1_200)
+
+  // Assert
+  assert.equal(page.body.getAttribute('data-read-after-ms'), '2000')
+})
+
+// Value: protects=a page test that holds an answer back and releases it stating an order that happened; fails_when=`release` succeeds although the page never made the held request, so the test's "answer arrives late" step delivers nothing and a request made afterwards is answered at once; why_new=review of Cycle 0045, tests-1 #5; seam=none
+test('releasing a held answer the fake Wiki page has not asked for fails the test, and the hold stays for the request that comes later', async () => {
+  // Arrange: a page whose script asks for freshness only when the window gets focus; the test holds that answer back.
+  const page = await openFakeWikiPage(
+    [
+      "window.addEventListener('focus', function () {",
+      "  fetch('/w/fake-reader-token/api/freshness').then(function () {",
+      "    document.body.setAttribute('data-freshness-answered', 'yes')",
+      '  })',
+      '})',
+    ].join('\n'),
+    'no-rail',
+  )
+  page.holdNext('api/freshness')
+
+  // Act: the release comes before the page asked; then the page asks, and the answer is released again.
+  const releasedBeforeTheRequest = await page.release('api/freshness').then(
+    () => 'released',
+    (error: unknown) => String(error),
+  )
+  await page.focusWindow()
+  const answeredWhileHeld = page.body.getAttribute('data-freshness-answered')
+  await page.release('api/freshness')
+
+  // Assert
+  assert.equal(
+    releasedBeforeTheRequest,
+    'Error: The fake page has not asked for api/freshness since its answer was to be held back, so there is no answer to release.',
+  )
+  assert.equal(answeredWhileHeld, null)
+  assert.equal(page.body.getAttribute('data-freshness-answered'), 'yes')
+})
+
 // Value: protects=a page test standing at the faked time it asked for, between two of the page's timers; fails_when=an advance is rounded up to whole seconds, so a test that advances 1,200 ms already sees what the page does at 2,000 ms; why_new=Cycle 0045 D-L6; seam=none
 test("the fake Wiki page's clock moves exactly the time asked for: a timer due after 1,500 ms has not fired after an advance of 1,200 ms", async () => {
   // Arrange: the page script sets one timer that notes how long after the load it fired.
@@ -268,6 +455,58 @@ test("the fake Wiki page's clock moves exactly the time asked for: a timer due a
   assert.equal(page.body.getAttribute('data-fired-after-ms'), '1500')
 })
 
+// Value: protects=a test of the product's file watching failing when the product keeps reacting to a listener it disposed; fails_when=the fake watcher's listener registration cannot be disposed, so a product that disposes its listener and keeps the watcher still gets every event; why_new=review of Cycle 0045, tests-1 #10 (`dispose()` of a listener did nothing); seam=none
+test('a file listener whose registration was disposed gets no further event from the fake watcher, while the watcher and its other listeners live on', () => {
+  // Arrange: one watcher with two change listeners.
+  const files = createFakeFileWatching()
+  const watcher = files.createFileSystemWatcher(
+    new FakeRelativePattern('/repo', '**'),
+  )
+  const heard: string[] = []
+  const firstListener = watcher.onDidChange((file) =>
+    heard.push(`first: ${file.fsPath}`),
+  )
+  watcher.onDidChange((file) => heard.push(`second: ${file.fsPath}`))
+  files.report('change', '/repo/src/a.ts')
+
+  // Act: the first listener is disposed; the watcher is not.
+  firstListener.dispose()
+  files.report('change', '/repo/src/b.ts')
+
+  // Assert
+  assert.deepEqual(heard, [
+    'first: /repo/src/a.ts',
+    'second: /repo/src/a.ts',
+    'second: /repo/src/b.ts',
+  ])
+  assert.equal(files.liveWatcherCount(), 1)
+})
+
+// Value: protects=a test that reports a file outside the watched project showing that the product does not hear of it; fails_when=the fake delivers a report to every live watcher whatever folder it watches, so a file of another project reaches the product; why_new=review of Cycle 0045, tests-1 #10; seam=none
+test('the fake watcher reports a file only to the watchers whose folder contains it', () => {
+  // Arrange: one watcher on a project, one on a folder beside it whose name starts alike.
+  const files = createFakeFileWatching()
+  const heard: string[] = []
+  files
+    .createFileSystemWatcher(new FakeRelativePattern('/repo', '**'))
+    .onDidCreate((file) => heard.push(`repo: ${file.fsPath}`))
+  files
+    .createFileSystemWatcher(new FakeRelativePattern('/repository', '**'))
+    .onDidCreate((file) => heard.push(`repository: ${file.fsPath}`))
+
+  // Act: a file of each project, the first project's own folder, and a file above both.
+  files.report('create', '/repo/src/new.ts')
+  files.report('create', '/repository/notes.md')
+  files.report('create', '/repo')
+  files.report('create', '/elsewhere.ts')
+
+  // Assert
+  assert.deepEqual(heard, [
+    'repo: /repo/src/new.ts',
+    'repository: /repository/notes.md',
+  ])
+})
+
 // Value: protects=the machine's temporary folder staying free of Wiki projects that a failed fixture created; fails_when=the fixture rejects after it created its temporary project and leaves it there, although no caller holds its cleanup; why_new=Cycle 0045 X7-D.3; seam=TMPDIR of this test process, so the fixture's project is the only thing in a folder the test owns
 test('a published Wiki fixture whose first publish is refused removes the temporary project it created', async () => {
   // Arrange: temporary projects are created in a folder of this test; the publisher refuses the project root as output folder.
@@ -284,6 +523,96 @@ test('a published Wiki fixture whose first publish is refused removes the tempor
       message:
         'The Wiki output cannot be the project root or a folder that contains it. A folder inside the project, such as .codebook/wiki, is accepted.',
     })
+    assert.deepEqual(await readdir(temporaryFolder), [])
+  } finally {
+    if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTemporaryFolder
+    await rm(temporaryFolder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the machine's temporary folder staying free of Wiki projects that a failed window fixture created; fails_when=the Wiki opening window throws after it created its temporary project (the extension does not load or activate) and leaves the project there, although no caller holds its `close`; why_new=review of Cycle 0045, tests-1 #9 (a) (X7-D.3 guarded the two other Wiki fixtures and not this one); seam=TMPDIR of this test process, and the fixture loaded with a module loader that refuses the extension
+test('a Wiki opening window whose extension does not load removes the temporary project it created', async () => {
+  // Arrange: temporary projects are created in a folder of this test, and the fixture's loader refuses the extension.
+  const temporaryFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-fixture-cleanup-'),
+  )
+  const previousTemporaryFolder = process.env.TMPDIR
+  process.env.TMPDIR = temporaryFolder
+  try {
+    const fixture = await loadModule<typeof WikiOpeningWindowModule>(
+      join(__dirname, 'utils', 'wikiOpeningWindow.js'),
+      {
+        './loadModule': {
+          loadModule: async () => {
+            throw new Error('The extension could not load.')
+          },
+        },
+      },
+    )
+    // Act
+    const opening = fixture.openWikiOpeningWindow()
+    // Assert
+    await assert.rejects(opening, { message: 'The extension could not load.' })
+    assert.deepEqual(await readdir(temporaryFolder), [])
+  } finally {
+    if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTemporaryFolder
+    await rm(temporaryFolder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a test of the opened Wiki asserting what was put into the editor chat for a question; fails_when=the window fixture records only the name of the executed command, so no test can tell the drafted text, or records commands that carry no draft; why_new=review of Cycle 0045, tests-1 #9 (c) (`chatDrafts` held command names); seam=the real extension activated on the stubbed editor of the fixture
+test('the Wiki opening window records a question handed to the editor chat with the command and the drafted text', async () => {
+  // Arrange: the editor exposes no model, so a question becomes a draft in the editor chat.
+  const window = await openWikiOpeningWindow()
+  try {
+    await window.open()
+
+    // Act
+    await window.readers[0]?.ask('Where is it?', new AbortController().signal)
+
+    // Assert
+    assert.deepEqual(window.chatDrafts, [
+      {
+        name: 'workbench.action.chat.open',
+        query: `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(window.projectRoot, '.codebook', 'wiki', 'codebook-wiki.json'))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: "Where is it?"`,
+      },
+    ])
+  } finally {
+    await window.close()
+  }
+})
+
+// Value: protects=the machine's temporary folder staying free of the Wiki project of a test whose reader failed to close; fails_when=the served Wiki's `close` stops at the reader's rejected close and never removes the project it created; why_new=review of Cycle 0045, tests-1 #14 (X7-D.3 made the failed start remove the project and left this path); seam=TMPDIR of this test process, and the fixture loaded with a reader whose close rejects
+test('a served minimal Wiki whose reader fails to close still removes the temporary project it created', async () => {
+  // Arrange: temporary projects are created in a folder of this test, and the fixture's reader starts but refuses to close.
+  const temporaryFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-fixture-cleanup-'),
+  )
+  const previousTemporaryFolder = process.env.TMPDIR
+  process.env.TMPDIR = temporaryFolder
+  try {
+    const fixture = await loadModule<typeof ServeMinimalWikiModule>(
+      join(__dirname, 'utils', 'serveMinimalWiki.js'),
+      {
+        '../../deepWikiReader': {
+          startDeepWikiReader: async () => ({
+            url: 'http://127.0.0.1:4100/w/reader-token/index.html',
+            close: async () => {
+              throw new Error('The reader could not close.')
+            },
+          }),
+        },
+      },
+    )
+    const wiki = await fixture.serveMinimalWiki()
+    const projectsWhileServed = (await readdir(temporaryFolder)).length
+    // Act
+    const closing = wiki.close()
+    // Assert: the reader's error is passed on, and the project is gone.
+    await assert.rejects(closing, { message: 'The reader could not close.' })
+    assert.equal(projectsWhileServed, 1)
     assert.deepEqual(await readdir(temporaryFolder), [])
   } finally {
     if (previousTemporaryFolder === undefined) delete process.env.TMPDIR

@@ -269,7 +269,7 @@ export type FakeWikiPage = {
   reader: FakeWikiReader
   /** Keeps the answer to the next request of one route back until `release(route)`; the answer is what the reader knew when the request arrived. */
   holdNext(route: string): void
-  /** Delivers the held answer of one route and lets the page take it in. */
+  /** Delivers the held answer of one route and lets the page take it in. @throws When no answer of the route is held back, or when the page has not asked for the route since the hold: a release before the request would state an order that never happened. */
   release(route: string): Promise<void>
   body: PageElement
   /** First element matching the selector, or undefined. */
@@ -380,7 +380,7 @@ export async function openFakeWikiPage(
     (load.browserClockAheadMs ?? 0)
   const pagePublication =
     load.publication === undefined ? PUBLICATION_AT_LOAD : load.publication
-  /** The routes whose next answer a test keeps back, each with the promise its request waits on and the function that settles it. */
+  /** The routes whose next answer a test keeps back, each with the promise its request waits on and the function that settles it. A route stays in `heldRequests` until the page's request for it arrives. */
   const heldRequests = new Map<string, Promise<void>>()
   const heldReleases = new Map<string, () => void>()
   const holdNext = (route: string): void => {
@@ -392,7 +392,6 @@ export async function openFakeWikiPage(
     )
   }
   for (const route of load.heldAtLoad ?? []) holdNext(route)
-  let elapsedMs = 0
   let reloads = 0
 
   const head = new PageElement('head')
@@ -513,8 +512,9 @@ export async function openFakeWikiPage(
     performance: { timeOrigin: loadedAtMs },
     // The page reads the clock and formats times through Date; both follow the manual clock and UTC.
     Date: class PageDate extends Date {
+      // The manual clock stands at a timer's own due time while its callback runs, so a callback reads the time it was due at.
       static override now(): number {
-        return loadedAtMs + elapsedMs
+        return loadedAtMs + clock.now()
       }
       override toLocaleTimeString(): string {
         return this.toISOString().slice(11, 16)
@@ -555,6 +555,11 @@ export async function openFakeWikiPage(
       const release = heldReleases.get(route)
       if (!release)
         throw new Error(`The fake page holds no answer of ${route} back.`)
+      // The hold is still waiting for its request: nothing was kept back yet, and the hold stays for a request that comes later.
+      if (heldRequests.has(route))
+        throw new Error(
+          `The fake page has not asked for ${route} since its answer was to be held back, so there is no answer to release.`,
+        )
       heldReleases.delete(route)
       release()
       await settle()
@@ -584,7 +589,6 @@ export async function openFakeWikiPage(
       // Each step may start a request whose answer sets the next timer, so the page settles between steps.
       for (let stepped = 0; stepped < milliseconds; stepped += CLOCK_STEP_MS) {
         const stepMs = Math.min(CLOCK_STEP_MS, milliseconds - stepped)
-        elapsedMs += stepMs
         clock.advance(stepMs)
         await settle()
       }

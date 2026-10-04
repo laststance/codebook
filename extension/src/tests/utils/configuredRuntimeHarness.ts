@@ -69,7 +69,7 @@ export async function configuredRuntimeHarness(
       /** Column the first stop is declared at instead of column 1. */
       declaredColumn?: number
     }
-    /** Replaces runtime bounds in the run and in the constants it reads ({@link loadConstantsWith}), so a test can make two bounds equal and see what depends on their values. */
+    /** Replaces runtime bounds in the run's own module and in the constants it reads ({@link loadConstantsWith}), so a test can make two bounds equal and see what depends on their values. The modules the run requires (the owned breakpoint, `waitUntil`) keep the real bounds. */
     runtimeConstants?: RuntimeConstantOverrides
     /** The stand-in browser closes without a failure and then names this profile folder as one it could not remove, as the real adapter does. */
     browserProfileLeft?: ProfileLeft

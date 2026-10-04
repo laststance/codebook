@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
+import type * as FakeClockModule from './utils/fakeClock'
 import {
   advanceClock,
   advanceClockUntil,
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import { loadModule } from './utils/loadModule'
 
 /** The real timer, kept from before a test fakes `setTimeout`, so a test can let real time pass. */
 const realSetTimeout = setTimeout
@@ -102,4 +105,34 @@ test('advancing the fake clock spends no fake time while a child process the wor
 
   // Assert: the timer was set before any fake time passed, and fired when the advance reached the time it was due.
   assert.deepEqual(timer, { setAfterMs: 0, firedAfterMs: 200 })
+})
+
+// Value: protects=a fake-clock test that hangs on real work failing with a sentence that says which work; fails_when=the turn limit's error names neither the pending resource nor what it is, so a child process that outlives the test reads like a slow disk; why_new=review of Cycle 0045, tests-1 #8 (the limit said only "Real file or child-process work"); seam=the helper loaded with a turn that costs no real time and with the process's active resources answered by the test
+test('a wait that gives up on pending real work names the resources that were still pending and what each is', async (context) => {
+  // Arrange: a child process and a file handle's close never finish; a socket and a timer are active too and do not count.
+  const fakeClock = await loadModule<typeof FakeClockModule>(
+    join(__dirname, 'utils', 'fakeClock.js'),
+    {},
+    {
+      setTimeout: (callback: () => void) => setImmediate(callback),
+      process: {
+        getActiveResourcesInfo: () => [
+          'Timeout',
+          'ProcessWrap',
+          'TCPSocketWrap',
+          'CloseReq',
+          'ProcessWrap',
+        ],
+      },
+    },
+  )
+
+  // Act
+  const waiting = fakeClock.advanceClockUntil(context, () => false, 50)
+
+  // Assert
+  await assert.rejects(waiting, {
+    message:
+      'Real file or child-process work was still pending after 10000 event-loop turns (ProcessWrap: a child process that has not exited, CloseReq: a file handle being closed); the faked clock was not moved.',
+  })
 })

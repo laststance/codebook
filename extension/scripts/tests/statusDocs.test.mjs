@@ -23,17 +23,25 @@ const retiredLogCitations = (text) =>
   text.match(/\bD0[0-4]\d\b|DECISIONS\.md/g) ?? []
 
 /**
+ * Returns README's whole "Implementation status" section, from its heading to the next heading of the same level, so a check of the status also sees a paragraph added below the first one.
+ * @param {string} readme - The root README's text.
+ * @returns {string} The section with its heading line (without the `## ` mark), or an empty string when the heading is gone.
+ * @example
+ * statusSection('## Implementation status\n\nA private preview.\n\nMore.\n\n## Start here\n') // => 'Implementation status\n\nA private preview.\n\nMore.\n\n'
+ */
+const statusSection = (readme) =>
+  readme
+    .split(/^## /m)
+    .find((part) => part.startsWith('Implementation status\n')) ?? ''
+
+/**
  * Returns the first paragraph under README's "Implementation status" heading: the one a reader takes as the current state.
  * @param {string} readme - The root README's text.
  * @returns {string} The paragraph, or an empty string when the heading is gone.
  * @example
  * statusParagraph('## Implementation status\n\nA private preview.\n\nMore.') // => 'A private preview.'
  */
-const statusParagraph = (readme) =>
-  readme
-    .split(/^## /m)
-    .find((part) => part.startsWith('Implementation status\n'))
-    ?.split('\n\n')[1] ?? ''
+const statusParagraph = (readme) => statusSection(readme).split('\n\n')[1] ?? ''
 
 // Cycle 0045 (DOC-3, DX-21): red while README cited "(D047)" and "(D044)", the packaged README "D034", and README's status ended at Cycle 0043 and 0.2.27.
 test("README and the packaged README cite no number of the retired decision log, and README's status names the delivered version", async () => {
@@ -98,15 +106,18 @@ test("PROJECT_STATE's one next action is one action, without the earlier next ac
 })
 
 // Cycle 0045 (CR-1): red while the status paragraph retold every cycle from 0028 to 0043 (sixteen linked records) instead of leaving that history to the records and the change history.
+// Review of Cycle 0045 (tests-1 #2): the check read the first paragraph only, so it was green while the section's second paragraph linked the record of Cycle 0029 and retold what it changed.
 test("README's implementation status states the delivered and the open cycle and leaves the history of earlier cycles to their records and the change history", async () => {
   // Arrange
   const readme = await readDocument('README.md')
 
-  // Act
-  const status = statusParagraph(readme)
-  const linkedCycleRecords = [
-    ...status.matchAll(/\]\(docs\/cycles\/(\d{4})-[^)]*\)/g),
-  ].map((match) => match[1])
+  // Act: every paragraph from the heading to the next heading counts, not only the first.
+  const status = statusSection(readme)
+  const cyclesWithLinkedRecords = [
+    ...new Set(
+      [...status.matchAll(/docs\/cycles\/(\d{4})-/g)].map((match) => match[1]),
+    ),
+  ]
   const pointsToHistory = [
     '[change history](CHANGELOG.md)',
     '[`docs/cycles`](docs/cycles)',
@@ -115,9 +126,9 @@ test("README's implementation status states the delivered and the open cycle and
 
   // Assert: at most the delivered cycle's record and the open cycle's, and nothing older.
   assert.equal(
-    linkedCycleRecords.length <= 2,
+    cyclesWithLinkedRecords.length <= 2,
     true,
-    `the status links the records of ${linkedCycleRecords.length} cycles: ${linkedCycleRecords.join(', ')}`,
+    `the status links the records of ${cyclesWithLinkedRecords.length} cycles: ${cyclesWithLinkedRecords.join(', ')}`,
   )
   assert.deepEqual(pointsToHistory, [true, true, true])
 })

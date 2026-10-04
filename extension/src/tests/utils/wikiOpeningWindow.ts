@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -8,8 +8,10 @@ import type {
   WikiIncludedSource,
 } from '../../utils/answerDeepWikiQuestion'
 
+import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
+import { writeMinimalWiki } from './writeMinimalWiki'
 
 /** A step of opening or asking that a test can keep open: the start of a reader, the editor's answer to which chat models it has, or the learner's choice among them. */
 export type HeldOpeningStep = 'reader-start' | 'model-list' | 'model-choice'
@@ -26,6 +28,27 @@ export type StartedWikiReader = {
   ask(question: string, signal: AbortSignal): Promise<WikiAnswer | unknown>
 }
 
+/** What a test asked of the window: how the editor forwards a reader's address, and the chat models it exposes. */
+type WikiOpeningWindowOptions = {
+  forwardTo?: (url: string) => string
+  models?: Array<{ id: string; name: string; vendor: string }>
+}
+
+/** An opened window of {@link openWikiOpeningWindow}: what it did so far, and the test's hands on it. */
+type WikiOpeningWindow = {
+  projectRoot: string
+  readers: StartedWikiReader[]
+  openedUrls: string[]
+  errors: string[]
+  modelQuestions: string[]
+  /** Every command the window executed with a chat query: the command's name and the query's text. */
+  chatDrafts: Array<{ name: string; query: string }>
+  files: ReturnType<typeof createFakeFileWatching>
+  open(): Promise<void>
+  hold(step: HeldOpeningStep): { started: Promise<void>; release(): void }
+  close(): Promise<void>
+}
+
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a temporary project with a one-page Wiki, with stand-in readers, so a test can drive "Codebook: Open DeepWiki in Browser" and see what the window does around a reader.
  *
@@ -34,7 +57,8 @@ export type StartedWikiReader = {
  *
  * @param options.forwardTo - The address the editor forwards a reader's URL to (a remote window); the URL itself when omitted (a local window).
  * @param options.models - The chat models the editor exposes to the question handler; none when omitted. The learner picks the first one when the editor asks.
- * @returns What the window did (`readers` it started, `openedUrls` it handed to the browser, `errors` it showed, `modelQuestions` it sent to a chat model, `chatDrafts` it put into the editor chat), the fake file watching, `open` (runs the command), `hold` (keeps one step of the next open or question open until `release()`) and `close` (deactivates and removes the project).
+ * @returns What the window did (`readers` it started, `openedUrls` it handed to the browser, `errors` it showed, `modelQuestions` it sent to a chat model, `chatDrafts` it put into the editor chat, each with the command's name and the drafted text), the fake file watching, `open` (runs the command), `hold` (keeps one step of the next open or question open until `release()`) and `close` (deactivates and removes the project).
+ * @throws When the Wiki cannot be written or the extension does not load or activate; the temporary project is removed before the error is passed on.
  *
  * @example
  * ```ts
@@ -46,46 +70,40 @@ export type StartedWikiReader = {
  * ```
  */
 export async function openWikiOpeningWindow(
-  options: {
-    forwardTo?: (url: string) => string
-    models?: Array<{ id: string; name: string; vendor: string }>
-  } = {},
-): Promise<{
-  projectRoot: string
-  readers: StartedWikiReader[]
-  openedUrls: string[]
-  errors: string[]
-  modelQuestions: string[]
-  chatDrafts: string[]
-  files: ReturnType<typeof createFakeFileWatching>
-  open(): Promise<void>
-  hold(step: HeldOpeningStep): { started: Promise<void>; release(): void }
-  close(): Promise<void>
-}> {
-  const projectRoot = await realpath(
-    await mkdtemp(join(tmpdir(), 'codebook-wiki-opening-')),
+  options: WikiOpeningWindowOptions = {},
+): Promise<WikiOpeningWindow> {
+  const projectDirectory = await mkdtemp(
+    join(tmpdir(), 'codebook-wiki-opening-'),
   )
-  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
-  await mkdir(outputDirectory, { recursive: true })
-  await writeFile(
-    join(outputDirectory, 'index.html'),
-    '<!doctype html><body>Wiki</body>',
-  )
-  await writeFile(
-    join(outputDirectory, 'codebook-wiki.json'),
-    JSON.stringify({
-      schemaVersion: 1,
-      repositoryRoot: projectRoot,
-      pages: [],
-      assets: [],
-      includedSources: [],
-    }),
-  )
+  try {
+    const projectRoot = await realpath(projectDirectory)
+    await writeMinimalWiki(projectRoot)
+    return await activateWindowOn(projectRoot, options)
+  } catch (error) {
+    // A fixture that failed hands no `close` to its caller, so it removes its own temporary project.
+    await rm(projectDirectory, { recursive: true, force: true })
+    throw error
+  }
+}
+
+/**
+ * Loads and activates the extension on a prepared project, for {@link openWikiOpeningWindow}; it creates nothing on disk, so its caller owns the project's removal when it throws.
+ * @param projectRoot - The temporary project's real path, with its one-page Wiki already written.
+ * @param options - What the test asked of the window.
+ * @returns The activated window.
+ * @throws When the extension does not load or activate.
+ * @example
+ * const window = await activateWindowOn('/tmp/codebook-wiki-opening-x', {})
+ */
+async function activateWindowOn(
+  projectRoot: string,
+  options: WikiOpeningWindowOptions,
+): Promise<WikiOpeningWindow> {
   const readers: StartedWikiReader[] = []
   const openedUrls: string[] = []
   const errors: string[] = []
   const modelQuestions: string[] = []
-  const chatDrafts: string[] = []
+  const chatDrafts: WikiOpeningWindow['chatDrafts'] = []
   const files = createFakeFileWatching()
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
@@ -99,10 +117,6 @@ export async function openWikiOpeningWindow(
     hold.reached()
     await hold.released
   }
-  /** A parsed address as these tests need it: its text. */
-  const parseUri = (value: string): { toString(): string } => ({
-    toString: () => value,
-  })
   const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../../extension.js'),
     {
@@ -120,8 +134,15 @@ export async function openWikiOpeningWindow(
             commands.set(name, action)
             return { dispose(): void {} }
           },
-          executeCommand: async (name: string) => {
-            chatDrafts.push(name)
+          executeCommand: async (name: string, argument?: unknown) => {
+            // Only a command that carries a chat query is a draft.
+            if (
+              typeof argument === 'object' &&
+              argument !== null &&
+              'query' in argument &&
+              typeof argument.query === 'string'
+            )
+              chatDrafts.push({ name, query: argument.query })
           },
         },
         workspace: {
@@ -137,13 +158,15 @@ export async function openWikiOpeningWindow(
         },
         env: {
           asExternalUri: async (uri: { toString(): string }) =>
-            parseUri(options.forwardTo?.(uri.toString()) ?? uri.toString()),
+            options.forwardTo
+              ? parseFakeUri(options.forwardTo(uri.toString()))
+              : keepLocalAddress(uri),
           openExternal: async (uri: { toString(): string }) => {
             openedUrls.push(uri.toString())
             return true
           },
         },
-        Uri: { parse: parseUri },
+        Uri: { parse: parseFakeUri },
         window: {
           showErrorMessage(message: string) {
             errors.push(message)
@@ -200,11 +223,6 @@ export async function openWikiOpeningWindow(
           modelQuestions.push(question)
           return { answer: 'Answered.', citations: [], sourceChanged: false }
         },
-        answerDeepWikiQuestionWithPrompt: async () => ({
-          answer: 'Answered.',
-          citations: [],
-          sourceChanged: false,
-        }),
       },
       './repositoryReader': {
         RepositoryReader: class {

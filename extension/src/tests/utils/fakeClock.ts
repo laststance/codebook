@@ -9,12 +9,17 @@ const MIN_REAL_TURNS_PER_STEP = 5
 /** Real event-loop turns one stretch of real file or child-process work may stay pending before {@link reachedWithoutFakeTime} reports it; a turn lasts at least 1 ms. */
 const PENDING_REAL_WORK_TURN_LIMIT = 10_000
 
-/** The names `process.getActiveResourcesInfo()` gives real work the product awaits: a `node:fs` call with a callback, one of `node:fs/promises`, the close of a file handle, and a child process that has not exited (the `git` reads of a repository source). */
-const PENDING_REAL_WORK_TYPES = new Set([
-  'FSReqCallback',
-  'FSReqPromise',
-  'CloseReq',
-  'ProcessWrap',
+/**
+ * The real work that costs no fake time, by the name `process.getActiveResourcesInfo()` gives it, each with the words the limit's error says for it.
+ *
+ * Only these four count. Other awaited real work gets the {@link MIN_REAL_TURNS_PER_STEP} turns of a step and then costs fake time as before: a socket or a loopback HTTP request, the output pipe of a child process that has already exited (`PipeWrap`), and zlib or crypto work on the thread pool.
+ * The count is taken for the whole process, not for the code under test: a child process that lives through the test keeps every wait at {@link PENDING_REAL_WORK_TURN_LIMIT}.
+ */
+const PENDING_REAL_WORK_TYPES = new Map([
+  ['FSReqCallback', 'a node:fs call with a callback'],
+  ['FSReqPromise', 'a node:fs/promises call'],
+  ['CloseReq', 'a file handle being closed'],
+  ['ProcessWrap', 'a child process that has not exited'],
 ])
 
 /** The real timer, kept from before any test fakes `setTimeout`, so real storage and promise work can finish between fake steps. */
@@ -31,37 +36,49 @@ function realTurn(): Promise<void> {
   return new Promise((resolve) => realSetTimeout(resolve, 1))
 }
 
-/** Tells {@link reachedWithoutFakeTime} whether a real file request (a read, a write, a stat, a close) has not answered yet or a child process is still running. @returns `true` while one is pending; open handles and timers that outlive the wait do not count. @example hasPendingRealWork() // => true until readFile() answers */
-function hasPendingRealWork(): boolean {
-  return process
-    .getActiveResourcesInfo()
-    .some((resourceType) => PENDING_REAL_WORK_TYPES.has(resourceType))
+/**
+ * Lists for {@link reachedWithoutFakeTime} the real work that has not finished: a file request (a read, a write, a stat, a close) that has not answered, or a child process that is still running.
+ * @returns The resource names of {@link PENDING_REAL_WORK_TYPES} that are active now, each once; empty when none is. Open handles, sockets and timers that outlive the wait are not listed.
+ * @example pendingRealWork() // => ['FSReqPromise'] until readFile() answers
+ */
+function pendingRealWork(): string[] {
+  return [...new Set(process.getActiveResourcesInfo())].filter((resourceType) =>
+    PENDING_REAL_WORK_TYPES.has(resourceType),
+  )
 }
 
 /**
  * Gives real work its event-loop turns while the faked clock stands still, for {@link advanceClockUntil} before every fake step.
  *
- * {@link MIN_REAL_TURNS_PER_STEP} turns always pass; further turns follow for as long as a real file request is pending or a child process is running, so storage work and a `git` read cost no fake time however long they take.
+ * {@link MIN_REAL_TURNS_PER_STEP} turns always pass; further turns follow for as long as a real file request is pending or a child process is running, so storage work and a `git` read cost no fake time however long they take. No other real work is waited for ({@link PENDING_REAL_WORK_TYPES} names the limit).
  *
  * @param reached - The awaited condition, read after every turn.
  * @returns
  * - `true` as soon as the condition holds
  * - `false` once it does not hold and no file or child-process work is pending, so only fake time can still bring it about
- * @throws When that work is still pending after {@link PENDING_REAL_WORK_TURN_LIMIT} turns, so a file request that never answers or a child process that never exits fails the test instead of hanging it.
+ * @throws When that work is still pending after {@link PENDING_REAL_WORK_TURN_LIMIT} turns, so a file request that never answers or a child process that never exits fails the test instead of hanging it; the error names the resources that were pending at the last turn.
  * @example
  * if (await reachedWithoutFakeTime(() => controller.state().readiness === 'ready')) return elapsedMs
  */
 async function reachedWithoutFakeTime(
   reached: () => boolean,
 ): Promise<boolean> {
+  let pending: string[] = []
   for (let turn = 1; turn <= PENDING_REAL_WORK_TURN_LIMIT; turn++) {
     await realTurn()
     if (reached()) return true
+    pending = pendingRealWork()
     // Nothing real is left to wait for: the caller may move the faked clock.
-    if (turn >= MIN_REAL_TURNS_PER_STEP && !hasPendingRealWork()) return false
+    if (turn >= MIN_REAL_TURNS_PER_STEP && pending.length === 0) return false
   }
+  const pendingInWords = pending
+    .map(
+      (resourceType) =>
+        `${resourceType}: ${PENDING_REAL_WORK_TYPES.get(resourceType)}`,
+    )
+    .join(', ')
   throw new Error(
-    `Real file or child-process work was still pending after ${PENDING_REAL_WORK_TURN_LIMIT} event-loop turns; the faked clock was not moved.`,
+    `Real file or child-process work was still pending after ${PENDING_REAL_WORK_TURN_LIMIT} event-loop turns (${pendingInWords}); the faked clock was not moved.`,
   )
 }
 
