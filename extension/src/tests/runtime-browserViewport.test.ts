@@ -149,8 +149,11 @@ async function viewportHarness(
   observer?: ViewportModule.ViewportRecordingObserver,
   mode: 'live' | 'recording' = 'live',
   renderer = viewportPanel(),
-  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. */
-  pausedFile?: { focusEditorOnBreak: boolean },
+  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. `learnerInChat` says how Cursor reports a learner who went back to the Agent chat afterwards: `'named group'` (the chat's group is the active tab group) or `'keyboard only'` (the paused file's tab is still named, and no text editor is active). */
+  pausedFile?: {
+    focusEditorOnBreak: boolean
+    learnerInChat?: 'named group' | 'keyboard only'
+  },
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -170,12 +173,17 @@ async function viewportHarness(
                 createWebviewPanel: () => panel,
                 state: { focused: true },
                 tabGroups: {
-                  activeTabGroup: {
-                    viewColumn: 1,
-                    activeTab: { input: new PausedFileTab() },
-                  },
+                  activeTabGroup:
+                    pausedFile?.learnerInChat === 'named group'
+                      ? { viewColumn: 3, activeTab: { input: undefined } }
+                      : {
+                          viewColumn: 1,
+                          activeTab: { input: new PausedFileTab() },
+                        },
                 },
-                activeTextEditor: { viewColumn: 1 },
+                activeTextEditor: pausedFile?.learnerInChat
+                  ? undefined
+                  : { viewColumn: 1 },
               },
               ViewColumn: { One: 1 },
               TabInputText: PausedFileTab,
@@ -1862,6 +1870,15 @@ for (const [situation, pausedFile] of [
   [
     'the learner turned off debug.focusEditorOnBreak',
     { focusEditorOnBreak: false },
+  ],
+  // Cycle 0045 X7-A.4: the debugger opened the paused file in the Application's group, and the learner went back to Cursor's chat before a delayed reveal.
+  [
+    "the learner went back to Cursor's chat after a pause and the editor names the chat's group",
+    { focusEditorOnBreak: true, learnerInChat: 'named group' },
+  ],
+  [
+    "the learner went back to Cursor's chat after a pause and the editor still names the paused file's tab, with no active text editor",
+    { focusEditorOnBreak: true, learnerInChat: 'keyboard only' },
   ],
 ] as const)
   // Value: protects=the keyboard focus of a learner who types in the chat or another pane while the Application pane is brought back; fails_when=the Application pane takes the focus although the editor it covers was not focused by a pause; why_new=control for the 0037-F6 fix; seam=fake editor
