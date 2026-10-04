@@ -421,44 +421,49 @@ export function installWikiUpdateStatus(
   const isOvertakenBySource = (state: WikiUpdateStatus['state']): boolean =>
     (state === 'succeeded' || state === 'already-current') &&
     freshness === 'changed'
-  /** Tells whether the site on disk was published after a run ended; called by {@link describeEndOnCurrentSource}. @param ended - The run's end, of which only `finishedAt` is read, and only once a publish time is known. @returns true when the reader answered a publish time later than the end, false when it is not later or no manifest is readable. @example wasPublishedAfter({ finishedAt: '2026-10-03T12:10:00.000Z' }) // => true when the site was published at 12:20 */
+  /** Tells whether the site on disk was published after a run ended; called by {@link weighUnsuccessfulEnd}. @param ended - The run's end, of which only `finishedAt` is read, and only once a publish time is known. @returns true when the reader answered a publish time later than the end, false when it is not later or no manifest is readable. @example wasPublishedAfter({ finishedAt: '2026-10-03T12:10:00.000Z' }) // => true when the site was published at 12:20 */
   const wasPublishedAfter = (ended: { finishedAt: string }): boolean =>
     sitePublishedAtMs !== undefined &&
     sitePublishedAtMs > Date.parse(ended.finishedAt)
-  /** Words a run that ended without success while the source matches the site again; called by {@link weighUnsuccessfulEnd}. @param ended - The ended run: when it finished and what it left of the site. @param state - The state of that run. @param described - The sentence of that end as {@link WikiUpdatePageSettings.describeUpdate} wrote it. @returns The late-publish sentence when a site was published after the end, undefined when a failed run replaced the site (the status line then says nothing), otherwise the sentence of the end. @example describeEndOnCurrentSource({ finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept' }, 'cancelled', described) // => { state: 'late-publish', lead: 'A new site was published', … } when the site was published at 12:20 */
-  const describeEndOnCurrentSource = (
+  /** Words a publish that landed after a run was given up; called by {@link weighUnsuccessfulEnd} whatever the freshness check answered. @param output - The output line of the ended run. @returns The late-publish sentence: "… and matches the source." while freshness is current, otherwise a pointer to the freshness label, which says how the new site stands; a reload is offered when the page was served from another publication. @example describeLatePublish('Output: .codebook/wiki') // => { state: 'late-publish', lead: 'A new site was published', rest: ' after this run ended and matches the source.', … } */
+  const describeLatePublish = (output: string): Shown => ({
+    state: 'late-publish',
+    lead: 'A new site was published',
+    rest:
+      freshness === 'current'
+        ? ' after this run ended and matches the source.'
+        : ' after this run ended; check the freshness label above.',
+    detail: [],
+    output,
+    // Only a page served before that publish still shows the older pages.
+    offerReload: sitePublication !== settings.pagePublication,
+  })
+  /** Words a run that ended without success and was followed by no publish; called by {@link weighUnsuccessfulEnd}. @param ended - The ended run, of which only what it left of the site is read. @param state - The state of that run. @param described - The sentence of that end as {@link WikiUpdatePageSettings.describeUpdate} wrote it. @returns undefined when a failed run replaced the site and the source matches it again (the status line then says nothing), otherwise the sentence of the end. @example describeEndWithoutPublish({ finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept' }, 'cancelled', described) // => { state: 'cancelled', ...described } */
+  const describeEndWithoutPublish = (
     ended: { finishedAt: string; site?: string },
     state: WikiUpdateStatus['state'],
     described: WikiUpdateDescription,
   ): Shown | undefined => {
-    // The editor chat may publish after its run was given up; the site on disk then matches the source after all.
-    if (wasPublishedAfter(ended))
-      return {
-        state: 'late-publish',
-        lead: 'A new site was published',
-        rest: ' after this run ended and matches the source.',
-        detail: [],
-        output: described.output,
-        // Only a page served before that publish still shows the older pages.
-        offerReload: sitePublication !== settings.pagePublication,
-      }
     // Nothing was published since, so the source itself went back to what the site describes: "needs another run" no longer holds.
-    if (state === 'failed' && ended.site === 'replaced') return undefined
+    if (
+      freshness === 'current' &&
+      state === 'failed' &&
+      ended.site === 'replaced'
+    )
+      return undefined
     return { state, ...described }
   }
-  /** Weighs the sentence of the last answer against a source that is current; called by {@link describeAnsweredRun} for every answer it words. @param answer - The last answer of the reader. @param state - Its state. @param described - Its sentence. @returns What {@link describeEndOnCurrentSource} says for a run that ended without success while freshness is current, otherwise the sentence with its state. @example weighUnsuccessfulEnd({ state: 'running', … }, 'running', described) // => { state: 'running', ...described } */
+  /** Weighs the sentence of the last answer against what happened since the run ended; called by {@link describeAnsweredRun} for every answer it words. @param answer - The last answer of the reader. @param state - Its state. @param described - Its sentence. @returns For a run that ended without success: the late-publish sentence of {@link describeLatePublish} when a site was published after the end, whatever freshness answers, otherwise what {@link describeEndWithoutPublish} says; for every other answer the sentence with its state. @example weighUnsuccessfulEnd({ state: 'running', … }, 'running', described) // => { state: 'running', ...described } */
   const weighUnsuccessfulEnd = (
     answer: WikiUpdateStatus,
     state: WikiUpdateStatus['state'],
     described: WikiUpdateDescription,
   ): Shown | undefined => {
-    if (
-      isEndedWithoutSuccess(state) &&
-      'finishedAt' in answer &&
-      freshness === 'current'
-    )
-      return describeEndOnCurrentSource(answer, state, described)
-    return { state, ...described }
+    if (!isEndedWithoutSuccess(state) || !('finishedAt' in answer))
+      return { state, ...described }
+    // The editor chat may publish after its run was given up; the page then shows an older site than the reader answers, also when that site does not match the source.
+    if (wasPublishedAfter(answer)) return describeLatePublish(described.output)
+    return describeEndWithoutPublish(answer, state, described)
   }
   /** Words the last answer of the reader and weighs it against freshness; called by {@link describeShown} when the page itself has nothing to say. @returns The sentence to show, or undefined before the first answer, for a state without a sentence, and for a result that freshness has overtaken. @example describeAnsweredRun() // => { state: 'running', lead: 'Updating', … } while a run is active */
   const describeAnsweredRun = (): Shown | undefined => {
