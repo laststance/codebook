@@ -487,6 +487,8 @@ export class StudyWorkspace {
   private closing = false
   private closingPromise?: Promise<void>
   private arranging?: Promise<void>
+  /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
+  private maximizedByRead = false
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
   private layoutReceipt?: {
@@ -1168,6 +1170,7 @@ export class StudyWorkspace {
           await vscode.commands.executeCommand(
             'workbench.action.minimizeOtherEditors',
           )
+          this.maximizedByRead = false
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
@@ -1474,6 +1477,7 @@ export class StudyWorkspace {
         await vscode.commands.executeCommand(
           'workbench.action.minimizeOtherEditors',
         )
+        this.maximizedByRead = false
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
@@ -2758,6 +2762,7 @@ export class StudyWorkspace {
         await vscode.commands.executeCommand(
           'workbench.action.maximizeEditorHideSidebar',
         )
+        this.maximizedByRead = true
         assertReadFocus()
         focusedPane.assertCurrent()
         assertPlacement()
@@ -2927,6 +2932,7 @@ export class StudyWorkspace {
       await vscode.commands.executeCommand(
         'workbench.action.minimizeOtherEditors',
       )
+      this.maximizedByRead = false
       assertRetained()
       const expanded = retained
         ? await this.readPassivePresentationLayout()
@@ -5013,6 +5019,13 @@ export class StudyWorkspace {
         storageTimeLeftMs(),
       )
       await settledWithin(this.library?.flush(), storageTimeLeftMs())
+      // A Read maximized an editor group for the pane it showed; a closed workspace does not leave that maximization behind.
+      if (this.maximizedByRead) {
+        this.maximizedByRead = false
+        await vscode.commands
+          .executeCommand('workbench.action.minimizeOtherEditors')
+          .then(undefined, () => undefined)
+      }
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .filter((tab) => this.ownsCapturedSourceTab(tab))

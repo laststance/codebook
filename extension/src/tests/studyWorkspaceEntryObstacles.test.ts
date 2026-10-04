@@ -218,3 +218,72 @@ test("Open replay with the learner's file in front of the live Application pane 
     await harness.close()
   }
 })
+
+for (const column of [1, 2, 3] as const)
+  // Value: protects=a selection and a Restore made while a kept tab that is no text editor (an image) has the focus arranging the three panes, instead of leaving the Study pane filling the window; fails_when=the selection is not arranged for that tab and falls back to the enlarged explanation, and every Restore ends there again; why_new=Cycle 0045 NF-22 with PC-1.10 (the state no longer arises since the first part of package S1 admits such a tab; this pins it for each Study column and for the Restore after it); seam=addOpaqueTab, focusOpaqueTab
+  test(`a selection and a Restore made beside a focused kept image tab in editor group ${column} arrange the Study panes without enlarging the Study pane`, async () => {
+    // Arrange: the learner keeps an image open and it has the focus; it is no preview and no text editor.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+    try {
+      const image = harness.addOpaqueTab('logo.png', column)
+      harness.focusOpaqueTab(image)
+      const closed = harness.reader.presentationState()
+
+      // Act
+      const selected = await harness.reader.changePresentation({
+        presentationId: closed.presentationId,
+        expectedRevision: closed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      const restored = await harness.reader.changePresentation({
+        presentationId: selected.presentationId,
+        expectedRevision: selected.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+
+      // Assert
+      assert.equal(selected.layoutConfirmed, true)
+      assert.equal(selected.reason, undefined)
+      assert.equal(restored.layoutConfirmed, true)
+      assert.equal(restored.reason, undefined)
+      assert.equal(restored.panes.appColumn, 1)
+      assert.equal(restored.panes.sourceColumn, 2)
+      assert.equal(restored.panes.contextColumn, 3)
+      assert.equal(
+        harness.commands.includes('workbench.action.maximizeEditorHideSidebar'),
+        false,
+      )
+      assert.equal(harness.maximizedEditorGroup(), false)
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(image)),
+        true,
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=Close Study Workspace ending the maximized editor group a Read of a pane left; fails_when=the workspace closes its panes and the editor stays with one maximized group; why_new=Cycle 0045 NF-22 (close undid neither the maximized group nor the hidden side bars); seam=the fake editor's maximized group
+test('Close Study Workspace ends the maximized editor group that a Read of a pane left', async () => {
+  // Arrange: the learner read the explanation enlarged; the editor shows that group maximized.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    const maximizedByRead = harness.maximizedEditorGroup()
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.equal(maximizedByRead, true)
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
