@@ -7,6 +7,8 @@
 
 # Large or private runtime evidence; keep sanitized manifests in cycle records
 artifacts/
+# The working folder playwright-cli leaves where the Reader DOM check is started
+.playwright-cli/
 node_modules/
 extension/dist/
 extension/coverage/
