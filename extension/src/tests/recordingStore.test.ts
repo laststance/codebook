@@ -25,6 +25,7 @@ import {
   type RecordingLimits,
 } from '../recordingStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { systemTrashName } from '../utils/systemTrashName'
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
@@ -435,6 +436,31 @@ test('simultaneous editor reservations cannot overfill a one-slot recording libr
   assert.equal((await store.list()).length, 1)
 })
 
+// Value: protects=a learner whose editor could not move a saved study to the Trash is not told to delete one when a recording is refused; fails_when=the store words its refusal without asking whether a removal can work in this window (B-M3, C-L3); why_new=only the run refusal read the removal availability; seam=the store's reader of the removal availability
+test('a recording refused by a full library names no delete remedy after this editor’s Trash refused a removal', async (context) => {
+  // Arrange: a recording library full at one recording, in a window whose last removal left its study in the library.
+  const { directory, binding } = await recordingHarness(context)
+  const store = new RecordingStore(
+      directory,
+      workspaceKey,
+      {},
+      undefined,
+      () => 1,
+      () => 'trash-refused',
+    ),
+    runId = randomUUID()
+  await store.start(binding, 0)
+  // Act
+  const reservation = store.start(
+    { ...binding, runId, studyId: `${binding.instanceId}_${runId}` },
+    0,
+  )
+  // Assert
+  await assert.rejects(reservation, {
+    message: `Recording library is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) in Settings before starting another session; this editor could not move a saved study to the ${systemTrashName()} in this session. Existing recordings were kept.`,
+  })
+})
+
 test('interrupted reservations count against capacity and legacy learner bytes remain untouched', async (context) => {
   // Arrange
   const { directory, binding, store } = await recordingHarness(
@@ -611,6 +637,34 @@ test('an in-progress recording of this session opens without reading back the fr
     ],
   )
   assert.equal(index.lastVerifiedMs, 100)
+})
+
+// Value: protects=an in-progress recording is offered for replay only as far as its frames are still on disk; fails_when=what the writer measured when it wrote a frame stands for that frame after its file was deleted, so the read counts the moment as verified (X7-B.5); why_new=the own-writer shortcut was only tested with every frame in place; seam=the recording directory, from which the test removes one frame file
+test('an in-progress recording whose frame file was deleted after its write is read only up to the frame before it', async (context) => {
+  // Arrange: this session's writer wrote one frame; its file is deleted afterwards.
+  const { store, binding } = await recordingHarness(context),
+    writer = await store.start(binding, 0)
+  writer.frame({
+    bytes: png,
+    elapsedMs: 50,
+    kind: 'phase',
+    phase: 'paused-browser',
+  })
+  await writer.flush()
+  await rm(join(store.path(binding.studyId), `${sha256(png)}.png`))
+
+  // Act
+  const index = await store.read(binding.studyId)
+
+  // Assert
+  assert.deepEqual(index.entries, [])
+  assert.equal(index.lastVerifiedMs, 0)
+  assert.equal(
+    index.reason?.startsWith(
+      'Interrupted recording after verified prefix: Error: ENOENT',
+    ),
+    true,
+  )
 })
 
 // Value: protects=the verified prefix of a recording another session left behind; fails_when=the frames of a recording this session did not write are trusted without their bytes being read; why_new=control for the own-writer shortcut of 0035-O01; seam=RecordingStore.readFrame

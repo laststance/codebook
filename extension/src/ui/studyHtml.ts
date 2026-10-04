@@ -35,6 +35,10 @@ export interface StudyRemovalView {
   status: 'confirming' | 'moving' | 'moved' | 'refused' | 'failed'
   studyId: string
   text?: string
+  /** The number the asking pane gave the delete request this state answers (`removalRequest` of its `delete-study` message); absent for a request without a number. */
+  request?: number
+  /** The files and folders of the study, listed for removal by hand: set on the refusal a window without a Trash answers a delete request with. A `copy-study-files` message copies them to the clipboard. */
+  files?: string[]
 }
 
 export interface StudyViewMessage {
@@ -82,6 +86,8 @@ export interface StudyViewMessage {
   }[]
   studies: StudyCatalogEntry[]
   studyRemoval?: StudyRemovalView
+  /** Set in a window without a Trash (a WSL remote window): a delete request moves nothing there and is answered with the study's files for removal by hand. */
+  removalWithoutTrash?: true
   /** Why the current run never started; shown first in the error region and no reason to offer Retry storage. */
   runRefusal?: string
   /** The saved study of this window's run that has not stopped, which cannot be deleted. */
@@ -842,7 +848,7 @@ function studyClient(
     entry?.metadata === 'unavailable' && entry.format !== 'node-test-history'
   /** Says whether an entry that cannot be opened is one Retry storage / refresh may repair: a current-format archive whose catalog checkpoint is missing or stale, which the catalog marks with a reason. An unsupported historical file has none. @example canBeRepaired(staleEntry) // => true */
   const canBeRepaired = (entry: SavedStudyEntry | undefined): boolean =>
-    cannotBeOpened(entry) && Boolean(entry?.reason)
+    cannotBeOpened(entry) && Boolean(entry?.reason) && entry?.format !== 'newer'
   /** Keeps an entry that cannot be opened as this pane's choice: nothing is loaded, the host is not asked, and the outcome of an earlier removal gives way. @example chooseUnopenable(staleEntry.id) */
   const chooseUnopenable = (studyId: string): void => {
     unopenableChoice = studyId

@@ -1,3 +1,6 @@
+import { STUDY_ARCHIVE_UNAVAILABLE_MESSAGE } from './constants'
+import { newerStudyFormatMessage } from './utils/newerStudyFormatMessage'
+
 export const ERROR_RECOVERY = {
   NOT_FOUND:
     'Read codebook_status and use a resource reference from the selected instance and run.',
@@ -80,6 +83,33 @@ export class StudyError extends Error {
 export class EvidenceIntegrityError extends StudyError {
   constructor(message: string) {
     super('EVIDENCE_UNAVAILABLE', message)
+  }
+}
+
+/**
+ * Marks a saved study whose archive the library does not hold: it was deleted, was never saved, or has no file left to remove.
+ *
+ * {@link LearningLibrary.readStudy}, {@link LearningLibrary.readCheckpoint} and {@link LearningLibrary.removeStudy} raise it;
+ * {@link RepositoryBookStore} tells it by its class from every other read failure, also from one that carries the same sentence.
+ *
+ * @example throw new StudyArchiveUnavailableError()
+ */
+export class StudyArchiveUnavailableError extends Error {
+  constructor() {
+    super(STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
+  }
+}
+
+/**
+ * Marks a saved study that a newer Codebook wrote in a format this one cannot read; the study is kept as it is and never replaced by an older file.
+ *
+ * {@link assertReadableStudyFormat} raises it for an archive whose `version` is too high, and {@link LearningLibrary} for a study whose newest file has a format number it does not know.
+ *
+ * @example throw new NewerStudyFormatError(5) // 'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.'
+ */
+export class NewerStudyFormatError extends Error {
+  constructor(readonly savedFormat: number) {
+    super(newerStudyFormatMessage(savedFormat))
   }
 }
 

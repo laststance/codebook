@@ -799,6 +799,25 @@ for (const version of [1, 2])
     }
   })
 
+// Value: protects=an agent that meets a study of a newer Codebook in the library knows from the help that it is refused and kept; fails_when=the help names only corrupt and unsupported formats (RT-1, DX-15); why_new=the help had no sentence for a newer format; seam=none
+test('configured help says that a study saved in a newer format is refused as saved by a newer Codebook and is kept', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ retainedFormats: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.retainedFormats.includes(
+      'A study saved in a newer format is refused as saved by a newer Codebook and is kept.',
+    ),
+    true,
+  )
+})
+
 test('configured help tells an agent that only the next stop is armed and where its binding may lie', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)

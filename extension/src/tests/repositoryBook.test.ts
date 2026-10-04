@@ -178,6 +178,21 @@ test('same-key recovery survives unavailable checkpoints while public reads labe
   assert.equal(unavailable.latestRevision, 1)
 })
 
+// Value: protects=a storage failure while a linked study is read reaches the agent as that failure; fails_when=the store recognises a missing archive by the sentence of the error, so any failure worded the same way is reported as a deleted study (SM-3); why_new=the only failure tested was the library's own missing archive; seam=the library's checkpoint read, replaced by one that rejects with a plain error
+test('a linked study whose read fails for another reason that words itself like a missing archive is passed on as it is, not reported as deleted', async (context) => {
+  // Arrange: a publication that links a saved study; the checkpoint read fails with a plain error that carries the missing-archive sentence.
+  const harness = await bookHarness(context)
+  await linkCheckpoint(harness)
+  const readFailure = new Error('Study archive is unavailable.')
+  context.mock.method(harness.library, 'readCheckpoint', async () => {
+    throw readFailure
+  })
+  // Act
+  const publication = harness.books.publish(harness.intent)
+  // Assert
+  await assert.rejects(publication, (error) => error === readFailure)
+})
+
 test('slow source preparation lets another learner writer finish before publication enters the shared queue', async (context) => {
   // Arrange
   const { books, intent, sources, library } = await bookHarness(context)

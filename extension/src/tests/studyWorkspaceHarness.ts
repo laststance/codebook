@@ -53,10 +53,16 @@ const DISPOSED_TAB_CLOSE_DELAY_MS = 20
 type NativeVariablesHiding =
   'never-opened' | 'missed-the-stop' | 'shows-another-session'
 
-/** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
+/**
+ * Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions.
+ * @param remoteName - `vscode.env.remoteName` of the fake window, for the editor and the service alike; `wsl` models a WSL remote window, which has no Trash.
+ * @example const reader = await workspaceHarness()
+ * @example const readerInWsl = await workspaceHarness(true, false, 'wsl')
+ */
 export async function workspaceHarness(
   attach = true,
   deterministicClock = false,
+  remoteName?: string,
 ) {
   let clock = 0
   let savedStudyCapacity: unknown
@@ -118,15 +124,22 @@ export async function workspaceHarness(
   /** Pending `awaitRetrieval` checks of the fake historical debugger, re-run whenever the fake Variables view asks for scopes or lists values. */
   const nativeVariablesWaiters = new Set<() => void>()
   const trashMoves: { path: string; options: unknown }[] = []
+  /** The reader's listeners for a changed editor setting; see `setSavedStudyCapacity`. */
+  const configurationListeners = new Set<
+    (event: { affectsConfiguration(section: string): boolean }) => void
+  >()
   let rejectsTrashMove: (path: string) => boolean = () => false
   let beforeTrashMove: (path: string) => Promise<void> = async () => {}
   let heldTrashMove: { wait: Promise<void>; entered(): void } | undefined
+  /** Every text the reader wrote to the editor's clipboard. */
+  const clipboardTexts: string[] = []
   const harness = await createHarness({
     create: async (directory, profile) => {
       const runtime = new ControlledRuntime(directory, profile)
       if (deterministicClock) runtime.evidence.elapsedMs = () => clock
       return runtime
     },
+    remoteName,
   })
   /** Builds one fake status bar item. It counts the assignments of its command, because the editor turns every assigned command object into a new internal command and disposes the one before. @example createStatusItem().commandAssignments // => 0 */
   const createStatusItem = () => {
@@ -1822,6 +1835,11 @@ export async function workspaceHarness(
     },
   }
   const playbackPanelMessages: StudyViewMessage[] = []
+  /** The last Study message the bottom panel had received at the moment each of its open requests was answered, by request number; see `playbackPanelMessageAtReply`. */
+  const playbackPanelMessagesAtReply = new Map<
+    number,
+    StudyViewMessage | undefined
+  >()
   const playbackPanelListeners = new Set<(message: unknown) => void>()
   const playbackPanelVisibilityListeners = new Set<() => void>()
   const playbackPanelDisposeListeners = new Set<() => void>()
@@ -1840,6 +1858,10 @@ export async function workspaceHarness(
             webview: 'moments',
             openRequest: message.openRequest,
           })
+          playbackPanelMessagesAtReply.set(
+            message.openRequest,
+            structuredClone(playbackPanelMessages.at(-1)),
+          )
           return true
         }
         playbackPanelMessages.push(message)
@@ -1881,6 +1903,12 @@ export async function workspaceHarness(
       env: {
         get appName(): string {
           return hostAppName
+        },
+        remoteName,
+        clipboard: {
+          writeText: async (text: string): Promise<void> => {
+            clipboardTexts.push(text)
+          },
         },
       },
       commands: {
@@ -2526,6 +2554,18 @@ export async function workspaceHarness(
               ? savedStudyCapacity
               : undefined,
         }),
+        onDidChangeConfiguration: (
+          listener: (event: {
+            affectsConfiguration(section: string): boolean
+          }) => void,
+        ) => {
+          configurationListeners.add(listener)
+          return {
+            dispose(): void {
+              configurationListeners.delete(listener)
+            },
+          }
+        },
         fs: {
           // Models the editor's Trash: the path leaves the library and stays recoverable outside it.
           delete: async (uri: Uri, options: unknown): Promise<void> => {
@@ -2650,8 +2690,14 @@ export async function workspaceHarness(
       summary.visible = false
       for (const listener of summaryVisibilityListeners) listener()
     },
+    /** Changes the Saved Study Limit setting and tells the reader, as the editor does when the learner edits Settings. @example harness.setSavedStudyCapacity(2) */
     setSavedStudyCapacity(value: unknown): void {
       savedStudyCapacity = value
+      for (const listener of configurationListeners)
+        listener({
+          affectsConfiguration: (section) =>
+            section === 'codebook' || section === 'codebook.savedStudyLimit',
+        })
     },
     /** Every native warning dialog the reader opened, with its title, options and buttons. @example harness.warningDialogs[0].title */
     warningDialogs,
@@ -2719,6 +2765,8 @@ export async function workspaceHarness(
     },
     /** Every path the reader moved to the editor's Trash, with the options it passed. @example harness.trashMoves.map((move) => move.path) */
     trashMoves,
+    /** Every text the reader wrote to the editor's clipboard, in order. @example harness.clipboardTexts.at(-1) */
+    clipboardTexts,
     /** Makes the editor's Trash refuse the moves a test names. @example harness.rejectTrashMoves((path) => path.endsWith('.study.v3.json')) */
     rejectTrashMoves(rejects: (path: string) => boolean): void {
       rejectsTrashMove = rejects
@@ -2802,6 +2850,11 @@ export async function workspaceHarness(
     postedMessages: () => postedMessages,
     /** Lists the reader's replies to open requests in the order the webviews received them, so a test can assert which pane was answered and when. @example harness.openRequestReplies() // => [{ webview: 'context', openRequest: 3 }] */
     openRequestReplies: () => openRequestReplies.map((reply) => ({ ...reply })),
+    /** Gives the last Study message the bottom panel had received when its open request with this number was answered, so a test can assert that the message naming the entry arrived before the reply. @example harness.playbackPanelMessageAtReply(1)?.model.selection.studyId */
+    playbackPanelMessageAtReply: (
+      openRequest: number,
+    ): StudyViewMessage | undefined =>
+      playbackPanelMessagesAtReply.get(openRequest),
     presentationPreferences,
     watchedPatterns,
     viewportEvents,

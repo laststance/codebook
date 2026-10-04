@@ -9,6 +9,7 @@ import {
 } from '../constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
+import { assertReadableStudyFormat } from './assertReadableStudyFormat'
 import { validateConfiguredStudyEvidence } from './validateConfiguredStudyEvidence'
 
 /** Validates configured history for storage/replay without consulting current files or granting live pause authority. @example decodeConfiguredStudy(archive, workspaceKey).profile // 'repository-browser' */
@@ -16,6 +17,8 @@ export function decodeConfiguredStudy(
   value: unknown,
   workspaceKey: string,
 ): ConfiguredStudy {
+  // The format number is read before the schema: a study of a newer Codebook is refused as such, not with a schema error.
+  assertReadableStudyFormat(value)
   const study = configuredStudySchema.parse(value)
   validateConfiguredStudyEvidence(study, workspaceKey)
   if (!study.descriptor && study.captures.length)

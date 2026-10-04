@@ -11,9 +11,8 @@ import {
   BOOK_SCHEMA_VERSION_V2,
   BOOK_STORAGE_FORMATS,
   PRIVATE_DIRECTORY_MODE,
-  STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
 } from './constants'
-import { StudyError } from './errors'
+import { StudyArchiveUnavailableError, StudyError } from './errors'
 import type { LearningLibrary } from './learningLibrary'
 import { RecordingStore } from './recordingStore'
 import {
@@ -32,7 +31,6 @@ import { bookIntentDigest } from './utils/bookIntentDigest'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { projectRecording } from './utils/projectRecording'
 import { readBoundedFile } from './utils/readBoundedFile'
-import { thrownMessage } from './utils/thrownMessage'
 import { validateRepositoryBook } from './utils/validateRepositoryBook'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -380,8 +378,8 @@ export class RepositoryBookStore {
     studyId: string,
   ): ReturnType<LearningLibrary['readCheckpoint']> {
     return this.library.readCheckpoint(studyId).catch((error: unknown) => {
-      if (thrownMessage(error) !== STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
-        throw error
+      // Only the library's own class says that the archive is gone; another failure with the same words is passed on.
+      if (!(error instanceof StudyArchiveUnavailableError)) throw error
       throw new StudyError(
         'BOOK_UNAVAILABLE',
         `Linked saved study ${studyId} is no longer in the study library; it was deleted or never saved.`,

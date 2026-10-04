@@ -125,6 +125,8 @@ export interface StudyRuntime {
 export interface StudyEnvironment {
   readonly workspace: string
   readonly host: HostConfiguration
+  /** `vscode.env.remoteName` of the window: `wsl` in a WSL remote window, absent in a local one. A remote window has no Trash, so {@link StudyService} starts there with study removal unavailable. */
+  readonly remoteName?: string
   readonly build: { revision: string; dirty: boolean; sourceHash: string }
   assertWorkspace?(): void
   prerequisites(): Promise<{
