@@ -526,6 +526,14 @@ export async function workspaceHarness(
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
   let keyboardOnBody = false
+  // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
+  let activeStackItem: unknown, focusEditorOnBreak: boolean | undefined
+  // Every text document the reader showed, with the group and whether it left the keyboard focus where it was.
+  const textDocumentShows: {
+    name: string
+    viewColumn: number | undefined
+    preserveFocus: boolean
+  }[] = []
   // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
   let revealsPanelsLater = false,
     applyingLaterReveal = false
@@ -2394,6 +2402,11 @@ export async function workspaceHarness(
             document instanceof Uri
               ? await openSourceDocument(document)
               : document
+          textDocumentShows.push({
+            name: basename(sourceDocument.uri.path),
+            viewColumn: options?.viewColumn,
+            preserveFocus: Boolean(options?.preserveFocus),
+          })
           sourceColumn =
             options?.viewColumn === undefined
               ? sourceColumn
@@ -2516,15 +2529,19 @@ export async function workspaceHarness(
         },
       },
       debug: {
-        // No test of this harness pauses a native debug session; the Application pane then always preserves the keyboard focus when it is revealed.
-        activeStackItem: undefined,
+        // Unset unless a test pauses a debug session with `setActiveStackItem`; the Application pane then always preserves the keyboard focus when it is revealed.
+        get activeStackItem() {
+          return activeStackItem
+        },
       },
       workspace: {
         getConfiguration: (section: string) => ({
           get: (key: string) =>
             section === 'codebook' && key === 'savedStudyLimit'
               ? savedStudyCapacity
-              : undefined,
+              : section === 'debug' && key === 'focusEditorOnBreak'
+                ? focusEditorOnBreak
+                : undefined,
         }),
         fs: {
           // Models the editor's Trash: the path leaves the library and stays recoverable outside it.
@@ -3154,6 +3171,18 @@ export async function workspaceHarness(
     },
     /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
     keyboardOnBody: () => keyboardOnBody,
+    /**
+     * Sets what the fake editor reports as the selected stack item of Run and Debug: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
+     * @example
+     * harness.focusMutableDraft('actions.ts', 2)
+     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     */
+    setActiveStackItem(item: unknown, focusesEditorOnBreak?: boolean): void {
+      activeStackItem = item
+      focusEditorOnBreak = focusesEditorOnBreak
+    },
+    /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
+    textDocumentShows: () => [...textDocumentShows],
     /**
      * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
      * @example harness.revealPanelsLater()

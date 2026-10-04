@@ -7101,7 +7101,10 @@ export class StudyWorkspace {
         if (this.closing || lifetime !== this.lifetime) return
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
-          preserveFocus,
+          // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
+          preserveFocus:
+            preserveFocus &&
+            !this.replacesEditorFocusedByPause(targetColumn, document.uri),
           preview: false,
           selection: new vscode.Range(position, position),
         })
@@ -7291,6 +7294,46 @@ export class StudyWorkspace {
     await vscode.commands.executeCommand(
       'vscode.setEditorLayout',
       JSON.parse(receipt.signature),
+    )
+  }
+
+  /**
+   * Says whether showing the captured source in a group would hide the text editor that the editor's debugger focused at a live pause; called by {@link renderSelection} before it shows the source.
+   *
+   * At a breakpoint the editor opens the paused file in the active group and gives it the keyboard focus (`debug.focusEditorOnBreak`,
+   * on by default). When that group is the source group, the captured source takes that file's place, and showing it while preserving
+   * the focus hides the focused editor without focusing anything: the keyboard focus falls to the document body. The Application
+   * pane's reveal follows the same rule for its own group ({@link BrowserViewport}).
+   *
+   * Where the learner went back to Cursor's chat after the pause the focus is not taken: the editor then names the chat's group, or
+   * reports no active text editor. In VS Code, where the chat is a side view, the editor reports the paused file as the active text
+   * editor in both cases, and the source takes the focus.
+   *
+   * @param column - The group the captured source is shown in.
+   * @param source - The captured source; a group that shows it already loses no editor.
+   * @returns `true` only while a debug session is paused beside a live run, the window is focused, and the group is the active group showing another text tab whose editor is the active text editor, with `debug.focusEditorOnBreak` not turned off.
+   * @example
+   * ```ts
+   * preserveFocus: preserveFocus && !this.replacesEditorFocusedByPause(targetColumn, document.uri)
+   * ```
+   */
+  private replacesEditorFocusedByPause(
+    column: vscode.ViewColumn,
+    source: vscode.Uri,
+  ): boolean {
+    if (this.recordingActive || vscode.debug.activeStackItem === undefined)
+      return false
+    const group = vscode.window.tabGroups.activeTabGroup,
+      shown = group.activeTab?.input
+    return (
+      vscode.window.state.focused &&
+      group.viewColumn === column &&
+      shown instanceof vscode.TabInputText &&
+      shown.uri.toString() !== source.toString() &&
+      vscode.window.activeTextEditor?.viewColumn === column &&
+      vscode.workspace
+        .getConfiguration('debug')
+        .get<boolean>('focusEditorOnBreak') !== false
     )
   }
 
