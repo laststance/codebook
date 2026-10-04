@@ -839,7 +839,7 @@ export const MANAGED_PROFILE_ROOT = '/tmp'
 export const MANAGED_PROFILE_PREFIX = 'codebook-browser-'
 /** The file in a managed browser profile folder that names the editor process, the machine and the boot that made it. Only a folder that carries it is ever removed by a later run. */
 export const MANAGED_PROFILE_OWNER_FILE = 'codebook-owner.json'
-/** How many profile folders the start of a managed run looks at for ones a killed editor left; more than that wait for a later run. */
+/** How many profile folders with an owner marker the start of a managed run judges for ones a killed editor left; more than that wait for a later run. A folder without a readable marker is passed over and is not counted. */
 export const MANAGED_PROFILE_SWEEP_LIMIT = 64
 /** How often the removal of a run's own profile folder is tried again while something in it is still busy. */
 export const MANAGED_PROFILE_REMOVAL_RETRIES = 3

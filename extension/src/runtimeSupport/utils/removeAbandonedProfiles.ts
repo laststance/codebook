@@ -9,7 +9,6 @@ import {
 import { isRecordedOwnerGone } from '../../utils/isRecordedOwnerGone'
 import {
   readRecordedOwner,
-  type RecordedOwner,
   type StorageOwnerIdentity,
 } from '../../utils/readRecordedOwner'
 import { withoutBootTime } from '../../utils/withoutBootTime'
@@ -17,7 +16,7 @@ import { withoutBootTime } from '../../utils/withoutBootTime'
 import { profileProcesses } from './profileProcesses'
 
 /**
- * Removes one profile folder when no process uses it as its profile; called by {@link removeAbandonedProfiles} for a folder whose owner is gone.
+ * Removes one profile folder when no process uses it as its profile; called by {@link sweepProfile} for a folder whose owner is gone.
  * @param profile - The profile folder.
  * @returns
  * - `true` when the folder was removed
@@ -36,21 +35,27 @@ async function removeUnusedProfile(profile: string): Promise<boolean> {
 }
 
 /**
- * Says whether a profile folder's owner marker proves that its owner is gone from this machine; called by {@link removeAbandonedProfiles} with the marker it has just read, before anything is removed.
- * @param owner - What {@link readRecordedOwner} read from the folder's marker; `undefined` when there is no readable marker.
+ * Judges one profile folder by its owner marker and removes it when its owner is gone and nothing uses it; called by {@link removeAbandonedProfiles} for each real directory with the profile prefix.
+ * @param profile - The profile folder.
  * @param judgedBy - The identity of this process without its boot time ({@link withoutBootTime}), by which the marker's owner is judged.
  * @returns
- * - `true` when the marker is readable and its process is gone ({@link isRecordedOwnerGone})
- * - `false` when there is no readable marker, or when its owner may still run: the folder is not known to be abandoned
+ * - `unmarked` when the folder has no readable marker: it is never touched, whoever made it, and takes none of the sweep's bound
+ * - `kept` when the marker's owner may still run ({@link isRecordedOwnerGone}), or a process still runs with the folder as its profile, or the removal failed
+ * - `removed` when the folder was removed
  * @example
- * isProfileOwnerGone(undefined, { hostname: 'workstation' })                                                          // => false
- * isProfileOwnerGone({ pid: 4242, hostname: 'workstation', boot: { id: 'boot-1' } }, { hostname: 'workstation', boot: { id: 'boot-2' } }) // => true
+ * await sweepProfile('/tmp/codebook-browser-a1b2c3', { hostname: 'workstation' }) // => 'removed' after the editor that made it was killed
  */
-function isProfileOwnerGone(
-  owner: RecordedOwner | undefined,
+async function sweepProfile(
+  profile: string,
   judgedBy: StorageOwnerIdentity,
-): boolean {
-  return owner !== undefined && isRecordedOwnerGone(owner, judgedBy)
+): Promise<'unmarked' | 'kept' | 'removed'> {
+  const owner = await readRecordedOwner(
+    join(profile, MANAGED_PROFILE_OWNER_FILE),
+  )
+  if (!owner) return 'unmarked'
+  // An owner that may still run: the folder is not known to be abandoned.
+  if (!isRecordedOwnerGone(owner, judgedBy)) return 'kept'
+  return (await removeUnusedProfile(profile)) ? 'removed' : 'kept'
 }
 
 /**
@@ -59,6 +64,8 @@ function isProfileOwnerGone(
  * A folder is removed only on proof that Codebook made it and nothing uses it: it is a real directory, it carries the owner marker
  * ({@link MANAGED_PROFILE_OWNER_FILE}), the marker's process is gone from this machine ({@link isRecordedOwnerGone}, judged without a boot time,
  * see {@link withoutBootTime}), and no process runs with the folder as its profile. A folder without a readable marker is never touched, whoever made it.
+ * One sweep judges at most {@link MANAGED_PROFILE_SWEEP_LIMIT} marked folders; the folders without a marker that builds before the marker left behind
+ * take none of that bound, so they cannot keep the marked folders listed after them from being looked at.
  *
  * @param root - The directory that holds the profile folders: {@link MANAGED_PROFILE_ROOT} in the product, a directory of their own in tests.
  * @param identity - The machine and the boot of this process, by which a marker's owner is judged.
@@ -72,23 +79,23 @@ export async function removeAbandonedProfiles(
   identity: StorageOwnerIdentity,
 ): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
-  // A link with the prefix is no profile folder of Codebook's making; only real directories are looked at, and a bounded number of them.
-  const candidates = entries
-    .filter(
-      (entry) =>
-        entry.isDirectory() && entry.name.startsWith(MANAGED_PROFILE_PREFIX),
-    )
-    .slice(0, MANAGED_PROFILE_SWEEP_LIMIT)
+  // A link with the prefix is no profile folder of Codebook's making; only real directories are looked at.
+  const candidates = entries.filter(
+    (entry) =>
+      entry.isDirectory() && entry.name.startsWith(MANAGED_PROFILE_PREFIX),
+  )
   const judgedBy = withoutBootTime(identity)
   const removed: string[] = []
+  let judgedCount = 0
   for (const candidate of candidates) {
+    // The bound counts the folders whose marker was judged; the rest wait for a later run.
+    if (judgedCount >= MANAGED_PROFILE_SWEEP_LIMIT) break
     const profile = join(root, candidate.name)
-    const owner = await readRecordedOwner(
-      join(profile, MANAGED_PROFILE_OWNER_FILE),
-    )
-    // No marker, or an owner that may still run: the folder is not known to be abandoned.
-    if (!isProfileOwnerGone(owner, judgedBy)) continue
-    if (await removeUnusedProfile(profile)) removed.push(profile)
+    const outcome = await sweepProfile(profile, judgedBy)
+    // A folder without a readable marker costs one failed read and takes none of the bound.
+    if (outcome === 'unmarked') continue
+    judgedCount += 1
+    if (outcome === 'removed') removed.push(profile)
   }
   return removed
 }
