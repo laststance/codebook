@@ -2333,9 +2333,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
     if (participant.instrumentationPaused) {
       participant.instrumentationPaused = false
-      if (isPauseOnlyCounted) this.unjournaledAdapterEvents++
-      else
-        this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
+      this.journalUnheldResume(name, pausedForMs, isPauseOnlyCounted)
       return
     }
     const transient = this.transientBrowserPause
@@ -2361,16 +2359,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const stopped = participant.stopped
     participant.stopped = undefined
     // A pause from before the action is held by nothing; past the journal's cap its resume is counted, as its observation was.
-    if (!stopped && isPauseOnlyCounted) {
-      this.unjournaledAdapterEvents++
+    if (!stopped) {
+      this.journalUnheldResume(name, pausedForMs, isPauseOnlyCounted)
       return
     }
     this.evidence.record('cdp.resumed', {
       participant: name,
-      generation: stopped?.generation,
+      generation: stopped.generation,
       pausedForMs,
     })
-    if (!stopped) return
     const continuation = this.continuation
     if (
       !continuation ||
@@ -2385,6 +2382,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     participant.gate.invalidate()
     if (name === 'browser') this.browser.resumeViewport()
     this.beginAfter(continuation)
+  }
+  /**
+   * Journals the resume of a pause nothing holds (the runtime's instrumentation pause, a pause from before the action) as `cdp.resumed`, or counts it when its observation was only counted, so a loop of such pauses stays under the journal's cap; called by {@link onCdpResumed}.
+   * @param name - The participant whose runtime resumed.
+   * @param pausedForMs - How long the pause lasted on the journal clock, when its start was observed.
+   * @param isPauseOnlyCounted - Whether the pause's observation was left out of the journal.
+   * @example
+   * ```ts
+   * this.journalUnheldResume('server', 2, false) // journals cdp.resumed { participant: 'server', pausedForMs: 2 }
+   * ```
+   */
+  private journalUnheldResume(
+    name: Participant,
+    pausedForMs: number | undefined,
+    isPauseOnlyCounted: boolean,
+  ): void {
+    if (isPauseOnlyCounted) this.unjournaledAdapterEvents++
+    else this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
   }
   /** Rejects loss of either selected target while retaining owned-root teardown. @example run.terminated(child) */
   terminated(session: vscode.DebugSession): void {
@@ -2891,15 +2906,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.alive()
         // The other participant keeps running while its stop is armed: a pause it made before this point is read before the continuation exists, so it is never taken for that stop.
         if (nextStop.participant !== name) {
-          try {
-            await this.deliverEarlierPauses(nextStop.participant)
-          } catch (error) {
-            // This read comes before the resume is requested as well, so its failure is recorded as that, not as an uncertain continuation.
-            this.fail(
-              `Next declared stop could not be continued to: the earlier pauses of the ${nextStop.participant} could not be read (${thrownMessage(error)}), and no resume was sent. Earlier observations stay.`,
-            )
-            throw error
-          }
+          await this.deliverEarlierPauses(nextStop.participant)
           this.alive()
         }
       }
@@ -2941,22 +2948,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Makes one round trip on a participant's inspector channel, called by {@link continue} before the continuation exists.
    * Events on one channel keep their order, so every pause the participant sent before it answered has been read when this returns.
    * @param name - The participant whose next stop was armed.
+   * @throws What the round trip failed with, after the run was failed with a sentence that says that no resume was sent: this read comes before the resume is requested, so its failure is never an uncertain continuation.
    * @example
    * ```ts
    * await this.deliverEarlierPauses('browser')
    * ```
    */
   private async deliverEarlierPauses(name: Participant): Promise<void> {
-    const cdp = this.participants[name].cdp
-    if (!cdp) throw new Error('Selected native proxy unavailable')
-    await awaitResponse(
-      cdp.request('Runtime.evaluate', {
-        expression: 'undefined',
-        returnByValue: true,
-      }),
-      'earlier pause delivery',
-      this.abort.signal,
-    )
+    try {
+      const cdp = this.participants[name].cdp
+      if (!cdp) throw new Error('Selected native proxy unavailable')
+      await awaitResponse(
+        cdp.request('Runtime.evaluate', {
+          expression: 'undefined',
+          returnByValue: true,
+        }),
+        'earlier pause delivery',
+        this.abort.signal,
+      )
+    } catch (error) {
+      // Nothing has been resumed yet, so the record says exactly that, as for a next stop that could not be armed.
+      this.fail(
+        `Next declared stop could not be continued to: the earlier pauses of the ${name} could not be read (${thrownMessage(error)}), and no resume was sent. Earlier observations stay.`,
+      )
+      throw error
+    }
   }
   /** Starts after verification once all three independent continuation acknowledgements name the original generation. @example this.beginAfter(continuation) */
   private beginAfter(continuation: Continuation): void {
