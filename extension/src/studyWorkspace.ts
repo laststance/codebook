@@ -1171,10 +1171,15 @@ export class StudyWorkspace {
             focusedPane.beforeScopeFocus,
           )
           // The measurement may have left the focus in the main editor; a tab that is no text editor (an agent chat) gets it back.
-          await returnForeignFocus?.(focusedPane.beforeScopeFocus)
+          if (returnForeignFocus?.toAnotherPart) {
+            // The watched focus is the learner's file the editor named: it is checked first, then the keyboard goes back to the editor part that held it.
+            focusedPane.assertCurrent()
+            focusedPane.dispose()
+            await returnForeignFocus()
+          } else await returnForeignFocus?.(focusedPane.beforeScopeFocus)
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
-          focusedPane.assertCurrent()
+          if (!returnForeignFocus?.toAnotherPart) focusedPane.assertCurrent()
           if (transition.runtimeIdentity !== this.assertPresentationAdmission())
             throw new StudyError(
               'PRESENTATION_UNAVAILABLE',
@@ -1758,7 +1763,7 @@ export class StudyWorkspace {
    * Retains the logical reading region for one admitted handoff; foreign editors still require an exact source receipt. Called by {@link admitPresentation} before a selection or restore changes any pane.
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; `undefined` when no focused tab closed or its group is now empty. That tab was never the learner's reading position, so only the group focus is kept.
    * @returns The function that gives focus back once the presentation is placed. Its third argument is `true` only after a confirmed placement: a learner's document that shares the captured source's group then stays open behind that source instead of covering it. For a focused tab that is neither a text editor nor a Study pane (an agent chat, a settings page) the function does nothing: that tab stays where it is, and {@link retainForeignTabFocus} gives its group the focus back.
-   * @throws `PRESENTATION_UNAVAILABLE`, naming the tab and how to clear it, when the focused tab is a preview (a pane placed in its group would replace it) or a text tab the editor reports no text editor for.
+   * @throws `PRESENTATION_UNAVAILABLE`, naming the tab and how to clear it, when the focused tab is a preview (a pane placed in its group would replace it) or a captured source the editor reports no text editor for.
    * @example
    * ```ts
    * const restore = this.capturePresentationFocus(undefined)
@@ -1877,22 +1882,22 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         foreignPreviewObstacle(this.editorTabName(activeTab), activeColumn),
       )
-    // A text tab the editor shows without a text editor (a captured source of an earlier session or of another workspace) has no reading position to return to.
-    if (activeTab.input instanceof vscode.TabInputText)
+    // A captured source the editor shows without a text editor (a leftover of an earlier session it would not close, or another workspace's) is told by what the tab is: its document is a captured source. It has no reading position to return to.
+    if (this.isCapturedSourceInput(activeTab.input))
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         tabWithoutEditorObstacle(this.editorTabName(activeTab), activeColumn),
       )
-    // Any other tab (an agent chat, a settings page, an image the learner keeps) stays as it is: {@link retainForeignTabFocus} gives its group the focus back after the last layout read.
+    // Any other tab stays as it is: an agent chat, a settings page, an image the learner keeps, and a learner's own file that the editor names as the active tab while another part (the chat input) holds the keyboard, so that no text editor is active. {@link retainForeignTabFocus} gives its group the focus back after the last layout read.
     return async (): Promise<void> => {}
   }
 
   /**
-   * Remembers the focused tab when it is neither a text editor nor a Study pane, so a selection or a restore is admitted without closing or moving that tab; called by {@link admitPresentation} for every arrangement and by {@link confirmPresentationNoop}. Cursor's Agent chat is such a tab of an editor group, and nobody can focus anything else while the agent works.
+   * Remembers the tab the editor names as active when no text editor and no Study pane has the focus, so a selection or a restore is admitted without closing or moving that tab; called by {@link admitPresentation} for every arrangement and by {@link confirmPresentationNoop}. Cursor's Agent chat is such a tab of an editor group; and while its chat input holds the keyboard, Cursor can name a learner's own file of the main editor as the active tab without an active text editor. Nobody can focus anything else while the agent works.
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
    * @returns
-   * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's, or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a text tab without a text editor, `activatedByClose`).
-   * - Otherwise the function that gives the tab's group the focus back once the panes are arranged. It does so only while the tab is still the one its group shows, in a group no Study pane uses, and while the focus is where the arrangement left it (a Codebook pane or the captured source); in every other case the focus stays and nothing is guessed. Its argument announces the focus move to a caller that watches the focus.
+   * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's, or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
+   * - Otherwise the function that gives the focus back once the panes are arranged: to the tab's group while the tab is still the one its group shows, or, for a learner's file the editor named without an active text editor, to the one group outside the main editor ({@link groupOutsideMainEditor}), which held the keyboard (`toAnotherPart` is then `true`: the editor named another group than the one that gets the focus, so a caller that watches the focus checks it before this function runs). It does so only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or that file's editor the measurement focused); in every other case the focus stays and nothing is guessed. Its argument announces the focus move to a caller that watches the focus.
    * @example
    * ```ts
    * const returnForeignFocus = this.retainForeignTabFocus(undefined)
@@ -1903,7 +1908,9 @@ export class StudyWorkspace {
   private retainForeignTabFocus(
     activatedByClose: vscode.Tab | undefined,
   ):
-    | ((announce?: (target: RepositoryFocusTarget) => void) => Promise<void>)
+    | (((
+        announce?: (target: RepositoryFocusTarget) => void,
+      ) => Promise<void>) & { readonly toAnotherPart: boolean })
     | undefined {
     if (
       this.app?.active ||
@@ -1918,7 +1925,7 @@ export class StudyWorkspace {
       !tab ||
       tab === activatedByClose ||
       tab.isPreview ||
-      tab.input instanceof vscode.TabInputText ||
+      this.isCapturedSourceInput(tab.input) ||
       (tab.input instanceof vscode.TabInputWebview &&
         isCodebookPaneViewType(
           tab.input.viewType,
@@ -1938,19 +1945,29 @@ export class StudyWorkspace {
     const showsThatTab = (candidate: vscode.TabGroup): boolean =>
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
-    return async (announce): Promise<void> => {
+    // A learner's file named as the active tab without an active text editor: another editor part (the chat input) holds the keyboard, and the editor does not name that part's group.
+    const heldByAnotherPart = tab.input instanceof vscode.TabInputText,
+      heldUri = heldByAnotherPart ? tab.input.uri.toString() : undefined
+    const giveBack = async (
+      announce?: (target: RepositoryFocusTarget) => void,
+    ): Promise<void> => {
       // Groups the arrangement opened or closed in the main editor shift the column of a group behind them.
       const shownColumn =
         column + vscode.window.tabGroups.all.length - groupCount
-      const target = vscode.window.tabGroups.all.find(
-        (candidate) =>
-          candidate.viewColumn === shownColumn && showsThatTab(candidate),
-      )
+      const target = heldByAnotherPart
+        ? await this.groupOutsideMainEditor()
+        : vscode.window.tabGroups.all.find(
+            (candidate) =>
+              candidate.viewColumn === shownColumn && showsThatTab(candidate),
+          )
       const active = vscode.window.tabGroups.activeTabGroup,
-        activeInput = active.activeTab?.input,
+        activeUri =
+          active.activeTab?.input instanceof vscode.TabInputText
+            ? active.activeTab.input.uri.toString()
+            : undefined,
         panes = this.studyPanePositions()
       const command = target && focusEditorGroupCommand(target.viewColumn)
-      // The focus is given back only from where the arrangement left it, and never to a group a Study pane uses or one that is gone.
+      // The focus is given back only from where the arrangement left it (a Codebook pane, the captured source, or the learner's file the measurement focused), and never to a group a Study pane uses or one that is gone.
       if (
         !command ||
         !vscode.window.state.focused ||
@@ -1961,8 +1978,9 @@ export class StudyWorkspace {
         !(
           this.app?.active ||
           this.contextPanel?.active ||
-          (activeInput instanceof vscode.TabInputText &&
-            activeInput.uri.toString() === this.sourceUri?.toString())
+          (activeUri !== undefined &&
+            (activeUri === this.sourceUri?.toString() ||
+              (activeUri === heldUri && active.viewColumn === column)))
         )
       )
         return
@@ -1970,11 +1988,37 @@ export class StudyWorkspace {
         matchesEditor: () => !vscode.window.activeTextEditor,
         matchesGroup: () => {
           const focused = vscode.window.tabGroups.activeTabGroup
-          return focused.viewColumn === shownColumn && showsThatTab(focused)
+          return (
+            focused.viewColumn === target.viewColumn &&
+            (heldByAnotherPart || showsThatTab(focused))
+          )
         },
       })
       await vscode.commands.executeCommand(command)
     }
+    return Object.assign(giveBack, { toAnotherPart: heldByAnotherPart })
+  }
+
+  /**
+   * Finds the editor group that held the keyboard while the editor named a learner's file of the main editor as the active tab without an active text editor (Cursor, with the Agent chat's input focused); called by the function {@link retainForeignTabFocus} returns, after the last layout read of an arrangement.
+   * @returns
+   * - The group behind the main editor's groups when there is exactly one: the other editor part's.
+   * - `undefined` when the main editor does not have the focus now (a layout read is answered for the part that has it, so its groups cannot be counted), or when no group or several groups lie outside it: nothing is guessed.
+   * @example
+   * ```ts
+   * const chatGroup = await this.groupOutsideMainEditor()
+   * ```
+   */
+  private async groupOutsideMainEditor(): Promise<vscode.TabGroup | undefined> {
+    const count = editorLayoutGroupCount(
+      await vscode.commands.executeCommand<unknown>('vscode.getEditorLayout'),
+    )
+    // Only the main editor's own answer tells which groups are its own.
+    if (count === undefined || !this.hasMainEditorFocus(count)) return undefined
+    const outside = vscode.window.tabGroups.all.filter(
+      (group) => group.viewColumn > count,
+    )
+    return outside.length === 1 ? outside[0] : undefined
   }
 
   /**

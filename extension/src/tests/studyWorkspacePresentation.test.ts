@@ -4023,3 +4023,156 @@ for (const reader of ['closed', 'open'] as const)
       await harness.close()
     }
   })
+
+for (const action of ['select', 'restore'] as const)
+  for (const replacesGroupObjects of [false, true])
+    // Value: protects=an agent's presentation select or restore being admitted in the state a real Cursor chat submission is in (the chat input holds the keyboard, and the editor names a learner's file of the main editor as the active tab without an active text editor), and the chat having the keyboard again afterwards; fails_when=every text tab without an active text editor is refused as if it were a captured source the editor kept, which only a click into an editor clears, and an agent cannot click, or the keyboard stays on the captured source after the measurement borrowed it; why_new=Cycle 0045 cause 12 (a) (second native round, N14-b2 and owed check 1, take A2: both calls refused with "has no text editor", the run showed no stopped source); seam=workspace harness with a separate editor part that holds the keyboard while the main group stays the active tab group
+    test(`a ${action === 'select' ? 'selection' : 'restore'} made while the chat input has the focus and the editor names a text tab without an active text editor arranges the Study panes and closes or moves no tab, ${replacesGroupObjects ? 'also when the editor replaces every tab group object with each tab change as Cursor does' : 'in an editor that keeps its tab group objects'}`, async () => {
+      // Arrange: as the editor API reported it in Cursor: group 1 is the active tab group and shows the learner's file beside a settings page, group 2 below it is empty, and the Agent chat's own editor part holds the keyboard, so no text editor is active while that file's editor is visible.
+      const harness = await workspaceHarness(false)
+      harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+      harness.groups.at(-1)!.tabs = []
+      harness.groups.at(-1)!.activeTab = undefined
+      const chat = harness.addSeparateEditorPart()
+      if (replacesGroupObjects) harness.replaceGroupObjectsOnTabChanges()
+      try {
+        const settings = harness.addOpaqueTab('Cursor Settings', 1),
+          learnerFile = harness.focusMutableDraft('actions.ts', 1)
+        chat.focus()
+        const state = harness.reader.presentationState(),
+          activeBefore = harness.editor.window.tabGroups.activeTabGroup,
+          tabsOfFirstGroupBefore = [...activeBefore.tabs]
+        const stateBefore = {
+          chatHasKeyboard: chat.focused(),
+          chatColumn: harness.groups.find((group) =>
+            group.tabs.includes(chat.tab),
+          )?.viewColumn,
+          activeColumn: activeBefore.viewColumn,
+          activeTabIsLearnerFile: activeBefore.activeTab === learnerFile.tab,
+          hasActiveTextEditor:
+            harness.editor.window.activeTextEditor !== undefined,
+          visibleEditors: harness.editor.window.visibleTextEditors.length,
+        }
+        // Act
+        const arranged = await harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action,
+        })
+        // Assert
+        const firstGroup = harness.groups.find(
+          (group) => group.viewColumn === 1,
+        )!
+        assert.deepEqual(stateBefore, {
+          chatHasKeyboard: true,
+          chatColumn: 3,
+          activeColumn: 1,
+          activeTabIsLearnerFile: true,
+          hasActiveTextEditor: false,
+          visibleEditors: 1,
+        })
+        assert.equal(arranged.state, 'open')
+        assert.equal(arranged.layoutConfirmed, true)
+        assert.equal(arranged.reason, undefined)
+        assert.equal(arranged.panes.appColumn, 1)
+        assert.equal(arranged.panes.sourceColumn, 2)
+        assert.equal(arranged.panes.contextColumn, 3)
+        // No tab was closed or moved: the first group still holds its tabs in their order, before the Application pane, and the chat tab is alone in its group behind the Study groups.
+        assert.deepEqual(harness.tabCloseRequests(), [])
+        assert.deepEqual(
+          firstGroup.tabs.slice(0, tabsOfFirstGroupBefore.length),
+          tabsOfFirstGroupBefore,
+        )
+        assert.equal(firstGroup.tabs.includes(settings), true)
+        assert.equal(learnerFile.tab.isDirty, true)
+        assert.equal(
+          learnerFile.document.getText(),
+          'Original learner draft.\n',
+        )
+        assert.equal(
+          harness.groups.find((group) => group.tabs.includes(chat.tab))
+            ?.viewColumn,
+          4,
+        )
+        // The measurement borrowed the keyboard for the main editor; the chat has it again, through the editor's command for its group.
+        assert.equal(chat.focused(), true)
+        assert.equal(
+          harness.editor.window.tabGroups.activeTabGroup.tabs.includes(
+            chat.tab,
+          ),
+          true,
+        )
+        assert.equal(harness.editor.window.activeTextEditor, undefined)
+        assert.equal(
+          harness.commands
+            .filter((command) =>
+              /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+            )
+            .at(-1),
+          'workbench.action.focusFourthEditorGroup',
+        )
+      } finally {
+        await harness.close()
+      }
+    })
+
+for (const reader of ['closed', 'open'] as const)
+  // Value: protects=an agent's presentation select during its own paused run in the state of a real Cursor chat submission (the chat input holds the keyboard, the editor names the file the debugger opened in the Application's group, no text editor is active) ending with the live panes confirmed and the keyboard back in the chat; fails_when=the selection is refused for the text tab without an active text editor, or the keyboard stays on that file after the measurement focused the first editor group; why_new=Cycle 0045 cause 12 (a) (N14-b2: the debugger's source shared group 1 with the Application pane and every presentation call was refused); seam=workspace harness with the controlled runtime, a separate editor part that holds the keyboard and the fake editor's group object replacement
+  test(`a presentation select during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
+    // Arrange: the debugger's file is a tab of the first group; the chat's own editor part holds the keyboard, so the editor names that file's tab and no active text editor.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    try {
+      await pauseLiveRun(harness)
+      if (reader === 'open') await harness.reader.open()
+      const debuggerFile = harness.focusMutableDraft('login-form.tsx', 1)
+      chat.focus()
+      const state = harness.reader.presentationState()
+      const stateBefore = {
+        chatHasKeyboard: chat.focused(),
+        activeTabIsDebuggerFile:
+          harness.editor.window.tabGroups.activeTabGroup.activeTab ===
+          debuggerFile.tab,
+        hasActiveTextEditor:
+          harness.editor.window.activeTextEditor !== undefined,
+      }
+      // Act
+      const selected = await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      // Assert
+      const chatGroup = harness.groups.find((group) =>
+        group.tabs.includes(chat.tab),
+      )
+      assert.deepEqual(stateBefore, {
+        chatHasKeyboard: true,
+        activeTabIsDebuggerFile: true,
+        hasActiveTextEditor: false,
+      })
+      assert.equal(state.state, reader)
+      assert.equal(selected.state, 'open')
+      assert.equal(selected.layoutConfirmed, true)
+      assert.equal(selected.reason, undefined)
+      assert.equal(selected.panes.appColumn, 1)
+      assert.equal(selected.panes.sourceColumn, 2)
+      assert.equal(readerSeams(harness).isLiveArrangement(), true)
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 1)
+          ?.tabs.includes(debuggerFile.tab),
+        true,
+      )
+      assert.deepEqual(harness.tabCloseRequests(), [])
+      assert.equal(chatGroup?.viewColumn, 3)
+      assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+      assert.equal(chat.focused(), true)
+    } finally {
+      await harness.close()
+    }
+  })
