@@ -1845,3 +1845,575 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
     await rm(projectRoot, { recursive: true, force: true })
   }
 })
+
+// Cycle 0045 (ST-9): one case per notification that quotes outside text. Each fails when its message reaches the editor without the plain-text wrapper of the notice helper.
+test('a Cursor chat registration that fails with an error quoting a command link warns without a clickable link', async () => {
+  // Arrange: a saved Cursor setup reconnects at activation; the skill check passes once and then names a redirected home folder.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-registration-notice-')),
+  )
+  const warnings: string[] = []
+  let reportWarning!: () => void
+  const warned = new Promise<void>((resolveWarned) => {
+    reportWarning = resolveWarned
+  })
+  let skillChecks = 0
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showWarningMessage(message: string) {
+            warnings.push(message)
+            reportWarning()
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => ({
+          listening: true,
+          resourcesReleased: true,
+          descriptor: {
+            url: 'http://127.0.0.1/instance-1/mcp',
+            token: 'token-instance-1',
+            instanceId: 'instance-1',
+            workspace: directory,
+            apiVersion: '1.5',
+          },
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => {
+          skillChecks += 1
+          if (skillChecks > 1)
+            throw new Error(
+              'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor',
+            )
+          return { status: 'current' }
+        },
+      },
+    },
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await warned
+
+    // Assert
+    assert.deepEqual(warnings, [
+      'Codebook agent server started, but Cursor MCP registration failed: Error: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat to repair the connection.',
+    ])
+    assert.equal(warnings[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Update LLM Wiki without a Wiki, in an output folder named like a command link, shows no clickable link', async () => {
+  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax and the folder holds no manifest.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-no-wiki-notice-')),
+  )
+  const commands = new Map<string, () => Promise<void>>(),
+    errors: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '[Open](command:x)' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: projectRoot },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    await commands.get('codebook.updateDeepWiki')!()
+
+    // Assert
+    assert.deepEqual(errors, [
+      'Codebook found no LLM Wiki in [Open] (command:x). Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
+    ])
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
+test('a managed Cursor skill removal whose catalog cleanup error quotes a command link warns without a clickable link', async () => {
+  // Arrange: the learner confirms the removal; the skill is removed and the owned catalog cleanup fails on a path.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-removal-notice-')),
+  )
+  const commands = new Map<string, () => Promise<void>>(),
+    warnings: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showWarningMessage(message: string, options?: { modal?: boolean }) {
+            // The modal confirmation is answered; every other warning is a notification.
+            if (typeof options === 'object' && options.modal)
+              return Promise.resolve('Remove managed skill')
+            warnings.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './environment': { requireWorkspace: () => directory },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        removeManagedCursorSkill: async () => ({ status: 'removed' }),
+      },
+      './utils/refreshCursorMcpCatalog': {
+        captureOwnedCursorMcpCatalogGeneration: async () => 'generation-1',
+        removeOwnedCursorMcpCatalog: async () => {
+          throw new Error(
+            "EACCES: permission denied, unlink '/home/[Open](command:x)/.cursor/mcp.json'",
+          )
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: directory,
+    globalStorageUri: { fsPath: directory },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    await commands.get('codebook.removeManagedCursorSkill')!()
+
+    // Assert
+    assert.deepEqual(warnings, [
+      "Managed Cursor skill removed, but its empty MCP catalog config cleanup is incomplete: Error: EACCES: permission denied, unlink '/home/[Open] (command:x)/.cursor/mcp.json'. No unverified file was deleted; inspect the private recovery record, restore setup, then retry removal.",
+    ])
+    assert.equal(warnings[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a failed Open Repository Wiki whose error quotes a command link shows no clickable link', async () => {
+  // Arrange
+  const commands = new Map<string, () => Promise<void>>(),
+    errors: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': {},
+      './repositoryReader': {
+        RepositoryReader: class {
+          async open(): Promise<void> {
+            throw new Error(
+              "ENOENT: no such file or directory, open '/repo/[Open](command:x)/book.json'",
+            )
+          }
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: __dirname },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    await assert.rejects(commands.get('codebook.openRepositoryWiki')!())
+
+    // Assert
+    assert.deepEqual(errors, [
+      "Codebook could not open Repository Wiki: Error: ENOENT: no such file or directory, open '/repo/[Open] (command:x)/book.json'",
+    ])
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+  }
+})
+
+test('a failed Open DeepWiki in Browser whose error quotes a command link shows no clickable link', async () => {
+  // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax, and no Wiki exists in the folder it names.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-open-wiki-notice-')),
+  )
+  const commands = new Map<string, () => Promise<void>>(),
+    errors: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '[Open](command:x)' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: projectRoot },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    await assert.rejects(commands.get('codebook.openDeepWiki')!())
+
+    // Assert
+    assert.deepEqual(errors, [
+      `Codebook could not open DeepWiki: Error: ENOENT: no such file or directory, open '${projectRoot}/[Open] (command:x)/codebook-wiki.json'. Generate it through /codebook in this project, then retry.`,
+    ])
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
+test('a failed Update LLM Wiki whose error quotes a command link shows no clickable link', async () => {
+  // Arrange: the output folder is named like a link and holds this checkout's manifest without its entry page.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-update-wiki-notice-')),
+  )
+  const outputDirectory = join(projectRoot, '[Open cited line](x)')
+  await mkdir(outputDirectory)
+  await writeFile(
+    join(outputDirectory, 'codebook-wiki.json'),
+    JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot }),
+  )
+  const commands = new Map<string, () => Promise<void>>(),
+    errors: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          getConfiguration: () => ({ get: () => '[Open cited line](x)' }),
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': { requireWorkspace: () => projectRoot },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: projectRoot },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    await assert.rejects(commands.get('codebook.updateDeepWiki')!())
+
+    // Assert
+    assert.deepEqual(errors, [
+      `Codebook could not start the Wiki update: ENOENT: no such file or directory, open '${projectRoot}/[Open cited line] (x)/index.html'`,
+    ])
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})
+
+test('a failed Save Learning Replay whose error quotes a command link shows no clickable link', async () => {
+  // Arrange
+  const commands = new Map<string, () => Promise<void>>(),
+    errors: string[] = []
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: {
+          registerCommand(name: string, action: () => Promise<void>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': {},
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async saveLearningReplay(): Promise<void> {
+            throw new Error(
+              "EACCES: permission denied, open '/library/[Open](command:x).json'",
+            )
+          }
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: __dirname },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    // Act
+    await assert.rejects(commands.get('codebook.saveLearningReplay')!())
+
+    // Assert
+    assert.deepEqual(errors, [
+      "Codebook could not save learning: Error: EACCES: permission denied, open '/library/[Open] (command:x).json'",
+    ])
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+  }
+})
+
+test('a workspace folder change whose cleanup error quotes a command link shows no clickable link', async () => {
+  // Arrange: the Repository Wiki reader cannot be released once, on a path named like a link.
+  const errors: string[] = []
+  let reportError!: () => void
+  const reported = new Promise<void>((resolveReported) => {
+    reportError = resolveReported
+  })
+  let changeWorkspaceFolders: (() => void) | undefined
+  let releases = 0
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: (listener: () => void) => {
+            changeWorkspaceFolders = listener
+            return { dispose(): void {} }
+          },
+        },
+        window: {
+          showErrorMessage(message: string) {
+            errors.push(message)
+            reportError()
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': {},
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {
+            releases += 1
+            if (releases === 1)
+              throw new Error(
+                "EBUSY: resource busy or locked, rmdir '/storage/[Open](command:x)'",
+              )
+          }
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+    },
+  )
+  boundary.activate({
+    extensionPath: resolve(__dirname, '../..'),
+    globalStorageUri: { fsPath: __dirname },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  })
+  try {
+    assert.ok(changeWorkspaceFolders)
+    // Act
+    changeWorkspaceFolders()
+    await reported
+
+    // Assert
+    assert.deepEqual(errors, [
+      "Codebook cleanup incomplete: Error: EBUSY: resource busy or locked, rmdir '/storage/[Open] (command:x)'",
+    ])
+    assert.equal(errors[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+  }
+})
