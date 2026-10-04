@@ -518,6 +518,17 @@ export class RepositoryBookStore {
     return this.receipt(book.bookId, prior)
   }
   /**
+   * Reads the revision a publication must expect in order to replace a book; called by {@link assertRevision} before it compares the two.
+   * @param book - The stored book, or `undefined` when none exists under the id.
+   * @returns The number of the last stored revision, or 0 when there is no book or no revision.
+   * @example
+   * this.currentRevision(undefined) // => 0
+   * this.currentRevision(book)      // => 1 for a book published once
+   */
+  private currentRevision(book: RepositoryBook | undefined): number {
+    return book?.revisions.at(-1)?.revision ?? 0
+  }
+  /**
    * Rejects a publication whose expected revision is not the book's current one, before preparation and again after the queue wait; called by {@link publishOwned}.
    * For a book that exists the refusal says what exists and the two ways on (replace it with the current revision as the expected one, or keep it and publish under another book id), because an agent that only read "read the current book" ran on the article it found.
    * @param book - The stored book, or `undefined` when none exists under the id.
@@ -531,7 +542,7 @@ export class RepositoryBookStore {
     book: RepositoryBook | undefined,
     expected: number,
   ): void {
-    const current = book?.revisions.at(-1)?.revision ?? 0
+    const current = this.currentRevision(book)
     if (expected === current) return
     // A book that does not exist yet has no revision to replace or to keep.
     if (!book || current === 0)
