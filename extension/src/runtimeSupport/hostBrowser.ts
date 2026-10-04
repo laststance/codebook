@@ -102,7 +102,7 @@ export class HostBrowser {
     return this.leftProfile
   }
 
-  /** Starts a real debugger using the selected host route, invoked once during run preparation. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
+  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch first removes the profile folders a killed editor left ({@link removeAbandonedProfiles}) and marks its own as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
   async launch(
     configuration: vscode.DebugConfiguration,
     signal: AbortSignal,
