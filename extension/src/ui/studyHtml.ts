@@ -349,9 +349,9 @@ function studyClient(
         : null
     if (!target || (target instanceof HTMLButtonElement && target.disabled))
       return
-    // A stop already shown in the native debugger keeps its focusable Inspect, which sends nothing.
+    // The selected event's control and the Inspect of a stop already shown in the native debugger stay focusable, and send nothing.
     if (
-      target.dataset.inspectNodeHistoryStop &&
+      target.dataset.nodeHistorySequence &&
       target.getAttribute('aria-disabled') === 'true'
     )
       return
@@ -503,6 +503,11 @@ function studyClient(
     text(
       'node-history-playback-position',
       `${(Number(nodePlayhead.value) / options.secondMs).toFixed(2)} s`,
+    )
+    // Assistive technology hears the time under the thumb while it moves, before the host answers the seek.
+    nodePlayhead.setAttribute(
+      'aria-valuetext',
+      `${seconds(Number(nodePlayhead.value))} of recorded test time`,
     )
   })
   nodePlayhead.addEventListener('change', () => {
@@ -2132,13 +2137,14 @@ function studyClient(
         nodePlayhead.max = '0'
         nodePlayhead.value = '0'
       }
-      // Assistive technology reads the selected test time, not the raw millisecond value.
-      nodePlayhead.setAttribute(
-        'aria-valuetext',
-        playbackState?.positionMs === undefined
-          ? 'No recorded test time selected'
-          : `${seconds(playbackState.positionMs)} of recorded test time`,
-      )
+      // Assistive technology reads the selected test time, not the raw millisecond value; during a scrub the thumb's own time stays.
+      if (!nodeHistoryScrubbing)
+        nodePlayhead.setAttribute(
+          'aria-valuetext',
+          playbackState?.positionMs === undefined
+            ? 'No recorded test time selected'
+            : `${seconds(playbackState.positionMs)} of recorded test time`,
+        )
       if (!nodeHistoryScrubbing)
         text(
           'node-history-playback-position',
@@ -2242,7 +2248,9 @@ function studyClient(
             select.type = 'button'
             select.dataset.nodeHistorySequence = String(entry.sequence)
             select.textContent = isSelected ? 'Selected event' : 'Select event'
-            select.disabled = Boolean(recording || isSelected)
+            // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
+            select.disabled = Boolean(recording)
+            if (isSelected) select.setAttribute('aria-disabled', 'true')
             select.setAttribute('aria-pressed', String(isSelected))
             article.append(select)
             if (entry.type === 'stop') {

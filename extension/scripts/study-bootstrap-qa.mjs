@@ -1032,6 +1032,116 @@ async function check(page, options) {
           nodePlayheadAfterStep.value === '198630' &&
           nodePlayheadAfterStep.valueText === '198.63 s of recorded test time',
       })
+      // Arrange: the thumb of the Node playhead is moved and the host has not answered yet (SD-5).
+      await publish(nodeTimeline)
+      await page.locator('#node-history-playhead').evaluate((playhead) => {
+        playhead.value = '150000'
+        playhead.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      const spokenUnderThumb = await page
+        .locator('#node-history-playhead')
+        .getAttribute('aria-valuetext')
+      // Act: a Study message for another reason arrives while the thumb is still held.
+      await publish({ ...nodeTimeline, busy: true })
+      const spokenDuringScrub = await page
+        .locator('#node-history-playhead')
+        .getAttribute('aria-valuetext')
+      await page
+        .locator('#node-history-playhead')
+        .dispatchEvent('pointercancel', { bubbles: true })
+      // Assert
+      cases.push({
+        name: 'dragging the Node playhead speaks the time under the thumb before the host answers',
+        actual: { spokenUnderThumb, spokenDuringScrub },
+        passed:
+          spokenUnderThumb === '150.00 s of recorded test time' &&
+          spokenDuringScrub === '150.00 s of recorded test time',
+      })
+      // Arrange: two events, the second one unselected, with keyboard focus on its Select event (SD-1).
+      await publish({ ...twoStops, nodeHistoryPosition: nodeStop })
+      const selectSecond = page.locator(
+        '[data-node-history-sequence="3"]:not([data-inspect-node-history-stop])',
+      )
+      await selectSecond.focus()
+      const eventRequestsBefore = await page.evaluate(
+        () =>
+          window.sent.filter((message) => message.type === 'node-history-event')
+            .length,
+      )
+      // Act: the learner presses it, the host answers with that event selected, and the learner presses again.
+      await page.keyboard.press('Enter')
+      await publish({
+        ...twoStops,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          sequence: 3,
+          index: 1,
+          eventIndex: 1,
+          debuggerAvailable: false,
+        },
+      })
+      const afterSelect = await page.evaluate(() => ({
+        focusedSequence: document.activeElement?.dataset?.nodeHistorySequence,
+        focusedIsInspect:
+          document.activeElement?.dataset?.inspectNodeHistoryStop === 'true',
+        label: document.activeElement?.textContent,
+        ariaDisabled: document.activeElement?.getAttribute('aria-disabled'),
+        disabled: document.activeElement?.disabled,
+      }))
+      await page.keyboard.press('Enter')
+      const eventRequestsAfter = await page.evaluate(
+        () =>
+          window.sent.filter((message) => message.type === 'node-history-event')
+            .length,
+      )
+      // Assert
+      cases.push({
+        name: "pressing Select event by keyboard keeps focus on that event's control and a second press sends nothing",
+        actual: { afterSelect, eventRequestsBefore, eventRequestsAfter },
+        passed:
+          afterSelect.focusedSequence === '3' &&
+          afterSelect.focusedIsInspect === false &&
+          afterSelect.label === 'Selected event' &&
+          afterSelect.ariaDisabled === 'true' &&
+          afterSelect.disabled === false &&
+          eventRequestsAfter === eventRequestsBefore + 1,
+      })
+      // Arrange: an output event whose text is one unbroken line of 400 characters (SD-9).
+      await page.setViewportSize({ width: 300, height: 720 })
+      await publish({
+        ...nodeReader,
+        nodeHistoryEventCount: 2,
+        nodeHistory: {
+          ...nodeReader.nodeHistory,
+          entries: [
+            {
+              type: 'output',
+              sequence: 1,
+              channel: 'stdout',
+              elapsedMs: 500,
+              text: 'x'.repeat(400),
+            },
+            nodeReader.nodeHistory.entries[0],
+          ],
+        },
+        nodeHistoryPosition: nodeStop,
+      })
+      // Act
+      const cardOverflow = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        cardTextLength: document.querySelector('.node-history-event pre')
+          .textContent.length,
+      }))
+      await page.setViewportSize({ width: 600, height: 800 })
+      // Assert
+      cases.push({
+        name: 'a Node event card with one 400-character line does not widen the pane',
+        actual: cardOverflow,
+        passed:
+          cardOverflow.cardTextLength === 400 &&
+          cardOverflow.scrollWidth === cardOverflow.clientWidth,
+      })
       await publish({
         ...replay,
         recording: {
