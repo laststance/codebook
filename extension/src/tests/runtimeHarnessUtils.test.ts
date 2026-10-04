@@ -292,6 +292,43 @@ test('a published Wiki fixture whose first publish is refused removes the tempor
   }
 })
 
+// Value: protects=the machine's temporary folder staying free of the Wiki project of a test whose reader failed to close; fails_when=the served Wiki's `close` stops at the reader's rejected close and never removes the project it created; why_new=review of Cycle 0045, tests-1 #14 (X7-D.3 made the failed start remove the project and left this path); seam=TMPDIR of this test process, and the fixture loaded with a reader whose close rejects
+test('a served minimal Wiki whose reader fails to close still removes the temporary project it created', async () => {
+  // Arrange: temporary projects are created in a folder of this test, and the fixture's reader starts but refuses to close.
+  const temporaryFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-fixture-cleanup-'),
+  )
+  const previousTemporaryFolder = process.env.TMPDIR
+  process.env.TMPDIR = temporaryFolder
+  try {
+    const fixture = await loadModule<typeof ServeMinimalWikiModule>(
+      join(__dirname, 'utils', 'serveMinimalWiki.js'),
+      {
+        '../../deepWikiReader': {
+          startDeepWikiReader: async () => ({
+            url: 'http://127.0.0.1:4100/w/reader-token/index.html',
+            close: async () => {
+              throw new Error('The reader could not close.')
+            },
+          }),
+        },
+      },
+    )
+    const wiki = await fixture.serveMinimalWiki()
+    const projectsWhileServed = (await readdir(temporaryFolder)).length
+    // Act
+    const closing = wiki.close()
+    // Assert: the reader's error is passed on, and the project is gone.
+    await assert.rejects(closing, { message: 'The reader could not close.' })
+    assert.equal(projectsWhileServed, 1)
+    assert.deepEqual(await readdir(temporaryFolder), [])
+  } finally {
+    if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTemporaryFolder
+    await rm(temporaryFolder, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the machine's temporary folder staying free of Wiki projects that a failed fixture created; fails_when=the served Wiki's reader does not start and the project written for it stays, although no caller holds its `close`; why_new=Cycle 0045 X7-D.3; seam=TMPDIR of this test process, and the fixture loaded with a reader that refuses to start
 test('a served minimal Wiki whose reader does not start removes the temporary project it created', async () => {
   // Arrange: temporary projects are created in a folder of this test, and the fixture's reader refuses to start.

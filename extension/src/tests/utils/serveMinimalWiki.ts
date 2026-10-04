@@ -10,7 +10,7 @@ import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
  *
  * @param readUpdateStatus - Update state of the reader's window, built from the Wiki folder this fixture serves (the reader answers a run of another folder as idle); idle when omitted.
  * @param startReader - The reader's start function; a test that loads the reader module with replaced parts hands its own, the real one serves when omitted.
- * @returns The started reader, the Wiki folder it serves, the path of its manifest and a `close` that stops the reader and removes the project.
+ * @returns The started reader, the Wiki folder it serves, the path of its manifest and a `close` that stops the reader and removes the project, also when the reader's close fails (its error is passed on after the removal).
  * @throws When the Wiki cannot be written or its reader does not start; the temporary project is removed before the error is passed on.
  *
  * @example
@@ -68,8 +68,12 @@ export async function serveMinimalWiki(
       outputDirectory: output,
       manifestPath,
       async close(): Promise<void> {
-        await reader.close()
-        await removeProject()
+        // The project is removed also when the reader's close fails.
+        try {
+          await reader.close()
+        } finally {
+          await removeProject()
+        }
       },
     }
   } catch (error) {
