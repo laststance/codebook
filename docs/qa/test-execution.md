@@ -104,6 +104,45 @@ Local CodeRabbit CLI (20 files, six trivial findings) and a delegated Open Code 
 - The dependency cache key leaves out `extension/package.json` and the runner's architecture.
 - A missing or malformed `test-timings.json` fails with the raw read or parse error.
 
+## Reader DOM check
+
+The unit suites never load the Study reader's document. `extension/scripts/study-bootstrap-qa.mjs` does: it opens the compiled reader (`extension/dist/ui/studyHtml.js`) in Chrome through `playwright-cli`, publishes Study messages into the page as the extension host would, and reads the DOM after each one. The Reader DOM job (`.github/workflows/reader-dom.yml`) runs it for every pull request into `main` and every push to `main`.
+
+| Need                    | Where it comes from                                                                                                                                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A build                 | `pnpm --dir extension build` or `build:fast`. The script reads `extension/dist` and must be started from the repository root.                                                                                        |
+| `playwright-cli` 0.1.22 | `npm ci --ignore-scripts` in `.github/reader-dom`. Its `package-lock.json` pins the CLI and its dependencies by integrity hash, and the CI job installs from the same file. Git ignores the folder's `node_modules`. |
+| The video encoder       | `playwright-cli install-browser ffmpeg`, once per machine. The check records a video of its run, which needs the ffmpeg build of the Playwright inside `playwright-cli`. The CI job keeps that download in a cache.  |
+| A Chrome                | `playwright-cli` opens the installed Google Chrome. On a machine without one, set `PLAYWRIGHT_MCP_EXECUTABLE_PATH` to a Chrome or Chrome for Testing binary.                                                         |
+
+From the repository root:
+
+```sh
+pnpm --dir extension build
+(cd .github/reader-dom && npm ci --ignore-scripts)                 # once, and after the lockfile changes
+export PATH="$PWD/.github/reader-dom/node_modules/.bin:$PATH"
+playwright-cli install-browser ffmpeg                              # once per machine
+node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom
+```
+
+The script exits 1 when a case fails, when the page raised an error, or when a browser command failed. Its last line of output lists every case with `passed`. The folder named as its second argument (`artifacts/` is ignored by Git) receives:
+
+| File                                           | Content                                                                                                                                            |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `result.json`                                  | The report: every case with its name, `passed` and, for most, the values it read (`actual`); the SHA-256 of the compiled reader; the page's errors |
+| `flow.webm`                                    | A video of the whole run (420 × 720 px)                                                                                                            |
+| `*.png`                                        | Stills of chosen states (first paint, the narrow pause, Saved studies, the replay transport)                                                       |
+| `open.log`, `video-start.log`, `flow.log`, ... | What `playwright-cli` printed for each command; `flow.log` holds the error text when the run ended before its report                               |
+| `flow.js`                                      | The check and its fixtures as the one function `playwright-cli run-code --filename` loaded                                                         |
+
+`playwright-cli` also leaves a `.playwright-cli/` folder with page snapshots where the script was started; Git ignores it. The CI job uploads the output folder as the artifact `reader-dom` only when the job failed.
+
+**What it covers.** What the reader's document shows and does for a given Study message, in real Chrome: first paint and loading states, labels and sentences, which parts are rendered again, keyboard focus and tab order, page overflow and density at side bar and bottom panel sizes, the Saved studies list with its delete control, the replay transport.
+
+**What it does not cover.** The host is simulated: the script dispatches each message itself and replaces `acquireVsCodeApi` with a recorder of what the reader posts. No extension host, editor, debugger or file takes part. A green run therefore says nothing about what the extension sends, about the editor's webview (theme, focus between panes, layout) or about VS Code and Cursor, and it earns no native acceptance credit. The report states the same in its `qualification` field.
+
+**Adding a case.** The whole `check` function is handed to the browser CLI as text, so it can use only `page`, `options` and what it defines itself: no import, and nothing from the script's module scope. A callback passed to `page.evaluate` or `page.waitForFunction` runs in the page and receives values only as arguments. State a Study message's revision as `revisionAt(n)`, its distance from the first message, in the message and in every wait or comparison (`await waitUntilRendered(revisionAt(2))`); the Saved studies cases number their messages with their own counter, `savedRevision`. `node extension/scripts/study-bootstrap-qa.mjs red <folder>` expects at least one failing case and exits 1 when all pass: it shows a new case failing before its fix.
+
 ## Measurement evidence
 
 On the development Mac (Node 24.21.0, 16 available CPUs), the same 1,368 extension cases took 189.32 s before partitioning and 54.34 s afterward, about 71% less elapsed time. Four read-only shards at concurrency 4 each took 55.55 s; they added no local speed benefit, so CI kept the complete glob at that time (the Test workflow has run [balanced shards](#ci-shards) since 2026-10-02). The same 175 package cases took 19.53 s at concurrency 1 and 7.97 s at concurrency 4. All green runs had zero failures/cancellations/skips; the combined shard names exactly match the full suite. These are one-machine observations, not a CI timing guarantee; build time is separate (baseline 4.24 s).
