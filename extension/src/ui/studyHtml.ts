@@ -1093,6 +1093,13 @@ function studyClient(
     if (heldFocus && repair.hidden)
       element('studies').focus({ preventScroll: true })
   }
+  /** Says whether the host answered a request for one entry's files already: it listed them, for this pane or for another one, or its removal state shows its own refusal for that entry. Asked by {@link askForStudyFiles} before it sends a request. @example hostAnsweredFilesOf(message, entry.id) // => true once message.studyFiles holds entry.id */
+  const hostAnsweredFilesOf = (
+    message: StudyViewMessage,
+    studyId: string,
+  ): boolean =>
+    Boolean(message.studyFiles?.[studyId]) ||
+    message.studyRemoval?.studyId === studyId
   /**
    * In a window without a Trash, asks the host for the files of the chosen entry, which the host names only in its answer to a delete request; called by {@link renderStudyRemoval}.
    * Nothing is asked while the entry cannot be removed anyway, once the host listed its files or refused the request, or twice under one Study message.
@@ -1107,10 +1114,7 @@ function studyClient(
     reason: string,
   ): void => {
     if (!message.removalWithoutTrash || !chosen || reason) return
-    // The host listed this entry's files already, for this pane or for another one.
-    if (message.studyFiles?.[chosen.id]) return
-    // The host's own refusal for this entry is shown.
-    if (message.studyRemoval?.studyId === chosen.id) return
+    if (hostAnsweredFilesOf(message, chosen.id)) return
     // A render that is no new Study message (a choice in the list, the host's reply to an open request) asks nothing again.
     if (
       filesRequest?.studyId === chosen.id &&

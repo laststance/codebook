@@ -23,24 +23,46 @@ const ACKNOWLEDGEMENT_ENTRY_TYPES = [
 ]
 
 /**
+ * Reads the line a browser stop's verified binding names; called by {@link acknowledgedLineOf} for a `breakpoint.bound` entry.
+ * @param event - A `breakpoint.bound` entry.
+ * @returns The bound line, or `undefined` when the entry names no readable line.
+ * @example
+ * boundLineOf({ type: 'breakpoint.bound', detail: { verified: true, line: 3, column: 1 }, ... }) // => 3
+ */
+function boundLineOf(event: RecordedEvent): number | undefined {
+  return boundEntrySchema.safeParse(event.detail).data?.line
+}
+
+/**
+ * Reads the line a server stop's registration says the adapter moved it to; called by {@link acknowledgedLineOf} for a `breakpoint.registered` entry.
+ * @param event - A `breakpoint.registered` entry.
+ * @returns The line it moved to, or `undefined` when the adapter acknowledged it where it was requested or has not answered yet.
+ * @example
+ * movedToLineOf({ type: 'breakpoint.registered', detail: { status: 'bound', movedTo: { line: 4 } }, ... }) // => 4
+ * movedToLineOf({ type: 'breakpoint.registered', detail: { status: 'bound' }, ... })                       // => undefined
+ */
+function movedToLineOf(event: RecordedEvent): number | undefined {
+  return registeredEntrySchema.safeParse(event.detail).data?.movedTo?.line
+}
+
+/**
  * Reads the line an acknowledgement says the stop is bound on; called by {@link plannedStopLine} for the last acknowledgement of the last request.
  * @param event - A `breakpoint.bound` or `breakpoint.registered` entry, or `undefined` when the last request has none yet.
  * @returns
- * - A browser stop's verified binding: its line
- * - A server stop's registration: the line the adapter moved it to
+ * - A browser stop's verified binding: its line ({@link boundLineOf})
+ * - A server stop's registration: the line the adapter moved it to ({@link movedToLineOf})
  * - `undefined` for a registration on the requested line or a pending one, an entry without a readable line, and no entry: the requested line then stands
  * @example
- * acknowledgedLineOf({ type: 'breakpoint.bound', detail: { verified: true, line: 3, column: 1 }, ... })             // => 3
- * acknowledgedLineOf({ type: 'breakpoint.registered', detail: { status: 'bound', movedTo: { line: 4 } }, ... })      // => 4
- * acknowledgedLineOf({ type: 'breakpoint.registered', detail: { status: 'bound' }, ... })                            // => undefined
+ * acknowledgedLineOf({ type: 'breakpoint.bound', detail: { verified: true, line: 3, column: 1 }, ... }) // => 3
+ * acknowledgedLineOf(undefined)                                                                          // => undefined
  */
 function acknowledgedLineOf(
   event: RecordedEvent | undefined,
 ): number | undefined {
   if (!event) return undefined
   return event.type === 'breakpoint.bound'
-    ? boundEntrySchema.safeParse(event.detail).data?.line
-    : registeredEntrySchema.safeParse(event.detail).data?.movedTo?.line
+    ? boundLineOf(event)
+    : movedToLineOf(event)
 }
 
 /**

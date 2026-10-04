@@ -50,7 +50,7 @@ export function answerBreakLocationRequest(
  * breakLocationsInRange([{ lineNumber: 0, columnNumber: 6 }, { lineNumber: 1, columnNumber: 0 }], { lineNumber: 0, columnNumber: 0 }, { lineNumber: 1, columnNumber: 0 })
  * // => [{ lineNumber: 0, columnNumber: 6 }]
  */
-export function breakLocationsInRange(
+function breakLocationsInRange(
   locations: readonly GeneratedPlace[],
   start: GeneratedPlace,
   end?: GeneratedPlace,

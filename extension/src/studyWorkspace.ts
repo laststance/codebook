@@ -1570,7 +1570,7 @@ export class StudyWorkspace {
    * Gives the keyboard back to the editor part that held it (an agent chat) when an arrangement of the live or recording panes failed; called by the failure path of the composition branch of {@link admitPresentation}, as a failed selection and a failed open do.
    * @param focusedPane - The focus watch of that arrangement: a focus the learner changed since the request stays where it is.
    * @param returnForeignFocus - What {@link retainForeignTabFocus} answered before the arrangement, `undefined` when no foreign tab had the focus.
-   * @param lifetime - The reader lifetime the arrangement began in; a reader closed or closing since gives nothing back.
+   * @param lifetime - The reader lifetime the arrangement began in; a reader closed or closing since gives nothing back ({@link assertLifetime}).
    * @returns Once the focus is given back or left: nothing is thrown, so that the arrangement's own error is the one reported.
    * @example
    * ```ts
@@ -1583,13 +1583,12 @@ export class StudyWorkspace {
     returnForeignFocus: ReturnType<StudyWorkspace['retainForeignTabFocus']>,
     lifetime: number,
   ): Promise<void> {
-    if (!returnForeignFocus || this.closing || lifetime !== this.lifetime)
-      return
     try {
+      this.assertLifetime(lifetime)
       focusedPane.assertUndeparted()
-      await returnForeignFocus()
+      await returnForeignFocus?.()
     } catch {
-      // A newer focus of the learner, or a return the editor refused, leaves the keyboard where it is.
+      // A reader that is closed or closing, a newer focus of the learner, or a return the editor refused leaves the keyboard where it is.
     }
   }
 
@@ -2634,20 +2633,7 @@ export class StudyWorkspace {
         await this.rememberSideBarsBeforeRead()
         assertReadFocus()
       }
-      // A measured reading hides both side bars with the group's maximization.
-      if (this.sideBarsBeforeRead) {
-        await vscode.commands.executeCommand(
-          'workbench.action.maximizeEditorHideSidebar',
-        )
-        return
-      }
-      await vscode.commands.executeCommand(
-        'workbench.action.minimizeOtherEditors',
-      )
-      assertReadFocus()
-      await vscode.commands.executeCommand(
-        'workbench.action.toggleMaximizeEditorGroup',
-      )
+      await this.maximizeActiveGroupForRead(assertReadFocus)
     } catch (error) {
       // A Read refused before its maximization begins no reading: the side bar hidden for the measurement is shown again, and the next Read measures anew.
       if (startsReading) {
@@ -2656,6 +2642,35 @@ export class StudyWorkspace {
       }
       throw error
     }
+  }
+
+  /**
+   * Runs the editor commands that maximize the active group for a Read; called by {@link maximizeForRead} once the side bars were measured or found unmeasurable.
+   * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read.
+   * @returns Once the editor answered: both side bars hidden for a measured reading ({@link sideBarsBeforeRead} set), or the side bars untouched after Expand and the maximize toggle.
+   * @throws What `assertReadFocus` throws, and a rejection of an editor command.
+   * @example
+   * ```ts
+   * await this.maximizeActiveGroupForRead(assertReadFocus)
+   * ```
+   */
+  private async maximizeActiveGroupForRead(
+    assertReadFocus: () => void,
+  ): Promise<void> {
+    // A measured reading hides both side bars with the group's maximization.
+    if (this.sideBarsBeforeRead) {
+      await vscode.commands.executeCommand(
+        'workbench.action.maximizeEditorHideSidebar',
+      )
+      return
+    }
+    await vscode.commands.executeCommand(
+      'workbench.action.minimizeOtherEditors',
+    )
+    assertReadFocus()
+    await vscode.commands.executeCommand(
+      'workbench.action.toggleMaximizeEditorGroup',
+    )
   }
 
   /**
@@ -2702,7 +2717,7 @@ export class StudyWorkspace {
 
   /**
    * Measures which side bars a Read hid and lists the editor commands that show them, in the order {@link showSideBarsHiddenByRead} runs them: the secondary bar first, then the primary one.
-   * The secondary bar was open when the editor area is wider now than it was without the primary bar alone. An area that did not grow says nothing while the learner may have opened a bar during the reading, which takes that width away again: the primary bar is then hidden once more and the area read again, which tells both whether the secondary bar is still hidden and whether the primary one was open.
+   * The secondary bar was open when the editor area is wider now than it was without the primary bar alone. An area that did not grow says nothing while the learner may have opened a bar during the reading, which takes that width away again: {@link sideBarsHiddenAtSecondLook} then hides the primary bar once more and reads the area again, which tells both whether the secondary bar is still hidden and whether the primary one was open.
    * @param before - What {@link rememberSideBarsBeforeRead} measured.
    * @returns One command for each bar that was open before the Read and for a primary bar the learner opened during it; an empty list when both were closed. A bar whose state could not be measured is left out.
    * @example
@@ -2714,27 +2729,45 @@ export class StudyWorkspace {
     before: NonNullable<StudyWorkspace['sideBarsBeforeRead']>,
   ): Promise<string[]> {
     const widthPx = await this.readEditorAreaWidthPx()
-    let showAuxiliary = this.hasSideBarGain(
-        widthPx,
-        before.widthWithoutPrimaryPx,
-      ),
-      showPrimary = before.primaryVisible
-    // No gain with a known width: the secondary bar was closed, or a bar the learner opened since hides the gain.
-    if (!showAuxiliary && widthPx !== undefined) {
-      await vscode.commands
-        .executeCommand('workbench.action.closeSidebar')
-        .then(undefined, () => undefined)
-      const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
-      showAuxiliary = this.hasSideBarGain(
+    // A wider area says that the secondary bar was open and is still hidden; anything else needs a second look.
+    const hidden = this.hasSideBarGain(widthPx, before.widthWithoutPrimaryPx)
+      ? { auxiliary: true, primary: before.primaryVisible }
+      : await this.sideBarsHiddenAtSecondLook(before, widthPx)
+    return [
+      ...(hidden.auxiliary ? ['workbench.action.focusAuxiliaryBar'] : []),
+      ...(hidden.primary ? ['workbench.action.focusSideBar'] : []),
+    ]
+  }
+
+  /**
+   * Hides the primary side bar once more and measures again which bars are to be shown, for {@link sideBarShowCommands} when the editor area did not grow since the Read: the secondary bar was closed then, or a bar the learner opened during the reading takes the gained width away.
+   * @param before - What {@link rememberSideBarsBeforeRead} measured.
+   * @param widthPx - The editor area's width at the end of the reading, `undefined` when it could not be read.
+   * @returns `auxiliary`: whether the secondary bar was open before the Read and is hidden still; `primary`: whether the primary bar was open before the Read or was opened by the learner during it (and hidden by this look). Without a width only the primary bar's measured state is known, and the secondary bar is left alone.
+   * @example
+   * ```ts
+   * await this.sideBarsHiddenAtSecondLook({ primaryVisible: false, widthWithoutPrimaryPx: 1035 }, 1035) // => { auxiliary: true, primary: true } after the learner opened a primary bar as wide as the secondary one
+   * ```
+   */
+  private async sideBarsHiddenAtSecondLook(
+    before: NonNullable<StudyWorkspace['sideBarsBeforeRead']>,
+    widthPx: number | undefined,
+  ): Promise<{ auxiliary: boolean; primary: boolean }> {
+    if (widthPx === undefined)
+      return { auxiliary: false, primary: before.primaryVisible }
+    await vscode.commands
+      .executeCommand('workbench.action.closeSidebar')
+      .then(undefined, () => undefined)
+    const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
+    return {
+      auxiliary: this.hasSideBarGain(
         widthWithoutPrimaryPx,
         before.widthWithoutPrimaryPx,
-      )
-      showPrimary ||= this.hasSideBarGain(widthWithoutPrimaryPx, widthPx)
+      ),
+      primary:
+        before.primaryVisible ||
+        this.hasSideBarGain(widthWithoutPrimaryPx, widthPx),
     }
-    return [
-      ...(showAuxiliary ? ['workbench.action.focusAuxiliaryBar'] : []),
-      ...(showPrimary ? ['workbench.action.focusSideBar'] : []),
-    ]
   }
 
   /**
