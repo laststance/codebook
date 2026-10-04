@@ -1,12 +1,9 @@
-import { thrownMessage } from './thrownMessage'
-
-/** The step that repairs a chat connection; a reason that already names it is not followed by it again. */
-const SETUP_STEP = 'Run Codebook: Set Up AI Chat'
+import { noticeWithSetupStep } from './noticeWithSetupStep'
 
 /**
  * Words the one notification a learner reads when the saved AI chat setup could not reconnect at editor start; called by {@link activate} when its reconnect fails.
  *
- * Why: the notice was the thrown value's string form with the setup step appended, which printed "Error:", named the step twice when the reason already gave it, and ended with two full stops. The reason is shown as its message, ends with exactly one full stop, and is followed by the setup step only when it does not name that step itself.
+ * The sentence is built by {@link noticeWithSetupStep}: the reason without "Error:", one full stop, and the setup step only when the reason does not name it itself.
  *
  * @param thrown - What the reconnect threw: the skill check's refusal, a server start failure, or a changed workspace.
  * @returns The whole sentence: what happened, what Codebook found, and the step to take.
@@ -20,9 +17,9 @@ const SETUP_STEP = 'Run Codebook: Set Up AI Chat'
  * ```
  */
 export function aiChatReconnectNotice(thrown: unknown): string {
-  const reason = thrownMessage(thrown)
-  // A reason that already ends its sentence gets no second full stop.
-  const reasonSentence = /[.!?]$/.test(reason) ? reason : `${reason}.`
-  const notice = `Codebook AI chat did not reconnect: ${reasonSentence}`
-  return reason.includes(SETUP_STEP) ? notice : `${notice} ${SETUP_STEP}.`
+  return noticeWithSetupStep(
+    'Codebook AI chat did not reconnect',
+    thrown,
+    'Run Codebook: Set Up AI Chat.',
+  )
 }

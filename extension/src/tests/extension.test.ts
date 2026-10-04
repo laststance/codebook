@@ -1946,7 +1946,7 @@ test('a Cursor chat registration that fails with an error quoting a command link
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook agent server started, but Cursor MCP registration failed: Error: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat to repair the connection.',
+      'Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat to repair the connection.',
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
@@ -2581,6 +2581,138 @@ test('a reconnect that fails with an error quoting a command link warns without 
       'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat.',
     ])
     assert.equal(warnings[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the one sentence a Cursor learner reads when the agent server started without its chat connection; fails_when=the notice prints "Error:", names the setup step twice or ends with two full stops; why_new=Cycle 0045 (EX-F1); seam=the real skill check against a temporary home folder
+test('a Cursor chat registration that finds the skill edited says once what happened and once to run Set Up AI Chat', async () => {
+  // Arrange: Cursor chat was set up for this workspace; the skill is edited after the window's first check, before the connection registers.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-registration-sentence-')),
+  )
+  const extensionPath = join(directory, 'extension'),
+    storageRoot = join(directory, 'storage'),
+    homeRoot = join(directory, 'home')
+  await mkdir(join(extensionPath, 'skills', 'codebook'), { recursive: true })
+  await mkdir(storageRoot)
+  await mkdir(homeRoot)
+  await writeFile(
+    join(extensionPath, 'skills', 'codebook', 'SKILL.md'),
+    '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n',
+  )
+  await cursorSkillDeployment.deployCursorSkill(
+    extensionPath,
+    storageRoot,
+    homeRoot,
+  )
+  const warnings: string[] = []
+  let reportWarning!: () => void
+  const warned = new Promise<void>((resolveWarned) => {
+    reportWarning = resolveWarned
+  })
+  let skillChecks = 0
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showWarningMessage(message: string) {
+            warnings.push(message)
+            reportWarning()
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: {
+          mcp: { registerServer(): void {}, unregisterServer(): void {} },
+        },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => ({
+          listening: true,
+          resourcesReleased: true,
+          descriptor: {
+            url: 'http://127.0.0.1/instance-1/mcp',
+            token: 'token-instance-1',
+            instanceId: 'instance-1',
+            workspace: directory,
+            apiVersion: '1.5',
+          },
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        ...cursorSkillDeployment,
+        // The real check, pointed at the temporary home; the learner's edit lands between the first and the second check.
+        verifyManagedCursorSkill: async (
+          checkedExtensionPath: string,
+          checkedStorageRoot: string,
+        ) => {
+          skillChecks += 1
+          if (skillChecks === 2)
+            await writeFile(
+              join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md'),
+              'An edit made by the learner.\n',
+            )
+          return cursorSkillDeployment.verifyManagedCursorSkill(
+            checkedExtensionPath,
+            checkedStorageRoot,
+            homeRoot,
+          )
+        },
+      },
+    },
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath,
+      globalStorageUri: { fsPath: storageRoot },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await warned
+
+    // Assert
+    assert.deepEqual(warnings, [
+      'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+    ])
   } finally {
     await boundary.deactivate()
     await rm(directory, { recursive: true, force: true })

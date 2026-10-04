@@ -53,6 +53,7 @@ import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
 } from './utils/classifyWikiUpdateEnd'
+import { cursorRegistrationNotice } from './utils/cursorRegistrationNotice'
 import { describeUpdateFailure } from './utils/describeUpdateFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
@@ -256,10 +257,7 @@ export function activate(
           await registerCursorConnection()
         } catch (error) {
           if (!stopping && !cursorRemoving && running === server)
-            void showNotice(
-              'warning',
-              `Codebook agent server started, but Cursor MCP registration failed: ${String(error)}. Run Codebook: Set Up AI Chat to repair the connection.`,
-            )
+            void showNotice('warning', cursorRegistrationNotice(error))
         }
       }
       if (running !== server || stopping || !server.endpoint.listening)
