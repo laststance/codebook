@@ -409,7 +409,7 @@ async function serveWikiThatAnswers(): Promise<{
       })
       return response.status
     },
-    async close() {
+    async close(): Promise<void> {
       await reader.close()
       await rm(projectRoot, { recursive: true, force: true })
     },
