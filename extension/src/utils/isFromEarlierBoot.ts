@@ -2,6 +2,27 @@ import { STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS } from '../constants'
 
 import type { BootIdentity } from './readRecordedOwner'
 
+/** Says whether two kernel boot ids differ: a kernel names every boot once, so two ids that differ are two boots. A boot time on either side decides nothing here. @example isOtherKernelBoot({ id: 'boot-1' }, { id: 'boot-2' }) // => true */
+function isOtherKernelBoot(
+  recorded: BootIdentity,
+  current: BootIdentity,
+): boolean {
+  return 'id' in recorded && 'id' in current && recorded.id !== current.id
+}
+
+/** Says whether a recorded boot time lies before this boot's by more than {@link STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS}: a restart puts this boot's time after the recorded one, and a recorded time that is later can only be a clock that moved. A boot id on either side decides nothing here. @example startedClearlyBefore({ startedAtMs: 1_000 }, { startedAtMs: 62_000 }) // => true */
+function startedClearlyBefore(
+  recorded: BootIdentity,
+  current: BootIdentity,
+): boolean {
+  return (
+    'startedAtMs' in recorded &&
+    'startedAtMs' in current &&
+    current.startedAtMs - recorded.startedAtMs >
+      STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
+  )
+}
+
 /**
  * Says whether a storage owner was recorded before this machine's last restart, so that {@link isRecordedOwnerGone} does not take a process id that is in use again for the owner.
  * Only what is certain counts: two different kernel boot ids, or a recorded boot time that lies before this boot's by more than {@link STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS}. Two clocks that disagree never make an owner one of an earlier boot.
@@ -20,13 +41,8 @@ export function isFromEarlierBoot(
   current: BootIdentity | undefined,
 ): boolean {
   if (!recorded || !current) return false
-  // A kernel names every boot once, so two ids that differ are two boots.
-  if ('id' in recorded && 'id' in current) return recorded.id !== current.id
-  // A restart puts this boot's time after the recorded one; a recorded time that is later can only be a clock that moved.
-  if ('startedAtMs' in recorded && 'startedAtMs' in current)
-    return (
-      current.startedAtMs - recorded.startedAtMs >
-      STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS
-    )
-  return false
+  return (
+    isOtherKernelBoot(recorded, current) ||
+    startedClearlyBefore(recorded, current)
+  )
 }

@@ -22,19 +22,22 @@ function isPresent(path: string): Promise<boolean> {
 /**
  * Says whether a connection descriptor names an editor process that no longer exists, so a descriptor left by a crashed window keeps nothing in place; called by {@link evidenceInUseElsewhere}.
  * @param descriptor - The `<instanceId>.connection.json` file of another instance.
- * @param identity - The machine and the boot of this process.
+ * @param identity - The machine and the boot of this process; {@link currentStorageOwner} when left out.
  * @returns
  * - `true` when the descriptor names this machine and either an earlier boot or a process id that no longer exists ({@link isRecordedOwnerGone})
  * - `false` for a descriptor of another machine, one without a machine or a process id (written by an earlier build), one that cannot be read, and one whose process may still run: each may belong to a running window
  * @example
- * await isDescriptorOwnerGone('/storage/agent/instance.connection.json', await currentStorageOwner()) // => true after its window was killed
+ * await isDescriptorOwnerGone('/storage/agent/instance.connection.json') // => true after its window was killed
  */
 async function isDescriptorOwnerGone(
   descriptor: string,
-  identity: StorageOwnerIdentity,
+  identity?: StorageOwnerIdentity,
 ): Promise<boolean> {
   const owner = await readRecordedOwner(descriptor)
-  return owner !== undefined && isRecordedOwnerGone(owner, identity)
+  return (
+    owner !== undefined &&
+    isRecordedOwnerGone(owner, identity ?? (await currentStorageOwner()))
+  )
 }
 
 /**
@@ -64,9 +67,6 @@ export async function evidenceInUseElsewhere(
   return (
     (await isPresent(evidenceDirectory)) &&
     (await isPresent(descriptor)) &&
-    !(await isDescriptorOwnerGone(
-      descriptor,
-      identity ?? (await currentStorageOwner()),
-    ))
+    !(await isDescriptorOwnerGone(descriptor, identity))
   )
 }

@@ -8,6 +8,7 @@ import { isSameStorageMachine } from './isSameStorageMachine'
 import { placeStorageLock } from './placeStorageLock'
 import {
   readRecordedOwner,
+  type RecordedOwner,
   type StorageOwnerIdentity,
 } from './readRecordedOwner'
 import { removeStaleStorageClaims } from './removeStaleStorageClaims'
@@ -15,6 +16,26 @@ import { removeStaleStorageLock } from './removeStaleStorageLock'
 import { systemErrorCode } from './systemErrorCode'
 
 const pendingWriters = new Map<string, Promise<void>>()
+
+/**
+ * Removes the storage lock when it still names the process that took it; called by {@link withStorageLock} when its write has ended.
+ * Only a lock that names this process is this call's to remove; one that names another writer, or whose owner cannot be read, is another window's and is left to it.
+ * @param path - The `writer.lock` file.
+ * @param holder - The owner record this process placed.
+ * @throws What removing the lock throws, except for a lock that is already gone: that one is released.
+ * @example
+ * await releaseStorageLock('/storage/learning/writer.lock', { pid: process.pid, hostname: 'workstation' })
+ */
+async function releaseStorageLock(
+  path: string,
+  holder: RecordedOwner & StorageOwnerIdentity,
+): Promise<void> {
+  const owner = await readRecordedOwner(path)
+  if (owner?.pid !== holder.pid || !isSameStorageMachine(owner, holder)) return
+  await unlink(path).catch((error: unknown) => {
+    if (systemErrorCode(error) !== 'ENOENT') throw error
+  })
+}
 
 /**
  * Queues this process's library/recorder writes and excludes other windows with the file `writer.lock` in the storage directory; called by every writer of private storage ({@link LearningLibrary}, {@link RecordingStore}, {@link RepositoryBookStore}, the Cursor skill and catalog).
@@ -70,13 +91,7 @@ export async function withStorageLock<Value>(
         await removeStaleStorageClaims(path, holder).catch(() => undefined)
         return await operation()
       } finally {
-        const owner = await readRecordedOwner(path)
-        // Only a lock that names this process is this call's to remove; one that names another writer, or whose owner cannot be read, is another window's and is left to it.
-        if (owner?.pid === holder.pid && isSameStorageMachine(owner, holder))
-          // A lock that is already gone is released; only one that stays is a failure.
-          await unlink(path).catch((error: unknown) => {
-            if (systemErrorCode(error) !== 'ENOENT') throw error
-          })
+        await releaseStorageLock(path, holder)
       }
     },
   )

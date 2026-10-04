@@ -1,6 +1,23 @@
+import type { Stats } from 'node:fs'
 import { lstat, readdir } from 'node:fs/promises'
 
 import { STORAGE_LOCK_UNWRITTEN_GRACE_MS } from '../constants'
+
+/** Says whether an inspected entry is of the expected kind and holds nothing: a file of zero bytes, or a folder without an entry; a folder that cannot be listed may hold something. @example await holdsNothing('/storage/learning/writer.lock', await lstat('/storage/learning/writer.lock'), 'file') // => true for a 0-byte file */
+async function holdsNothing(
+  path: string,
+  entry: Stats,
+  kind: 'file' | 'directory',
+): Promise<boolean> {
+  if (kind === 'file') return entry.isFile() && entry.size === 0
+  return (
+    entry.isDirectory() &&
+    (await readdir(path).then(
+      (names) => names.length === 0,
+      () => false,
+    ))
+  )
+}
 
 /**
  * Says whether a lock file or a prepared takeover claim was created and never filled, which is what a window leaves that is killed between creating and writing it; called by {@link isStaleStorageLock} for a file without an owner and by {@link removeStaleStorageClaims} for a claim folder without one.
@@ -19,14 +36,6 @@ export async function isLeftEmpty(
   kind: 'file' | 'directory',
 ): Promise<boolean> {
   const entry = await lstat(path).catch(() => undefined)
-  if (!entry) return false
-  const isEmpty =
-    kind === 'file'
-      ? entry.isFile() && entry.size === 0
-      : entry.isDirectory() &&
-        (await readdir(path).then(
-          (names) => names.length === 0,
-          () => false,
-        ))
-  return isEmpty && Date.now() - entry.mtimeMs > STORAGE_LOCK_UNWRITTEN_GRACE_MS
+  if (!entry || !(await holdsNothing(path, entry, kind))) return false
+  return Date.now() - entry.mtimeMs > STORAGE_LOCK_UNWRITTEN_GRACE_MS
 }
