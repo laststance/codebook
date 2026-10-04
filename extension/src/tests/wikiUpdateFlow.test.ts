@@ -294,6 +294,37 @@ test('a chat that cannot open ends the update as failed, says what to install an
   }
 })
 
+// Value: protects=the next step on the Wiki page when the editor's chat command fails with a long error; fails_when=the failure is recorded as an outside text, so the page cuts it at 160 characters and "Install or enable GitHub Copilot Chat…" is hidden in the disclosure, or the editor's text is quoted without a bound; why_new=Cycle 0045 local review wiki-1 #9; seam=none
+test('a chat that cannot open with a long error is recorded as Codebook’s own sentence, with the error cut and the next step kept', async () => {
+  // Arrange: the chat command throws a text of 150 characters.
+  const wiki = await openWikiWindow({
+    chatFails:
+      `No chat provider is registered for this window: ${'the extension host did not answer. '.repeat(3)}`.slice(
+        0,
+        150,
+      ),
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.deepEqual(
+      status.state === 'failed'
+        ? [status.reason, status.isCodebookSentence]
+        : [],
+      [
+        'The editor chat could not be opened (No chat provider is registered for this window: the extension host did not answer. the extension host did not answer. th…). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.',
+        true,
+      ],
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a configured Wiki output folder is the one the update state names', async () => {
   // Arrange
   const wiki = await openWikiWindow({ outputSetting: 'docs/my-wiki' })

@@ -276,6 +276,29 @@ test('an agent error with the site untouched ends as failed with the site kept',
   })
 })
 
+// Value: protects=the next step of a failure Codebook worded itself (a chat that did not open) on the Wiki page, which cuts a reason at 160 characters unless it is marked as Codebook's sentence; fails_when=a failure the host hands over can never be marked, so its next step moves into the disclosure; why_new=Cycle 0045 local review wiki-1 #9; seam=none
+test('a failure sentence Codebook wrote itself ends the run as failed with the reason marked as Codebook’s sentence', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    failure:
+      'The editor chat did not open within 30 seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.',
+    isFailureCodebookSentence: true,
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    reason:
+      'The editor chat did not open within 30 seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.',
+    isCodebookSentence: true,
+    site: 'kept',
+  })
+})
+
 test('a Cursor run past its bound ends as timed out, the state VS Code reports for the same event', () => {
   // Arrange
   const cursor: WikiUpdateEndFacts = {

@@ -32,6 +32,8 @@ export type WikiUpdateEndFacts = {
   blockingPaths: string[]
   /** What stopped the agent or the watch, as a sentence from the CLI or a thrown error; undefined when nothing failed. */
   failure: string | undefined
+  /** Set when Codebook wrote `failure` itself and ended it with the learner's next step (the chat that did not open); the result then marks its reason, so a reader shows it whole. */
+  isFailureCodebookSentence?: boolean
 }
 
 /** The remedy for each cause that keeps a new publish from being checked against the source. A retry helps only where the cause can pass by itself. */
@@ -273,7 +275,7 @@ function succeededEnd(
  * @param site - Whether the published site was replaced meanwhile.
  * @returns
  * - Learner files in the way: `conflict` with cause `learner-file` and a copy of the paths, also when a failure sentence is there
- * - A failure sentence from the agent or a thrown error: `failed` with that reason
+ * - A failure sentence from the agent or a thrown error: `failed` with that reason, marked as a Codebook sentence when the facts say Codebook wrote it
  * - Otherwise: `undefined`
  * @example
  * blockedEnd({ ...facts, blockingPaths: ['pages/notes.html'] }, 'kept') // => { state: 'conflict', paths: ['pages/notes.html'], cause: 'learner-file', site: 'kept' }
@@ -290,7 +292,12 @@ function blockedEnd(
       site,
     }
   if (facts.failure !== undefined)
-    return { state: 'failed', reason: facts.failure, site }
+    return {
+      state: 'failed',
+      reason: facts.failure,
+      ...(facts.isFailureCodebookSentence ? { isCodebookSentence: true } : {}),
+      site,
+    }
   return undefined
 }
 

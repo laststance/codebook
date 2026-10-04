@@ -67,6 +67,7 @@ import {
   useEditorMachineId,
 } from './utils/currentStorageOwner'
 import { cursorRegistrationNotice } from './utils/cursorRegistrationNotice'
+import { describeWikiChatOpenFailure } from './utils/describeWikiChatOpenFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
@@ -738,7 +739,11 @@ export function activate(
     observed: Partial<
       Pick<
         WikiUpdateEndFacts,
-        'cancelled' | 'timedOut' | 'blockingPaths' | 'failure'
+        | 'cancelled'
+        | 'timedOut'
+        | 'blockingPaths'
+        | 'failure'
+        | 'isFailureCodebookSentence'
       >
     > & {
       publish?: { token: string; published: WikiUpdateEndFacts['published'] }
@@ -764,6 +769,7 @@ export function activate(
       uncoveredAtStart: run.uncoveredAtStart,
       blockingPaths: observed.blockingPaths ?? [],
       failure: observed.failure,
+      isFailureCodebookSentence: observed.isFailureCodebookSentence,
     })
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
@@ -1197,14 +1203,17 @@ export function activate(
               WIKI_CHAT_OPEN_TIMEOUT_MS,
             )
           } catch (error) {
+            // Both sentences of a chat that did not open end with the next step, so the page shows them whole.
             await finishWikiUpdate(run, {
-              failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
+              failure: describeWikiChatOpenFailure(thrownMessage(error)),
+              isFailureCodebookSentence: true,
             })
             return
           }
           if (!didChatOpen) {
             await finishWikiUpdate(run, {
               failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
+              isFailureCodebookSentence: true,
             })
             return
           }

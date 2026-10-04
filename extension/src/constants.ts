@@ -484,6 +484,8 @@ export const WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS = 60_000
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 /** How long a VS Code Wiki update waits for the editor's chat command to return before the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
+/** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
+export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
 /** Milliseconds in one second, for naming a bound in seconds. */
 export const MS_PER_SECOND = 1_000
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */

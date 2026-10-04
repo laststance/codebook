@@ -47,7 +47,7 @@ export type HeldUpdateStep =
  * @param options.projectRoot - Canonical folder the window has open.
  * @param options.outputSetting - Value of `codebook.wikiOutputDirectory`; `.codebook/wiki` when omitted.
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
- * @param options.chatFails - Makes VS Code's chat command throw.
+ * @param options.chatFails - Makes VS Code's chat command throw: "Chat is unavailable" for `true`, the given message for a text.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
  * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
@@ -72,7 +72,7 @@ export async function openWikiUpdateWindow(options: {
   projectRoot: string
   outputSetting?: string
   cursor?: boolean
-  chatFails?: boolean
+  chatFails?: boolean | string
   cursorAgent?: (
     root: string,
     prompt: string,
@@ -188,7 +188,12 @@ export async function openWikiUpdateWindow(options: {
             return { dispose(): void {} }
           },
           executeCommand: async (name: string, argument?: unknown) => {
-            if (options.chatFails) throw new Error('Chat is unavailable')
+            if (options.chatFails)
+              throw new Error(
+                options.chatFails === true
+                  ? 'Chat is unavailable'
+                  : options.chatFails,
+              )
             await passHold('chat-open')
             chatRequests.push({
               name,
