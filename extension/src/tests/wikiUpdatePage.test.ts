@@ -1012,7 +1012,9 @@ test('the refusal that names another window’s update is shown whole, with its 
       host: 'vscode',
       finishedAt: '2026-10-03T11:58:00.000Z',
       reason:
-        'Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57). Wait for it to finish, or delete that folder, then press Update LLM Wiki again.',
+        'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57 GMT+9). Codebook waits for it until 12:12 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification.',
+      // Codebook wrote this sentence itself, so the page shows it whole.
+      isCodebookSentence: true,
       site: 'kept',
       ...output,
     },
@@ -1022,7 +1024,7 @@ test('the refusal that names another window’s update is shown whole, with its 
   // Assert
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    'Update failed at 11:58: Another editor window or an earlier chat appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57). Wait for it to finish, or delete that folder, then press Update LLM Wiki again. The last usable site is kept.',
+    'Update failed at 11:58: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2a1e-8b7d-4c1a-9e55-0d2f6a7b8c90, written 11:57 GMT+9). Codebook waits for it until 12:12 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.',
   )
   assert.equal(page.find('[data-codebook-update-detail]'), undefined)
 })
