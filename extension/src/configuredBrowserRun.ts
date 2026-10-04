@@ -2527,7 +2527,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.progressDeadline(ACTIVE_TIMEOUT_MS, () => this.afterDeadlineReason())
     this.track(this.observeAfter(continuation))
   }
-  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, and waits until no participant is still paused at a pause the adapter made for itself. @example await this.observeAfter(continuation) */
+  /** Confirms input, declared DOM conditions and renderer ACK while no additional pause has invalidated the original completion, waits until no participant is still paused at a pause the adapter made for itself, and reads the conditions once more after the after image, failing the run when they no longer hold. @example await this.observeAfter(continuation) */
   private async observeAfter(continuation: Continuation): Promise<void> {
     const current = (): void => {
       this.alive()
@@ -2566,13 +2566,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } while (!this.adapterPausesRetired())
     await this.capture('after', current)
     current()
-    await waitUntil(
-      () => this.adapterPausesRetired(),
-      ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
-      ACTIVE_TIMEOUT_MS,
-      this.abort.signal,
-    )
-    current()
+    // The page can change while the image is captured (a participant paused during the capture runs on at its resume): the conditions are read once more with nothing paused, and a result that no longer holds is not certified.
+    let afterCapture: z.infer<typeof domResultSchema>
+    do {
+      await waitUntil(
+        () => this.adapterPausesRetired(),
+        ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
+        ACTIVE_TIMEOUT_MS,
+        this.abort.signal,
+      )
+      current()
+      afterCapture = await this.readDom('after')
+      current()
+    } while (!this.adapterPausesRetired())
+    if (!afterCapture.ready) {
+      this.fail(this.changedAfterCaptureReason(afterCapture.failure))
+      return
+    }
     this.operation!.afterVerified = true
     this.status = 'completed'
     clearTimeout(this.progressTimer)
@@ -2636,6 +2646,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     phase: 'before' | 'after',
     failure: ConfiguredDomFailure,
   ): string {
+    return `Timed out waiting for configured ${phase} conditions: ${this.failedConditionText(phase, failure)}`
+  }
+  /**
+   * Names a declared DOM condition that did not hold, with the page's reason and the hint that corrects it, for {@link conditionTimeoutText} and {@link changedAfterCaptureReason}.
+   * @param phase - Whether the condition guards the input or proves the result.
+   * @param failure - What the page answered.
+   * @returns The condition (or the click target), the reason and a period, followed by the hint when there is one.
+   * @example
+   * ```ts
+   * this.failedConditionText('after', { conditionIndex: 0, reason: 'not-visible' }) // 'condition 1 (visible) not-visible.'
+   * ```
+   */
+  private failedConditionText(
+    phase: 'before' | 'after',
+    failure: ConfiguredDomFailure,
+  ): string {
     const { conditionIndex, reason } = failure
     const failedCondition =
       conditionIndex === undefined
@@ -2645,7 +2671,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       conditionIndex === undefined
         ? 'click target'
         : `condition ${conditionIndex + 1} (${failedCondition?.kind ?? 'unknown'})`
-    return `Timed out waiting for configured ${phase} conditions: ${condition} ${reason}.${configuredConditionHint(phase, failedCondition, failure)}`
+    return `${condition} ${reason}.${configuredConditionHint(phase, failedCondition, failure)}`
+  }
+  /**
+   * Words the failure of a run whose after conditions held before the after image was captured and no longer held when {@link observeAfter} read them again after it, so such a run is never certified as demonstrated.
+   * @param failure - What the page answered at the second read; `undefined` when it named no condition.
+   * @returns The text that says what was observed, which condition no longer held, and what to declare before a new run.
+   * @example
+   * ```ts
+   * this.changedAfterCaptureReason({ conditionIndex: 0, reason: 'not-visible' }) // 'Repository after conditions held before the after image was captured and no longer held when they were read again after it: condition 1 (visible) not-visible. The page changed …'
+   * ```
+   */
+  private changedAfterCaptureReason(
+    failure: ConfiguredDomFailure | undefined,
+  ): string {
+    const observed =
+      'Repository after conditions held before the after image was captured and no longer held when they were read again after it'
+    return `${failure ? `${observed}: ${this.failedConditionText('after', failure)}` : `${observed}.`} The page changed during the capture, so the result is not demonstrated. Declare in configuration.action.after a condition that still holds once the action has finished, then start a new run.`
   }
   /** Polls conditions without repeating application input; setup and after verification call it. @example await this.waitForDom('after') */
   private async waitForDom(phase: 'before' | 'after'): Promise<void> {

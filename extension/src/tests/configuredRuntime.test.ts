@@ -1717,6 +1717,55 @@ test('a run does not complete while the page is paused at a pause the debugger m
   )
 })
 
+// Cycle 0045 (X7-B.1): red while the after conditions were read only before the after image was captured, so a page that changed during the capture completed as demonstrated.
+test('a page that changed while the after image was captured is not saved as demonstrated, and the run ends naming the after condition that no longer held', async (context) => {
+  // Arrange: the last continuation is acknowledged, the after conditions held and the after image is being presented.
+  const {
+    run,
+    holdCapture,
+    announceScript,
+    emitCdpPauseAt,
+    manualResume,
+    failAfterWith,
+  } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  announceScript('hook', 'eval-ca9ab6a4.cdp')
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => run.view().snapshots[0], 'first stop'),
+    held = holdCapture('after')
+  await run.continue('browser', snapshot.pause)
+  await held.started
+  // Act: the adapter's hook pauses the page during the capture, and the page's text is replaced before that pause is resumed.
+  emitCdpPauseAt({
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  failAfterWith({ conditionIndex: 0, reason: 'text-mismatch' })
+  held.release()
+  await waitUntil(
+    () => run.view().captures.after?.status === 'captured',
+    'after image captured',
+  )
+  manualResume()
+  await waitUntil(
+    () => ['completed', 'failed'].includes(run.view().status),
+    'the run ended',
+  )
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    [...run.view().failures],
+    [
+      "Repository after conditions held before the after image was captured and no longer held when they were read again after it: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. The page changed during the capture, so the result is not demonstrated. Declare in configuration.action.after a condition that still holds once the action has finished, then start a new run.",
+    ],
+  )
+  assert.equal(run.view().operation?.afterVerified, false)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
 /** The hints sentence every binding failure ends with. */
 const MAPPED_POSITION_HINTS =
   'These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.'
