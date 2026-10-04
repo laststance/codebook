@@ -4207,6 +4207,43 @@ test('a group emptied by a tab close in a two-row layout leaves the same layout 
   }
 })
 
+// Value: protects=reader tests in Cursor after an extension-host restart that left dead panes in two groups: the fake editor ends with the groups the editor ends with; fails_when=the fake Cursor removes the first emptied group, answers that removal with new group objects and then no longer finds the second emptied group, which stays as an empty group no editor would keep; why_new=local CodeRabbit review of Cycle 0045 (the loop held the group objects of before the first removal); seam=none
+test('the fake Cursor removes every group that dead panes leave empty in one close, although each removal gives the remaining groups new objects', async () => {
+  // Arrange: four native groups side by side; the third and the fourth hold one dead pane each, and the editor answers tab changes as Cursor does.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 0.25 }, { size: 0.25 }, { size: 0.25 }, { size: 0.25 }],
+    })
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        3,
+      ),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 4)
+    harness.replaceGroupObjectsOnTabChanges()
+    const groupsBefore = harness.groups.map((group) => ({
+      column: group.viewColumn,
+      tabs: group.tabs.length,
+    }))
+
+    // Act: one request closes both dead panes.
+    await harness.editor.window.tabGroups.close([deadApplication, deadStudy])
+
+    // Assert: both emptied groups are gone, and the two groups that stay keep their columns.
+    assert.deepEqual(
+      groupsBefore.map((group) => group.column),
+      [1, 2, 3, 4],
+    )
+    assert.deepEqual(
+      harness.groups.map((group) => group.viewColumn),
+      [1, 2],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests after a moved pane seeing the grid the editor leaves; fails_when=the fake editor rebuilds the grid as columns when a pane's move empties its group, so two rows become two columns; why_new=Cycle 0045 D-M4 (the pane-move copy of the removal of an emptied group flattened the layout too); seam=the workspace harness's fake editor
 test('a group emptied by a moved pane in a two-row layout leaves the same layout as one emptied by a disposed pane', async () => {
   // Arrange: the third group, beside the second in the lower row, holds one pane.

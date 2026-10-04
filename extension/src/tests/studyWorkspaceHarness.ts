@@ -999,11 +999,20 @@ export async function workspaceHarness(
         emptiedByDeadPane.push(group)
     }
     // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
-    for (const emptied of emptiedByDeadPane) {
+    // From the last column to the first, each group looked up again by its column: a removal renumbers the later columns, and Cursor answers it with new group objects.
+    const emptiedColumns = emptiedByDeadPane
+      .map((group) => group.viewColumn)
+      .toSorted((left, right) => right - left)
+    for (const emptiedColumn of emptiedColumns) {
       const mainGroups = groups.filter(
         (candidate) => candidate !== separateEditorPart?.group,
       )
       if (!nativeLayout || mainGroups.length === 1) break
+      const emptied = mainGroups.find(
+        (candidate) =>
+          candidate.viewColumn === emptiedColumn && !candidate.tabs.length,
+      )
+      if (!emptied) continue
       // The keyboard focus of the removed group goes to the group before it, or to the next one when it was the first.
       if (activeTabGroup === emptied) {
         const index = groups.indexOf(emptied)
@@ -1511,9 +1520,21 @@ export async function workspaceHarness(
               ))
                 removeEmptiedGroup(group)
             })
-          } else if (closeDisposedPanelTabsLater && emptied.length)
-            for (const group of emptied) removeEmptiedGroup(group)
-          else replaceGroupObjects()
+          } else if (closeDisposedPanelTabsLater && emptied.length) {
+            // From the last column to the first, each group looked up again by its column, as in the close of dead panes above.
+            const laterEmptiedColumns = emptied
+              .map((group) => group.viewColumn)
+              .toSorted((left, right) => right - left)
+            for (const emptiedColumn of laterEmptiedColumns) {
+              const group = groups.find(
+                (candidate) =>
+                  candidate !== separateEditorPart?.group &&
+                  candidate.viewColumn === emptiedColumn &&
+                  !candidate.tabs.length,
+              )
+              if (group) removeEmptiedGroup(group)
+            }
+          } else replaceGroupObjects()
         }
         // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
         if (

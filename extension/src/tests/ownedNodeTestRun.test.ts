@@ -1282,7 +1282,16 @@ test('a run cancelled while the adapter does not answer the breakpoint read ends
       () => 'advanced',
       (error: unknown) => String(error),
     )
-    await harness.bindingReadStarted
+    // Bounded: a run that never asks where its breakpoint is bound fails this test instead of hanging the file.
+    let hasBindingReadStarted = false
+    void harness.bindingReadStarted.then(() => {
+      hasBindingReadStarted = true
+    })
+    await waitUntil(
+      () => hasBindingReadStarted,
+      'the run’s read of its pending breakpoint’s binding',
+      2_000,
+    )
 
     // Act
     await harness.run.stop()

@@ -11,8 +11,8 @@ test('a time the editor writes names its time zone, so a remote host in another 
   const onAHostInTokyo = formatClockTime(moment, { timeZone: 'Asia/Tokyo' })
   const onAHostInUtc = formatClockTime(moment, { timeZone: 'UTC' })
 
-  // Assert: the hour follows the host's zone and the zone is written beside it (a 12-hour locale writes 09:10 PM).
-  assert.match(onAHostInTokyo, /^(?:21:10|09:10\s?PM) GMT\+9$/)
+  // Assert: the hour follows the host's zone and the zone is written beside it, in the host's own language (a 12-hour locale writes 09:10 PM; a Japanese one names Tokyo's zone JST).
+  assert.match(onAHostInTokyo, /^(?:21:10|09:10\s?PM) (?:GMT\+9|JST)$/)
   assert.match(onAHostInUtc, /^(?:12:10|12:10\s?PM) UTC$/)
 })
 
