@@ -269,6 +269,8 @@ async function findAddedSources(
           'diff',
           '--name-only',
           '--diff-filter=A',
+          // A file moved in from a place the Wiki does not index is a rename to Git, which the filter would drop: without rename detection it is an added file.
+          '--no-renames',
           '--relative',
           '-z',
           revision,

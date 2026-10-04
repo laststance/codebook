@@ -440,6 +440,66 @@ test('a file added under an excluded directory keeps the Wiki current', async ()
   }
 })
 
+// Value: protects=the freshness label and the Update button for a source file the learner moves into the indexed tree; fails_when=Git's rename detection reports the move as a rename, which the added-files filter drops, so the Wiki reads current and Update answers "Already current"; why_new=Cycle 0045 local review wiki-1 #5; seam=none
+test('a source file moved in from an excluded folder counts as added', async () => {
+  // Arrange: a repository whose Wiki indexes src/a.ts and excludes examples.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-freshness-'))
+  const root = await realpath(directory)
+  const indexed = 'export const answer = 1;\n'
+  await mkdir(join(root, 'src'))
+  await mkdir(join(root, 'examples'))
+  await writeFile(join(root, 'src/a.ts'), indexed)
+  await writeFile(
+    join(root, 'examples/x.ts'),
+    'export const example = "moved into the source tree later";\n',
+  )
+  await runGit('git', ['init', '-q'], { cwd: root })
+  await runGit('git', ['add', '.'], { cwd: root })
+  await runGit(
+    'git',
+    [
+      '-c',
+      'user.name=Codebook',
+      '-c',
+      'user.email=codebook@example.invalid',
+      'commit',
+      '-qm',
+      'baseline',
+    ],
+    { cwd: root },
+  )
+  const { stdout: revisionOutput } = await runGit(
+    'git',
+    ['rev-parse', 'HEAD'],
+    { cwd: root },
+  )
+  const included = [
+    {
+      path: 'src/a.ts',
+      sha256: createHash('sha256').update(indexed).digest('hex'),
+    },
+  ]
+  try {
+    // Act
+    await runGit('git', ['mv', 'examples/x.ts', 'src/x.ts'], { cwd: root })
+    const freshness = await inspectDeepWikiFreshness(
+      root,
+      included,
+      revisionOutput.trim(),
+      ['examples'],
+    )
+
+    // Assert
+    assert.deepEqual(freshness, {
+      status: 'changed',
+      changedPaths: [],
+      addedPaths: ['src/x.ts'],
+    })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('a file added under a directory glob exclusion keeps the Wiki current', async () => {
   // Arrange
   const directory = await mkdtemp(
