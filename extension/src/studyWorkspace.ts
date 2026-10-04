@@ -192,6 +192,7 @@ import {
 } from './utils/unconfirmedLayoutReason'
 import { unreportedEditorFocusObstacle } from './utils/unreportedEditorFocusObstacle'
 import { untilAborted } from './utils/untilAborted'
+import { withoutErrorName } from './utils/withoutErrorName'
 import { withoutStudy } from './utils/withoutStudy'
 import { webviewFocusReceiptSchema } from './webviewFocusSchemas'
 
@@ -918,7 +919,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link isCodebookTabWithoutFocus}, by {@link isPaneTabWithoutOwner} and by the foreign-preview search of {@link readMainEditorGrid}.
+   * Tells whether a tab input is the webview of a Codebook editor pane; asked of a tab by {@link unkeptPreview}, by {@link readStudyPane} while it waits for its pane's tab, by {@link isCodebookTabWithoutFocus}, by {@link isPaneTabWithoutOwner}, by the foreign-preview search of {@link readMainEditorGrid}, by {@link ensureApp}, {@link isApplicationCoveredByTab} and {@link hasUnownedPaneTab}, and by {@link open} while it waits for the Application pane's reveal.
    * The view type alone cannot tell a live pane from one an earlier extension host left behind; the caller decides that from the panels it owns.
    * @param input - The `input` of an editor tab.
    * @param kinds - The registered view types to match; every Codebook pane when none is given.
@@ -5090,9 +5091,8 @@ export class StudyWorkspace {
               vscode.window.tabGroups.all.some(
                 (group) =>
                   group.viewColumn === app.viewColumn &&
-                  group.activeTab?.input instanceof vscode.TabInputWebview &&
-                  isCodebookPaneViewType(
-                    group.activeTab.input.viewType,
+                  this.isCodebookPaneInput(
+                    group.activeTab?.input,
                     'codebook.scopedBrowser',
                   ),
               ),
@@ -6710,7 +6710,7 @@ export class StudyWorkspace {
     void showPlainNotice(
       vscode.window,
       'error',
-      `Codebook could not open the learning replay: ${state.reason.replace(/^[A-Za-z]*Error: /, '')}`,
+      `Codebook could not open the learning replay: ${withoutErrorName(state.reason)}`,
     )
   }
 
@@ -8402,8 +8402,7 @@ export class StudyWorkspace {
   private ensureApp(): vscode.WebviewPanel {
     if (this.app) return this.app
     const owned = (tab: vscode.Tab) =>
-      tab.input instanceof vscode.TabInputWebview &&
-      isCodebookPaneViewType(tab.input.viewType, 'codebook.scopedBrowser')
+      this.isCodebookPaneInput(tab.input, 'codebook.scopedBrowser')
     const contents = (group: vscode.TabGroup) =>
       JSON.stringify(
         group.tabs
@@ -8732,13 +8731,7 @@ export class StudyWorkspace {
     )?.activeTab
     return Boolean(
       activeTab &&
-      !(
-        activeTab.input instanceof vscode.TabInputWebview &&
-        isCodebookPaneViewType(
-          activeTab.input.viewType,
-          'codebook.scopedBrowser',
-        )
-      ),
+      !this.isCodebookPaneInput(activeTab.input, 'codebook.scopedBrowser'),
     )
   }
 
@@ -10814,8 +10807,7 @@ export class StudyWorkspace {
     return vscode.window.tabGroups.all.some((group) =>
       group.tabs.some(
         (tab) =>
-          tab.input instanceof vscode.TabInputWebview &&
-          isCodebookPaneViewType(tab.input.viewType, ...kinds) &&
+          this.isCodebookPaneInput(tab.input, ...kinds) &&
           !this.inheritedPaneTabs.has(tab),
       ),
     )
