@@ -4920,6 +4920,15 @@ export class StudyWorkspace {
     this.playback?.hide()
     this.clearLearningSummary()
     const pending = (this.closingPromise = (async () => {
+      // One bound for every storage wait of this close, counted from the first of them: a writer that never returns is waited for once, not once per wait.
+      let storageDeadlineMs: number | undefined
+      const storageTimeLeftMs = (): number =>
+        Math.max(
+          0,
+          (storageDeadlineMs ??=
+            performance.now() + READER_CLOSE_STORAGE_TIMEOUT_MS) -
+            performance.now(),
+        )
       await this.refreshing
       const record = this.currentRecord()
       if (record && this.service && !record.stopped) {
@@ -4927,7 +4936,11 @@ export class StudyWorkspace {
           instanceId: this.service.instanceId,
           runId: record.id,
         })
-        await this.checkpoint(this.service, record, true)
+        // The run's final checkpoint is a storage write too: one that never returns must not leave the reader closing, and it keeps running.
+        await settledWithin(
+          this.checkpoint(this.service, record, true),
+          storageTimeLeftMs(),
+        )
       }
       await Promise.allSettled([
         this.arranging,
@@ -4938,11 +4951,8 @@ export class StudyWorkspace {
       await this.playback
         ?.settle(undefined, PRESENTATION_READY_TIMEOUT_MS)
         .catch(() => {})
-      // A storage write that never returns must not keep the reader closing: each wait below is bounded, and the write itself keeps running.
-      await settledWithin(
-        this.playback?.saved(),
-        READER_CLOSE_STORAGE_TIMEOUT_MS,
-      )
+      // A storage write that never returns must not keep the reader closing: the waits below share the bound above, and the write itself keeps running.
+      await settledWithin(this.playback?.saved(), storageTimeLeftMs())
       this.dropReplayViewport()
       this.nodeHistoryPlaybackController?.dispose()
       this.nodeHistoryPlaybackController = undefined
@@ -4954,12 +4964,9 @@ export class StudyWorkspace {
       await this.outlineRendering
       await settledWithin(
         Promise.allSettled(this.archiveWrites.values()),
-        READER_CLOSE_STORAGE_TIMEOUT_MS,
+        storageTimeLeftMs(),
       )
-      await settledWithin(
-        this.library?.flush(),
-        READER_CLOSE_STORAGE_TIMEOUT_MS,
-      )
+      await settledWithin(this.library?.flush(), storageTimeLeftMs())
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
         .filter((tab) => this.ownsCapturedSourceTab(tab))

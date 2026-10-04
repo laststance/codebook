@@ -17,6 +17,11 @@ import {
   openRetainedStudy,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntil,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 for (const stage of [
   'capture-presentation-pose',
   'restore-presentation-pose',
@@ -1505,6 +1510,61 @@ test('closing the reader finishes after the storage bound while a library write 
     assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
     context.mock.timers.reset()
+    releaseLock()
+    await harness.close()
+  }
+})
+
+// Value: protects=Close Study Workspace ending while a run is still alive and learning storage does not answer, and the workspace opening again afterwards; fails_when=close() awaits the run's final checkpoint without a bound, so a write that never returns leaves the reader closing for good and every later Open is refused; why_new=Cycle 0045 X7-A.2 (the code half of row DOC-4: the 5 s bound did not cover the forced checkpoint before it); seam=the storage lock of the library's directory, held by the test as another writer of this process
+test('closing the Study workspace during a run whose checkpoint write never returns ends within the close bound and the workspace opens again', async (context) => {
+  // Arrange: the reader follows a run that has not stopped; another writer holds the storage lock, so the run's final checkpoint cannot be written.
+  const harness = await workspaceHarness()
+  let releaseLock = (): void => {}
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'run-alive-at-close',
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await harness.reader.open()
+    const library = harness.reader['library']
+    assert.ok(library)
+    let lockTaken = false
+    const lockHeld = withStorageLock(
+      library.directory,
+      () =>
+        new Promise<void>((resolve) => {
+          lockTaken = true
+          releaseLock = resolve
+        }),
+    )
+    await waitUntil(() => lockTaken, 'the held storage lock', 1_000)
+    let closed = false
+
+    // Act: the close bound passes on a faked clock.
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    enableFakeClock(context)
+    const closedAfterMs = await advanceClockUntil(context, () => closed, 60_000)
+    resetFakeClock(context)
+    releaseLock()
+    await lockHeld
+    await closing
+    await harness.reader.open()
+
+    // Assert: closed while the write was still held, at the one 5 s bound; the rest of the close takes a few 50 ms steps of the faked clock, far from a second bound.
+    assert.equal(
+      closedAfterMs !== undefined &&
+        closedAfterMs >= 5_000 &&
+        closedAfterMs <= 5_500,
+      true,
+    )
+    assert.equal(harness.reader.presentationState().state, 'open')
+  } finally {
+    resetFakeClock(context)
     releaseLock()
     await harness.close()
   }
