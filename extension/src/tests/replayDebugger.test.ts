@@ -2828,6 +2828,70 @@ test('a wait for native Variables ends at once without the scopes when the learn
   }
 })
 
+// Value: protects=a recorded stop deep in library frames committing with its image at once and without a hint for values that do not exist; fails_when=the presentation reads only once, before any Call Stack page was served, whether the stop has values to load, so after the first page moved the inspection frame to a top frame without scopes it waits the whole grace and commits as uninspected or inspected; why_new=Cycle 0045 A-L4; seam=none
+test('a stop whose first frame with source lies past the first Call Stack page and whose top frame has no scopes commits as a stop without values once that page is loaded, without waiting the inspection grace', async (context) => {
+  // Arrange: twenty library frames without source or scopes lie above the first frame with source, which holds the recorded values.
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const sourceText = 'const pending = true'
+  const deepSourceSnapshot: ReplayDebugSnapshot = {
+    version: 1,
+    frames: [
+      ...Array.from({ length: 20 }, (_unused, index) => ({
+        name: `libraryFrame${index}`,
+        line: 1,
+        column: 1,
+        scopes: [],
+      })),
+      {
+        name: 'LoginButton',
+        line: 1,
+        column: 1,
+        source: {
+          name: 'app/ui/login-form.tsx',
+          text: sourceText,
+          hash: sha256(sourceText),
+          line: 1,
+        },
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [{ name: 'pending', value: 'true', children: [] }],
+    limitations: [],
+  }
+  const fixture = harness(undefined, undefined, 0, false, true)
+  let outcome = 'pending'
+  const showing = fixture.owner
+    .present(deepSourceSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((inspection) => {
+      outcome = inspection
+    })
+  try {
+    await fixture.started
+    await flushNative()
+    const outcomeBeforeCallStack = outcome
+
+    // Act: native Call Stack loads its first page of twenty frames; no timer runs.
+    const thread = fixture.request('threads').body.threads[0]
+    const firstPage = fixture.request('stackTrace', {
+      threadId: thread.id,
+      startFrame: 0,
+      levels: 20,
+    }).body
+    await flushNative()
+
+    // Assert
+    assert.equal(outcomeBeforeCallStack, 'pending')
+    assert.equal(firstPage.stackFrames.length, 20)
+    assert.equal(firstPage.totalFrames, 21)
+    assert.equal(outcome, 'no-values')
+  } finally {
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    await showing
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
 // Value: protects=the recorded values and the reader's dropped hint both reaching the screen after one press of Show Variables; fails_when=the reader is told in the same instant the adapter served the values, so its repaint lands within a few milliseconds of the native view's and, under WSLg, neither is shown until the pointer moves; why_new=Cycle 0044 (0031-U1 in VS Code 1.140 on WSLg: the first scope stayed open and empty and the hint stayed, although the editor held the values); seam=none
 test('the reader is told that Run and Debug loaded the values 150 ms after they were served, not in the same instant', async (context) => {
   // Arrange: Variables is hidden, so the stop commits without its values.

@@ -374,7 +374,7 @@ export class ReplayDebugger {
    * @returns
    * - `'inspected'` when current stack, scopes and first values were retrieved
    * - `'uninspected'` when the grace elapsed first, or at once while Run and Debug still loads no values
-   * - `'no-values'` at once for a gap or a stop without scopes, which native Variables cannot load
+   * - `'no-values'` at once for a gap or a stop without scopes, which native Variables cannot load, and as soon as a served Call Stack page shows that the frame native Run and Debug focuses has none
    * @throws When the learner stopped the owned session, the workspace closed, a newer presentation superseded this one or `signal` aborted.
    * @example
    * await debuggerView.present(snapshot, 'Recorded pause · 55.87 s', signal) // => 'inspected'
@@ -624,7 +624,7 @@ export class ReplayDebugger {
    * @param adapter - Adapter that received the current selection.
    * @param revision - Presentation revision that owns this wait.
    * @param signal - Caller cancellation.
-   * @returns `'inspected'` when retrieval completed, otherwise `'uninspected'` once the grace or the `stopped` deadline elapsed.
+   * @returns `'inspected'` when retrieval completed, `'no-values'` once a served Call Stack page left the stop with an inspection frame that has no scopes, otherwise `'uninspected'` once the grace or the `stopped` deadline elapsed.
    * @throws When the session closed, a newer presentation superseded this one or `signal` aborted, each with its own error.
    * @example await this.awaitInspection(adapter, revision, signal) // => 'uninspected' while Variables is hidden
    */
@@ -686,6 +686,7 @@ export class ReplayDebugger {
    * @param expired - Whether the grace or the stopped-event deadline elapsed.
    * @returns
    * - `{ error }` when the caller aborted, the session closed or a newer presentation superseded this one
+   * - `{ inspection: 'no-values' }` once the stop's inspection frame is one without scopes: native Call Stack loaded its first page without a frame with source, so it focuses the top frame, which has nothing for Variables to load
    * - `{ inspection: 'inspected' }` once native Run and Debug loaded the values
    * - `{ inspection: 'uninspected' }` after a deadline without loaded values
    * - `undefined` while the wait continues
@@ -700,6 +701,8 @@ export class ReplayDebugger {
     if (signal.aborted) return { error: signal.reason }
     const ownership = this.ownershipError(adapter, revision)
     if (ownership) return { error: ownership }
+    // The inspection frame moves to the top frame when the first Call Stack page holds no frame with source; without scopes there, waiting out the grace would only delay the frame and leave a hint for values that do not exist.
+    if (!adapter.hasLoadableValues) return { inspection: 'no-values' }
     if (adapter.inspectionReady) return { inspection: 'inspected' }
     return expired ? { inspection: 'uninspected' } : undefined
   }
