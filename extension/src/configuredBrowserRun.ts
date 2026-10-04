@@ -819,32 +819,61 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
     binding: { line: number; column: number },
   ): Promise<void> {
-    let onDeclaredLine: boolean
-    try {
-      const possible = await this.participants[stop.participant].cdp!.request(
-        'Debugger.getPossibleBreakpoints',
-        {
-          start: {
-            scriptId: stop.script!.scriptId,
-            lineNumber: 0,
-            columnNumber: 0,
-          },
-        },
-      )
-      onDeclaredLine = possible.locations.some(
-        (location) => stop.verifier.originalLine(location) === stop.armed.line,
-      )
-    } catch {
-      // An adapter that cannot list break locations leaves the binding to the line rule.
-      this.alive()
-      return
-    }
-    this.alive()
-    if (onDeclaredLine)
+    const pausableColumns = await this.pausableColumns(stop, stop.armed.line)
+    // An adapter that cannot list break locations leaves the binding to the line rule.
+    if (pausableColumns?.length)
       throw this.bindingFailure(
         stop,
         `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${stop.armed.line === stop.source.line ? `the declared line ${stop.source.line}` : `line ${stop.armed.line}, where the stop was requested`}, so requested column ${stop.armed.column} lies after its statement; request the column where the statement begins`,
       )
+  }
+
+  /**
+   * Asks the debugger where it can pause on one line of a stop's source, so a breakpoint the debugger moved to a later line because the line cannot pause is told from one requested after the line's last break location; {@link refuseSlidePastDeclaredLine} asks it for the line the stop was requested on.
+   * The request covers only the generated range the sealed map gives for the line; a map too large to scan completely is asked for the whole module, because a partial scan may have missed mappings of the line. Every answered location is mapped back, since the range can hold places of other lines.
+   * @param stop - The stop; its module is parsed (`stop.script` is set).
+   * @param line - One-based line of the stop's source.
+   * @returns
+   * - The one-based source columns of the line's break locations, ascending; empty when the debugger cannot pause on the line
+   * - `undefined` when the adapter cannot list break locations
+   * @example
+   * ```ts
+   * await this.pausableColumns(stop, 22) // [3] for a line whose statement begins at column 3
+   * ```
+   */
+  private async pausableColumns(
+    stop: PreparedStop,
+    line: number,
+  ): Promise<number[] | undefined> {
+    const { range, complete } = stop.verifier.generatedRangeOfLine(line),
+      scriptId = stop.script!.scriptId
+    // A completely scanned map without a position on the line leaves the debugger no place to pause there.
+    if (complete && !range) return []
+    let locations: Protocol.Debugger.BreakLocation[]
+    try {
+      ;({ locations } = await this.participants[stop.participant].cdp!.request(
+        'Debugger.getPossibleBreakpoints',
+        complete && range
+          ? {
+              start: { scriptId, ...range.start },
+              end: { scriptId, ...range.end },
+            }
+          : { start: { scriptId, lineNumber: 0, columnNumber: 0 } },
+      ))
+    } catch {
+      this.alive()
+      return undefined
+    }
+    this.alive()
+    return locations
+      .flatMap((location) => {
+        const column =
+          stop.verifier.originalLine(location) === line
+            ? stop.verifier.originalColumn(location)
+            : undefined
+        return column === undefined ? [] : [column]
+      })
+      .sort((left, right) => left - right)
   }
 
   /**

@@ -2497,6 +2497,41 @@ test('a browser stop slid to the next line although its declared line has a brea
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
 
+// Cycle 0045 (B-L6, SP-3, ER-21, PC-3.1): red while the debugger was asked for every break location of the module from 0:0 with no end.
+test('a browser stop moved to a later line asks the debugger for the break locations of the requested line only, and is refused when one lies on it', async (context) => {
+  // Arrange: the adapter verifies the stop declared at 1:1 at 2:1; generated line 0 is source line 1 and holds a break location at column 6, after that line's only mapping, and generated line 1 holds one too.
+  const {
+    run,
+    bindFirstStopAt,
+    listPossibleBreakLocations,
+    breakLocationRequests,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], TWO_LINE_CITATION)
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLocations([
+    { lineNumber: 0, columnNumber: 6 },
+    { lineNumber: 1, columnNumber: 0 },
+  ])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert: the range ends, exclusively, where generated line 1 begins.
+  assert.deepEqual(breakLocationRequests, [
+    {
+      start: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 },
+      end: { scriptId: 'actual', lineNumber: 1, columnNumber: 0 },
+    },
+  ])
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; request the column where the statement begins. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.equal(mouse.length, 0)
+})
+
 // Value: protects=the deadline of a first browser stop that was not moved still naming that stop once the click was sent; fails_when=the run ends with the bare "Repository input reached no verified pause"; why_new=Cycle 0043 N-3; seam=the harness clock
 test('a first stop on its declared line that the click does not reach ends the run naming the stop and that its line must run', async (context) => {
   // Arrange

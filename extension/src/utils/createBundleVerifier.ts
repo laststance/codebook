@@ -9,6 +9,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { isCommentAt } from './isCommentAt'
 import { isSourcePosition } from './isSourcePosition'
+import { sourceMapGeneratedRange } from './sourceMapGeneratedRange'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
 
 /** Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
@@ -30,14 +31,22 @@ export function createBundleVerifier(input: BundleSource) {
   if (canonicalSource(bundle.sourcePath) !== originalPath)
     throw new Error('Map original differs from native source path')
   const sourceMap = new SourceMap(payload)
+  // Split once on first use: a scan asks the generated text at every mapping in its range, and a list of break locations asks it for every location.
+  let splitGeneratedLines: string[] | undefined
+  const generatedLines = (): string[] =>
+    (splitGeneratedLines ??= bundle.javascript.split(/\r\n|\r|\n/))
   /** Reads the sealed original position of a generated location for `originalLine` and `originalColumn`; unmapped generated code has none. */
   const originalPosition = (
     location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
   ): { line: number; column: number } | undefined => {
-    const generatedColumn = location.columnNumber ?? 0
-    // A location past the end of the executed module is no place of it.
+    const generatedColumn = location.columnNumber ?? 0,
+      generatedLineText = generatedLines()[location.lineNumber]
+    // A location past the end of the executed module is no place of it; the once-split lines answer without another pass over the module text.
     if (
-      !isSourcePosition(bundle.javascript, location.lineNumber, generatedColumn)
+      generatedLineText === undefined ||
+      !Number.isSafeInteger(generatedColumn) ||
+      generatedColumn < 0 ||
+      generatedColumn > generatedLineText.length
     )
       return undefined
     const mapping = sourceMap.findEntry(location.lineNumber, generatedColumn)
@@ -54,13 +63,8 @@ export function createBundleVerifier(input: BundleSource) {
       column: mapping.originalColumn + 1,
     }
   }
-  // Split once on first use: a scan asks the generated text at every mapping in its range.
-  let generatedLines: string[] | undefined
   const isCodeAt = (generatedLine: number, generatedColumn: number): boolean =>
-    !isCommentAt(
-      (generatedLines ??= bundle.javascript.split(/\r\n|\r|\n/))[generatedLine],
-      generatedColumn,
-    )
+    !isCommentAt(generatedLines()[generatedLine], generatedColumn)
   const hashes = Object.freeze({
     typescript: sha256(bundle.source),
     javascript: sha256(bundle.javascript),
@@ -77,6 +81,16 @@ export function createBundleVerifier(input: BundleSource) {
         endLine,
         isCodeAt,
       )
+    },
+    /**
+     * Gives the generated range that holds every place the sealed map puts on one line of the cited source, so {@link ConfiguredBrowserRun} asks the debugger for the break locations of that line instead of the whole module's.
+     * @param line - One-based line of the sealed original.
+     * @returns The range ({@link sourceMapGeneratedRange}: an exclusive `end` at the end of the span the line's last mapping governs), absent when the scan found no mapping of the line, and whether the scan read the whole map.
+     * @example
+     * verifier.generatedRangeOfLine(2) // => { range: { start: { lineNumber: 1, columnNumber: 0 }, end: { lineNumber: 2, columnNumber: 0 } }, complete: true }
+     */
+    generatedRangeOfLine(line: number) {
+      return sourceMapGeneratedRange(payload.mappings, matches[0]!, line)
     },
     /**
      * Maps a generated location of this module back to a line of the sealed original, so a pause can be placed in source terms before any debugger frame exists.
