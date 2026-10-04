@@ -498,14 +498,62 @@ async function inspectManagedSkill(
     throw error
   })
   const currentStatus = current ? await inspectedPath(targetPath) : undefined
-  if (
-    !receipt?.installed ||
-    !current ||
-    !currentStatus ||
-    currentStatus.ino !== receipt.inode ||
-    sha256(current) !== receipt.skillSha256
-  )
+  if (!isReceiptedSkillUnedited(receipt, current, currentStatus))
     return { kind: 'changed' }
+  return receiptedSkillState(receipt, packagedSha256)
+}
+
+/**
+ * Says whether the deployed skill is the installed, unedited file of its receipt, for {@link inspectManagedSkill} right after it read both.
+ * @param receipt - The owner receipt, or `undefined` when none is stored.
+ * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
+ * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @returns `true` for an installed receipt whose file is still there with its inode and bytes ({@link holdsReceiptedBytes}); `false` without an installed receipt and for a missing, replaced or edited file.
+ * @example isReceiptedSkillUnedited(undefined, bytes, status) // => false
+ */
+function isReceiptedSkillUnedited(
+  receipt: SkillReceipt | undefined,
+  current: Buffer | undefined,
+  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+): receipt is SkillReceipt {
+  if (!receipt?.installed) return false
+  return holdsReceiptedBytes(receipt, current, currentStatus)
+}
+
+/**
+ * Compares the deployed skill file with what its receipt recorded, for {@link isReceiptedSkillUnedited}: the inode first, and the digest only for the same file.
+ * @param receipt - The installed owner receipt.
+ * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
+ * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @returns `true` when the file exists, is the receipted inode and holds the receipted bytes; `false` when it is missing, replaced (another inode) or edited (other bytes).
+ * @example holdsReceiptedBytes(receipt, undefined, undefined) // => false
+ */
+function holdsReceiptedBytes(
+  receipt: SkillReceipt,
+  current: Buffer | undefined,
+  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+): boolean {
+  if (!current || !currentStatus) return false
+  return (
+    currentStatus.ino === receipt.inode &&
+    sha256(current) === receipt.skillSha256
+  )
+}
+
+/**
+ * Says how a receipted, unedited skill stands to this installation, for {@link inspectManagedSkill} once the file is known to be the receipt's.
+ * @param receipt - The installed receipt of the unedited file.
+ * @param packagedSha256 - Digest of the skill this installation packages.
+ * @returns
+ * - `current`: the file holds this installation's bytes
+ * - `newer`: a later extension version than the running one deployed it
+ * - `outdated`: this or an earlier version deployed it, with other bytes
+ * @example receiptedSkillState(receipt, receipt.skillSha256) // => { kind: 'current', receipt }
+ */
+function receiptedSkillState(
+  receipt: SkillReceipt,
+  packagedSha256: string,
+): ManagedSkillState {
   if (receipt.skillSha256 === packagedSha256)
     return { kind: 'current', receipt }
   return {
@@ -817,21 +865,8 @@ export async function verifyManagedCursorSkill(
       targetPath,
       packaged.sha256,
     )
-    if (seen.kind === 'current')
-      return {
-        status: 'current',
-        path: targetPath,
-        sha256: packaged.sha256,
-        version: packaged.version,
-      }
-    // A window still running an earlier extension leaves the newer window's skill and reconnects with it.
-    if (seen.kind === 'newer')
-      return {
-        status: 'current',
-        path: targetPath,
-        sha256: seen.receipt.skillSha256,
-        version: seen.receipt.skillVersion,
-      }
+    const accepted = skillAcceptedWithoutLock(seen, targetPath, packaged)
+    if (accepted) return accepted
     try {
       // An outdated skill is updated and a mismatch is confirmed under the lock, where no other window's update is half done.
       return await deploySkill(
@@ -841,18 +876,73 @@ export async function verifyManagedCursorSkill(
         'reconnect',
       )
     } catch (error) {
-      // The cause is read by its shape: the lock's refusal carries the `EEXIST` of the lock file.
-      const isLockHeldElsewhere =
-        typeof error === 'object' &&
-        error !== null &&
-        'cause' in error &&
-        systemErrorCode(error.cause) === 'EEXIST'
-      if (!isLockHeldElsewhere || attempt >= CURSOR_SKILL_RECONNECT_ATTEMPTS)
-        throw error
+      rethrowUnlessLockHeldElsewhere(error, attempt)
       // The other window's update leaves the receipt current; the next look then needs no lock.
       await delay(CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS)
     }
   }
+}
+
+/**
+ * Gives the reconnect's answer for a skill that needs no lock and no write, for {@link verifyManagedCursorSkill} after every look at the receipt and the file.
+ * @param seen - How the receipt and the deployed file stand to this installation ({@link inspectManagedSkill}).
+ * @param targetPath - The managed skill file in Cursor's user skills.
+ * @param packaged - Digest and version of the skill this installation packages.
+ * @returns
+ * - `current` with this installation's digest and version, for the file that holds its bytes
+ * - `current` with the receipt's digest and version, for the skill a newer window deployed
+ * - `undefined` for an outdated or changed skill, which is decided under the storage lock
+ * @example skillAcceptedWithoutLock({ kind: 'changed' }, '/home/user/.cursor/skills/codebook/SKILL.md', packaged) // => undefined
+ */
+function skillAcceptedWithoutLock(
+  seen: ManagedSkillState,
+  targetPath: string,
+  packaged: { sha256: string; version: string },
+): CursorSkillResult | undefined {
+  if (seen.kind === 'current')
+    return {
+      status: 'current',
+      path: targetPath,
+      sha256: packaged.sha256,
+      version: packaged.version,
+    }
+  // A window still running an earlier extension leaves the newer window's skill and reconnects with it.
+  if (seen.kind === 'newer')
+    return {
+      status: 'current',
+      path: targetPath,
+      sha256: seen.receipt.skillSha256,
+      version: seen.receipt.skillVersion,
+    }
+  return undefined
+}
+
+/**
+ * Says whether a failed deployment was refused because another window holds the storage lock, for {@link rethrowUnlessLockHeldElsewhere}.
+ * @param error - What {@link deploySkill} threw.
+ * @returns `true` when the error's cause is the `EEXIST` of the lock file; `false` for every other failure.
+ * @example isLockHeldElsewhere(new Error('changed')) // => false
+ */
+function isLockHeldElsewhere(error: unknown): boolean {
+  // The cause is read by its shape: the lock's refusal carries the `EEXIST` of the lock file.
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'cause' in error &&
+    systemErrorCode(error.cause) === 'EEXIST'
+  )
+}
+
+/**
+ * Ends the reconnect with a deployment's failure unless waiting can help, for {@link verifyManagedCursorSkill} when {@link deploySkill} threw: only a lock another window holds is waited for, and only while attempts are left.
+ * @param error - What the deployment threw.
+ * @param attempt - The number of this attempt, from 1.
+ * @throws `error` itself when it is no held lock, and at the last of {@link CURSOR_SKILL_RECONNECT_ATTEMPTS}.
+ * @example rethrowUnlessLockHeldElsewhere(new Error('changed'), 1) // throws that error
+ */
+function rethrowUnlessLockHeldElsewhere(error: unknown, attempt: number): void {
+  if (!isLockHeldElsewhere(error) || attempt >= CURSOR_SKILL_RECONNECT_ATTEMPTS)
+    throw error
 }
 
 /** Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. @example await removeManagedCursorSkill('/private', '/home') */
