@@ -1,0 +1,8 @@
+{
+  "name": "codebook-reader-dom-tools",
+  "private": true,
+  "description": "The browser CLI the Reader DOM check drives. Install it with `npm ci` in this folder: package-lock.json pins it and its dependencies by integrity hash.",
+  "dependencies": {
+    "@playwright/cli": "0.1.22"
+  }
+}
