@@ -1507,20 +1507,25 @@ export class StudyWorkspace {
           this.errors.delete('presentation')
           this.publish()
           await this.savePresentationPreference(input.mode, transition.id)
-        } else if (
-          await this.hasRetainedStudyTopology(
-            transition.cancellation.signal,
-            focusedPane.beforeScopeFocus,
+        } else {
+          // A tab the learner keeps in front of the captured source (an image, a settings page) keeps the panes from being confirmed: the Restore names that tab and the step that clears it, and leaves the grid as it arranged it instead of enlarging the Study pane again.
+          const coveringTab = this.coveredSourceCause()
+          if (coveringTab)
+            throw new StudyError('PRESENTATION_UNAVAILABLE', coveringTab)
+          if (
+            !(await this.hasRetainedStudyTopology(
+              transition.cancellation.signal,
+              focusedPane.beforeScopeFocus,
+            ))
           )
-        ) {
+            throw new StudyError(
+              'PRESENTATION_UNAVAILABLE',
+              'The Study panes changed during Restore. Existing editor work was preserved.',
+            )
           focusedPane.assertCurrent()
           await this.readStudyPane('context', transition.cancellation.signal)
           this.errors.delete('layout')
-        } else
-          throw new StudyError(
-            'PRESENTATION_UNAVAILABLE',
-            'The Study panes changed during Restore. Existing editor work was preserved.',
-          )
+        }
         return { ...this.presentationState(), state: 'open' as const }
       } catch (error) {
         if (transition.id === this.presentationId) {

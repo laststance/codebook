@@ -287,3 +287,54 @@ test('Close Study Workspace ends the maximized editor group that a Read of a pan
     await harness.close()
   }
 })
+
+// Value: protects=Restore leaving the enlarged Study pane while a tab the learner keeps covers the captured source, and saying which tab and what clears it; fails_when=the Restore finds the source not shown and enlarges the Study pane again, so the pane fills the window after every Restore and no tab is named; why_new=Cycle 0045 NF-22 with PC-1.10 (a kept tab that is no text editor is its own case, and the step the refusal names makes the next Restore possible); seam=addOpaqueTab, focusOpaqueTab, the fake editor's maximized group
+test('Restore beside a kept image tab leaves the enlarged Study pane and names the tab that keeps the panes from being arranged', async () => {
+  // Arrange: the learner keeps an image open in front of the captured source and read the explanation enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const image = harness.addOpaqueTab('logo.png', 2)
+    harness.focusOpaqueTab(image)
+    await harness.reader.action('read-context')
+    const enlargedByRead = harness.maximizedEditorGroup()
+    const maximizeCommands = (): number =>
+      harness.commands.filter(
+        (command) => command === 'workbench.action.maximizeEditorHideSidebar',
+      ).length
+
+    // Act: the pane's Restore; then the step the refusal names, and Restore again.
+    await harness.reader.action('arrange')
+    const refused = {
+      lines: harness.reader.inspect().view!.errors.join(' | '),
+      maximized: harness.maximizedEditorGroup(),
+      maximizeCommands: maximizeCommands(),
+    }
+    const sourceGroup = harness.groups.find((group) =>
+      group.tabs.includes(image),
+    )!
+    sourceGroup.activeTab = sourceGroup.tabs.find((tab) => tab !== image)
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(enlargedByRead, true)
+    assert.deepEqual(refused, {
+      lines:
+        'Error: The tab "logo.png" is in front of the captured source in editor group 2. Close that tab or select the captured source\'s tab, then restore the layout again.',
+      maximized: false,
+      maximizeCommands: 1,
+    })
+    // After the named step (the learner selected the captured source's tab; the image stays open behind it) the next Restore arranges and confirms the three panes.
+    assert.equal(sourceGroup.tabs.includes(image), true)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.equal(maximizeCommands(), 1)
+    assert.equal(
+      (await harness.reader.readPresentationState()).layoutConfirmed,
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
