@@ -246,7 +246,7 @@ export async function openWikiUpdateWindow(options: {
                 ...choices,
               ])
             if (!messageOptions?.modal)
-              return showNotification(warnings, message, [])
+              return showNotification(warnings, message, choices)
             confirmations.push(message)
             confirmationDetails.push(messageOptions.detail ?? '')
             return Promise.resolve(
