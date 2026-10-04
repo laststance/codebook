@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
-import { join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
@@ -314,7 +314,7 @@ function isComparableSource(source: WikiIncludedSource): boolean {
 /**
  * Says whether a file's canonical place lies outside the opened folder; called by {@link checkSource} in {@link inspectDeepWikiFreshness} so that a link out of the project is never hashed.
  * @param pathWithinProject - The canonical file relative to the project root.
- * @returns `true` for the root itself, its parent and anything under the parent; `false` for a path inside the project.
+ * @returns `true` for the root itself, its parent, anything under the parent and a file on another drive (on Windows the relative path to it is absolute); `false` for a path inside the project.
  * @example
  * isOutsideProject('../other/a.ts') // => true
  * isOutsideProject('src/a.ts')      // => false
@@ -323,7 +323,9 @@ function isOutsideProject(pathWithinProject: string): boolean {
   return (
     !pathWithinProject ||
     pathWithinProject === '..' ||
-    pathWithinProject.startsWith(`..${sep}`)
+    pathWithinProject.startsWith(`..${sep}`) ||
+    // On Windows no relative path leads to another drive, so `relative` answers the absolute one.
+    isAbsolute(pathWithinProject)
   )
 }
 

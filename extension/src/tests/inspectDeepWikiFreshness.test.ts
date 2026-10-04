@@ -4,11 +4,14 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, win32 } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+import * as freshnessModule from '../utils/inspectDeepWikiFreshness'
 import { inspectDeepWikiFreshness } from '../utils/inspectDeepWikiFreshness'
+
+import { loadModule } from './utils/loadModule'
 
 const runGit = promisify(execFile)
 
@@ -773,3 +776,59 @@ test(
     })
   },
 )
+
+// Value: protects=the rule that a link out of the project is never hashed, on Windows where the linked file can be on another drive; fails_when=the relative path to another drive, which is absolute and does not start with "..", is taken for a path inside the project; why_new=Cycle 0045 local review wiki-1 #10; seam=the path module (Windows rules on this host), the link's resolution and Git, since no Linux folder has a second drive
+test('an indexed source that is a link to a file on another drive is not hashed and is named as the one that could not be checked', async () => {
+  // Arrange: the check runs with Windows path rules; the indexed source resolves to a file on drive D of a project on drive C.
+  const hashedFiles: string[] = []
+  const { inspectDeepWikiFreshness: inspectOnWindows } = await loadModule<
+    typeof freshnessModule
+  >(resolve(__dirname, '../utils/inspectDeepWikiFreshness.js'), {
+    'node:path': win32,
+    'node:fs/promises': {
+      realpath: async () => String.raw`D:\secrets\linked.ts`,
+    },
+    // The project is in no Git repository.
+    'node:child_process': {
+      execFile: (
+        _command: string,
+        _arguments: string[],
+        _options: object,
+        callback: (error: Error) => void,
+      ) => {
+        callback(
+          Object.assign(new Error('git failed'), {
+            stderr: 'fatal: not a git repository',
+          }),
+        )
+      },
+    },
+  })
+
+  // Act
+  const freshness = await inspectOnWindows(
+    String.raw`C:\repo`,
+    [{ path: 'linked.ts', sha256: 'a'.repeat(64) }],
+    undefined,
+    [],
+    {
+      hashFile: async (filePath) => {
+        hashedFiles.push(filePath)
+        return 'a'.repeat(64)
+      },
+    },
+  )
+
+  // Assert
+  assert.deepEqual(hashedFiles, [])
+  // The answer was built in the loaded module's own context, so its plain data is compared.
+  assert.deepEqual(JSON.parse(JSON.stringify(freshness)), {
+    status: 'unknown',
+    changedPaths: [],
+    addedPaths: [],
+    reason: 'An indexed source could not be checked: linked.ts.',
+    uncheckedPath: 'linked.ts',
+    unknownCause: 'unchecked-source',
+    addedFilesUnchecked: true,
+  })
+})
