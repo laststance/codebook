@@ -1246,6 +1246,32 @@ test('a second window’s Update is refused while the first window’s run has s
   }
 })
 
+// Value: protects=the Update button after an editor was killed during an update and its process id went to another process; fails_when=the start check takes the leftover marker for another window's running update for as long as that id answers, and refuses every press with a sentence that offers no "Update anyway"; why_new=Cycle 0045 local review wiki-1 #2; seam=none
+test('a marker a killed editor left seventeen minutes ago does not refuse the update, although a process has its id', async () => {
+  // Arrange: the marker of another window's run; its recorded process is this test process, which runs.
+  const wiki = await openWikiWindow()
+  await writeFile(
+    `${wiki.outputDirectory}.update-run.json`,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'a-window-that-was-killed',
+      host: 'vscode',
+      startedAtMs: Date.now() - 17 * 60_000,
+    }),
+  )
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 1)
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('Update anyway is not offered while another window’s update is running', async () => {
   // Arrange
   const wiki = await openWikiWindow()

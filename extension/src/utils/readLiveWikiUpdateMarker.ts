@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-import { WIKI_UPDATE_RUN_MARKER_SUFFIX } from '../constants'
+import {
+  WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS,
+  WIKI_UPDATE_RUN_MARKER_SUFFIX,
+  WIKI_UPDATE_WATCH_TIMEOUT_MS,
+} from '../constants'
 
 import { isProcessGone } from './isProcessGone'
 import { readWikiRegularFile } from './readWikiRegularFile'
@@ -41,31 +47,57 @@ function parseWikiUpdateMarker(bytes: Buffer): WikiUpdateMarker | undefined {
 }
 
 /**
+ * Says whether a run's marker is older than any run can be; called by {@link isLiveMarkerOfAnotherWindow}, so a marker a killed editor left stops counting even when its process id belongs to another process by now.
+ * @param marker - The marker beside the Wiki.
+ * @param nowMs - The present (epoch milliseconds).
+ * @returns `true` for a marker of a run (no `watchEndedAtMs`) that started longer ago than the host's longest run plus {@link WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS}: the Cursor agent's bound, or the chat's opening and the watch's bound in VS Code. `false` otherwise, also for every reservation of a stopped watch, which the caller weighs against the watch bound.
+ * @example
+ * isRunMarkerExpired({ pid: 4242, windowId: '3f6c', host: 'cursor', startedAtMs: 0 }, 961_000) // => true
+ * isRunMarkerExpired({ pid: 4242, windowId: '3f6c', host: 'cursor', startedAtMs: 0 }, 600_000) // => false
+ */
+function isRunMarkerExpired(marker: WikiUpdateMarker, nowMs: number): boolean {
+  const longestRunMs =
+    marker.host === 'cursor'
+      ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
+      : WIKI_CHAT_OPEN_TIMEOUT_MS + WIKI_UPDATE_WATCH_TIMEOUT_MS
+  return (
+    marker.watchEndedAtMs === undefined &&
+    nowMs >
+      marker.startedAtMs + longestRunMs + WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS
+  )
+}
+
+/**
  * Says whether a marker stands for an update that still counts against the asking window; called by {@link readLiveWikiUpdateMarker} for a readable marker.
  * @param marker - The marker beside the Wiki.
  * @param ownWindowId - The asking window's own id.
- * @returns `false` for this window's own marker (a leftover of a run that already ended; its process is not asked for) and for a marker whose process is gone; `true` for another window's marker whose process still runs.
+ * @returns `false` for this window's own marker (a leftover of a run that already ended; its process is not asked for), for a marker whose process is gone and for a run's marker that is older than any run can be ({@link isRunMarkerExpired}); `true` for another window's marker whose process still runs.
  * @example
- * isLiveMarkerOfAnotherWindow({ pid: process.pid, windowId: 'other', host: 'vscode', startedAtMs: 1790000000000 }, 'own') // => true
+ * isLiveMarkerOfAnotherWindow({ pid: process.pid, windowId: 'other', host: 'vscode', startedAtMs: Date.now() }, 'own') // => true
  */
 function isLiveMarkerOfAnotherWindow(
   marker: WikiUpdateMarker,
   ownWindowId: string,
 ): boolean {
-  return marker.windowId !== ownWindowId && !isProcessGone(marker.pid)
+  return (
+    marker.windowId !== ownWindowId &&
+    !isProcessGone(marker.pid) &&
+    // A process id is given to another process after a restart: a run that would have ended by now is nobody's.
+    !isRunMarkerExpired(marker, Date.now())
+  )
 }
 
 /**
  * Reads the marker another editor window's running update left beside the Wiki, so a second window does not start a second update of the same Wiki.
  *
- * Why: each window holds its own run state, and until the first window's agent stages a candidate nothing else on disk shows its run. A marker whose process is gone was left by a killed editor and counts for nothing.
+ * Why: each window holds its own run state, and until the first window's agent stages a candidate nothing else on disk shows its run. A marker whose process is gone was left by a killed editor and counts for nothing, and so does a run's marker that is older than any run can be.
  * Trigger: the extension reads it when an update starts, before the candidate rule, and {@link claimWikiUpdateMarker} when its exclusive write finds a marker in the way.
  *
  * @param outputDirectory - Resolved Wiki output folder; the marker is `<output>.update-run.json`.
  * @param ownWindowId - The asking window's own id; its own marker is a leftover of a run that already ended and is not reported.
  * @returns
  * - A marker of another window whose process still runs: that marker (with `watchEndedAtMs` when it is the reservation of a stopped watch, which the caller weighs against the watch bound)
- * - No marker, one that cannot be read, one of a process that is gone, or this window's own: undefined
+ * - No marker, one that cannot be read, one of a process that is gone, a run's marker older than any run can be, or this window's own: undefined
  *
  * @example
  * ```ts
