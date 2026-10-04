@@ -685,6 +685,15 @@ Installed in both QA profiles with the editors closed (`build.json` of both inst
 
 So the 154 functions row T-1 split, the review fixes to the second request, to the planned line and to the journal, and the profile removal run in both editors as before. Left by the runs: one saved study per host (VS Code 38 of 64, Cursor 26 of 64) and the article `er9-check-a` revision 1 in VS Code's library. In both hosts the bottom panel shows the Debug Console of the run's session after the run, as it did in the second round (still `N14-a2/a2-10-turn-ended.png`); not a change of this candidate.
 
+#### Checks owed on the final candidate: results
+
+Two checks that use no QA profile and no saved study were made before the submissions, while the last CodeRabbit runs were under way (a deviation from "after both submissions" that touches nothing the submissions start from). The others follow the submissions.
+
+| # | Result | What was seen |
+| --- | --- | --- |
+| F24 (NF-18, 0031-U6) | Holds, with a limit of the instrument | The Reader DOM check has a new case that reads Chrome's own accessibility tree of the Node playhead through the debugging protocol while the thumb is held at 150 s: role `slider`, name "Recorded test time", value 150000 of 0 to 400000 (`8eda4fb`; the check now has 108 cases, 108 of 108 locally). So the value a native accessibility read gets follows the selected time, which is what 0031-U6 named. The tree that protocol returns has no field for `aria-valuetext`: its `valuetext` property reads "150000" for the pane and the same for a plain `<input type="range" aria-valuetext="…">` on an empty page (control made with the same Chrome), so the spoken sentence "150.00 s of recorded test time" stays pinned by the attribute's two cases, and a screen reader's speech stays missing coverage |
+| F25 (SEC-3) | Holds | VS Code 1.140.0 with a temporary profile of its own (the QA extensions folder; `codebook.wikiOutputDirectory` set to `[Open](command:x)`, ctrl+alt+w bound to `codebook.openDeepWiki`, workspace trust off for that profile), the dashboard folder. After the key two notifications are on screen: Codebook's error notice "Codebook could not open DeepWiki: Error: ENOENT: no such file or directory, open '<dashboard>/[Open] (command:x)/codebook-wiki.json'. Generate it through /codebook in this project, then retry." and the editor's own warning for the rejected command with the same path; neither message holds a link element, and the link syntax is taken apart. Nothing was written into the dashboard. The temporary profile folder `codebook-qa/tmp-sec3-user` is left in the QA folder |
+
 ## Result and decision
 
 - Result: pending
