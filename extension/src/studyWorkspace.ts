@@ -162,6 +162,7 @@ import { libraryHasRoom } from './utils/libraryHasRoom'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
+import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import {
@@ -6675,6 +6676,8 @@ export class StudyWorkspace {
       study,
       live,
       liveDescriptor,
+      plannedStopLine:
+        record?.runtime && plannedStopLine(record.runtime.view().events),
       progress: this.progress,
       baselines: this.baselines,
       currentSourceAvailable: this.currentSourceAvailable,

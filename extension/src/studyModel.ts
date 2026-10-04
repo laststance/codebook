@@ -46,6 +46,8 @@ export type StudyProjectionInput = {
   study?: RetainedStudy
   live?: Pick<LiveStudy, 'instanceId' | 'runId' | 'participants'>
   liveDescriptor?: StudyDescriptor
+  /** The line the live run's first stop is expected to pause on while it has not paused yet ({@link plannedStopLine}); absent when the journal names none. */
+  plannedStopLine?: number
   progress?: LearnerProgress
   baselines: SourceBaselines
   currentSourceAvailable?: boolean

@@ -3198,6 +3198,62 @@ test("in Cursor, Show Variables that took the Learning summary's place in the si
   }
 })
 
+// Value: protects=the learner's source highlight standing, before the first pause, where the run requested its stop; fails_when=the reader does not hand the run's planned line to the pane's model, so the highlight stays on a declared line the debugger cannot pause on and jumps at the pause; why_new=Cycle 0045 SD-16 (the projection read the configuration's declared line and the reader passed nothing of the run's journal); seam=the fake runtime's view gains the journal entry a run writes when it requests a stop after its declared line
+test('before the first pause of a run whose stop was requested after its declared line, the Study pane shows the source at the requested line', async () => {
+  // Arrange: a prepared run that has not paused, whose journal says its stop, declared on line 1, was requested on line 2.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.model.selection.studyId !== undefined,
+      'the reader to select the live run',
+      2_000,
+    )
+    const declaredLine = harness.configuration.source.line,
+      lineBeforeTheRequestIsKnown =
+        harness.reader.inspect().view!.model.source.line
+    const runtime = harness.runtimes[0]!,
+      view = runtime.view.bind(runtime)
+
+    // Act
+    runtime.view = () => ({
+      ...view(),
+      events: [
+        ...view().events,
+        {
+          sequence: view().events.length + 1,
+          elapsedMs: 0,
+          wallTime: new Date(0).toISOString(),
+          type: 'breakpoint.armed-after-declared-line',
+          detail: {
+            participant: 'browser',
+            declared: { line: declaredLine, column: 1 },
+            armed: { line: declaredLine + 1, column: 1 },
+          },
+        },
+      ],
+    })
+
+    // Assert
+    assert.equal(harness.reader.inspect().view!.model.observation, undefined)
+    assert.equal(lineBeforeTheRequestIsKnown, declaredLine)
+    assert.equal(
+      harness.reader.inspect().view!.model.source.line,
+      declaredLine + 1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 /** Counts how often the reader ran the editor's command that focuses the active editor group. @example focusEditorGroupRuns(harness.commands) // => 1 */
 function focusEditorGroupRuns(commands: readonly string[]): number {
   return commands.filter(

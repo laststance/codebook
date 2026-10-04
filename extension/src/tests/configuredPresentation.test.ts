@@ -14,6 +14,7 @@ import { capturedAppHtml } from '../utils/capturedAppHtml'
 import { captureStudy } from '../utils/captureStudy'
 import { decodeLearnerProgress } from '../utils/decodeLearnerProgress'
 import { describeStudy } from '../utils/describeStudy'
+import { plannedStopLine } from '../utils/plannedStopLine'
 import { projectPlaybackStudy } from '../utils/projectPlaybackStudy'
 import { selectStudy } from '../utils/selectStudy'
 
@@ -321,6 +322,99 @@ test('configured replay shows an explicit pre-observation placeholder and never 
   assert.equal(paused.continueArguments, undefined)
   assert.equal(paused.matching, false)
   assert.equal(paused.selection.follow, false)
+})
+
+/** Builds one journal entry of a live run for the planned-line cases; only its type and detail are read. @example journalEntry(1, 'breakpoint.bound', { verified: true, line: 3, column: 1 }) */
+function journalEntry(sequence: number, type: string, detail: unknown) {
+  return { sequence, elapsedMs: sequence, wallTime: '', type, detail }
+}
+
+// Value: protects=the source highlight of a live run standing, before the first pause, on the line the stop is requested at instead of a declared line the debugger cannot pause on; fails_when=the projection ignores the run's planned line and shows the declared line, so the highlight jumps at the pause; why_new=Cycle 0045 SD-16 (before a pause the projection used the configuration's declared line); seam=none
+test('before the first pause the source highlight is on the line the stop is requested at', () => {
+  // Arrange: the live run's own study before its first pause, declared on line 1 and requested on line 2; and the same study read as history beside another run.
+  const input = configuredProjectionInput()
+  input.study.observations = []
+  const live: Pick<LiveStudy, 'instanceId' | 'runId' | 'participants'> = {
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      runId: input.study.runId,
+      participants: {
+        browser: {
+          snapshotUri: undefined,
+          sourceUri: undefined,
+          itemId: undefined,
+          actionId: undefined,
+          phase: 'running',
+          resumable: false,
+          continueArguments: undefined,
+        },
+      },
+    },
+    anotherRun = { ...live, runId: '99999999-9999-4999-8999-999999999999' }
+
+  // Act
+  const beforePause = projectStudy({ ...input, live, plannedStopLine: 2 }),
+    withoutPlannedLine = projectStudy({ ...input, live }),
+    asHistory = projectStudy({ ...input, live: anotherRun, plannedStopLine: 2 })
+
+  // Assert
+  assert.equal(beforePause.observation, undefined)
+  assert.equal(beforePause.source.line, 2)
+  assert.equal(withoutPlannedLine.source.line, 1)
+  assert.equal(asHistory.source.line, 1)
+})
+
+// Value: protects=the planned line being what the run knows: a binding the adapter acknowledged, else the requested line, and nothing once a stop was committed; fails_when=the highlight before the pause names the requested line although the adapter already bound the stop on a later one (it would then move at the pause), or keeps a planned line after the first commit; why_new=Cycle 0045 SD-16 with PC-3.2 (declared 1, requested 2, bound 3 is a valid stop, so "does not move" holds only for an acknowledged binding); seam=none
+test('the planned line of a stop that has not paused is its acknowledged binding, else the line it was requested at', () => {
+  // Arrange: the journal of a stop declared on an unmapped line 1 and requested on line 2, then acknowledged on line 3.
+  const requested = journalEntry(1, 'breakpoint.armed-after-declared-line', {
+      participant: 'browser',
+      declared: { line: 1, column: 1 },
+      armed: { line: 2, column: 1 },
+    }),
+    browserBinding = journalEntry(2, 'breakpoint.bound', {
+      verified: true,
+      line: 3,
+      column: 1,
+      requested: { line: 1, column: 1 },
+      declared: { line: 1, column: 1 },
+      armed: { line: 2, column: 1 },
+    }),
+    pendingServerRegistration = journalEntry(2, 'breakpoint.registered', {
+      participant: 'server',
+      status: 'pending',
+    }),
+    movedServerRegistration = journalEntry(3, 'breakpoint.registered', {
+      participant: 'server',
+      status: 'bound',
+      movedTo: { line: 4, column: 1 },
+    }),
+    committed = journalEntry(4, 'snapshot.committed', {
+      snapshotId: 'browser-session:1',
+    })
+
+  // Act
+  const planned = {
+    nothingJournaled: plannedStopLine([]),
+    requestedOnly: plannedStopLine([requested]),
+    acknowledgedByBrowser: plannedStopLine([requested, browserBinding]),
+    pendingOnServer: plannedStopLine([requested, pendingServerRegistration]),
+    acknowledgedByServer: plannedStopLine([
+      requested,
+      pendingServerRegistration,
+      movedServerRegistration,
+    ]),
+    afterFirstCommit: plannedStopLine([requested, browserBinding, committed]),
+  }
+
+  // Assert
+  assert.deepEqual(planned, {
+    nothingJournaled: undefined,
+    requestedOnly: 2,
+    acknowledgedByBrowser: 3,
+    pendingOnServer: 2,
+    acknowledgedByServer: 4,
+    afterFirstCommit: undefined,
+  })
 })
 
 // Value: protects=the learner seeing that a stop was moved: the pane's source label gets the declared line beside the line the stop paused on; fails_when=the projection carries no declared line for a moved stop, or carries one for a stop that paused where it was declared; why_new=Cycle 0045 SD-16 as DR-28 (the pane named only the bound line, so an explanation that named line 73 stood beside a highlight on 75); seam=none

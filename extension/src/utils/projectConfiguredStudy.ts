@@ -33,10 +33,18 @@ export function projectConfiguredStudy(
   )
   const placeholder =
     '// Configured source is unavailable. Open the article or retry preparation.\n'
+  // Before the first pause of the live run the highlight stands where the stop is expected: a binding the adapter acknowledged, else the line the breakpoint was requested at. Any other study shows its declared line.
+  const isLiveRun =
+    study?.instanceId === live?.instanceId && study?.runId === live?.runId
   const source =
     observation?.source ??
     (captured
-      ? { ...captured, line: study!.configuration.source.line }
+      ? {
+          ...captured,
+          line:
+            (isLiveRun ? input.plannedStopLine : undefined) ??
+            study!.configuration.source.line,
+        }
       : { text: placeholder, hash: sha256(placeholder), line: 1 })
   const anchors = study?.descriptor?.anchors,
     states = input.citationSources
