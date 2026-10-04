@@ -180,6 +180,172 @@ function describeUnverifiedPublish(
 }
 
 /**
+ * Says that the Wiki folder is gone after a publish that did not finish; called first by {@link classifyWikiUpdateEnd}, before the site is called kept or replaced.
+ * @param facts - What the host observed when the run stopped.
+ * @returns
+ * - No readable manifest file any more where one was at the start: `failed` with `site: 'missing'` and the recovery request
+ * - Otherwise: `undefined`
+ * @example
+ * missingSiteEnd({ ...facts, tokenAtStart: 'a@1', tokenAtEnd: undefined }) // => { state: 'failed', reason: 'The Wiki is missing after a publish that did not finish. …', isCodebookSentence: true, site: 'missing' }
+ * missingSiteEnd({ ...facts, tokenAtStart: 'a@1', tokenAtEnd: 'a@1' })     // => undefined
+ */
+function missingSiteEnd(facts: WikiUpdateEndFacts): WikiUpdateEnd | undefined {
+  // A stop inside the publisher's swap leaves no folder: that is neither the kept site nor a new one.
+  if (facts.tokenAtEnd === undefined && facts.tokenAtStart !== undefined)
+    return {
+      state: 'failed',
+      reason: `The Wiki is missing after a publish that did not finish. Ask the editor chat "${WIKI_UPDATE_RECOVERY_REQUEST}", then press Update LLM Wiki again.`,
+      isCodebookSentence: true,
+      site: 'missing',
+    }
+  return undefined
+}
+
+/**
+ * Ends a run the learner stopped or whose bound passed; called by {@link classifyWikiUpdateEnd} before anything the agent did is looked at.
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether the published site was replaced meanwhile.
+ * @returns
+ * - Cancelled: `cancelled` with the site, also when the bound passed too
+ * - Past the bound: `timed-out` with the site
+ * - Otherwise: `undefined`
+ * @example
+ * stoppedEnd({ ...facts, cancelled: false, timedOut: true }, 'kept') // => { state: 'timed-out', site: 'kept' }
+ */
+function stoppedEnd(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateEnd | undefined {
+  if (facts.cancelled) return { state: 'cancelled', site }
+  if (facts.timedOut) return { state: 'timed-out', site }
+  return undefined
+}
+
+/**
+ * Picks the published manifest that is the run's success; called by {@link endOfFinishedRun} before any failure the agent reported is looked at.
+ * @param facts - What the host observed when the run stopped.
+ * @returns
+ * - A new publication identity whose manifest matches the source: that manifest
+ * - No publish of the Codebook publisher, an unreadable manifest, or one that is not verified current: `undefined`
+ * @example
+ * verifiedPublication({ ...facts, publicationAtStart: 'a@7', publicationAtEnd: 'b@8', published }) // => published, when published.freshness.status is 'current'
+ * verifiedPublication({ ...facts, publicationAtStart: 'a@7', publicationAtEnd: 'a@7', published }) // => undefined
+ */
+function verifiedPublication(
+  facts: WikiUpdateEndFacts,
+): WikiUpdateEndFacts['published'] {
+  if (
+    facts.publicationAtEnd === undefined ||
+    facts.publicationAtEnd === facts.publicationAtStart
+  )
+    return undefined
+  return facts.published?.freshness.status === 'current'
+    ? facts.published
+    : undefined
+}
+
+/**
+ * Builds the success a verified publication is recorded as; called by {@link endOfFinishedRun}.
+ * @param published - The published manifest that matches the source.
+ * @returns `succeeded` with the identity and the index, and with the revision only when one was checked.
+ * @example
+ * succeededEnd({ identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c', freshness: { status: 'current', changedPaths: [], addedPaths: [] } })
+ * // => { state: 'succeeded', identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }
+ */
+function succeededEnd(
+  published: NonNullable<WikiUpdateEndFacts['published']>,
+): WikiUpdateEnd {
+  const { freshness, identity, revision, index } = published
+  return {
+    state: 'succeeded',
+    identity,
+    // Without a Git repository no revision was checked, so none is claimed.
+    ...(revision === undefined || freshness.addedFilesUnchecked
+      ? {}
+      : { revision }),
+    index,
+  }
+}
+
+/**
+ * Ends a run that something stopped from publishing; called by {@link endOfFinishedRun} once no verified publication is there.
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether the published site was replaced meanwhile.
+ * @returns
+ * - Learner files in the way: `conflict` with cause `learner-file` and a copy of the paths, also when a failure sentence is there
+ * - A failure sentence from the agent or a thrown error: `failed` with that reason
+ * - Otherwise: `undefined`
+ * @example
+ * blockedEnd({ ...facts, blockingPaths: ['pages/notes.html'] }, 'kept') // => { state: 'conflict', paths: ['pages/notes.html'], cause: 'learner-file', site: 'kept' }
+ */
+function blockedEnd(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateEnd | undefined {
+  if (facts.blockingPaths.length)
+    return {
+      state: 'conflict',
+      paths: [...facts.blockingPaths],
+      cause: 'learner-file',
+      site,
+    }
+  if (facts.failure !== undefined)
+    return { state: 'failed', reason: facts.failure, site }
+  return undefined
+}
+
+/**
+ * Words the failure of a run in which nothing stopped the agent and no verified publication appeared; called by {@link endOfFinishedRun} as its last case.
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether the published site was replaced meanwhile.
+ * @returns
+ * - A changed site that is not verified current: `failed` with the reason of {@link describeUnverifiedPublish}
+ * - Nothing published: `failed` with `site: 'kept'` and the chat command that shows the agent's own message
+ * @example
+ * unexplainedEnd({ ...facts, host: 'cursor' }, 'kept')
+ * // => { state: 'failed', reason: 'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.', isCodebookSentence: true, site: 'kept' }
+ */
+function unexplainedEnd(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateEnd {
+  const agent = facts.host === 'cursor' ? 'Cursor Agent' : 'The editor agent'
+  if (site === 'replaced')
+    return {
+      state: 'failed',
+      reason: describeUnverifiedPublish(agent, facts),
+      isCodebookSentence: true,
+      site,
+    }
+  // An agent can end its turn without publishing and without an error.
+  return {
+    state: 'failed',
+    reason: `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in ${facts.host === 'cursor' ? 'Cursor chat' : 'the editor chat'} to see its own message.`,
+    isCodebookSentence: true,
+    site,
+  }
+}
+
+/**
+ * Decides how a run ended that nobody stopped and that left a Wiki folder; called by {@link classifyWikiUpdateEnd} after the missing site, the cancel and the bound.
+ * @param facts - What the host observed when the run stopped.
+ * @param site - Whether the published site was replaced meanwhile.
+ * @returns In this order: the success of {@link succeededEnd} for a verified publication, the end of {@link blockedEnd}, the failure of {@link unexplainedEnd}.
+ * @example
+ * endOfFinishedRun({ ...facts, blockingPaths: [], failure: 'Cursor Agent stopped with exit code 1 before finishing.' }, 'kept')
+ * // => { state: 'failed', reason: 'Cursor Agent stopped with exit code 1 before finishing.', site: 'kept' }
+ */
+function endOfFinishedRun(
+  facts: WikiUpdateEndFacts,
+  site: WikiUpdateSite,
+): WikiUpdateEnd {
+  // A publish that matches the source is the update's success, also when the agent's CLI reported a failure after it.
+  const published = verifiedPublication(facts)
+  if (published) return succeededEnd(published)
+  return blockedEnd(facts, site) ?? unexplainedEnd(facts, site)
+}
+
+/**
  * Decides how a Wiki update run ended, in one place for VS Code and Cursor.
  *
  * Why: both hosts must report the same states for the same events, and "kept or replaced" must come from the disk (the publish token and the publication identity before and after), never from an assumption.
@@ -204,57 +370,9 @@ function describeUnverifiedPublish(
 export function classifyWikiUpdateEnd(
   facts: WikiUpdateEndFacts,
 ): WikiUpdateEnd {
-  // A stop inside the publisher's swap leaves no folder: that is neither the kept site nor a new one.
-  if (facts.tokenAtEnd === undefined && facts.tokenAtStart !== undefined)
-    return {
-      state: 'failed',
-      reason: `The Wiki is missing after a publish that did not finish. Ask the editor chat "${WIKI_UPDATE_RECOVERY_REQUEST}", then press Update LLM Wiki again.`,
-      isCodebookSentence: true,
-      site: 'missing',
-    }
+  const missing = missingSiteEnd(facts)
+  if (missing) return missing
   const site: WikiUpdateSite =
     facts.tokenAtEnd === facts.tokenAtStart ? 'kept' : 'replaced'
-  if (facts.cancelled) return { state: 'cancelled', site }
-  if (facts.timedOut) return { state: 'timed-out', site }
-  // A publish that matches the source is the update's success, also when the agent's CLI reported a failure after it.
-  if (
-    facts.publicationAtEnd !== undefined &&
-    facts.publicationAtEnd !== facts.publicationAtStart &&
-    facts.published?.freshness.status === 'current'
-  ) {
-    const { freshness, identity, revision, index } = facts.published
-    return {
-      state: 'succeeded',
-      identity,
-      // Without a Git repository no revision was checked, so none is claimed.
-      ...(revision === undefined || freshness.addedFilesUnchecked
-        ? {}
-        : { revision }),
-      index,
-    }
-  }
-  if (facts.blockingPaths.length)
-    return {
-      state: 'conflict',
-      paths: [...facts.blockingPaths],
-      cause: 'learner-file',
-      site,
-    }
-  if (facts.failure !== undefined)
-    return { state: 'failed', reason: facts.failure, site }
-  const agent = facts.host === 'cursor' ? 'Cursor Agent' : 'The editor agent'
-  if (site === 'replaced')
-    return {
-      state: 'failed',
-      reason: describeUnverifiedPublish(agent, facts),
-      isCodebookSentence: true,
-      site,
-    }
-  // An agent can end its turn without publishing and without an error.
-  return {
-    state: 'failed',
-    reason: `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in ${facts.host === 'cursor' ? 'Cursor chat' : 'the editor chat'} to see its own message.`,
-    isCodebookSentence: true,
-    site,
-  }
+  return stoppedEnd(facts, site) ?? endOfFinishedRun(facts, site)
 }
