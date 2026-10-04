@@ -418,23 +418,62 @@ export class OwnedRepositoryBreakpoint {
    * owned.registration(session)?.status // 'pending'
    */
   registration(session: vscode.DebugSession): RegistrationReceipt | undefined {
-    if (
-      this.retirement ||
+    if (this.isRetiredOrRemoved()) throw new OwnedBreakpointRemovedError()
+    const registration = this.registrations.get(session.id)
+    if (!registration) return undefined
+    this.assertNotRefused(registration)
+    return registration.receipt && { ...registration.receipt }
+  }
+
+  /**
+   * Says whether the owned breakpoint can no longer be acknowledged at all, so {@link registration} fails with that reason before it reads any receipt.
+   * @returns `true` while a retirement is under way, after it, and when the breakpoint is gone from the editor's list (the learner removed it); `false` while the editor still holds it.
+   * @example
+   * if (this.isRetiredOrRemoved()) throw new OwnedBreakpointRemovedError()
+   */
+  private isRetiredOrRemoved(): boolean {
+    return (
+      Boolean(this.retirement) ||
       this.retired ||
       !vscode.debug.breakpoints.some(
         (breakpoint) => breakpoint.id === this.breakpoint.id,
       )
     )
-      throw new OwnedBreakpointRemovedError()
-    const registration = this.registrations.get(session.id)
-    if (registration?.failure) throw new Error(registration.failure)
+  }
+
+  /**
+   * Fails a registration read whose adapter refused the request or moved the breakpoint to a place the owner refuses; called by {@link registration} for the session's current registration, after the removal check and before the receipt is copied.
+   * @param registration - The session's current registration: the adapter's refusal text, and the refused place of its latest news.
+   * @throws A plain error with the adapter's refusal when the registration failed, otherwise an {@link OwnedBreakpointMovedError} while a refused place stands.
+   * @example
+   * this.assertNotRefused({ failure: 'Malformed breakpoint registration replacement' }) // throws that text
+   */
+  private assertNotRefused(registration: {
+    failure?: string
+    refusedAt?: VerifiedPlace
+  }): void {
+    if (registration.failure) throw new Error(registration.failure)
     // The adapter's latest news put the acknowledged breakpoint where its owner cannot use it.
-    if (registration?.refusedAt)
+    if (registration.refusedAt)
       throw new OwnedBreakpointMovedError(
         { line: this.line, column: this.column },
         registration.refusedAt,
       )
-    return registration?.receipt && { ...registration.receipt }
+  }
+
+  /**
+   * Gives the session's registration only while its acknowledgement stands, for the two reads that never throw, {@link movedTo} and {@link verifiedPlace}.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The registration, or `undefined` when the session has none, the adapter refused it, or its latest news names a place the owner refuses.
+   * @example
+   * this.standingRegistration(session)?.verifiedAt // => { line: 33, column: 5 }
+   */
+  private standingRegistration(session: vscode.DebugSession) {
+    const registration = this.registrations.get(session.id)
+    if (!registration) return undefined
+    return registration.failure || registration.refusedAt
+      ? undefined
+      : registration
   }
 
   /**
@@ -446,10 +485,7 @@ export class OwnedRepositoryBreakpoint {
    * owned.movedTo(session) // => { line: 35, column: 5 }
    */
   movedTo(session: vscode.DebugSession): VerifiedPlace | undefined {
-    const registration = this.registrations.get(session.id)
-    return registration?.failure || registration?.refusedAt
-      ? undefined
-      : registration?.receipt?.movedTo
+    return this.standingRegistration(session)?.receipt?.movedTo
   }
 
   /**
@@ -490,10 +526,7 @@ export class OwnedRepositoryBreakpoint {
    * owned.verifiedPlace(session) // => { line: 33, column: 5 } for a breakpoint verified on its requested line 33
    */
   verifiedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
-    const registration = this.registrations.get(session.id)
-    return registration?.failure || registration?.refusedAt
-      ? undefined
-      : registration?.verifiedAt
+    return this.standingRegistration(session)?.verifiedAt
   }
 
   /**
