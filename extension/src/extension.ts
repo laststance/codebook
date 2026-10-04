@@ -880,6 +880,18 @@ export function activate(
         }
       },
     )
+  /**
+   * Tells {@link runCursorWikiAgent} whether the Cursor agent run ended because its bound passed, so the run is recorded as `timed-out` and not as a failure.
+   * @param agentError - What the agent run threw; `undefined` when it threw nothing.
+   * @returns `true` only for an error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME}, which {@link runCursorWikiUpdate} throws at the bound.
+   * @example
+   * isWikiUpdateTimeout(new Error('The Wiki update was cancelled.')) // => false
+   */
+  const isWikiUpdateTimeout = (agentError: unknown): boolean =>
+    typeof agentError === 'object' &&
+    agentError !== null &&
+    'name' in agentError &&
+    agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
   const runCursorWikiAgent = async (
     run: WikiRun,
@@ -925,11 +937,7 @@ export function activate(
     }
     await finishWikiUpdate(run, {
       cancelled: run.controller.signal.aborted,
-      timedOut:
-        typeof agentError === 'object' &&
-        agentError !== null &&
-        'name' in agentError &&
-        agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
+      timedOut: isWikiUpdateTimeout(agentError),
       // A refused candidate is the learner's file in the way, not a failed agent.
       blockingPaths: await probeWikiCandidates(run).catch(() => []),
       failure: didAgentFail ? thrownMessage(agentError) : undefined,
