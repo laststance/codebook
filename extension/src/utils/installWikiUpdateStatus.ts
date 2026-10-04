@@ -264,14 +264,8 @@ export function installWikiUpdateStatus(
     state === 'timed-out' ||
     state === 'conflict'
 
-  /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. @param reason - Why a check could not decide; empty when the answer gave none. @param isAdditionUnchecked - Whether the project has no Git repository, so added files were not looked for. */
-  const noteFreshness = (
-    status: string | undefined,
-    reason: string,
-    isAdditionUnchecked: boolean,
-  ): void => {
-    freshness = status
-    if (!freshnessLabel) return
+  /** Words the freshness label of a check that could not decide; {@link noteFreshness} asks for it before it knows which label applies. @param reason - Why the check could not decide; empty when the answer gave none. @returns "Wiki freshness unknown", followed by the reason when there is one, shortened to the rail's limit. @example undecidedFreshnessLabel('The manifest is unreadable.') // => 'Wiki freshness unknown: The manifest is unreadable.' */
+  const undecidedFreshnessLabel = (reason: string): string => {
     // The label sits above the outline in a narrow rail: a long reason is cut at the last space before the rail's limit and stays whole in the tooltip.
     const lastSpace = reason.lastIndexOf(' ', settings.reasonLimitChars)
     const shownReason =
@@ -280,49 +274,78 @@ export function installWikiUpdateStatus(
             .slice(0, lastSpace > 0 ? lastSpace : settings.reasonLimitChars)
             .trimEnd() + '…'
         : reason
-    // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus.
-    let label = reason
+    return reason
       ? 'Wiki freshness unknown: ' + shownReason
       : 'Wiki freshness unknown'
-    if (status === 'changed') label = 'Source changed · Update available'
-    else if (status === 'current')
-      label = isAdditionUnchecked
-        ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
-        : 'Wiki source current'
-    freshnessLabel.textContent = label
+  }
+  /** Chooses the text of the freshness label for one answer; called by {@link noteFreshness} on every answered or failed check. @param status - The answered status, or undefined when the reader did not answer. @param undecidedLabel - The label of a check that could not decide, from {@link undecidedFreshnessLabel}. @param isAdditionUnchecked - Whether added files were not looked for. @returns The label of a changed source, of a current one (with the note on unchecked additions), or `undecidedLabel` for any other status. @example freshnessLabelText('current', 'Wiki freshness unknown', false) // => 'Wiki source current' */
+  const freshnessLabelText = (
+    status: string | undefined,
+    undecidedLabel: string,
+    isAdditionUnchecked: boolean,
+  ): string => {
+    if (status === 'changed') return 'Source changed · Update available'
+    if (status !== 'current') return undecidedLabel
+    return isAdditionUnchecked
+      ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
+      : 'Wiki source current'
+  }
+  /** Takes in what `api/freshness` answered and writes it into the freshness label; called by {@link readFreshness} when its check is answered or fails. @param status - The answered status, or undefined when the reader did not answer. @param reason - Why a check could not decide; empty when the answer gave none. @param isAdditionUnchecked - Whether the project has no Git repository, so added files were not looked for. @returns Nothing; the label, its `data-status` and its tooltip are written when the page has a label. @example noteFreshness('unknown', 'The manifest is unreadable.', false) // the label reads "Wiki freshness unknown: The manifest is unreadable." */
+  const noteFreshness = (
+    status: string | undefined,
+    reason: string,
+    isAdditionUnchecked: boolean,
+  ): void => {
+    freshness = status
+    if (!freshnessLabel) return
+    // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus.
+    const undecidedLabel = undecidedFreshnessLabel(reason)
+    freshnessLabel.textContent = freshnessLabelText(
+      status,
+      undecidedLabel,
+      isAdditionUnchecked,
+    )
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
     // The reason of an earlier look must not outlive it.
     if (reason) freshnessLabel.setAttribute('title', reason)
     else freshnessLabel.removeAttribute('title')
   }
-  /** Asks the reader how the Wiki stands against the source and writes the answer into the label. @param generation - The generation of site and source the check is for; a check already in flight for it is joined instead of asked twice. @returns A promise that settles when the answer was taken in, or dropped because a newer check was started meanwhile. */
+  /** What one answer of `api/freshness` says, as {@link noteFreshness} takes it in. */
+  type AnsweredFreshness = {
+    status: string
+    reason: string
+    isAdditionUnchecked: boolean
+  }
+  /** Tells whether an answer of `api/freshness` names a status; the answer is JSON from another process, and {@link takeFreshnessAnswer} relies on nothing else before it reads it. @param answer - What the freshness route answered. @returns true for an object whose `status` is a string, false for anything else. @example hasFreshnessStatus({ status: 'current' }) // => true; hasFreshnessStatus({ error: 'Unknown route.' }) // => false */
+  const hasFreshnessStatus = (answer: unknown): answer is { status: string } =>
+    typeof answer === 'object' &&
+    answer !== null &&
+    'status' in answer &&
+    typeof answer.status === 'string'
+  /** Reads the reason of an undecided check out of a freshness answer; called by {@link takeFreshnessAnswer}. @param answer - The answered object. @returns Its `reason` when that is a string, otherwise an empty string. @example answeredReason({ status: 'unknown', reason: 'The manifest is unreadable.' }) // => 'The manifest is unreadable.' */
+  const answeredReason = (answer: object): string =>
+    'reason' in answer && typeof answer.reason === 'string' ? answer.reason : ''
+  /** Turns what `api/freshness` answered into what {@link noteFreshness} takes in; called by {@link readFreshness} right after the answer arrived. @param answer - What the freshness route answered. @returns The status, the reason (empty when none was given) and whether added files were not checked. @throws When the answer names no status; {@link readFreshness} takes that like a read that failed. @example takeFreshnessAnswer({ status: 'current', addedFilesUnchecked: true }) // => { status: 'current', reason: '', isAdditionUnchecked: true } */
+  const takeFreshnessAnswer = (answer: unknown): AnsweredFreshness => {
+    if (!hasFreshnessStatus(answer))
+      throw new Error('The freshness answer has no status.')
+    return {
+      status: answer.status,
+      reason: answeredReason(answer),
+      isAdditionUnchecked:
+        'addedFilesUnchecked' in answer && answer.addedFilesUnchecked === true,
+    }
+  }
+  /** Asks the reader how the Wiki stands against the source and writes the answer into the label; called by {@link look} when a freshness check is due. @param generation - The generation of site and source the check is for; a check already in flight for it is joined instead of asked twice. @returns A promise that settles when the answer was taken in, or dropped because a newer check was started meanwhile. @example await readFreshness('1759491000000|0') // the freshness label shows what the reader answered */
   const readFreshness = (generation: string): Promise<void> => {
     if (freshnessRead?.generation === generation) return freshnessRead.done
     freshnessReadCount += 1
     const readNumber = freshnessReadCount
     const done = (async (): Promise<void> => {
-      let answered:
-        | { status: string; reason: string; isAdditionUnchecked: boolean }
-        | undefined
+      let answered: AnsweredFreshness | undefined
       try {
         const answer = await readFromReader(settings.freshnessRoute)
-        if (
-          typeof answer !== 'object' ||
-          answer === null ||
-          !('status' in answer) ||
-          typeof answer.status !== 'string'
-        )
-          throw new Error('The freshness answer has no status.')
-        answered = {
-          status: answer.status,
-          reason:
-            'reason' in answer && typeof answer.reason === 'string'
-              ? answer.reason
-              : '',
-          isAdditionUnchecked:
-            'addedFilesUnchecked' in answer &&
-            answer.addedFilesUnchecked === true,
-        }
+        answered = takeFreshnessAnswer(answer)
       } catch {
         answered = undefined
       }
@@ -383,7 +406,69 @@ export function installWikiUpdateStatus(
     isAwaitingStart = false
   }
 
-  /** Decides what the status line says from everything the page knows. */
+  /** Tells whether a result that says the Wiki matches the source is out of date; called by {@link describeAnsweredRun} before it words the result. @param state - The state of the last answer. @returns true when the run succeeded or found the Wiki current and the source changed since, false otherwise. @example isOvertakenBySource('succeeded') // => true while the freshness label reads "Source changed · Update available" */
+  const isOvertakenBySource = (state: WikiUpdateStatus['state']): boolean =>
+    (state === 'succeeded' || state === 'already-current') &&
+    freshness === 'changed'
+  /** Tells whether the site on disk was published after a run ended; called by {@link describeEndOnCurrentSource}. @param ended - The run's end, of which only `finishedAt` is read, and only once a publish time is known. @returns true when the reader answered a publish time later than the end, false when it is not later or no manifest is readable. @example wasPublishedAfter({ finishedAt: '2026-10-03T12:10:00.000Z' }) // => true when the site was published at 12:20 */
+  const wasPublishedAfter = (ended: { finishedAt: string }): boolean =>
+    sitePublishedAtMs !== undefined &&
+    sitePublishedAtMs > Date.parse(ended.finishedAt)
+  /** Words a run that ended without success while the source matches the site again; called by {@link weighUnsuccessfulEnd}. @param ended - The ended run: when it finished and what it left of the site. @param state - The state of that run. @param described - The sentence of that end as {@link WikiUpdatePageSettings.describeUpdate} wrote it. @returns The late-publish sentence when a site was published after the end, undefined when a failed run replaced the site (the status line then says nothing), otherwise the sentence of the end. @example describeEndOnCurrentSource({ finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept' }, 'cancelled', described) // => { state: 'late-publish', lead: 'A new site was published', … } when the site was published at 12:20 */
+  const describeEndOnCurrentSource = (
+    ended: { finishedAt: string; site?: string },
+    state: WikiUpdateStatus['state'],
+    described: WikiUpdateDescription,
+  ): Shown | undefined => {
+    // The editor chat may publish after its run was given up; the site on disk then matches the source after all.
+    if (wasPublishedAfter(ended))
+      return {
+        state: 'late-publish',
+        lead: 'A new site was published',
+        rest: ' after this run ended and matches the source.',
+        detail: [],
+        output: described.output,
+        // Only a page served before that publish still shows the older pages.
+        offerReload: sitePublication !== settings.pagePublication,
+      }
+    // Nothing was published since, so the source itself went back to what the site describes: "needs another run" no longer holds.
+    if (state === 'failed' && ended.site === 'replaced') return undefined
+    return { state, ...described }
+  }
+  /** Weighs the sentence of the last answer against a source that is current; called by {@link describeAnsweredRun} for every answer it words. @param answer - The last answer of the reader. @param state - Its state. @param described - Its sentence. @returns What {@link describeEndOnCurrentSource} says for a run that ended without success while freshness is current, otherwise the sentence with its state. @example weighUnsuccessfulEnd({ state: 'running', … }, 'running', described) // => { state: 'running', ...described } */
+  const weighUnsuccessfulEnd = (
+    answer: WikiUpdateStatus,
+    state: WikiUpdateStatus['state'],
+    described: WikiUpdateDescription,
+  ): Shown | undefined => {
+    if (
+      isEndedWithoutSuccess(state) &&
+      'finishedAt' in answer &&
+      freshness === 'current'
+    )
+      return describeEndOnCurrentSource(answer, state, described)
+    return { state, ...described }
+  }
+  /** Words the last answer of the reader and weighs it against freshness; called by {@link describeShown} when the page itself has nothing to say. @returns The sentence to show, or undefined before the first answer, for a state without a sentence, and for a result that freshness has overtaken. @example describeAnsweredRun() // => { state: 'running', lead: 'Updating', … } while a run is active */
+  const describeAnsweredRun = (): Shown | undefined => {
+    if (!lastAnswer) return undefined
+    const described = settings.describeUpdate(lastAnswer, {
+      formatTime,
+      pathLimit: settings.pathLimit,
+      reasonLimitChars: settings.reasonLimitChars,
+      msPerMinute: settings.msPerMinute,
+      // The page shows the freshness label above the update line.
+      freshnessLabelPlace: 'above',
+      // The host names both publications, so the browser's clock decides nothing.
+      isPageOlderThanSite: sitePublication !== settings.pagePublication,
+    })
+    if (!described) return undefined
+    const state = lastAnswer.state
+    // Freshness is read live and a result is history: a line that says the Wiki matches gives way once the source moved on.
+    if (isOvertakenBySource(state)) return undefined
+    return weighUnsuccessfulEnd(lastAnswer, state, described)
+  }
+  /** Decides what the status line says from everything the page knows; called by {@link show} on every look and press. @returns The sentence of the page's own state (lost contact, awaiting the confirmation, no start), else what {@link describeAnsweredRun} says, which is undefined when the line stays empty. @example describeShown() // => { state: 'awaiting', lead: 'Confirm the update in your editor', rest: ' to start it.', detail: [], output: '', offerReload: false } right after a press */
   const describeShown = (): Shown | undefined => {
     const pageOnly = { detail: [], output: '', offerReload: false }
     if (isUnreachable)
@@ -408,48 +493,7 @@ export function installWikiUpdateStatus(
         rest: ' Confirm it in the editor, or press Update LLM Wiki again.',
         ...pageOnly,
       }
-    if (!lastAnswer) return undefined
-    const described = settings.describeUpdate(lastAnswer, {
-      formatTime,
-      pathLimit: settings.pathLimit,
-      reasonLimitChars: settings.reasonLimitChars,
-      msPerMinute: settings.msPerMinute,
-      // The page shows the freshness label above the update line.
-      freshnessLabelPlace: 'above',
-      // The host names both publications, so the browser's clock decides nothing.
-      isPageOlderThanSite: sitePublication !== settings.pagePublication,
-    })
-    if (!described) return undefined
-    const state = lastAnswer.state
-    // Freshness is read live and a result is history: a line that says the Wiki matches gives way once the source moved on.
-    if (
-      (state === 'succeeded' || state === 'already-current') &&
-      freshness === 'changed'
-    )
-      return undefined
-    if (
-      isEndedWithoutSuccess(state) &&
-      'finishedAt' in lastAnswer &&
-      freshness === 'current'
-    ) {
-      // The editor chat may publish after its run was given up; the site on disk then matches the source after all.
-      if (
-        sitePublishedAtMs !== undefined &&
-        sitePublishedAtMs > Date.parse(lastAnswer.finishedAt)
-      )
-        return {
-          state: 'late-publish',
-          lead: 'A new site was published',
-          rest: ' after this run ended and matches the source.',
-          detail: [],
-          output: described.output,
-          // Only a page served before that publish still shows the older pages.
-          offerReload: sitePublication !== settings.pagePublication,
-        }
-      // Nothing was published since, so the source itself went back to what the site describes: "needs another run" no longer holds.
-      if (state === 'failed' && lastAnswer.site === 'replaced') return undefined
-    }
-    return { state, ...described }
+    return describeAnsweredRun()
   }
   /** Fills the disclosure with what the sentence shortened: every conflicting file, or the whole failure message. */
   const fillDetail = (shown: Shown): void => {
