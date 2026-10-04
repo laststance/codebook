@@ -74,12 +74,12 @@ test('development readiness waits for a complete port across process output chun
   assert.deepEqual(requestedOrigins, ['http://127.0.0.1:43217'])
 })
 
-test('shutdown kills surviving workers even when the process group leader already exited', async () => {
+test('shutdown kills surviving workers even when the process group leader already exited', async (context) => {
   // Arrange: only the leader honors TERM; its worker disappears only after group KILL.
   const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
     nativeRequire = createRequire(filename)
   const exports: Partial<typeof ServerModule> = {},
-    signals: (string | number)[] = []
+    signals: (string | number | undefined)[] = []
   const child = Object.assign(new EventEmitter(), {
     pid: 42000,
     exitCode: 0,
@@ -88,23 +88,27 @@ test('shutdown kills surviving workers even when the process group leader alread
     stderr: new EventEmitter(),
   })
   let groupAlive = true
+  // The closer signals through the shared process-group utilities, which use the real process: no signal of this test leaves it.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      assert.equal(pid, -42000)
+      signals.push(signal)
+      if (signal === 'SIGTERM') child.emit('exit')
+      if (signal === 'SIGKILL') groupAlive = false
+      if (signal === 0 && !groupAlive)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      return true
+    },
+  )
   runInNewContext(
     await readFile(filename, 'utf8'),
     {
       exports,
       AbortSignal,
       Buffer,
-      process: {
-        env: {},
-        kill(pid: number, signal: string | number) {
-          assert.equal(pid, -42000)
-          signals.push(signal)
-          if (signal === 'SIGTERM') child.emit('exit')
-          if (signal === 'SIGKILL') groupAlive = false
-          if (signal === 0 && !groupAlive)
-            throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
-        },
-      },
+      process: { env: {} },
       require(name: string) {
         if (name === 'node:child_process') return { spawn: () => child }
         if (name.endsWith('/utils/waitUntil'))
@@ -131,7 +135,7 @@ test('shutdown kills surviving workers even when the process group leader alread
   assert.equal(groupAlive, false)
 })
 
-test('a later stop retries an application signal failure instead of replaying its rejected promise', async () => {
+test('a later stop retries an application signal failure instead of replaying its rejected promise', async (context) => {
   // Arrange
   const filename = join(__dirname, '../utils/launchDevelopmentServer.js'),
     nativeRequire = createRequire(filename)
@@ -144,22 +148,26 @@ test('a later stop retries an application signal failure instead of replaying it
     stderr: new EventEmitter(),
   })
   let termCount = 0
+  // The closer signals through the shared process-group utilities, which use the real process: no signal of this test leaves it.
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      if (signal === 0)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      if (signal === 'SIGTERM' && ++termCount === 1)
+        throw new Error('Transient process signal failure')
+      child.emit('exit')
+      return true
+    },
+  )
   runInNewContext(
     await readFile(filename, 'utf8'),
     {
       exports,
       AbortSignal,
       Buffer,
-      process: {
-        env: {},
-        kill(_pid: number, signal: string | number) {
-          if (signal === 0)
-            throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
-          if (signal === 'SIGTERM' && ++termCount === 1)
-            throw new Error('Transient process signal failure')
-          child.emit('exit')
-        },
-      },
+      process: { env: {} },
       require(name: string) {
         return name === 'node:child_process'
           ? { spawn: () => child }
@@ -196,25 +204,29 @@ test('stopping the application resolves while macOS still answers its exited, un
   })
   context.mock.property(process, 'platform', 'darwin')
   let unreapedAnswers = 2
+  // The closer signals through the shared process-group utilities, which use the real process: no signal of this test leaves it.
+  context.mock.method(
+    process,
+    'kill',
+    (_pid: number, signal?: string | number): true => {
+      // macOS answers EPERM to every signal, signal 0 included, until the exited members are reaped.
+      if (unreapedAnswers > 0) {
+        unreapedAnswers -= 1
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      }
+      if (signal === 0)
+        throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
+      child.emit('exit')
+      return true
+    },
+  )
   runInNewContext(
     await readFile(filename, 'utf8'),
     {
       exports,
       AbortSignal,
       Buffer,
-      process: {
-        env: {},
-        kill(_pid: number, signal: string | number) {
-          // macOS answers EPERM to every signal, signal 0 included, until the exited members are reaped.
-          if (unreapedAnswers > 0) {
-            unreapedAnswers -= 1
-            throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
-          }
-          if (signal === 0)
-            throw Object.assign(new Error('missing group'), { code: 'ESRCH' })
-          child.emit('exit')
-        },
-      },
+      process: { env: {} },
       require(name: string) {
         return name === 'node:child_process'
           ? { spawn: () => child }
