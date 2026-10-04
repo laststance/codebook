@@ -142,6 +142,8 @@ export async function configuredRuntimeHarness(
   const sourceBoundWait = createSourceBoundWaitHold()
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
+  // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
+  let verifiableLines: number[] | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
   // The generated lines the adapter lists as break locations of the module; without them it cannot answer.
   let possibleBreakLines: number[] | undefined
@@ -259,6 +261,12 @@ export async function configuredRuntimeHarness(
       if (owned?.id === 'owned-breakpoint') reported = firstStopBinding
       else if (owned?.id.startsWith('owned-breakpoint-'))
         reported = laterStopBinding
+      if (
+        owned &&
+        verifiableLines &&
+        !verifiableLines.includes(owned.location.range.start.line + 1)
+      )
+        return undefined
       return bound && !rejectBinding && owned
         ? {
             id: 1,
@@ -420,10 +428,18 @@ export async function configuredRuntimeHarness(
           inputResolve = resolve
           inputReject = reject
         })
+        // A debugger that verifies only some lines pauses where the first stop's breakpoint was requested.
+        const requested = verifiableLines
+          ? breakpoints.find((candidate) => candidate.id === 'owned-breakpoint')
+              ?.location.range.start
+          : undefined
         if (emitInputPause)
           emitPause(
-            firstStopBinding?.column,
-            firstStopBinding?.line ?? fixture?.declaredLine,
+            firstStopBinding?.column ??
+              (requested ? requested.character + 1 : undefined),
+            firstStopBinding?.line ??
+              (requested ? requested.line + 1 : undefined) ??
+              fixture?.declaredLine,
           )
         return pending
       }
@@ -703,6 +719,10 @@ export async function configuredRuntimeHarness(
     /** Makes the page report other executed bytes for the selected module than the sealed bundle holds, as a rebuild between sealing and arming does. */
     replaceExecutedModule(scriptSource: string): void {
       executedScriptSource = scriptSource
+    },
+    /** Makes the adapter verify a breakpoint only when it is requested on one of these source lines, and pause the first stop where its breakpoint was requested: a request on a line without a mapped position is never verified, as natively. @example harness.verifyBreakpointsOnlyOnLines([2]) */
+    verifyBreakpointsOnlyOnLines(lines: number[]): void {
+      verifiableLines = lines
     },
     /** Reports the first stop's verified binding, and its pause, at this position instead of the requested one. */
     bindFirstStopAt(line: number, column: number): void {

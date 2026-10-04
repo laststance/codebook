@@ -592,10 +592,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       await this.assertExecutedModuleSealed(stop, phase)
     }
+    // The debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested where its rule accepts it.
+    const armed = this.armedPlace(stop)
+    if (!stop.breakpoint && armed !== position)
+      this.evidence.record('breakpoint.armed-after-declared-line', {
+        participant: stop.participant,
+        declared: { line: position.line, column: position.column },
+        armed,
+      })
     stop.breakpoint ??= new OwnedRepositoryBreakpoint(
       stop.bundle.sourcePath,
-      position.line,
-      position.column,
+      armed.line,
+      armed.column,
       'declared-line',
       stop.acceptsBoundLine,
     )
@@ -637,7 +645,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           return parsed.data
         },
-        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (requested column ${position.column}); choose an executable statement reached by the requested action`,
+        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${armed === position ? `requested column ${position.column}` : `requested at ${armed.line}:${armed.column}, the first mapped position after the declared line`}); choose an executable statement reached by the requested action`,
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
@@ -661,6 +669,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       requested: { line: position.line, column: position.column },
     })
     await this.verifySources()
+  }
+
+  /**
+   * Chooses the position a declared stop's breakpoint is requested at, called by {@link armStop}.
+   * The debugger verifies no breakpoint that is requested on a line the sealed map has no position on (a blank line, a comment, the `>` that closes an opening tag): natively a browser stop there was never verified and a server stop was never registered or never hit. Such a stop is requested at the first mapped position after its line within its citation, which is the place the stop's binding rule accepts and what the refusal's hints told an agent to declare instead.
+   * @param stop - The declared stop that is about to be armed.
+   * @returns
+   * - `stop.source` itself when its line has a mapped position, when no later line of its citation has one, and when the map was too large to scan completely (the declared position is then requested as before)
+   * - The first mapped position of the first later mapped line of the citation otherwise
+   * @example
+   * ```ts
+   * this.armedPlace(stop) // { line: 39, column: 9 } for a stop declared on the blank line 38
+   * ```
+   */
+  private armedPlace(stop: PreparedStop): { line: number; column: number } {
+    const declared = stop.source,
+      endLine = this.definition.descriptor.anchors[stop.anchorIndex]!.endLine,
+      onDeclaredLine = stop.verifier.mappedPositions(
+        declared.line,
+        declared.line,
+      )
+    if (
+      !onDeclaredLine.complete ||
+      onDeclaredLine.positions.length ||
+      declared.line >= endLine
+    )
+      return declared
+    const later = stop.verifier.mappedPositions(declared.line + 1, endLine)
+    // A partial scan may have missed an earlier mapped line, and a binding past such a line is refused by the stop's rule.
+    return later.complete ? (later.positions[0] ?? declared) : declared
   }
 
   /**

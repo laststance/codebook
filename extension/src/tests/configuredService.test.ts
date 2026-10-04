@@ -830,7 +830,7 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.match(
     contract.sourceBinding,
-    /A declared line without a mapped position \(a blank line, or a comment the generated module kept\) is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either\. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none\./,
+    /A declared line without a mapped position \(a blank line, or a comment the generated module kept\) is requested at the first mapped position after it within the stop's citation, because the debugger verifies no breakpoint on such a line, and is accepted there under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either\. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none\./,
   )
   assert.match(
     contract.sequence[2] ?? '',
@@ -905,7 +905,7 @@ test('configured help tells an agent when a binding on another line fails for ea
   // Cycle 0044 (0041-N10-1b, R3): one rule whatever the map's size; the help no longer says that every declared line without a mapped position fails preparation.
   assert.equal(
     contract.sourceBinding.includes(
-      "A declared line without a mapped position (a blank line, or a comment the generated module kept) is accepted where the debugger binds it under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none.",
+      "A declared line without a mapped position (a blank line, or a comment the generated module kept) is requested at the first mapped position after it within the stop's citation, because the debugger verifies no breakpoint on such a line, and is accepted there under the next rule; preparation fails before input only when no later line of the stop's citation can carry a position either. The sealed map decides that; when it is too large to scan completely, the source text does: a line that is blank or only a comment carries none.",
     ),
     true,
   )

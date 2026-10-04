@@ -2175,35 +2175,75 @@ test('a browser stop the debugger moves to another line after it was armed fails
   assert.equal(run.view().snapshots.length, 0)
 })
 
-// Cycle 0044 (0041-N10-1b): red while a stop declared on a line the sealed map has no position on was refused before input, so the agent's first declaration was lost although the debugger binds it on the next statement.
-test('a stop declared on a line the sealed map has no position on is armed where the debugger binds it on the next mapped line of its citation, pauses there and commits at the bound line', async (context) => {
-  // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both and the debugger verifies the binding at 2:1.
-  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
-    context,
-    undefined,
-    [],
-    {
+// Cycle 0044 (0041-N10-1b): red while a stop declared on a line the sealed map has no position on was requested on that line. A debugger verifies no breakpoint there (seen natively: the run was admitted and then lost after 20 s), so the first declaration was lost.
+test('a stop declared on a line the sealed map has no position on is requested at the first mapped position after it in its citation, pauses there and commits at that place', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both, and the debugger verifies a breakpoint on line 2 only.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], {
       mappings: ';AACA',
       fixture: {
         source: '// toggles the theme\nconst nextTheme = "dark";\n',
         citationEndLine: 2,
       },
-    },
-  )
-  bindFirstStopAt(2, 1)
+    })
+  verifyBreakpointsOnlyOnLines([2])
   // Act
   await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
   run.action('one', 'repository-click')
   const snapshot = await waitUntil(() => {
     const view = run.view()
     if (view.failures.length) throw new Error(view.failures.join('; '))
     return view.snapshots[0]
-  }, 'stop captured at the bound line')
+  }, 'stop captured at the first mapped position after its declared line')
+  const armed = run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
   await run.stop()
   // Assert
+  assert.equal(requested?.line, 1)
+  assert.equal(requested?.character, 0)
+  assert.deepEqual(JSON.parse(JSON.stringify(armed?.detail)), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 2, column: 1 },
+  })
   assert.equal(snapshot.source.line, 2)
   assert.equal(snapshot.source.column, 1)
   assert.equal(mouse.length, 2)
+})
+
+// Cycle 0044 (0041-N10-1b): the declared position is still what is requested when its line has a mapped position, also when the debugger then binds it on the next line.
+test('a stop declared on a line with a mapped position is requested at its declared position', async (context) => {
+  // Arrange: lines 1 and 2 are both mapped and the citation covers both.
+  const { run, breakpoints } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: 'AAAA;AACA',
+      fixture: { citationEndLine: 2 },
+    },
+  )
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  const armedElsewhere = run
+    .view()
+    .events.some(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
+  await run.stop()
+  // Assert
+  assert.equal(requested?.line, 0)
+  assert.equal(requested?.character, 0)
+  assert.equal(armedElsewhere, false)
 })
 
 // Cycle 0044 (0042-N11-2): red while a click target that matches nothing timed out with "click target click-target-missing." and no hint.
