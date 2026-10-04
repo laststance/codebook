@@ -75,13 +75,13 @@ export const inspectionPathSchema = z
       segments.every((segment) => !forbiddenSegments.has(segment))
     )
   }, `Use up to ${REPOSITORY_INSPECTION_SEGMENT_LIMIT} identifier segments without reserved roots or prototype access.`)
-export const repositoryInspectionSchema = z.strictObject({
+const repositoryInspectionSchema = z.strictObject({
   path: inspectionPathSchema,
   mode: z.enum(['value', 'type']),
   required: z.boolean(),
 })
 /** The rule every stop's inspections follow, said where an agent reads last before it declares a run: the description of each `inspections` field in the input schema of `codebook_start`, for both profiles. */
-export const INSPECTIONS_RULE_DESCRIPTION =
+const INSPECTIONS_RULE_DESCRIPTION =
   'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
 /** The inspections of one declared stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of both profiles is this schema. */
 export const stopInspectionsSchema = z

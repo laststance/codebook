@@ -17,7 +17,11 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { actionSchema } from '../schemas'
 import { startServer } from '../server'
 
-import { configuredServiceHarness } from './utils/configuredServiceHarness'
+import {
+  commitNextStop,
+  configuredServiceHarness,
+  observeResult,
+} from './utils/configuredServiceHarness'
 
 const receiptSchema = z.object({
   instanceId: z.string(),
@@ -1883,7 +1887,7 @@ test('a continuation sent with the arguments the run resource gave answers with 
     'the continuation acknowledged',
     1_000,
   )
-  const next = runtime.commitNextStop()
+  const next = commitNextStop(runtime)
   const answered = await continuing
 
   // Assert
@@ -1926,7 +1930,7 @@ test('a continuation sent with the arguments the run resource gave answers with 
   )
 })
 
-// Value: protects=an agent learning the observed result from its last continuation; fails_when=the last continuation answers accepted only, so the agent polls for observed.afterVerified; why_new=Cycle 0045 cause 3 (ER-7); seam=the synthetic runtime, which observes its result when the test says so
+// Value: protects=an agent learning the observed result from its last continuation; fails_when=the last continuation answers accepted only, so the agent polls for observed.afterVerified, or answers "stopped" because the service's own cleanup of the completed run came first; why_new=Cycle 0045 cause 3 (ER-7); seam=the synthetic runtime, which observes its result when the test says so
 test('after the last stop a continuation sent with those arguments answers the observed result', async (context) => {
   // Arrange: a run is paused at its last stop.
   const nowMs = CLOCK_START_MS
@@ -1943,7 +1947,9 @@ test('after the last stop a continuation sent with those arguments answers the o
     'the continuation acknowledged',
     1_000,
   )
-  runtime.observeResult()
+  observeResult(runtime)
+  // The maintenance turn that cleans a completed run up comes before the wait's next turn: that cleanup is no stop of the run.
+  service.maintain()
   const answer = await continuing
 
   // Assert
@@ -2199,7 +2205,7 @@ test('a continuation that waits for the next state does not hold other calls: th
   )
   const readMeanwhile = await readResource(service, receipt.runUri)
   const waitingAfterRead = await isStillWaiting(continuing)
-  runtime.commitNextStop()
+  commitNextStop(runtime)
   const answer = await continuing
 
   // Assert

@@ -127,7 +127,7 @@ export interface Explanation {
   learnerUnderstandingChanged: false
 }
 /** What `codebook_explain` answers: where the committed explanation is read, and the captured keys it was saved under (a path sent without its prefix appears here with it). */
-export interface ExplanationReceipt {
+interface ExplanationReceipt {
   explanationUri: string
   valuePaths: string[]
 }
@@ -848,8 +848,8 @@ export class StudyService {
    * @param committedBefore - The ids of the snapshots committed before the continuation.
    * @returns
    * - `'failure'` once the run has an error, a runtime or evidence failure, or passed its whole-run deadline ({@link StudyService.expireAtDeadline} applies it at once instead of at the next maintenance turn)
-   * - `'stopped'` once the run is being stopped or was cancelled, or the service is shutting down
-   * - `'result'` once the runtime completed
+   * - `'result'` once the runtime completed, also while the service already cleans the completed run up
+   * - `'stopped'` once a run that did not complete is being stopped or was cancelled, or the service is shutting down
    * - `'observation'` once a participant is paused at a snapshot committed after the continuation
    * - `undefined` while the run is still on its way; a snapshot that was committed and then failed its inspection is no observation to continue, and the failure that follows it is what ends the wait
    * @example this.nextRunState(record, new Set(['browser-session:1'])) // => 'observation' once browser-session:2 is committed and paused
@@ -868,6 +868,8 @@ export class StudyService {
       runtime?.status === 'failed'
     )
       return 'failure'
+    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run.
+    if (runtime?.status === 'completed') return 'result'
     if (
       this.stopping ||
       record.stopping ||
@@ -875,7 +877,6 @@ export class StudyService {
       runtime?.status === 'cancelled'
     )
       return 'stopped'
-    if (runtime?.status === 'completed') return 'result'
     const isAtNextObservation = Object.values(runtime?.participants ?? {}).some(
       (participant) =>
         participant.snapshot !== undefined &&
