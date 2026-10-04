@@ -504,8 +504,9 @@ test('an Updated line is gone once the source changed again after that update', 
   const status = page.find('[data-codebook-update-status]')
   const textWhileCurrent = status?.textContent
 
-  // Act
+  // Act: the learner comes back to the page after the source changed, later than a moment after the load.
   page.reader.freshness = 'changed'
+  await page.advance(5_000)
   await page.focusWindow()
 
   // Assert
@@ -630,8 +631,9 @@ test('a run that replaced the site and asked for another run says nothing once t
   const status = page.find('[data-codebook-update-status]')
   const textWhileChanged = status?.textContent
 
-  // Act
+  // Act: the learner comes back to the page after the source went back, later than a moment after the load.
   page.reader.freshness = 'current'
+  await page.advance(5_000)
   await page.focusWindow()
 
   // Assert
@@ -1273,4 +1275,100 @@ test('Reload is offered when the update published between the page’s HTML and 
     'Updated at 12:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
   )
   assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
+})
+
+test('a page served by Codebook says it is checking freshness until the first answer, never that it must be opened from Codebook', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: the reader's first answer is kept back.
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    {},
+    { heldAtLoad: ['api/update-status'] },
+  )
+  const label = page.find('[data-codebook-freshness]')
+  const textBeforeTheFirstAnswer = label?.textContent
+  await page.release('api/update-status')
+
+  // Assert
+  assert.equal(textBeforeTheFirstAnswer, 'Checking freshness…')
+  assert.equal(label?.textContent, 'Wiki source current')
+})
+
+test('a second return to the page within the interval asks for the update state but not for freshness again', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+  )
+  const reads = (route: string): number =>
+    page.reader.requests.filter((request) => request === route).length
+
+  // Act: the learner comes back four seconds after the load's check, and again a second later.
+  await page.advance(4_000)
+  await page.focusWindow()
+  const readsOnTheEarlyReturn = [
+    reads('api/update-status'),
+    reads('api/freshness'),
+  ]
+  await page.advance(1_000)
+  await page.focusWindow()
+
+  // Assert
+  assert.deepEqual(readsOnTheEarlyReturn, [2, 1])
+  assert.deepEqual([reads('api/update-status'), reads('api/freshness')], [3, 2])
+})
+
+test('returns to the page while a freshness check is still in flight join that check instead of asking again', async () => {
+  // Arrange: the answer of the load's freshness check is kept back.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+    {},
+    { heldAtLoad: ['api/freshness'] },
+  )
+
+  // Act
+  await page.focusWindow()
+  await page.focusWindow()
+  const freshnessReadsWhileInFlight = page.reader.requests.filter(
+    (request) => request === 'api/freshness',
+  ).length
+  await page.release('api/freshness')
+
+  // Assert
+  assert.equal(freshnessReadsWhileInFlight, 1)
+  assert.equal(
+    page.find('[data-codebook-freshness]')?.textContent,
+    'Wiki source current',
+  )
+})
+
+test('a freshness check of the site before a publish neither answers for the site after it nor puts its label back when it arrives late', async () => {
+  // Arrange: the check of the old site says current and its answer is kept back across the publish.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+    { freshness: 'current' },
+    { heldAtLoad: ['api/freshness'] },
+  )
+  const label = page.find('[data-codebook-freshness]')
+
+  // Act: a new site is published whose source has moved on; the learner comes back, and only then the old answer arrives.
+  page.reader.sitePublishedAt = '2026-10-03T12:00:10.000Z'
+  page.reader.freshness = 'changed'
+  await page.focusWindow()
+  const labelAfterTheNewCheck = label?.textContent
+  await page.release('api/freshness')
+
+  // Assert
+  assert.equal(labelAfterTheNewCheck, 'Source changed · Update available')
+  assert.equal(label?.textContent, 'Source changed · Update available')
+  assert.equal(
+    page.reader.requests.filter((request) => request === 'api/freshness')
+      .length,
+    2,
+  )
 })

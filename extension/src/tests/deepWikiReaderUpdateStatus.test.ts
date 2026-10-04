@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+import type * as DeepWikiReaderModule from '../deepWikiReader'
+import type { WikiIncludedSource } from '../utils/answerDeepWikiQuestion'
+import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
+import { readWikiPublishedAt } from '../utils/readWikiPublishedAt'
+
+import { loadModule } from './utils/loadModule'
 import { serveMinimalWiki } from './utils/serveMinimalWiki'
 
 test('the Wiki reader answers the current update state at api/update-status', async () => {
@@ -272,6 +278,129 @@ test('a served page carries the publication it was read from, and the update sta
     assert.equal(answer.publication, publicationAfterPublish)
     assert.notEqual(publicationAfterPublish, publicationAtLoad)
   } finally {
+    await wiki.close()
+  }
+})
+
+/**
+ * Serves a one-page Wiki through a reader whose freshness inspection the test keeps open and counts.
+ *
+ * @returns The served Wiki; `inspections` (how many inspections began, each answering the indexed paths of the manifest it was given as `changedPaths`), `generationReads` (how many freshness requests have named their generation), `finishInspections` (lets every inspection end) and `settle` (one turn of the event loop).
+ */
+async function serveWikiWithHeldInspection(): Promise<
+  Awaited<ReturnType<typeof serveMinimalWiki>> & {
+    counts: { inspections: number; generationReads: number }
+    finishInspections(): void
+  }
+> {
+  const counts = { inspections: 0, generationReads: 0 }
+  let finishInspections = (): void => {}
+  const held = new Promise<void>((resolveHeld) => {
+    finishInspections = resolveHeld
+  })
+  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
+    resolve(__dirname, '../deepWikiReader.js'),
+    {
+      './utils/inspectDeepWikiFreshness': {
+        inspectDeepWikiFreshness: async (
+          _projectRoot: string,
+          sources: WikiIncludedSource[],
+        ): Promise<WikiFreshness> => {
+          counts.inspections += 1
+          await held
+          return {
+            status: 'changed',
+            changedPaths: sources.map((source) => source.path),
+            addedPaths: [],
+          }
+        },
+      },
+      './utils/readWikiPublishedAt': {
+        readWikiPublishedAt: async (outputDirectory: string) => {
+          const publishedAt = await readWikiPublishedAt(outputDirectory)
+          counts.generationReads += 1
+          return publishedAt
+        },
+      },
+    },
+    { URL },
+  )
+  const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
+  return { ...wiki, counts, finishInspections }
+}
+
+/** Waits until a count the reader raises has reached a value, for at most two seconds. */
+async function waitForCount(
+  read: () => number,
+  expected: number,
+): Promise<void> {
+  const deadline = Date.now() + 2_000
+  while (read() < expected && Date.now() < deadline)
+    await new Promise((resolveTurn) => setImmediate(resolveTurn))
+  // The reader's own continuation runs after the count was raised.
+  await new Promise((resolveTurn) => setImmediate(resolveTurn))
+}
+
+test('freshness requests that overlap are answered by one inspection', async () => {
+  // Arrange
+  const wiki = await serveWikiWithHeldInspection()
+  try {
+    const freshnessRoute = new URL('api/freshness', wiki.reader.url)
+
+    // Act: the second request arrives while the first one's inspection is still running.
+    const first = fetch(freshnessRoute)
+    const second = fetch(freshnessRoute)
+    await waitForCount(() => wiki.counts.generationReads, 2)
+    wiki.finishInspections()
+    const answers = [await (await first).json(), await (await second).json()]
+
+    // Assert
+    assert.equal(wiki.counts.inspections, 1)
+    assert.deepEqual(
+      answers.map((answer) => answer.status),
+      ['changed', 'changed'],
+    )
+  } finally {
+    wiki.finishInspections()
+    await wiki.close()
+  }
+})
+
+test('a freshness request made after a publish does not join the inspection of the older manifest', async () => {
+  // Arrange: the inspection of the first manifest is still running when a publish replaces it.
+  const wiki = await serveWikiWithHeldInspection()
+  try {
+    const freshnessRoute = new URL('api/freshness', wiki.reader.url)
+    const beforeThePublish = fetch(freshnessRoute)
+    await waitForCount(() => wiki.counts.inspections, 1)
+    const manifest = JSON.parse(await readFile(wiki.manifestPath, 'utf8'))
+    await writeFile(
+      wiki.manifestPath,
+      JSON.stringify({
+        ...manifest,
+        includedSources: [{ path: 'src/new.ts', sha256: 'a'.repeat(64) }],
+      }),
+    )
+    const publishedAt = new Date('2030-01-01T00:00:00.000Z')
+    await utimes(wiki.manifestPath, publishedAt, publishedAt)
+
+    // Act
+    const afterThePublish = fetch(freshnessRoute)
+    await waitForCount(() => wiki.counts.generationReads, 2)
+    wiki.finishInspections()
+    const answers = [
+      await (await beforeThePublish).json(),
+      await (await afterThePublish).json(),
+    ]
+
+    // Assert
+    assert.equal(wiki.counts.inspections, 2)
+    assert.deepEqual(
+      answers.map((answer) => answer.changedPaths),
+      [[], ['src/new.ts']],
+    )
+  } finally {
+    wiki.finishInspections()
     await wiki.close()
   }
 })

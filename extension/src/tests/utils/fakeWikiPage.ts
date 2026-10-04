@@ -238,13 +238,17 @@ export type FakeWikiPageLoad = {
   browserClockAheadMs?: number
   /** The publication the reader wrote into the page's HTML; `null` for a site that had none. The one the fake reader answers at load when omitted. */
   publication?: string | null
+  /** Routes whose first answer is kept back from the load on, until `release(route)`. */
+  heldAtLoad?: string[]
 }
 
 /** A loaded fake page: its elements, its reader and the test's hands on time and input. */
 export type FakeWikiPage = {
   reader: FakeWikiReader
-  /** Keeps the answer to the next request of one route back until `release()`; the answer is what the reader knew when the request arrived. */
-  holdNext(route: string): { release(): Promise<void> }
+  /** Keeps the answer to the next request of one route back until `release(route)`; the answer is what the reader knew when the request arrived. */
+  holdNext(route: string): void
+  /** Delivers the held answer of one route and lets the page take it in. */
+  release(route: string): Promise<void>
   body: PageElement
   /** First element matching the selector, or undefined. */
   find(selector: string): PageElement | undefined
@@ -351,8 +355,18 @@ export async function openFakeWikiPage(
     (load.browserClockAheadMs ?? 0)
   const pagePublication =
     load.publication === undefined ? PUBLICATION_AT_LOAD : load.publication
-  /** The requests whose answers a test keeps back, by route. */
+  /** The routes whose next answer a test keeps back, each with the promise its request waits on and the function that settles it. */
   const heldRequests = new Map<string, Promise<void>>()
+  const heldReleases = new Map<string, () => void>()
+  const holdNext = (route: string): void => {
+    heldRequests.set(
+      route,
+      new Promise<void>((resolveHold) => {
+        heldReleases.set(route, resolveHold)
+      }),
+    )
+  }
+  for (const route of load.heldAtLoad ?? []) holdNext(route)
   let elapsedMs = 0
   let reloads = 0
 
@@ -486,20 +500,14 @@ export async function openFakeWikiPage(
 
   return {
     reader: pageReader,
-    holdNext(route) {
-      let release = (): void => {}
-      heldRequests.set(
-        route,
-        new Promise<void>((resolveHold) => {
-          release = resolveHold
-        }),
-      )
-      return {
-        async release(): Promise<void> {
-          release()
-          await settle()
-        },
-      }
+    holdNext,
+    async release(route): Promise<void> {
+      const release = heldReleases.get(route)
+      if (!release)
+        throw new Error(`The fake page holds no answer of ${route} back.`)
+      heldReleases.delete(route)
+      release()
+      await settle()
     },
     body,
     find: (selector) => root.querySelector(selector) ?? undefined,

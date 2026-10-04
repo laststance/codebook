@@ -23,6 +23,8 @@ export type WikiUpdatePageSettings = {
   statusPollMs: number
   /** How often the page asks while nothing is running and the tab is visible (ms). */
   idlePollMs: number
+  /** How long after an answered freshness check a mere return to the page asks for no other one (ms). */
+  freshnessMinIntervalMs: number
   /** How long after a press of the update link the page waits for the run the learner confirms in the editor (ms). */
   startWaitMs: number
   /** How many failed reads in a row a running update survives before the page says it lost contact. */
@@ -54,6 +56,7 @@ export type WikiUpdatePageSettings = {
  *   describeUpdate: describeWikiUpdate,
  *   statusPollMs: 2_000,
  *   idlePollMs: 15_000,
+ *   freshnessMinIntervalMs: 5_000,
  *   startWaitMs: 120_000,
  *   statusRetryLimit: 3,
  *   pathLimit: 3,
@@ -151,11 +154,23 @@ export function installWikiUpdateStatus(
     location.reload()
   })
 
+  // A page this script runs in is served by Codebook: the offline text of the published page gives way to what happens until the first answer.
+  if (freshnessLabel) freshnessLabel.textContent = 'Checking freshness…'
+
   /** The last state the reader answered, and its serialized form for comparing two answers. */
   let lastAnswer: WikiUpdateStatus | undefined
   let lastAnswerText = ''
   /** The last freshness the reader answered; undefined before the first answer and after a read that failed. */
   let freshness: string | undefined
+  /** The freshness read in flight and the generation of site and source it reads; a look that needs the same generation joins it. */
+  let freshnessRead: { generation: string; done: Promise<void> } | undefined
+  /** Freshness reads started so far; an answer counts only while its read is the latest. */
+  let freshnessReadCount = 0
+  /** The generation the last answered freshness read was made for, and when it was answered (browser clock); undefined until one was answered. */
+  let freshnessGeneration: string | undefined
+  let freshnessAnsweredAtMs: number | undefined
+  /** The generation of site and source the reader last answered; empty before its first answer. */
+  let answeredGeneration = ''
   /** When the site on disk was published, as the reader last answered it (epoch ms); undefined while no manifest is readable. */
   let sitePublishedAtMs: number | undefined
   /** Which publication is on disk, as the reader last answered it; the pages on screen are older when it is not the one they were served from. */
@@ -211,25 +226,45 @@ export function installWikiUpdateStatus(
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
     if (reason) freshnessLabel.title = reason
   }
-  const readFreshness = async (): Promise<void> => {
-    try {
-      const answer = await readFromReader(settings.freshnessRoute)
-      if (
-        typeof answer !== 'object' ||
-        answer === null ||
-        !('status' in answer) ||
-        typeof answer.status !== 'string'
-      )
-        throw new Error('The freshness answer has no status.')
-      noteFreshness(
-        answer.status,
-        'reason' in answer && typeof answer.reason === 'string'
-          ? answer.reason
-          : '',
-      )
-    } catch {
-      noteFreshness(undefined, '')
-    }
+  /** Asks the reader how the Wiki stands against the source and writes the answer into the label. @param generation - The generation of site and source the check is for; a check already in flight for it is joined instead of asked twice. @returns A promise that settles when the answer was taken in, or dropped because a newer check was started meanwhile. */
+  const readFreshness = (generation: string): Promise<void> => {
+    if (freshnessRead?.generation === generation) return freshnessRead.done
+    freshnessReadCount += 1
+    const readNumber = freshnessReadCount
+    const done = (async (): Promise<void> => {
+      let answered: { status: string; reason: string } | undefined
+      try {
+        const answer = await readFromReader(settings.freshnessRoute)
+        if (
+          typeof answer !== 'object' ||
+          answer === null ||
+          !('status' in answer) ||
+          typeof answer.status !== 'string'
+        )
+          throw new Error('The freshness answer has no status.')
+        answered = {
+          status: answer.status,
+          reason:
+            'reason' in answer && typeof answer.reason === 'string'
+              ? answer.reason
+              : '',
+        }
+      } catch {
+        answered = undefined
+      }
+      // A newer check was started for a newer site or source; this late answer must not put its label back over that one's.
+      if (readNumber !== freshnessReadCount) return
+      freshnessRead = undefined
+      if (!answered) {
+        noteFreshness(undefined, '')
+        return
+      }
+      freshnessGeneration = generation
+      freshnessAnsweredAtMs = Date.now()
+      noteFreshness(answered.status, answered.reason)
+    })()
+    freshnessRead = { generation, done }
+    return done
   }
 
   /** Takes in one answer of `api/update-status`. @returns Whether the run it describes just ended. */
@@ -424,7 +459,11 @@ export function installWikiUpdateStatus(
     window.clearTimeout(pollTimer)
     lookCount += 1
     const lookNumber = lookCount
-    let isFreshnessDue = isReturn
+    // A return to the page asks for freshness again, unless a check was answered a moment ago.
+    let isFreshnessDue =
+      isReturn &&
+      (freshnessAnsweredAtMs === undefined ||
+        Date.now() - freshnessAnsweredAtMs >= settings.freshnessMinIntervalMs)
     try {
       const answer = await readFromReader(settings.updateStatusRoute)
       // A newer look is under way; its answer is the one to show.
@@ -438,10 +477,11 @@ export function installWikiUpdateStatus(
         typeof sitePublishedAt === 'string'
           ? Date.parse(sitePublishedAt)
           : undefined
-      const didSiteChange = answeredPublishMs !== sitePublishedAtMs
       sitePublishedAtMs = answeredPublishMs
-      // A finished run changes freshness, and so does a publish: the chat may publish after its run was given up. Hashing the sources at every idle look would cost more than it tells.
-      if (noteAnswer(status) || didSiteChange) isFreshnessDue = true
+      answeredGeneration = String(answeredPublishMs)
+      // A finished run changes freshness, and so does a publish: the chat may publish after its run was given up. The generation of the last answered check is compared, so a check that failed stays owed. Hashing the sources at every idle look would cost more than it tells.
+      if (noteAnswer(status) || answeredGeneration !== freshnessGeneration)
+        isFreshnessDue = true
     } catch {
       if (lookNumber !== lookCount) return
       noteFailedRead()
@@ -449,7 +489,7 @@ export function installWikiUpdateStatus(
     if (isFreshnessDue) {
       // A result is weighed against freshness before it is shown; a run in progress shows at once.
       if (lastAnswer?.state === 'running' || isUnreachable) show()
-      await readFreshness()
+      await readFreshness(answeredGeneration)
       if (lookNumber !== lookCount) return
     }
     show()

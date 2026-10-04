@@ -10,6 +10,7 @@ import { join, relative, sep } from 'node:path'
 import {
   MS_PER_MINUTE,
   WIKI_ENTRY_FILE,
+  WIKI_FRESHNESS_MIN_INTERVAL_MS,
   WIKI_FRESHNESS_ROUTE,
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_MANIFEST_FILE,
@@ -28,7 +29,10 @@ import type {
   WikiIncludedSource,
 } from './utils/answerDeepWikiQuestion'
 import { describeWikiUpdate } from './utils/describeWikiUpdate'
-import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import {
+  inspectDeepWikiFreshness,
+  type WikiFreshness,
+} from './utils/inspectDeepWikiFreshness'
 import { installShortcutHelp } from './utils/installShortcutHelp'
 import {
   installWikiUpdateStatus,
@@ -65,7 +69,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE} });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
@@ -208,6 +212,36 @@ export async function startDeepWikiReader(
     }
   })
   let origin = ''
+  /** The freshness inspection in flight and the generation of the site it reads; requests of that generation that overlap await it. */
+  let freshnessInspection:
+    { generation: string; result: Promise<WikiFreshness> } | undefined
+  /** Inspects the Wiki's freshness once for every request that overlaps, because one inspection hashes each indexed source and runs Git; called by the freshness route. A request made after a publish names another generation and starts its own inspection, so it is never answered from the older manifest. @returns The freshness of the site on disk against the source. @throws When the manifest cannot be read (a publish is replacing the site). @example sendJson(response, 200, await inspectFreshnessShared()) */
+  async function inspectFreshnessShared(): Promise<WikiFreshness> {
+    // Named before the manifest is read, so an inspection a request joins has read a manifest at least as new as the one that request saw.
+    const generation = String(await readWikiPublishedAt(outputDirectory))
+    if (freshnessInspection?.generation === generation)
+      return freshnessInspection.result
+    const result = (async (): Promise<WikiFreshness> => {
+      const { sources, revision, excludedPaths } = await readDeepWikiManifest(
+        outputDirectory,
+        projectRoot,
+      )
+      return inspectDeepWikiFreshness(
+        projectRoot,
+        sources,
+        revision,
+        excludedPaths,
+        { outputDirectory },
+      )
+    })()
+    const inspection = { generation, result }
+    freshnessInspection = inspection
+    try {
+      return await result
+    } finally {
+      if (freshnessInspection === inspection) freshnessInspection = undefined
+    }
+  }
   /** Routes only owned pages and questions; every request must carry this reader's random path token. @example await handleRequest(request, response) */
   async function handleRequest(
     request: IncomingMessage,
@@ -245,27 +279,19 @@ export async function startDeepWikiReader(
       } satisfies WikiUpdateStatusAnswer)
       return
     }
-    // An agent may publish a new owned directory while this reader stays open.
-    const { files, sources, revision, excludedPaths } =
-      await readDeepWikiManifest(outputDirectory, projectRoot)
     if (relativePath === WIKI_FRESHNESS_ROUTE) {
       if (request.method !== 'GET') {
         sendGetOnly(response)
         return
       }
-      sendJson(
-        response,
-        200,
-        await inspectDeepWikiFreshness(
-          projectRoot,
-          sources,
-          revision,
-          excludedPaths,
-          { outputDirectory },
-        ),
-      )
+      sendJson(response, 200, await inspectFreshnessShared())
       return
     }
+    // An agent may publish a new owned directory while this reader stays open.
+    const { files, sources } = await readDeepWikiManifest(
+      outputDirectory,
+      projectRoot,
+    )
     if (relativePath === WIKI_QUESTION_ROUTE) {
       if (
         request.method !== 'POST' ||
