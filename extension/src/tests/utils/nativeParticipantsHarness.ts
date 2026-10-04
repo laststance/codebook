@@ -24,6 +24,7 @@ import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
+import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** Exercises the real coordinator using two controlled native transports and inert source records; never native product proof. @example const harness = await nativeParticipantsHarness(context); await harness.run.prepare() */
 export async function nativeParticipantsHarness(
@@ -504,10 +505,9 @@ export async function nativeParticipantsHarness(
         command: 'setBreakpoints',
         arguments: {
           source: { path: sourcePath },
-          breakpoints: selected.map((breakpoint) => ({
-            line: breakpoint.location.range.start.line + 1,
-            column: breakpoint.location.range.start.character + 1,
-          })),
+          breakpoints: selected.map((breakpoint) =>
+            sourceBreakpointRequest(breakpoint.location.range.start),
+          ),
         },
       })
       run.onResponse(sessions[name], {

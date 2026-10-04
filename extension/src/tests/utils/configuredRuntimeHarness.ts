@@ -23,6 +23,7 @@ import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
+import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
 interface BeforeFailure {
@@ -487,10 +488,9 @@ export async function configuredRuntimeHarness(
           command: 'setBreakpoints',
           arguments: {
             source: { path: sourcePath },
-            breakpoints: breakpoints.map((breakpoint) => ({
-              line: breakpoint.location.range.start.line + 1,
-              column: breakpoint.location.range.start.character + 1,
-            })),
+            breakpoints: breakpoints.map((breakpoint) =>
+              sourceBreakpointRequest(breakpoint.location.range.start),
+            ),
           },
         })
         if (removedAck)

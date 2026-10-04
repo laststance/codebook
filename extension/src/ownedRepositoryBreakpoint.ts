@@ -154,8 +154,9 @@ export class OwnedRepositoryBreakpoint {
       return
     }
     if (!retirement) {
+      // An editor sends a breakpoint at character 0 without a column, so a position that names none is column 1.
       const matches = parsed.data.breakpoints.flatMap((position, index) =>
-        position.line === this.line && position.column === this.column
+        position.line === this.line && (position.column ?? 1) === this.column
           ? [index]
           : [],
       )

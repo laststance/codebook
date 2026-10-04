@@ -14,6 +14,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { loadModule } from './utils/loadModule'
+import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 
 /** The adapter's DAP id for Codebook's own breakpoint, as its registration receipt reports it. */
 const OWNED_BREAKPOINT_ID = 7
@@ -257,10 +258,9 @@ async function nodeRunHarness({
       command: 'setBreakpoints',
       arguments: {
         source: { path: sourceFile },
-        breakpoints: editorBreakpoints.map((breakpoint) => ({
-          line: breakpoint.location.range.start.line + 1,
-          column: breakpoint.location.range.start.character + 1,
-        })),
+        breakpoints: editorBreakpoints.map((breakpoint) =>
+          sourceBreakpointRequest(breakpoint.location.range.start),
+        ),
       },
     })
     tracker?.onDidSendMessage?.({
