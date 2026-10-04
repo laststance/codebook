@@ -4196,6 +4196,11 @@ export class StudyWorkspace {
       historyRequest = this.historyRequest
     const firstOpen = !this.opened
     let unarrangedApp: vscode.WebviewPanel | undefined
+    // An entry takes the keyboard from no editor part that holds it (an agent chat): what a measurement borrows goes back at the end. A selection or restore returns it itself, after its own last layout read.
+    const returnForeignFocus =
+      origin === 'presentation'
+        ? undefined
+        : this.retainForeignTabFocus(undefined)
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.reserveSourceEntry(signal)
     const cancel = (): void => {
@@ -4215,9 +4220,8 @@ export class StudyWorkspace {
         const firstInput = vscode.window.tabGroups.all.find(
           (group) => group.viewColumn === vscode.ViewColumn.One,
         )?.activeTab?.input
-        // For a selection or restore made while a tab of another editor part holds the keyboard (the Agent chat), the main editor is measured once before any pane exists, when its first group shows a text editor: Cursor reports the focus the measurement gives a text editor, and not the focus it gives the Application pane once that is in front of it while the editor names the chat's group.
+        // While a tab of another editor part holds the keyboard (the Agent chat), the main editor is measured once before any pane exists, when its first group shows a text editor: Cursor reports the focus the measurement gives a text editor, and not the focus it gives the Application pane once that is in front of it while the editor names the chat's group. That holds for a selection, a restore, Open replay and Open Study Workspace alike.
         if (
-          origin === 'presentation' &&
           this.retainForeignTabFocus(undefined) &&
           firstInput instanceof vscode.TabInputText &&
           vscode.window.visibleTextEditors.some(
@@ -4286,8 +4290,8 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
       this.installReaders()
-      // A selection or restore that is refused before anything was arranged closes the Application pane it created.
-      const createsApp = origin === 'presentation' && firstOpen && !this.app
+      // A first entry that is refused before anything was arranged closes the Application pane it created.
+      const createsApp = firstOpen && !this.app
       this.ensureApp()
       if (createsApp) unarrangedApp = this.app
       await this.settleInitialApp(signal, lifetime)
@@ -4564,6 +4568,8 @@ export class StudyWorkspace {
       }
       if (request === this.readerOpenNumber)
         this.initialAppPlacement = undefined
+      // Last, because the editor answers a layout read for the focused editor part.
+      await returnForeignFocus?.().catch(() => undefined)
     } catch (error) {
       // A failed first entry remains retryable without retiring a newer Open or discarding accepted native effects.
       if (
@@ -4573,8 +4579,14 @@ export class StudyWorkspace {
         !this.closing
       )
         this.opened = false
-      // The refusal leaves the window as the selection found it.
-      if (unarrangedApp && unarrangedApp === this.app) unarrangedApp.dispose()
+      // The refusal leaves the window as the entry found it. The pane is released first: its close handler would read the disposal as the learner closing the pane and cancel the recording load whose refusal is being answered.
+      if (unarrangedApp && unarrangedApp === this.app) {
+        this.app = undefined
+        unarrangedApp.dispose()
+      }
+      // A newer focus of the learner stays; the keyboard a measurement borrowed goes back to the editor part that held it.
+      if (!this.closing && lifetime === this.lifetime)
+        await returnForeignFocus?.().catch(() => undefined)
       throw error
     } finally {
       if (request === this.readerOpenNumber) this.releaseSourceEntry()
