@@ -2508,6 +2508,90 @@ test('configured help says that every stop needs a required value inspection of 
   assert.doesNotMatch(inspections, /declare type:<path> or a primitive member/)
 })
 
+// Value: protects=an agent that publishes an article under a book id an earlier question already took getting to a run on its own citations; fails_when=the conflict only says "read the current book", so the agent runs on the article it found, whose citations do not cover its stop (the Cursor run's second refused start); why_new=Cycle 0045 cause 5; seam=none
+test('after a publish with expectedRevision 0 is refused for an existing article, the same document published with the current revision is the next revision, and a start on that revision is admitted', async (context) => {
+  // Arrange: the library holds revision 1 of the book "interface"; the agent's own document cites the same sources.
+  const { service, configuration, books, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  const document = (await books.readDefinition('interface', 1)).revision
+      .document,
+    publication = {
+      instanceId: service.instanceId,
+      bookId: 'interface',
+      document: { ...document, summary: 'The agent’s own article.' },
+    }
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_publish_book',
+    arguments: { ...publication, key: 'create', expectedRevision: 0 },
+  })
+  const published = await client.callTool({
+    name: 'codebook_publish_book',
+    arguments: { ...publication, key: 'replace', expectedRevision: 1 },
+  })
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'own-article',
+      configuration: {
+        ...configuration,
+        book: { ...configuration.book, revision: 2 },
+      },
+    }),
+    record = service.record(receipt)
+  await record.preparation
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.deepEqual(
+    z
+      .object({
+        error: z.object({
+          code: z.string(),
+          message: z.string(),
+          recovery: z.string(),
+        }),
+      })
+      .parse(refused.structuredContent).error,
+    {
+      code: 'BOOK_CONFLICT',
+      message:
+        "Book interface exists at revision 1. To replace it, publish the complete document again with expectedRevision 1; to keep it, publish under another book id. A run stops only on lines its article's node cites, so publish your own citations before you start.",
+      recovery:
+        'The message names what conflicts. For a revision conflict, publish the complete document with the current revision as expectedRevision to replace the book, or under another book id to keep it; read the latest revision when you build on its content or its learning identities. Reuse a key only with identical content and expectedRevision.',
+    },
+  )
+  assert.equal(published.isError, undefined, JSON.stringify(published.content))
+  assert.equal(
+    z
+      .object({ data: z.object({ revision: z.number() }) })
+      .parse(published.structuredContent).data.revision,
+    2,
+  )
+  assert.equal(record.error, undefined)
+  assert.equal(record.prepared, true)
+  assert.equal(runtimes.length, 1)
+  assert.equal(service.state(record).nextActions[0], 'repository-click')
+})
+
+// Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none
+test('repository help says that a revision conflict names the current revision and gives the two ways on', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository')
+
+  // Assert
+  assert.ok('text' in help)
+  assert.equal(
+    z.object({ recovery: z.string() }).parse(JSON.parse(help.text)).recovery,
+    'Source mismatch: reread the exact path and update citations explicitly. Revision conflict: the answer names the current revision; publish the complete document again with that expectedRevision to replace the book, or under another book id to keep it. Lost response: reuse identical key/input to recover the original receipt even after source changes. Missing history: discover saved studies in the library; never run application input as recovery.',
+  )
+})
+
 // Value: protects=an agent that sends codebook_reveal and codebook_continue for the same stop together; fails_when=the reveal answers EVIDENCE_UNAVAILABLE ("Matching captured source is not displayed") because the continuation retired the pause the reader presents; why_new=reveal tests never ran beside a continuation (Cycle 0044 row N-13, native N12-a); seam=the synthetic runtime's reveal, which fails like the reader once the pause is gone
 for (const order of ['reveal first', 'continue first'] as const)
   test(`a reveal and a continuation of the same stop issued together, ${order}, never answer an evidence failure`, async (context) => {

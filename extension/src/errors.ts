@@ -23,7 +23,7 @@ export const ERROR_RECOVERY = {
   STALE_SOURCE_CATALOG:
     'List codebook_sources again without a cursor; tracked paths or eligibility changed. No content or learner decision was modified.',
   BOOK_CONFLICT:
-    'Read the latest book revision before authoring another complete revision. Reuse a key only with identical content and expectedRevision.',
+    'The message names what conflicts. For a revision conflict, publish the complete document with the current revision as expectedRevision to replace the book, or under another book id to keep it; read the latest revision when you build on its content or its learning identities. Reuse a key only with identical content and expectedRevision.',
   BOOK_UNAVAILABLE:
     'Read the repository catalog for the affected book and retry after repairing its named storage/reference problem. Existing history is retained; never run application input to repair documentation.',
   RUNTIME_FAILED:

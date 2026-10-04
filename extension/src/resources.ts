@@ -200,7 +200,7 @@ export async function readResource(
           'Trusted local selected Git root. Tracked regular UTF-8 files; no symlinks, hidden paths, secret/key names or lockfiles. This is not a secret-content detector. Nothing runs and no remote repository is fetched.',
       },
       recovery:
-        'Source mismatch: reread the exact path and update citations explicitly. Revision conflict: read the current book. Lost response: reuse identical key/input to recover the original receipt even after source changes. Missing history: discover saved studies in the library; never run application input as recovery.',
+        'Source mismatch: reread the exact path and update citations explicitly. Revision conflict: the answer names the current revision; publish the complete document again with that expectedRevision to replace the book, or under another book id to keep it. Lost response: reuse identical key/input to recover the original receipt even after source changes. Missing history: discover saved studies in the library; never run application input as recovery.',
       understanding:
         'Only an explicit learner action changes understanding. v4 progress retains typed runtime source decisions, complete citation contexts, configured selections and actual article return origins; old v1/v2/v3 bytes remain. Older-format writes are not merged automatically after v4 exists.',
       evidence:
