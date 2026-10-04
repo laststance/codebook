@@ -190,6 +190,28 @@ test('an unsatisfied before condition names the failing predicate without clicki
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
 
+// Cycle 0045 (SM-12): red while the run recognised the wait's timeout by comparing its message with a copy of the wait's sentence, so a wait that worded its timeout differently ended the run with the bare sentence and the failing condition was lost.
+test('a before condition that never holds is still named when the wait words its own timeout differently', async (context) => {
+  // Arrange: the declared element stays hidden, and the wait ends with its timeout type under another sentence than its own.
+  const { run, setReady, wordBeforeTimeoutAs, mouse } =
+    await configuredRuntimeHarness(context)
+  setReady(false)
+  wordBeforeTimeoutAs('The page did not get ready in time')
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  // The run is loaded in its own module context, so its error is read by shape, not by `instanceof`.
+  assert.equal(
+    thrownMessage(failure),
+    'Timed out waiting for configured before conditions: condition 1 (visible) not-visible.',
+  )
+  assert.equal(mouse.length, 0)
+})
+
 // Value: protects=the agent reading in the run's failure that its text is on the page beside other text and how to correct a before condition; fails_when=the relation the page reported is dropped on the way to the timeout text, or the fix sentence drifts; why_new=a text mismatch ended a natural run with only "text-mismatch" (Cycle 0039, N8-a); seam=none
 test('a before text condition whose element holds more text ends the run with the rule and the fix, without clicking the application', async (context) => {
   // Arrange: the declared before condition is a text condition, and the page keeps answering that the element holds the text beside other text.

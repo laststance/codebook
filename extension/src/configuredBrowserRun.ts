@@ -68,6 +68,8 @@ import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
+import { waitTimeoutText } from './runtimeSupport/utils/waitTimeoutText'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
@@ -3023,7 +3025,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     phase: 'before' | 'after',
     failure: ConfiguredDomFailure,
   ): string {
-    return `Timed out waiting for configured ${phase} conditions: ${this.failedConditionText(phase, failure)}`
+    return `${waitTimeoutText(this.conditionsWaitDescription(phase))}: ${this.failedConditionText(phase, failure)}`
+  }
+  /** Names the wait for a phase's declared DOM conditions, so the wait {@link waitForDom} starts and the text {@link conditionTimeoutText} composes name the same thing. @example this.conditionsWaitDescription('after') // 'configured after conditions' */
+  private conditionsWaitDescription(phase: 'before' | 'after'): string {
+    return `configured ${phase} conditions`
   }
   /**
    * Names a declared DOM condition that did not hold, with the page's reason and the hint that corrects it, for {@link conditionTimeoutText} and {@link changedAfterCaptureReason}.
@@ -3066,10 +3072,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'Repository after conditions held before the after image was captured and no longer held when they were read again after it'
     return `${failure ? `${observed}: ${this.failedConditionText('after', failure)}` : `${observed}.`} The page changed during the capture, so the result is not demonstrated. Declare in configuration.action.after a condition that still holds once the action has finished, then start a new run.`
   }
-  /** Polls conditions without repeating application input; setup and after verification call it. @example await this.waitForDom('after') */
+  /**
+   * Polls the declared DOM conditions without repeating application input; setup ({@link prepareOwned}) and after verification ({@link observeAfter}) call it.
+   * @param phase - Whether the conditions guard the input or prove the result.
+   * @throws The text of {@link conditionTimeoutText} when the wait timed out ({@link WaitTimeoutError}, however the wait worded it) and the page named a condition; the invalid-selector text at once; any other failure of the wait unchanged.
+   * @example
+   * ```ts
+   * await this.waitForDom('after')
+   * ```
+   */
   private async waitForDom(phase: 'before' | 'after'): Promise<void> {
     let lastResult: z.infer<typeof domResultSchema> | undefined
-    const timeoutMessage = `Timed out waiting for configured ${phase} conditions`
     try {
       await waitUntil(
         async () => {
@@ -3089,18 +3102,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           return lastResult.ready
         },
-        `configured ${phase} conditions`,
+        this.conditionsWaitDescription(phase),
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
     } catch (error) {
-      if (
-        !error ||
-        typeof error !== 'object' ||
-        !('message' in error) ||
-        error.message !== timeoutMessage ||
-        !lastResult?.failure
-      )
+      // Only the wait's own timeout is completed with the condition the page named last; the type says so, whatever the wait's sentence is.
+      if (!(error instanceof WaitTimeoutError) || !lastResult?.failure)
         throw error
       throw new Error(this.conditionTimeoutText(phase, lastResult.failure))
     }
