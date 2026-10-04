@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { readServedWikiScript } from './utils/readServedWikiScript'
+import { serveMinimalWiki } from './utils/serveMinimalWiki'
 
 const output = {
   outputDirectory: '/repo/.codebook/wiki',
@@ -1107,4 +1108,30 @@ test('nothing in the update group moves: the page adds no animation or transitio
       .map((element) => element.tagName),
     ['p', 'a', 'p', 'strong', 'p'],
   )
+})
+
+// Value: protects=the page tests naming their cause when the reader stops serving the page script; fails_when=the helper hands the body of an error answer on as the page script, so every page test fails with a syntax error in a JSON text; why_new=Cycle 0045 D-L12 (no status check before the body was read); seam=none
+test("the page tests stop with the reader's status when it does not serve the page script", async () => {
+  // Arrange: the served Wiki's address points one folder below the reader's root, where the reader serves no page script.
+  const wiki = await serveMinimalWiki()
+  try {
+    const wikiWithoutPageScript = {
+      ...wiki,
+      reader: {
+        ...wiki.reader,
+        url: new URL('pages/index.html', wiki.reader.url).href,
+      },
+    }
+
+    // Act
+    const reading = readServedWikiScript(wikiWithoutPageScript)
+
+    // Assert
+    await assert.rejects(reading, {
+      message:
+        "The Wiki reader answered 404 for codebook-qa.js, so the page tests have no page script to run. Check the reader's route for that file.",
+    })
+  } finally {
+    await wiki.close()
+  }
 })
