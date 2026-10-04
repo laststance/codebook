@@ -6,7 +6,7 @@ import { isProcessGone } from './isProcessGone'
 import { readWikiRegularFile } from './readWikiRegularFile'
 
 /** What a running Wiki update writes beside the output folder: who runs it and since when. */
-export const wikiUpdateMarkerSchema = z.object({
+const wikiUpdateMarkerSchema = z.object({
   /** Process id of the extension host that runs the update. */
   pid: z.number().int().positive(),
   /** Random id of the editor window's activation; two windows of one test process share a pid, never this. */
