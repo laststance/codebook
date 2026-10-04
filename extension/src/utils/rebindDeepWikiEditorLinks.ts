@@ -3,7 +3,7 @@
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors.
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
- * @returns The page with Codebook action links bound to the active editor.
+ * @returns The page with Codebook action links bound to the active editor, and the rail's "Open in …" control named after it.
  * @example
  * rebindDeepWikiEditorLinks('<a href="vscode://laststance.codebook/settings?root=%2Frepo">Settings</a>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/settings?root=%2Frepo">Settings</a>'
@@ -12,9 +12,18 @@ export function rebindDeepWikiEditorLinks(
   html: string,
   editorScheme: 'vscode' | 'cursor',
 ): string {
-  return html.replace(
-    /(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g,
-    (_match, whitespace: string, quote: string, route: string) =>
-      `${whitespace}href=${quote}${editorScheme}://laststance.codebook/${route}?`,
+  return (
+    html
+      .replace(
+        /(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g,
+        (_match, whitespace: string, quote: string, route: string) =>
+          `${whitespace}href=${quote}${editorScheme}://laststance.codebook/${route}?`,
+      )
+      // The rail's control names the editor it opens the source in; the published page says VS Code, its fallback.
+      .replace(
+        /(<p class="open-in-editor"><a [^>]*>)Open in (?:VS Code|Cursor)(<\/a>)/g,
+        (_match, opening: string, closing: string) =>
+          `${opening}Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}${closing}`,
+      )
   )
 }

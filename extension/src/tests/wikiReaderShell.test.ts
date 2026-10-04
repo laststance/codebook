@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { startDeepWikiReader } from '../deepWikiReader'
+
+import { publishedWikiFixture } from './utils/publishedWikiFixture'
+
 /** The shell every newly published page is rendered from; tests run from `dist/tests`. */
 const readShell = (): Promise<string> =>
   readFile(
@@ -157,4 +161,79 @@ test('every text colour of the update panel keeps 4.5:1 on the panel background 
 
   // Assert
   assert.deepEqual(lowestRatios, { light: 5.48, dark: 7.42 })
+})
+
+test('the reader’s rail offers to open the page’s source in the editor that serves it', async () => {
+  // Arrange: a Wiki published by the shipped publisher, whose overview cites source.ts line 1.
+  const wiki = await publishedWikiFixture()
+  const answer = async (): Promise<never> => {
+    throw new Error('No model request expected.')
+  }
+  const cursorReader = await startDeepWikiReader(
+    wiki.outputDirectory,
+    wiki.projectRoot,
+    answer,
+    'cursor',
+  )
+  const codeReader = await startDeepWikiReader(
+    wiki.outputDirectory,
+    wiki.projectRoot,
+    answer,
+    'vscode',
+  )
+  try {
+    // Act
+    const publishedPage = await readFile(
+      join(wiki.outputDirectory, 'index.html'),
+      'utf8',
+    )
+    const servedByCursor = await (await fetch(cursorReader.url)).text()
+    const servedByCode = await (await fetch(codeReader.url)).text()
+
+    // Assert: the control sits between the outline and the output box and carries the address of the page's first citation.
+    const firstCitation =
+      /<details class="source-files">.*?<a href="([^"]+)">/.exec(
+        publishedPage,
+      )?.[1] ?? ''
+    assert.match(
+      firstCitation,
+      /^vscode:\/\/laststance\.codebook\/source\?root=[^"]+&amp;path=source\.ts&amp;line=1&amp;sha256=[a-f0-9]{64}$/,
+    )
+    assert.ok(
+      publishedPage.includes(
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}">Open in VS Code</a></p><div class="output">`,
+      ),
+    )
+    assert.ok(
+      servedByCode.includes(
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}">Open in VS Code</a></p><div class="output">`,
+      ),
+    )
+    assert.ok(
+      servedByCursor.includes(
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation.replace('vscode://', 'cursor://')}">Open in Cursor</a></p><div class="output">`,
+      ),
+    )
+  } finally {
+    await Promise.all([cursorReader.close(), codeReader.close()])
+    await wiki.cleanup()
+  }
+})
+
+test('the open control is printed only where the publisher puts a page’s first citation, never as a fixed link of the shell', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+
+  // Assert
+  assert.ok(
+    shell.includes(
+      '<ul class="outline">{{OUTLINE}}</ul></nav>{{OPEN_SOURCE}}<div class="output">',
+    ),
+  )
+  assert.doesNotMatch(shell, /<p class="open-in-editor">/)
+  assert.ok(
+    shell.includes(
+      '.open-in-editor{margin:0 0 1rem}.open-in-editor a{display:block;border:1px solid var(--border);border-radius:6px;padding:.5rem .7rem;text-decoration:none;font-size:.8rem;overflow-wrap:anywhere}',
+    ),
+  )
 })

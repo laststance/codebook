@@ -51,6 +51,8 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   const template = await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8');
   const sourceLines = new Map(), pages = new Map();
+  /** The editor address of one cited line; {@link sourceLink} wraps it in a citation's anchor, and the rail's "Open in VS Code" opens a page's first one. @example sourceAddress({ path: 'src/a.ts', sha256 }, 1) // => 'vscode://laststance.codebook/source?root=%2Frepo&path=src%2Fa.ts&line=1&sha256=…' */
+  const sourceAddress = (source, line) => `vscode://laststance.codebook/source?${new URLSearchParams({ root: projectRoot, path: source.path, line: String(line), sha256: source.sha256 })}`;
   /** Resolves page and graph citations through the same current-source boundary. @example await sourceLink({ path: 'src/a.ts', line: 1 }) */
   const sourceLink = async (reference, exactQuote = false) => {
     const source = reference && indexedSources.get(reference.path);
@@ -66,14 +68,15 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
     if (!Number.isSafeInteger(endLine) || endLine < reference.line || endLine > lines.length) throw new Error(`Wiki source line is out of range: ${source.path}:${reference.line}.`);
     // A matching file hash cannot rescue a quote attached to the wrong line range.
     if (exactQuote && (endLine - reference.line >= MAX_SOURCE_QUOTE_LINES || typeof reference.quote !== 'string' || !reference.quote.trim() || lines.slice(reference.line - 1, endLine).join('\n').trim() !== reference.quote.replace(/\r\n/g, '\n').trim())) throw new Error(`Diagram source quote does not match ${source.path}:${reference.line}-${endLine}. Cite at most ${MAX_SOURCE_QUOTE_LINES} exact lines.`);
-    const query = new URLSearchParams({ root: projectRoot, path: source.path, line: String(reference.line), sha256: source.sha256 });
     const location = `${source.path}:${reference.line}${endLine === reference.line ? '' : `–${endLine}`}`;
-    return `<a href="${escapeHtml(`vscode://laststance.codebook/source?${query}`)}">${escapeHtml(reference.label ?? location)}</a>`;
+    return `<a href="${escapeHtml(sourceAddress(source, reference.line))}">${escapeHtml(reference.label ?? location)}</a>`;
   };
   for (const page of manifest.pages) {
     const sourceLinks = [];
     for (const reference of page.sources) sourceLinks.push(`<li>${await sourceLink(reference)}</li>`);
     const article = await renderWikiDiagrams(page, sourceLink);
+    // The rail opens the page's first cited source through that citation's own address; every page has one, and the links above have checked it.
+    const firstSource = page.sources[0];
     const pageHref = target => escapeHtml(posix.relative(posix.dirname(page.path), target));
     const navigationList = (section, parent) => `<ul>${manifest.pages.filter(candidate => candidate.section === section && candidate.parent === parent).map(candidate => `<li><a href="${pageHref(candidate.path)}"${candidate.path === page.path ? ' aria-current="page"' : ''}>${escapeHtml(candidate.title)}</a>${manifest.pages.some(child => child.parent === candidate.path) ? navigationList(section, candidate.path) : ''}</li>`).join('')}</ul>`;
     const navigation = [...new Set(manifest.pages.map(candidate => candidate.section))].map(section => `<div class="chapter-group"><p class="group-label">${escapeHtml(section)}</p>${navigationList(section, undefined)}</div>`).join('');
@@ -89,6 +92,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       OUTPUT_LABEL: outputDirectory === join(projectRoot, '.codebook/wiki') ? 'Project folder' : 'Configured folder',
       UPDATE: escapeHtml(`vscode://laststance.codebook/update?${new URLSearchParams({ root: projectRoot })}`),
       SETTINGS: escapeHtml(`vscode://laststance.codebook/settings?${new URLSearchParams({ root: projectRoot })}`),
+      OPEN_SOURCE: `<p class="open-in-editor"><a href="${escapeHtml(sourceAddress(indexedSources.get(firstSource.path), firstSource.line))}">Open in VS Code</a></p>`,
     };
     pages.set(page.path, template.replace(/\{\{([A-Z_]+)\}\}/g, (match, key) => {
       if (!Object.hasOwn(values, key)) throw new Error(`Unknown reader template field: ${key}`);
