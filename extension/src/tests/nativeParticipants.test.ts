@@ -3761,6 +3761,45 @@ test('a stack refresh while a server stop bound on another line is still waited 
   )
 })
 
+// Cycle 0045 (ST-8): the guard of the deferred refresh had no test; green before, and red when every stop that follows a deferred refresh is consumed as its re-announcement (the guard removed).
+test('a stop announced on another thread after a stack refresh that came while a server stop’s own pause was awaited ends the run instead of passing as the refresh’s re-announcement', async (context) => {
+  // Arrange: the breakpoint binds on line 2 and the runtime pauses there; the wait for a pause on the declared line is held open, and the debugger refreshes the paused stack (continued, with no runtime resume).
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  harness.pauseAt('server', 1, 0)
+  harness.bindAt('server', 2, 1)
+  harness.movePausedFrame(2)
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the wait for the stop’s own pause',
+  )
+  emitServerEvent(harness, 962, 'continued')
+  // Act: the stop that follows is announced for thread 2, not for the refreshed thread 1.
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 963,
+    event: 'stopped',
+    body: { reason: 'breakpoint', threadId: 2 },
+  })
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unexpected stop invalidated native stack refresh',
+  )
+  assert.deepEqual(
+    journalDetails(harness, 'dap.pause-refresh-deferred-stop'),
+    [],
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
 // Cycle 0044 (0042-SR16): red while a throw inside the deadline's timer escaped it and the run was never failed.
 test('a deadline whose paused place cannot be read still fails the run with its own text', async (context) => {
   // Arrange: the server is held by the adapter's own pause and naming its place throws.
