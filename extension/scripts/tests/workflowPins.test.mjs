@@ -273,10 +273,11 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .filter((line) => line.startsWith('uses: '))
   const settings = workflow.split('\n').map((line) => line.trim())
 
-  // Assert: both triggers have one filter, the workflow itself and every source the six test files load; only the
-  // two constants files, which most pull requests change, are left out.
+  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the six test files
+  // load; only the two constants files, which most pull requests change, are left out.
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
+    '.node-version',
     'extension/src/tests/currentStorageOwner.test.ts',
     'extension/src/tests/isFromEarlierBoot.test.ts',
     'extension/src/tests/isProcessGone.test.ts',
@@ -305,6 +306,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(
     [
       '.github/workflows/storage-locks-windows.yml',
+      '.node-version',
       ...loadedSources.filter(
         (path) =>
           path !== 'extension/src/constants.ts' &&
@@ -324,4 +326,32 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
     'uses: ./.github/actions/prepare',
   ])
+})
+
+// Value: protects=the Windows run of the storage lock tests after a change the path filter leaves out (extension/src/constants.ts holds the lock's grace time, its boot time tolerance, its path and its file modes; most pull requests change that file); fails_when=the job starts for the filtered paths only, so a pull request that changes when a lock is taken over never runs on Windows; why_new=Cycle 0045 local review other-1 #1; seam=none
+test('the Windows storage lock job also runs once a week and for a new Node release, so a change the path filter leaves out is seen on Windows', async () => {
+  // Arrange
+  const workflow = await repositoryText(
+    '.github/workflows/storage-locks-windows.yml',
+  )
+
+  // Act
+  const lines = workflow.split('\n')
+  const scheduleAt = lines.indexOf('  schedule:')
+  const triggers = lines.filter((line) => /^ {2}\w+:$/.test(line))
+  const [pushFilter, pullRequestFilter] = pathFiltersOf(workflow)
+
+  // Assert
+  assert.deepEqual(lines.slice(scheduleAt, scheduleAt + 2), [
+    '  schedule:',
+    "    - cron: '17 5 * * 1'",
+  ])
+  assert.deepEqual(triggers.slice(0, 4), [
+    '  push:',
+    '  pull_request:',
+    '  schedule:',
+    '  workflow_dispatch:',
+  ])
+  assert.equal(pushFilter.includes('.node-version'), true)
+  assert.equal(pullRequestFilter.includes('.node-version'), true)
 })
