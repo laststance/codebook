@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
@@ -67,6 +68,32 @@ test('advancing the fake clock spends no fake time while a real file read is pen
       timer.firedAfterMs = Math.round(performance.now() - fakedAtMs)
     }, 200)
   })()
+
+  // Act
+  await advanceClock(context, 200)
+  await working
+  resetFakeClock(context)
+
+  // Assert: the timer was set before any fake time passed, and fired when the advance reached the time it was due.
+  assert.deepEqual(timer, { setAfterMs: 0, firedAfterMs: 200 })
+})
+
+// Value: protects=the faked time a test stands at when the product sets a bound after a child process (the three git reads of a repository source, then the focus wait); fails_when=the clock moves while a child process is still running, so the product sets its timer after 50 to 100 faked ms have already passed and a test that reads its state 50 ms before the bound is no control of that bound; why_new=Cycle 0045 H1-F1, second half (studyWorkspaceEntryObstacles stood 100 to 150 faked ms before the 10 s bound, and its control with a 100 ms shorter wait was red in 3 of 8 runs); seam=none
+test('advancing the fake clock spends no fake time while a child process the work started is still running', async (context) => {
+  // Arrange: work under the clock runs a child process for about 60 real ms and then sets a 200 ms timer, as the product sets its focus wait after its git reads.
+  enableFakeClock(context)
+  const fakedAtMs = performance.now()
+  const timer: { setAfterMs?: number; firedAfterMs?: number } = {}
+  const working = new Promise<void>((resolve, reject) => {
+    execFile(process.execPath, ['-e', 'setTimeout(() => {}, 60)'], (error) => {
+      if (error) return reject(error)
+      timer.setAfterMs = Math.round(performance.now() - fakedAtMs)
+      setTimeout(() => {
+        timer.firedAfterMs = Math.round(performance.now() - fakedAtMs)
+      }, 200)
+      resolve()
+    })
+  })
 
   // Act
   await advanceClock(context, 200)

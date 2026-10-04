@@ -3,17 +3,18 @@ import type { TestContext } from 'node:test'
 /** How far one step moves the faked clock; short enough that 250 ms test tolerances stay meaningful. */
 const FAKE_CLOCK_STEP_MS = 50
 
-/** The fewest real event-loop turns {@link advanceClockUntil} grants before each fake step, so real work that is not file work costs little fake time. */
+/** The fewest real event-loop turns {@link advanceClockUntil} grants before each fake step, so real work that is neither file work nor a child process costs little fake time. */
 const MIN_REAL_TURNS_PER_STEP = 5
 
-/** Real event-loop turns one stretch of real file work may stay pending before {@link reachedWithoutFakeTime} reports it; a turn lasts at least 1 ms. */
-const PENDING_FILE_WORK_TURN_LIMIT = 10_000
+/** Real event-loop turns one stretch of real file or child-process work may stay pending before {@link reachedWithoutFakeTime} reports it; a turn lasts at least 1 ms. */
+const PENDING_REAL_WORK_TURN_LIMIT = 10_000
 
-/** The names `process.getActiveResourcesInfo()` gives a pending real file request: a `node:fs` call with a callback, one of `node:fs/promises`, and the close of a file handle. */
-const PENDING_FILE_REQUEST_TYPES = new Set([
+/** The names `process.getActiveResourcesInfo()` gives real work the product awaits: a `node:fs` call with a callback, one of `node:fs/promises`, the close of a file handle, and a child process that has not exited (the `git` reads of a repository source). */
+const PENDING_REAL_WORK_TYPES = new Set([
   'FSReqCallback',
   'FSReqPromise',
   'CloseReq',
+  'ProcessWrap',
 ])
 
 /** The real timer, kept from before any test fakes `setTimeout`, so real storage and promise work can finish between fake steps. */
@@ -30,37 +31,37 @@ function realTurn(): Promise<void> {
   return new Promise((resolve) => realSetTimeout(resolve, 1))
 }
 
-/** Tells {@link reachedWithoutFakeTime} whether a real file request (a read, a write, a stat, a close) has not answered yet. @returns `true` while one is pending; open handles and timers that outlive the wait do not count. @example hasPendingFileWork() // => true until readFile() answers */
-function hasPendingFileWork(): boolean {
+/** Tells {@link reachedWithoutFakeTime} whether a real file request (a read, a write, a stat, a close) has not answered yet or a child process is still running. @returns `true` while one is pending; open handles and timers that outlive the wait do not count. @example hasPendingRealWork() // => true until readFile() answers */
+function hasPendingRealWork(): boolean {
   return process
     .getActiveResourcesInfo()
-    .some((resourceType) => PENDING_FILE_REQUEST_TYPES.has(resourceType))
+    .some((resourceType) => PENDING_REAL_WORK_TYPES.has(resourceType))
 }
 
 /**
  * Gives real work its event-loop turns while the faked clock stands still, for {@link advanceClockUntil} before every fake step.
  *
- * {@link MIN_REAL_TURNS_PER_STEP} turns always pass; further turns follow for as long as a real file request is pending, so storage work costs no fake time however long it takes.
+ * {@link MIN_REAL_TURNS_PER_STEP} turns always pass; further turns follow for as long as a real file request is pending or a child process is running, so storage work and a `git` read cost no fake time however long they take.
  *
  * @param reached - The awaited condition, read after every turn.
  * @returns
  * - `true` as soon as the condition holds
- * - `false` once it does not hold and no file work is pending, so only fake time can still bring it about
- * @throws When file work is still pending after {@link PENDING_FILE_WORK_TURN_LIMIT} turns, so a file request that never answers fails the test instead of hanging it.
+ * - `false` once it does not hold and no file or child-process work is pending, so only fake time can still bring it about
+ * @throws When that work is still pending after {@link PENDING_REAL_WORK_TURN_LIMIT} turns, so a file request that never answers or a child process that never exits fails the test instead of hanging it.
  * @example
  * if (await reachedWithoutFakeTime(() => controller.state().readiness === 'ready')) return elapsedMs
  */
 async function reachedWithoutFakeTime(
   reached: () => boolean,
 ): Promise<boolean> {
-  for (let turn = 1; turn <= PENDING_FILE_WORK_TURN_LIMIT; turn++) {
+  for (let turn = 1; turn <= PENDING_REAL_WORK_TURN_LIMIT; turn++) {
     await realTurn()
     if (reached()) return true
     // Nothing real is left to wait for: the caller may move the faked clock.
-    if (turn >= MIN_REAL_TURNS_PER_STEP && !hasPendingFileWork()) return false
+    if (turn >= MIN_REAL_TURNS_PER_STEP && !hasPendingRealWork()) return false
   }
   throw new Error(
-    `Real file work was still pending after ${PENDING_FILE_WORK_TURN_LIMIT} event-loop turns; the faked clock was not moved.`,
+    `Real file or child-process work was still pending after ${PENDING_REAL_WORK_TURN_LIMIT} event-loop turns; the faked clock was not moved.`,
   )
 }
 
@@ -109,11 +110,11 @@ export function resetFakeClock(context: TestContext): void {
 /**
  * Moves a test's faked clock forward by an exact amount, for a test that reads the product's state at a chosen faked time before or after one of its bounds.
  *
- * It steps as {@link advanceClockUntil} does: the clock moves only while no real file work is pending, so a timer the product sets after its file work counts from the faked time the test stood at when it asked.
+ * It steps as {@link advanceClockUntil} does: the clock moves only while no real file or child-process work is pending, so a timer the product sets after that work counts from the faked time the test stood at when it asked.
  *
  * @param context - The test whose clock {@link enableFakeClock} faked.
  * @param durationMs - Fake time to pass.
- * @throws When real file work stays pending for {@link PENDING_FILE_WORK_TURN_LIMIT} event-loop turns.
+ * @throws When real file or child-process work stays pending for {@link PENDING_REAL_WORK_TURN_LIMIT} event-loop turns.
  * @example await advanceClock(context, 4_000)
  */
 export async function advanceClock(
@@ -127,7 +128,7 @@ export async function advanceClock(
 /**
  * Moves the faked clock forward until a condition holds, and reports how much fake time that took.
  *
- * The clock moves only while no real file work is pending and never past `limitMs`: the last step is cut to what is left of the limit.
+ * The clock moves only while no real file or child-process work is pending and never past `limitMs`: the last step is cut to what is left of the limit.
  *
  * @param context - The test whose clock {@link enableFakeClock} faked.
  * @param reached - The awaited condition, read after every real event-loop turn.
@@ -135,7 +136,7 @@ export async function advanceClock(
  * @returns
  * - Fake milliseconds the clock was moved until the condition held: `0` when real work alone brought it about, at most `limitMs`
  * - `undefined` when it still did not hold at `limitMs`
- * @throws When real file work stays pending for {@link PENDING_FILE_WORK_TURN_LIMIT} event-loop turns.
+ * @throws When real file or child-process work stays pending for {@link PENDING_REAL_WORK_TURN_LIMIT} event-loop turns.
  * @example
  * await advanceClockUntil(context, () => controller.state().readiness === 'failed', 6_000) // => 5_000
  */
