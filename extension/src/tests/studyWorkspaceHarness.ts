@@ -375,7 +375,13 @@ export async function workspaceHarness(
       }
       return historicalDebugInspection
     }
-    /** Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter. @example await debuggerView.awaitRetrieval('scopes', 2_000) // => false when the view never asks */
+    /**
+     * Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter.
+     * @returns
+     * - `true` once the fake view retrieved that stage of the presented stop
+     * - `false` when `timeoutMs` elapsed first, or at once when the owned session ended or this owner was disposed, also for a view that refreshes later
+     * @example await debuggerView.awaitRetrieval('scopes', 2_000) // => false when the view never asks
+     */
     awaitRetrieval(
       stage: ReplayRetrievalStage,
       timeoutMs: number,
@@ -387,6 +393,8 @@ export async function workspaceHarness(
           resolve(retrieved)
         }
         const check = (): void => {
+          // Like the real owner, an ended session answers no request, so nothing is left to wait for.
+          if (!this.available) return finish(false)
           if (
             stage === 'scopes'
               ? nativeVariables.scopesRetrieved
@@ -414,6 +422,8 @@ export async function workspaceHarness(
       this.available = false
       if (this.closed) return
       this.closed = true
+      // Like the real owner, disposal ends every wait for native Variables at once.
+      for (const check of [...nativeVariablesWaiters]) check()
       // A held disposal models an editor that has not yet acknowledged the stop of the owned session.
       const held = nextHistoricalDebugDisposal
       if (held) {
@@ -3265,6 +3275,8 @@ export async function workspaceHarness(
       for (const debuggerView of historicalDebuggers) {
         if (!debuggerView.available) continue
         debuggerView.available = false
+        // Like the real owner, a wait on the ended session fails now instead of at its deadline.
+        for (const check of [...nativeVariablesWaiters]) check()
         debuggerView.changed('session-ended')
       }
     },
