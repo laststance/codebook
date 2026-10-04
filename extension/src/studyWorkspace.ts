@@ -18,6 +18,7 @@ import {
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
+  OPEN_REPLAY_RESULT_WAIT_MS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
@@ -5560,6 +5561,41 @@ export class StudyWorkspace {
     })
     // The open was accepted, so an earlier refused replay control no longer describes the replay.
     if (this.errors.delete('replay-control')) this.publish()
+  }
+
+  /**
+   * Opens a saved recording for the status bar's Open replay entry and tells the learner when its load failed; the command `codebook.openLearningReplay` calls it.
+   *
+   * {@link openRecording} returns once the load is admitted, and a load that fails later leaves its reason only in the playback state,
+   * which no pane shows while the reader could not open (another window keeps the desktop focus). So this waits, bounded by
+   * {@link OPEN_REPLAY_RESULT_WAIT_MS}, for the load to end and shows a failed load's reason as an editor notification, which the
+   * editor keeps on screen until its window has the focus again.
+   *
+   * @param studyId - The saved study whose recording the entry names.
+   * @returns Once the recording is presented, its load failed and the notification was shown, another recording took its place, or the bound passed.
+   * @throws Whatever {@link openRecording} throws before the load is admitted.
+   * @example await workspace.openLearningReplay(studyId)
+   */
+  async openLearningReplay(studyId: string): Promise<void> {
+    await this.openRecording(studyId)
+    const playback = this.playback!
+    // A load that outlasts the bound is still running and has nothing to report yet.
+    await playback
+      .settle(undefined, OPEN_REPLAY_RESULT_WAIT_MS)
+      .catch(() => undefined)
+    const state = playback.state()
+    if (
+      state.studyId !== studyId ||
+      state.readiness !== 'failed' ||
+      !state.reason
+    )
+      return
+    // The controller keeps a failure as its string form, which starts with the error's name.
+    void showPlainNotice(
+      vscode.window,
+      'error',
+      `Codebook could not open the learning replay: ${state.reason.replace(/^Error: /, '')}`,
+    )
   }
 
   /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */

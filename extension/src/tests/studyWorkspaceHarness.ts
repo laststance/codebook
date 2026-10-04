@@ -70,6 +70,8 @@ export async function workspaceHarness(
   let answerInformationMessage: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  /** The text of every native error notification the reader showed. */
+  const errorMessages: string[] = []
   let hostAppName = 'Visual Studio Code'
   /** Native commands the fake editor answers `getCommands` with: the ones the reader asks the host about before it runs them. */
   const nativeHostCommands = [
@@ -2187,6 +2189,11 @@ export async function workspaceHarness(
           informationMessages.push({ message, items })
           return answerInformationMessage(items)
         },
+        // An error notification of the reader has no button; it stays until the learner dismisses it.
+        showErrorMessage: async (message: string): Promise<undefined> => {
+          errorMessages.push(message)
+          return undefined
+        },
         createTextEditorDecorationType: disposable,
         createTreeView: (
           _id: string,
@@ -2501,6 +2508,8 @@ export async function workspaceHarness(
     warningDialogs,
     /** Every native information message the reader showed, with its buttons. @example harness.informationMessages[0].message */
     informationMessages,
+    /** The text of every native error notification the reader showed. @example harness.errorMessages[0] */
+    errorMessages,
     /** Decides how the learner answers the reader's next information messages; unanswered ones are dismissed. @example harness.answerInformationMessages(async ([move]) => move) */
     answerInformationMessages(
       answer: (items: string[]) => Promise<string | undefined>,

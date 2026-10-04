@@ -1235,7 +1235,7 @@ export function activate(
       workspace().moveLearningSummary(),
     ),
     registerCommand('codebook.openLearningReplay', (studyId: string) =>
-      workspace().openRecording(studyId),
+      workspace().openLearningReplay(studyId),
     ),
     registerCommand('codebook.closeRepositoryWiki', () =>
       repositoryReader?.close(),

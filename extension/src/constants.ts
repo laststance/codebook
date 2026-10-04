@@ -752,5 +752,8 @@ export const CHROME_LINUX_EXECUTABLE_NAMES = [
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
 export const RECORDING_WINDOW_FOCUS_WAIT_MS = 10_000
+/** How long the status bar's Open replay command waits for its load to end, so that it can show a failed load's reason as a notification: the wait for the window's focus and one owned replay settle. A load still running then is left to finish without a notice. */
+export const OPEN_REPLAY_RESULT_WAIT_MS =
+  RECORDING_WINDOW_FOCUS_WAIT_MS + PRESENTATION_SETTLE_CEILING_MS
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1
