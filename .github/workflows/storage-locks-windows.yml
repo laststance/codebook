@@ -1,0 +1,90 @@
+name: Storage locks (Windows)
+
+# The storage lock is taken over with a hard link, a directory rename onto an existing directory and a process probe,
+# which Windows answers differently from Linux; the Test workflow runs on Linux only. This job runs the lock test files
+# on Windows whenever a file those tests load changes. The two constants files are left out of the filter: they change
+# with most pull requests and hold no file system behavior.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/storage-locks-windows.yml
+      - extension/src/tests/currentStorageOwner.test.ts
+      - extension/src/tests/isFromEarlierBoot.test.ts
+      - extension/src/tests/isProcessGone.test.ts
+      - extension/src/tests/isSameStorageMachine.test.ts
+      - extension/src/tests/readBootIdentity.test.ts
+      - extension/src/tests/withStorageLock.test.ts
+      - extension/src/utils/claimStorageLockTakeover.ts
+      - extension/src/utils/currentStorageOwner.ts
+      - extension/src/utils/isFromEarlierBoot.ts
+      - extension/src/utils/isLeftEmpty.ts
+      - extension/src/utils/isProcessGone.ts
+      - extension/src/utils/isRecordedOwnerGone.ts
+      - extension/src/utils/isSameStorageMachine.ts
+      - extension/src/utils/isStaleStorageLock.ts
+      - extension/src/utils/placeStorageLock.ts
+      - extension/src/utils/readBootIdentity.ts
+      - extension/src/utils/readRecordedOwner.ts
+      - extension/src/utils/removeStaleStorageClaims.ts
+      - extension/src/utils/removeStaleStorageLock.ts
+      - extension/src/utils/systemErrorCode.ts
+      - extension/src/utils/withStorageLock.ts
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/storage-locks-windows.yml
+      - extension/src/tests/currentStorageOwner.test.ts
+      - extension/src/tests/isFromEarlierBoot.test.ts
+      - extension/src/tests/isProcessGone.test.ts
+      - extension/src/tests/isSameStorageMachine.test.ts
+      - extension/src/tests/readBootIdentity.test.ts
+      - extension/src/tests/withStorageLock.test.ts
+      - extension/src/utils/claimStorageLockTakeover.ts
+      - extension/src/utils/currentStorageOwner.ts
+      - extension/src/utils/isFromEarlierBoot.ts
+      - extension/src/utils/isLeftEmpty.ts
+      - extension/src/utils/isProcessGone.ts
+      - extension/src/utils/isRecordedOwnerGone.ts
+      - extension/src/utils/isSameStorageMachine.ts
+      - extension/src/utils/isStaleStorageLock.ts
+      - extension/src/utils/placeStorageLock.ts
+      - extension/src/utils/readBootIdentity.ts
+      - extension/src/utils/readRecordedOwner.ts
+      - extension/src/utils/removeStaleStorageClaims.ts
+      - extension/src/utils/removeStaleStorageLock.ts
+      - extension/src/utils/systemErrorCode.ts
+      - extension/src/utils/withStorageLock.ts
+  # A manual run, for the job's first run and for a look at Windows without a change to the files above.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-locks-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  storage-locks-windows:
+    name: Storage lock tests on Windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The job starts rarely, so it installs the dependencies each time instead of keeping a second cache for Windows.
+      - name: Prepare environment
+        uses: ./.github/actions/prepare
+
+      # The command of `pnpm build:fast`; it writes the build metadata itself. Type errors are reported by the TypeCheck
+      # and Build workflows.
+      - name: Emit the compiled tests without type checking
+        working-directory: extension
+        run: node scripts/build-fast.mjs
+
+      - name: Run the storage lock tests
+        working-directory: extension
+        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js
