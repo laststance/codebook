@@ -3707,3 +3707,331 @@ test('a recorded seek made while the bottom panel is maximized leaves the Applic
     await harness.close()
   }
 })
+
+/**
+ * Opens a fake editor whose editor area holds two stacked groups, the window in which VS Code 1.140.0 was observed bringing a hidden editor area back; the tests of the fake editor's own triggers start here.
+ * @returns The harness with a reader that is not open: the first group shows `article-source.ts`, the second group lies below it, and each is 420 px high.
+ * @example const harness = await twoStackedGroupsEditor(); harness.maximizePanel()
+ */
+async function twoStackedGroupsEditor() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 0.5 }, { size: 0.5 }],
+  })
+  return harness
+}
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when a pane is created behind the panel; fails_when=the fake editor keeps the editor area hidden for a new webview panel, so a product change that creates a pane while the panel is maximized passes although VS Code takes the panel out of its maximized state; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for a panel created without focus, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a webview panel created without the keyboard focus', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    harness.editor.window.createWebviewPanel('qa.probe', 'QA probe', {
+      viewColumn: 2,
+      preserveFocus: true,
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when a pane is created with the focus; fails_when=the fake editor keeps the editor area hidden for a new webview panel that takes the focus; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for a panel created with focus, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a webview panel created with the keyboard focus', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    harness.editor.window.createWebviewPanel('qa.probe', 'QA probe', {
+      viewColumn: 2,
+      preserveFocus: false,
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader focuses the first group; fails_when=the fake editor keeps the editor area hidden for the focus-first-group command, so a focus hand-off behind a maximized panel passes although VS Code brings the area back with the first group as a 70 px strip; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned, the focused first row 70 px and the second 617 px); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the command that focuses the first editor group', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the same editor for the other focus-group command the reader runs; fails_when=the fake editor brings the area back for the focus-first-group command only, so the reader's focus on the active group behind a maximized panel is not seen; why_new=Cycle 0045 D-M2 (both focus-group commands of the reader go through one place of the fake editor); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the command that focuses the active editor group', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusActiveEditorGroup',
+    )
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader applies a layout; fails_when=the fake editor keeps the editor area hidden for vscode.setEditorLayout, so an arrangement made behind a maximized panel passes although VS Code brings the area back; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for a layout of the same shape, with the sizes of that layout); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: an editor layout of the same shape', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(harness.groupHeightPx(2), 420)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader applies another layout; fails_when=the fake editor keeps the editor area hidden for a vscode.setEditorLayout that changes the shape of the grid; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for two columns in place of two rows, both columns at the full height); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: an editor layout of another shape', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 840)
+    assert.equal(harness.groupHeightPx(2), 840)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader closes the tab a group shows; fails_when=the fake editor keeps the editor area hidden for a close of a group's active tab, so a tab the reader closes behind a maximized panel passes although VS Code brings the area back; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned when the API closed the active tab of the first group, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a close request for the tab a group shows', async () => {
+  // Arrange: the first group holds a second tab behind the one it shows.
+  const harness = await twoStackedGroupsEditor()
+  try {
+    const shownTab = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!.activeTab!
+    harness.addTextPreview(join(harness.directory, 'second-source.ts'), 1)
+    harness.maximizePanel()
+
+    // Act
+    const closed = await harness.editor.window.tabGroups.close([shownTab])
+
+    // Assert
+    assert.equal(closed, true)
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the learner closes the editor in front; fails_when=the fake editor has no Close Editor command or keeps the editor area hidden for it; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for workbench.action.closeActiveEditor in the first group, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the Close Editor command', async () => {
+  // Arrange: the focused first group holds a second tab behind the one it shows.
+  const harness = await twoStackedGroupsEditor()
+  try {
+    const firstGroup = harness.groups.find((group) => group.viewColumn === 1)!,
+      shownTab = firstGroup.activeTab!
+    harness.addTextPreview(join(harness.directory, 'second-source.ts'), 1)
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.closeActiveEditor',
+    )
+
+    // Assert
+    assert.equal(firstGroup.tabs.includes(shownTab), false)
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the trigger the fake editor already had, kept with the sizes VS Code gives the returned area; fails_when=a revealed pane no longer brings the hidden editor area back; why_new=Cycle 0045 D-M2 (the case of the revealed pane beside the new triggers, so the whole set is pinned); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a webview panel revealed with the keyboard focus', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    const probe = harness.editor.window.createWebviewPanel(
+      'qa.probe',
+      'QA probe',
+      { viewColumn: 2, preserveFocus: true },
+    )
+    harness.maximizePanel()
+
+    // Act
+    probe.reveal(2, false)
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the trigger the fake editor already had, kept with the sizes VS Code gives the returned area; fails_when=a text document shown in a group no longer brings the hidden editor area back; why_new=Cycle 0045 D-M2 (the case of the shown document beside the new triggers, so the whole set is pinned); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a text document shown in a group', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.window.showTextDocument(
+      {
+        uri: harness.editor.Uri.file(join(harness.directory, 'shown.ts')),
+        getText: () => '',
+      },
+      { viewColumn: 2, preserveFocus: true },
+    )
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Opens a fake editor with one group in the first row and two groups side by side in the second, the last of them empty; the tests of an emptied group's removal start here.
+ * @returns The harness with a reader that is not open and three native groups: column 1 above columns 2 and 3.
+ * @example const harness = await twoRowEditorWithSplitSecondRow()
+ */
+async function twoRowEditorWithSplitSecondRow() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [
+      { size: 0.5 },
+      { size: 0.5, groups: [{ size: 0.5 }, { size: 0.5 }] },
+    ],
+  })
+  return harness
+}
+
+// Value: protects=reader tests after a closed dead pane seeing the grid the editor leaves; fails_when=the fake editor rebuilds the grid as columns when a tab close empties a group, so two rows become two columns in one path and stay rows in another; why_new=Cycle 0045 D-M4 (three copies of the removal of an emptied group gave different layouts); seam=the workspace harness's fake editor
+test('a group emptied by a tab close in a two-row layout leaves the same layout as one emptied by a disposed pane', async () => {
+  // Arrange: in each editor the third group, beside the second in the lower row, holds one pane.
+  const closedByRequest = await twoRowEditorWithSplitSecondRow(),
+    closedByDisposal = await twoRowEditorWithSplitSecondRow()
+  try {
+    const deadPane = closedByRequest.leaveDeadCodebookPane(
+      'codebook.studyContext',
+      3,
+    )
+    closedByDisposal.closeDisposedPanelTabsLater()
+    const disposedPane = closedByDisposal.editor.window.createWebviewPanel(
+      'qa.probe',
+      'QA probe',
+      { viewColumn: 3, preserveFocus: true },
+    )
+
+    // Act: one pane's tab is closed by request; the other pane is disposed and the editor closes its tab after the next layout read.
+    await closedByRequest.editor.window.tabGroups.close([deadPane])
+    disposedPane.dispose()
+    await closedByDisposal.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.equal(closedByRequest.groups.length, 2)
+    assert.equal(closedByDisposal.groups.length, 2)
+    assert.deepEqual(closedByRequest.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+    assert.deepEqual(closedByDisposal.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+  } finally {
+    await closedByRequest.close()
+    await closedByDisposal.close()
+  }
+})
+
+// Value: protects=reader tests after a moved pane seeing the grid the editor leaves; fails_when=the fake editor rebuilds the grid as columns when a pane's move empties its group, so two rows become two columns; why_new=Cycle 0045 D-M4 (the pane-move copy of the removal of an emptied group flattened the layout too); seam=the workspace harness's fake editor
+test('a group emptied by a moved pane in a two-row layout leaves the same layout as one emptied by a disposed pane', async () => {
+  // Arrange: the third group, beside the second in the lower row, holds one pane.
+  const harness = await twoRowEditorWithSplitSecondRow()
+  try {
+    harness.closeEmptyGroupsAfterPanelMove()
+    const movedPane = harness.editor.window.createWebviewPanel(
+      'qa.probe',
+      'QA probe',
+      { viewColumn: 3, preserveFocus: true },
+    )
+
+    // Act
+    movedPane.reveal(1, true)
+
+    // Assert
+    assert.deepEqual(harness.automaticallyClosedColumns(), [3])
+    assert.equal(harness.groups.length, 2)
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+  } finally {
+    await harness.close()
+  }
+})
