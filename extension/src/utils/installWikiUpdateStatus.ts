@@ -24,6 +24,8 @@ export type WikiUpdatePageSettings = {
   pathLimit: number
   /** How many characters of a failure reason the sentence shows. */
   reasonLimitChars: number
+  /** Milliseconds in one minute, handed to the embedded sentence writer, which cannot import the constant. */
+  msPerMinute: number
 }
 
 /**
@@ -46,6 +48,7 @@ export type WikiUpdatePageSettings = {
  *   statusRetryLimit: 3,
  *   pathLimit: 3,
  *   reasonLimitChars: 400,
+ *   msPerMinute: 60_000,
  * })
  * ```
  */
@@ -283,6 +286,9 @@ export function installWikiUpdateStatus(
       formatTime,
       pathLimit: settings.pathLimit,
       reasonLimitChars: settings.reasonLimitChars,
+      msPerMinute: settings.msPerMinute,
+      // The page shows the freshness label above the update line.
+      freshnessLabelPlace: 'above',
       pageLoadedAtMs: performance.timeOrigin,
     })
     if (!described) return undefined

@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
-import { stat } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { promisify } from 'node:util'
 
 import { listWikiCandidates } from '../utils/listWikiCandidates'
 
@@ -76,3 +87,70 @@ test('a project without a Wiki has no candidates', async () => {
     await wiki.cleanup()
   }
 })
+
+test('a backup the publisher kept is never read as a candidate, even when its receipt names the current generation', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  try {
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, { heading: 'Second' })
+    await wiki.publish(stage)
+    const parent = dirname(wiki.outputDirectory)
+    const backupName = (await readdir(parent)).find((name) =>
+      name.startsWith('wiki.previous-'),
+    )
+    assert.ok(backupName, 'the publisher kept the first generation as a backup')
+    // The backup's receipt is rewritten to look like a candidate prepared from the generation now published.
+    const publishedManifest = await readFile(
+      join(wiki.outputDirectory, 'codebook-wiki.json'),
+    )
+    await writeFile(
+      join(parent, backupName, 'codebook-publication.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: 'candidate',
+        output: wiki.outputDirectory,
+        baseline: {
+          manifestSha256: createHash('sha256')
+            .update(publishedManifest)
+            .digest('hex'),
+        },
+      }),
+    )
+
+    // Act
+    const candidates = await listWikiCandidates(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(candidates, [])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test(
+  'a candidate folder whose receipt is a named pipe is skipped at once instead of holding the listing',
+  { timeout: 2_000 },
+  async () => {
+    // Arrange
+    const wiki = await publishedWikiFixture()
+    const trap = `${wiki.outputDirectory}.stage-trap`
+    const pipePath = join(trap, 'codebook-publication.json')
+    await mkdir(trap)
+    await promisify(execFile)('mkfifo', [pipePath])
+    try {
+      // Act
+      const candidates = await listWikiCandidates(wiki.outputDirectory)
+
+      // Assert
+      assert.deepEqual(candidates, [])
+    } finally {
+      // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it.
+      await open(pipePath, constants.O_WRONLY | constants.O_NONBLOCK).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await wiki.cleanup()
+    }
+  },
+)

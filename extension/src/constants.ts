@@ -383,6 +383,32 @@ export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
 export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
 /** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */
 export const WIKI_PUBLISH_JOURNAL_SUFFIX = '.publish-journal.json'
+/** What the Wiki publisher puts between the output folder's name and a random id for the backup of the generation it replaced (`wiki.previous-<uuid>`); such a sibling is never a candidate and never added source. */
+export const WIKI_PUBLISH_BACKUP_INFIX = '.previous-'
+/** What the Wiki publisher puts between the output folder's name and a random id for a candidate it prepares by default (`wiki.stage-<uuid>`). */
+export const WIKI_PUBLISH_STAGE_INFIX = '.stage-'
+/** Largest manifest or publication receipt of a Wiki folder the update flow reads; a manifest carries every page's text, so the bound is generous, and it only keeps a link to an endless device from filling memory. */
+export const WIKI_METADATA_FILE_LIMIT_BYTES = 67_108_864
+/** How many indexed sources a freshness check hashes at the same time. */
+export const WIKI_FRESHNESS_HASH_CONCURRENCY = 16
+/** How long a watched Wiki update lets a newly published manifest stay unreadable before it ends as a publish Codebook cannot read; a manifest that is still being written becomes readable well within it. */
+export const WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS = 10_000
+/** The chat request that makes the editor agent run the publisher's recovery; the sentences of an unfinished publish, a manifest changed after its publish and a manifest Codebook cannot read all name it, so the learner can paste it. */
+export const WIKI_UPDATE_RECOVERY_REQUEST =
+  '/codebook Recover the unfinished LLM Wiki publish for this project'
+/** What a running Wiki update appends to the output folder's path for its marker file, which tells other editor windows that this Wiki is being updated. */
+export const WIKI_UPDATE_RUN_MARKER_SUFFIX = '.update-run.json'
+/** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
+export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
+/** How long a VS Code Wiki update waits for the editor's chat command to return before the run ends as failed. */
+export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
+/** Milliseconds in one second, for naming a bound in seconds. */
+export const MS_PER_SECOND = 1_000
+/** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */
+export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
+/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and (as the same words in {@link describeWikiUpdate}) the running line. */
+export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
+  'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
 /** `name` of the error a Cursor Wiki update rejects with at its bound, so the caller records `timed-out` instead of `failed`. */
 export const WIKI_UPDATE_TIMED_OUT_ERROR_NAME = 'WikiUpdateTimedOut'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request. */

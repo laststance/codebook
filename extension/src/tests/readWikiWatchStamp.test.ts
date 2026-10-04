@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { readWikiWatchStamp } from '../utils/readWikiWatchStamp'
@@ -22,7 +23,7 @@ test('a Wiki folder nobody wrote to keeps its stamp, also when the learner chang
     const second = await readWikiWatchStamp(wiki.outputDirectory)
 
     // Assert
-    assert.match(first, /^wiki=\d+:[\d.]+:\d+$/)
+    assert.match(first, /^wiki=\d+:[\d.]+:\d+\/\d+:[\d.]+$/)
     assert.equal(second, first)
   } finally {
     await wiki.cleanup()
@@ -63,7 +64,47 @@ test('a project without a Wiki still has a stamp, so the watch can run until one
     const stamp = await readWikiWatchStamp(`${wiki.projectRoot}/no-wiki-here`)
 
     // Assert
-    assert.equal(stamp, 'no-wiki-here=-')
+    assert.equal(stamp, 'no-wiki-here=-/0:0')
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('the stamp changes when a file is created in the Wiki folder', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  try {
+    const before = await readWikiWatchStamp(wiki.outputDirectory)
+
+    // Act
+    await afterAClockTick()
+    await writeFile(join(wiki.outputDirectory, 'notes', 'second.md'), 'more\n')
+    const afterNewFile = await readWikiWatchStamp(wiki.outputDirectory)
+
+    // Assert
+    assert.notEqual(afterNewFile, before)
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('the stamp does not grow with the backups the publisher keeps', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  try {
+    // Two more publishes leave two backups beside the Wiki, each with its receipt.
+    const second = await wiki.prepare()
+    await wiki.writeCandidate(second, { heading: 'Second' })
+    await wiki.publish(second)
+    const third = await wiki.prepare()
+    await wiki.writeCandidate(third, { heading: 'Third' })
+    await wiki.publish(third)
+
+    // Act
+    const stamp = await readWikiWatchStamp(wiki.outputDirectory)
+
+    // Assert
+    assert.match(stamp, /^wiki=\d+:[\d.]+:\d+\/\d+:[\d.]+$/)
   } finally {
     await wiki.cleanup()
   }

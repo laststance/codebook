@@ -13,6 +13,8 @@ const wording = {
   formatTime: (): string => '21:10',
   pathLimit: 3,
   reasonLimitChars: 200,
+  msPerMinute: 60_000,
+  freshnessLabelPlace: 'above',
 }
 
 /** Joins what the learner reads as one sentence. */
@@ -115,6 +117,8 @@ test('a published update names its time, revision and index, and offers a reload
     host: 'vscode',
     finishedAt,
     identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
     ...place,
   } as const
   const finishedAtMs = Date.parse(finishedAt)
@@ -147,6 +151,7 @@ test('a published update of a project without a Git revision says so instead of 
     host: 'cursor',
     finishedAt,
     identity: 'no-revision+0f9e8d7c',
+    index: '0f9e8d7c',
     ...place,
   } as const
 
@@ -156,7 +161,7 @@ test('a published update of a project without a Git revision says so instead of 
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Updated at 21:10 (index 0f9e8d7c; no Git revision recorded).',
+    'Updated at 21:10 (index 0f9e8d7c; no Git revision recorded, so added files are not checked).',
   )
 })
 
@@ -472,7 +477,7 @@ test('a manifest changed after its publish is named as the reason no update star
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update not started (21:10): the Wiki’s manifest (codebook-wiki.json) was changed after it was published, and the publisher will not replace it. Keep a copy of your change, ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+    'Update not started (21:10): the Wiki’s manifest (codebook-wiki.json) was changed after it was published, and the publisher will not replace it. Keep a copy of your change, ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
   )
 })
 
@@ -494,7 +499,7 @@ test('an unfinished earlier publish is named as the reason no update started, wi
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update not started (21:10): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+    'Update not started (21:10): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
   )
 })
 
@@ -515,4 +520,228 @@ test('a state from a newer extension is shown as unknown instead of as nothing o
     output: 'Output: .codebook/wiki',
     offerReload: false,
   })
+})
+
+test('the bound a running update names is counted in the minute length its caller gives', () => {
+  // Arrange
+  const running: WikiUpdateStatus = {
+    state: 'running',
+    host: 'cursor',
+    startedAt: '2026-10-03T12:00:00.000Z',
+    timeoutMs: 3_000,
+    candidateStaged: false,
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(running, {
+    ...wording,
+    msPerMinute: 1_000,
+  })
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Updating LLM Wiki… Cursor Agent started at 21:10 and may take up to 3 minutes. Cancel it from the notification in Cursor. This site stays readable.',
+  )
+})
+
+test('a published update whose state carries no revision says no Git revision was recorded, whatever its display identity reads', () => {
+  // Arrange
+  const published: WikiUpdateStatus = {
+    state: 'succeeded',
+    host: 'vscode',
+    finishedAt,
+    identity: 'main+0f9e8d7c',
+    index: '0f9e8d7c',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(published, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Updated at 21:10 (index 0f9e8d7c; no Git revision recorded, so added files are not checked).',
+  )
+})
+
+test('a watch that ran out, a Cursor run past its bound and a file conflict that came after the site was replaced say so and never claim it was kept', () => {
+  // Arrange
+  const replaced = { finishedAt, site: 'replaced', ...place } as const
+
+  // Act
+  const watchThatRanOut = describeWikiUpdate(
+    { state: 'timed-out', host: 'vscode', timeoutMs: 900_000, ...replaced },
+    wording,
+  )
+  const cursorPastItsBound = describeWikiUpdate(
+    { state: 'timed-out', host: 'cursor', timeoutMs: 900_000, ...replaced },
+    wording,
+  )
+  const fileConflict = describeWikiUpdate(
+    {
+      state: 'conflict',
+      host: 'cursor',
+      paths: ['notes/mine.md'],
+      cause: 'learner-file',
+      ...replaced,
+    },
+    wording,
+  )
+
+  // Assert
+  assert.equal(
+    sentenceOf(watchThatRanOut),
+    'No new site appeared within 15 minutes, so Codebook stopped watching at 21:10. The site on disk changed during the watch; check the freshness label above.',
+  )
+  assert.equal(
+    sentenceOf(cursorPastItsBound),
+    'Update timed out: Cursor Agent did not finish within 15 minutes and was stopped at 21:10 after it replaced the site on disk; check the freshness label above.',
+  )
+  assert.equal(
+    sentenceOf(fileConflict),
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). The site on disk changed during the run; check the freshness label above. Move or rename the file, then press Update LLM Wiki again.',
+  )
+})
+
+test('a missing generated page names how to get past it', () => {
+  // Arrange
+  const refused: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['index.html'],
+    cause: 'missing-page',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(refused, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): a generated page is missing (index.html). Restore it from Git or the editor’s local history; if you cannot, move the Wiki folder aside and ask the editor chat "/codebook Generate the LLM Wiki for this project".',
+  )
+})
+
+test('a link or special file in the Wiki folder is named with the step that lets the publisher go on', () => {
+  // Arrange
+  const refused: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['assets/shared.css'],
+    cause: 'special-file',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(refused, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): the Wiki folder holds a link or special file (assets/shared.css), which the publisher refuses. Move it out of the Wiki folder, then press Update LLM Wiki again.',
+  )
+})
+
+test('a manifest Codebook cannot read is named as the reason no update started, with the chat request that recovers it', () => {
+  // Arrange
+  const refused: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['codebook-wiki.json'],
+    cause: 'unreadable-manifest',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(refused, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): Codebook cannot read the Wiki’s manifest (codebook-wiki.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  )
+})
+
+test('a refusal Codebook wrote itself is shown whole with its next step, however long it is', () => {
+  // Arrange
+  const reason =
+    'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-3f6c2b1e-7a4d-4c0f-9b51-2d6e8f0a1c37, written 21:05 GMT+9). Codebook waits for it until 21:20 GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification.'
+  const refused: WikiUpdateStatus = {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt,
+    reason,
+    isCodebookSentence: true,
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(refused, {
+    ...wording,
+    reasonLimitChars: 160,
+  })
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    `Update failed at 21:10: ${reason} The last usable site is kept.`,
+  )
+  assert.deepEqual(described?.detail, [])
+})
+
+test('a Wiki that is gone after an interrupted publish is not said to be kept or replaced', () => {
+  // Arrange
+  const missing: WikiUpdateStatus = {
+    state: 'failed',
+    host: 'vscode',
+    finishedAt,
+    reason:
+      'The Wiki is missing after a publish that did not finish. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+    isCodebookSentence: true,
+    site: 'missing',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(missing, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update failed at 21:10: The Wiki is missing after a publish that did not finish. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  )
+})
+
+test('the running line of a VS Code update whose output lies outside the project says the chat will ask to approve each step there', () => {
+  // Arrange
+  const running: WikiUpdateStatus = {
+    state: 'running',
+    host: 'vscode',
+    startedAt: '2026-10-03T12:00:00.000Z',
+    timeoutMs: 900_000,
+    candidateStaged: false,
+    isOutputOutsideProject: true,
+    outputDirectory: '/srv/wiki',
+    outputLabel: '/srv/wiki',
+  }
+
+  // Act
+  const described = describeWikiUpdate(running, wording)
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+  )
 })

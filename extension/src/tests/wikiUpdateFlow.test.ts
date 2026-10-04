@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   mkdir,
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -42,23 +44,34 @@ async function openWikiWindow(
   await mkdir(outputDirectory, { recursive: true })
   await writeFile(join(outputDirectory, 'index.html'), '<title>Wiki</title>')
   const manifestPath = join(outputDirectory, 'codebook-wiki.json')
-  /** Writes the published manifest the way an agent's publish would change it. */
-  const publish = (
+  const receiptPath = join(outputDirectory, 'codebook-publication.json')
+  /** Writes the published manifest and its receipt the way an agent's publish through the publisher would: both as new files, the receipt naming the manifest's hash. */
+  const publish = async (
     sourceHash: string,
     excludedPaths: string[] = [],
-  ): Promise<void> =>
-    writeFile(
-      manifestPath,
+  ): Promise<void> => {
+    const manifestText = JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      generated: { revision: 'a1b2c3d4e5f6a7b8' },
+      pages: [],
+      assets: [],
+      excludedPaths,
+      includedSources: [{ path: 'src/a.ts', sha256: sourceHash }],
+    })
+    // Each file is written beside the old one and moved over it, so it has another inode than the one it replaces.
+    await writeFile(`${manifestPath}.next`, manifestText)
+    await rename(`${manifestPath}.next`, manifestPath)
+    await writeFile(
+      `${receiptPath}.next`,
       JSON.stringify({
         schemaVersion: 1,
-        repositoryRoot: projectRoot,
-        generated: { revision: 'a1b2c3d4e5f6a7b8' },
-        pages: [],
-        assets: [],
-        excludedPaths,
-        includedSources: [{ path: 'src/a.ts', sha256: sourceHash }],
+        kind: 'published',
+        manifestSha256: createHash('sha256').update(manifestText).digest('hex'),
       }),
     )
+    await rename(`${receiptPath}.next`, receiptPath)
+  }
   await publish('a'.repeat(64))
   const window = await openWikiUpdateWindow({
     ...options,
@@ -641,12 +654,22 @@ test('updating before any Wiki exists says to generate one first instead of show
   }
 })
 
-test('a failure before any state is recorded says the update could not start, without an "Error:" prefix', async () => {
+test('an update of a Wiki that belongs to another checkout says the update could not start, without an "Error:" prefix, and the page reads the same reason as a failed start', async () => {
   // Arrange
   const wiki = await openWikiWindow()
+  const foreignManifest = JSON.stringify({
+    schemaVersion: 1,
+    repositoryRoot: '/another/checkout',
+  })
+  await writeFile(wiki.manifestPath, foreignManifest)
   await writeFile(
-    wiki.manifestPath,
-    JSON.stringify({ schemaVersion: 1, repositoryRoot: '/another/checkout' }),
+    join(wiki.outputDirectory, 'codebook-publication.json'),
+    JSON.stringify({
+      kind: 'published',
+      manifestSha256: createHash('sha256')
+        .update(foreignManifest)
+        .digest('hex'),
+    }),
   )
   try {
     // Act
@@ -656,7 +679,14 @@ test('a failure before any state is recorded says the update could not start, wi
     assert.deepEqual(wiki.errors, [
       'Codebook could not start the Wiki update: The DeepWiki manifest does not identify this opened project.',
     ])
-    assert.equal(wiki.status().state, 'idle')
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The DeepWiki manifest does not identify this opened project.',
+    )
+    assert.equal(status.state === 'failed' ? status.site : '', 'kept')
+    assert.deepEqual(wiki.chatRequests, [])
   } finally {
     await wiki.close()
   }
@@ -673,7 +703,7 @@ test('the VS Code update request tells the chat that the publish must match the 
     assert.deepEqual(wiki.chatRequests, [
       {
         name: 'workbench.action.chat.open',
-        query: `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, and generated.revision is the full commit hash of HEAD. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.`,
+        query: `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.`,
       },
     ])
   } finally {
@@ -697,7 +727,7 @@ test('the Cursor update request carries the same contract but asks for no report
 
     // Assert
     assert.deepEqual(prompts, [
-      `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, and generated.revision is the full commit hash of HEAD. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.`,
+      `/codebook Update LLM Wiki for this opened repository. Read ${JSON.stringify(wiki.manifestPath)} and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.`,
     ])
   } finally {
     await wiki.close()

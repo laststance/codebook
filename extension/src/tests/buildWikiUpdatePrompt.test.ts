@@ -9,12 +9,14 @@ test('the VS Code update request tells the agent what Codebook accepts as "Updat
     manifestPath: '/repo/.codebook/wiki/codebook-wiki.json',
     timeoutMs: 900_000,
     isReplyRead: true,
+    hasGitRepository: true,
+    uncoveredPaths: [],
   })
 
   // Assert
   assert.equal(
     prompt,
-    '/codebook Update LLM Wiki for this opened repository. Read "/repo/.codebook/wiki/codebook-wiki.json" and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, and generated.revision is the full commit hash of HEAD. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.',
+    '/codebook Update LLM Wiki for this opened repository. Read "/repo/.codebook/wiki/codebook-wiki.json" and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 15 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths. If you cannot publish, say why in your reply and stop. Then report changed pages and citations. Do not start a debugger or application.',
   )
 })
 
@@ -24,11 +26,13 @@ test('the Cursor update request asks for no report, because nobody reads the CLI
     manifestPath: '/repo/docs/my wiki/codebook-wiki.json',
     timeoutMs: 600_000,
     isReplyRead: false,
+    hasGitRepository: true,
+    uncoveredPaths: [],
   })
 
   // Assert
   assert.equal(
     prompt,
-    '/codebook Update LLM Wiki for this opened repository. Read "/repo/docs/my wiki/codebook-wiki.json" and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 10 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, and generated.revision is the full commit hash of HEAD. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.',
+    '/codebook Update LLM Wiki for this opened repository. Read "/repo/docs/my wiki/codebook-wiki.json" and the installed Codebook skill. Reinspect current source, preserve manual files and the last usable Wiki on failure. Codebook is watching this folder and shows the learner "Updated" only if you publish through the installed publisher within 10 minutes and the published manifest matches the source at that moment: every includedSources sha256 equals the file on disk, generated.revision is the full commit hash of HEAD, and every file added since that revision is indexed or covered by excludedPaths. If you cannot publish, say why in your reply and stop. Do not start a debugger or application.',
   )
 })

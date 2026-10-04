@@ -70,9 +70,9 @@ test('a generated page the learner edited by hand stops the update before any ch
       { cause: 'edited-page', paths: ['index.html'], site: 'kept' },
     )
     assert.deepEqual(wiki.chatRequests, [])
-    assert.equal(wiki.warnings.length, 1)
+    assert.equal(wiki.errors.length, 1)
     assert.match(
-      wiki.warnings[0] ?? '',
+      wiki.errors[0] ?? '',
       /^Update not started \(\d{1,2}:\d{2}(?:\s?[AP]M)?\): a generated page was edited by hand \(index\.html\), and the publisher will not overwrite it\. Move your change aside or restore the page, then press Update LLM Wiki again\.$/,
     )
     assert.equal(
@@ -108,7 +108,7 @@ test('a manifest changed after its publish stops the update before any chat requ
       },
     )
     assert.deepEqual(wiki.chatRequests, [])
-    assert.equal(wiki.warnings.length, 1)
+    assert.equal(wiki.errors.length, 1)
     assert.equal(await readFile(manifestPath, 'utf8'), editedManifest)
   } finally {
     await wiki.close()
@@ -177,9 +177,9 @@ test('a candidate the agent staged in a folder of its own name ends the watched 
         : {},
       { cause: 'learner-file', paths: ['pages/notes.html'], site: 'kept' },
     )
-    assert.equal(wiki.warnings.length, 1)
+    assert.equal(wiki.errors.length, 1)
     assert.match(
-      wiki.warnings[0] ?? '',
+      wiki.errors[0] ?? '',
       /^Update stopped at \d{1,2}:\d{2}(?:\s?[AP]M)?: it would overwrite your own file in the Wiki folder \(pages\/notes\.html\)\. Nothing was replaced\. Move or rename the file, then press Update LLM Wiki again\.$/,
     )
     assert.equal(await wiki.hashOutput(), hashBefore)
@@ -202,13 +202,13 @@ test('a candidate that exists before the click refuses the start as somebody els
     assert.equal(status.state === 'failed' ? status.site : '', 'kept')
     assert.match(
       status.state === 'failed' ? status.reason : '',
-      /^Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written \d{1,2}:\d{2}[^)]*\)\. Wait for it to finish, or delete that folder, then press Update LLM Wiki again\.$/,
+      /^An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written \d{1,2}:\d{2}[^)]*\)\. Codebook waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
     )
     assert.deepEqual(wiki.chatRequests, [])
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
-      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Wait for it to finish, or delete that folder, then press Update LLM Wiki again\. The last usable site is kept\.$/,
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. The last usable site is kept\.$/,
     )
   } finally {
     await wiki.close()
@@ -276,7 +276,7 @@ test('a candidate the earlier chat keeps writing after this window stopped watch
     assert.equal(retry.state, 'failed')
     assert.match(
       retry.state === 'failed' ? retry.reason : '',
-      /^Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
+      /^An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
     )
     assert.equal(wiki.chatRequests.length, 1)
   } finally {
@@ -495,9 +495,9 @@ test(
         [900_000, 'kept'],
       )
       assert.equal(nowMs, 900_000)
-      assert.equal(wiki.warnings.length, 1)
+      assert.equal(wiki.errors.length, 1)
       assert.match(
-        wiki.warnings[0] ?? '',
+        wiki.errors[0] ?? '',
         /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing has been replaced\. Check the VS Code chat: it may be waiting for you or have reported a problem\. Press Update LLM Wiki to start again\.$/,
       )
       assert.equal(await wiki.hashOutput(), hashBefore)

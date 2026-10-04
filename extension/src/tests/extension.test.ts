@@ -1015,15 +1015,26 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
         runCursorWikiUpdate: async (root: string, prompt: string) => {
           agentRuns.push({ root, prompt })
           // The agent publishes: the manifest file changes, and it now matches the source.
+          const manifestText = JSON.stringify({
+            schemaVersion: 1,
+            repositoryRoot: projectRoot,
+            pages: [],
+            assets: [],
+            includedSources: [],
+            excludedPaths: ['scratch'],
+          })
           await writeFile(
             join(outputDirectory, 'codebook-wiki.json'),
+            manifestText,
+          )
+          // The publisher's receipt names the new manifest; a manifest rewritten without it is no publish.
+          await writeFile(
+            join(outputDirectory, 'codebook-publication.json'),
             JSON.stringify({
-              schemaVersion: 1,
-              repositoryRoot: projectRoot,
-              pages: [],
-              assets: [],
-              includedSources: [],
-              excludedPaths: ['scratch'],
+              kind: 'published',
+              manifestSha256: createHash('sha256')
+                .update(manifestText)
+                .digest('hex'),
             }),
           )
           publishedWikiIsCurrent = true
@@ -1031,10 +1042,12 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
         },
       },
       './utils/inspectDeepWikiFreshness': {
+        // What the real check answers for this project, which has no Git repository: current once the sources match, with added files not looked for.
         inspectDeepWikiFreshness: async () => ({
           status: publishedWikiIsCurrent ? 'current' : 'changed',
-          changedPaths: [],
+          changedPaths: publishedWikiIsCurrent ? [] : ['source.ts'],
           addedPaths: [],
+          addedFilesUnchecked: true,
         }),
       },
     },
@@ -1059,7 +1072,7 @@ test('Cursor Wiki update starts its project-bound agent without leaving an unsen
     assert.deepEqual(chatCommands, [])
     assert.match(
       messages[0] ?? '',
-      /^Updated at \d{1,2}:\d{2}(?:\s?[AP]M)? \(index [0-9a-f]{8}; no Git revision recorded\)\. Reload the browser reader to read the new pages\.$/,
+      /^Updated at \d{1,2}:\d{2}(?:\s?[AP]M)? \(index [0-9a-f]{8}; no Git revision recorded, so added files are not checked\)\. Reload the browser reader to read the new pages\.$/,
     )
   } finally {
     await boundary.deactivate()
@@ -1617,15 +1630,26 @@ test('a Cursor Wiki update that leaves source changed reports a failure instead 
         runCursorWikiUpdate: async (root: string) => {
           agentRuns.push(root)
           // The agent publishes a new site, but the source no longer matches it.
+          const manifestText = JSON.stringify({
+            schemaVersion: 1,
+            repositoryRoot: projectRoot,
+            pages: [],
+            assets: [],
+            includedSources: [],
+            excludedPaths: ['scratch'],
+          })
           await writeFile(
             join(outputDirectory, 'codebook-wiki.json'),
+            manifestText,
+          )
+          // The publisher's receipt names the new manifest; a manifest rewritten without it is no publish.
+          await writeFile(
+            join(outputDirectory, 'codebook-publication.json'),
             JSON.stringify({
-              schemaVersion: 1,
-              repositoryRoot: projectRoot,
-              pages: [],
-              assets: [],
-              includedSources: [],
-              excludedPaths: ['scratch'],
+              kind: 'published',
+              manifestSha256: createHash('sha256')
+                .update(manifestText)
+                .digest('hex'),
             }),
           )
           return 'Updated'
@@ -2221,16 +2245,12 @@ test('a failed Open DeepWiki in Browser whose error quotes a command link shows 
 })
 
 test('a failed Update LLM Wiki whose error quotes a command link shows no clickable link', async () => {
-  // Arrange: the output folder is named like a link and holds this checkout's manifest without its entry page.
+  // Arrange: the output folder is named like a link and holds no Wiki yet, so the notice quotes the folder.
   const projectRoot = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-update-wiki-notice-')),
   )
   const outputDirectory = join(projectRoot, '[Open cited line](x)')
   await mkdir(outputDirectory)
-  await writeFile(
-    join(outputDirectory, 'codebook-wiki.json'),
-    JSON.stringify({ schemaVersion: 1, repositoryRoot: projectRoot }),
-  )
   const commands = new Map<string, () => Promise<void>>(),
     errors: string[] = []
   const boundary = await loadModule<typeof ExtensionModule>(
@@ -2275,11 +2295,11 @@ test('a failed Update LLM Wiki whose error quotes a command link shows no clicka
   })
   try {
     // Act
-    await assert.rejects(commands.get('codebook.updateDeepWiki')!())
+    await commands.get('codebook.updateDeepWiki')!()
 
     // Assert
     assert.deepEqual(errors, [
-      `Codebook could not start the Wiki update: ENOENT: no such file or directory, open '${projectRoot}/[Open cited line] (x)/index.html'`,
+      'Codebook found no LLM Wiki in [Open cited line] (x). Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {

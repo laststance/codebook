@@ -15,7 +15,7 @@ test('a candidate written a minute ago in a window that has had no run is somebo
   const active = selectActiveWikiCandidate(candidates, {
     nowMs: 1_060_000,
     activeWithinMs: FIFTEEN_MINUTES_MS,
-    lastRunEndedAtMs: undefined,
+    lastRun: undefined,
   })
 
   // Assert
@@ -36,7 +36,7 @@ test('a candidate nobody wrote to for longer than the watch bound is abandoned a
   const active = selectActiveWikiCandidate(candidates, {
     nowMs: 1_000_000 + FIFTEEN_MINUTES_MS + 1,
     activeWithinMs: FIFTEEN_MINUTES_MS,
-    lastRunEndedAtMs: undefined,
+    lastRun: undefined,
   })
 
   // Assert
@@ -53,7 +53,13 @@ test('a candidate this window’s own finished run left behind does not block a 
   const active = selectActiveWikiCandidate(candidates, {
     nowMs: 1_060_000,
     activeWithinMs: FIFTEEN_MINUTES_MS,
-    lastRunEndedAtMs: 1_030_000,
+    // This window's run of this output lasted from 990,000 to 1,030,000 and its agent has stopped.
+    lastRun: {
+      outputDirectory: '/repo/wiki',
+      startedAtMs: 990_000,
+      endedAtMs: 1_030_000,
+      mayAgentStillWork: false,
+    },
   })
 
   // Assert
@@ -72,9 +78,67 @@ test('a candidate that changed after this window’s run ended blocks the retry:
   const active = selectActiveWikiCandidate(candidates, {
     nowMs: 1_060_000,
     activeWithinMs: FIFTEEN_MINUTES_MS,
-    lastRunEndedAtMs: 1_030_000,
+    // This window's run of this output lasted from 990,000 to 1,030,000 and its agent has stopped.
+    lastRun: {
+      outputDirectory: '/repo/wiki',
+      startedAtMs: 990_000,
+      endedAtMs: 1_030_000,
+      mayAgentStillWork: false,
+    },
   })
 
   // Assert
   assert.equal(active?.name, 'wiki.stage-live')
+})
+
+test('a candidate the chat staged before a cancelled or timed-out VS Code watch refuses the next start until the watch bound has passed', () => {
+  // Arrange
+  const candidates = [
+    { name: 'wiki.stage-1', writtenAtMs: 1_000_000, ownedPaths: [] },
+  ]
+  // The watch of this run was stopped at 1,030,000; the chat it asked may still be working.
+  const stoppedWatch = {
+    outputDirectory: '/repo/wiki',
+    startedAtMs: 990_000,
+    endedAtMs: 1_030_000,
+    mayAgentStillWork: true,
+  }
+
+  // Act
+  const insideTheBound = selectActiveWikiCandidate(candidates, {
+    nowMs: 1_060_000,
+    activeWithinMs: FIFTEEN_MINUTES_MS,
+    lastRun: stoppedWatch,
+  })
+  const pastTheBound = selectActiveWikiCandidate(candidates, {
+    nowMs: 1_000_000 + FIFTEEN_MINUTES_MS + 1,
+    activeWithinMs: FIFTEEN_MINUTES_MS,
+    lastRun: stoppedWatch,
+  })
+
+  // Assert
+  assert.equal(insideTheBound?.name, 'wiki.stage-1')
+  assert.equal(pastTheBound, undefined)
+})
+
+test('a candidate written before this window’s last run began has no known owner and blocks the start as another window’s', () => {
+  // Arrange
+  const candidates = [
+    { name: 'wiki.stage-1', writtenAtMs: 980_000, ownedPaths: [] },
+  ]
+
+  // Act
+  const active = selectActiveWikiCandidate(candidates, {
+    nowMs: 1_060_000,
+    activeWithinMs: FIFTEEN_MINUTES_MS,
+    lastRun: {
+      outputDirectory: '/repo/wiki',
+      startedAtMs: 990_000,
+      endedAtMs: 1_030_000,
+      mayAgentStillWork: false,
+    },
+  })
+
+  // Assert
+  assert.equal(active?.name, 'wiki.stage-1')
 })

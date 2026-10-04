@@ -20,8 +20,12 @@ export type WikiUpdateWording = {
   formatTime: (isoTimestamp: string) => string
   /** How many conflict paths the sentence names before "and N more". */
   pathLimit: number
-  /** How many characters of a failure reason the sentence shows. */
+  /** How many characters of a failure reason the sentence shows; a reason Codebook wrote itself (`isCodebookSentence`) is never shortened. */
   reasonLimitChars: number
+  /** Milliseconds in one minute, for naming a bound in minutes; the function is embedded into the page and cannot import the constant. */
+  msPerMinute: number
+  /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
+  freshnessLabelPlace: string
   /** When the reading page was loaded (epoch ms); omitted by the editor, which never offers a reload. */
   pageLoadedAtMs?: number
 }
@@ -33,7 +37,7 @@ export type WikiUpdateWording = {
  * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param wording - Time format, the bounds of the sentence and the page's load time.
+ * @param wording - Time format, the bounds of the sentence, the minute length, where the freshness label is and the page's load time.
  * @returns
  * - Idle: undefined (nothing to show)
  * - A state this version does not know: "Update status unknown."
@@ -43,7 +47,7 @@ export type WikiUpdateWording = {
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200 },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -61,9 +65,14 @@ export function describeWikiUpdate(
     offerReload = false,
   ): WikiUpdateDescription => ({ lead, rest, detail, output, offerReload })
   const minutes = (durationMs: number): string => {
-    const count = Math.round(durationMs / 60000)
+    const count = Math.round(durationMs / wording.msPerMinute)
     return count + (count === 1 ? ' minute' : ' minutes')
   }
+  // The chat request of the publisher's recovery, as the learner pastes it, after the first letter of "Ask" or "ask"; the function is embedded into the page and cannot import it.
+  const recoveryStep =
+    'sk the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.'
+  const freshnessStep =
+    'check the freshness label ' + wording.freshnessLabelPlace + '.'
   if (status.state === 'running') {
     const since = wording.formatTime(status.startedAt)
     const bound = minutes(status.timeoutMs)
@@ -93,28 +102,41 @@ export function describeWikiUpdate(
           since +
           '. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to ') +
         bound +
-        '. This site stays readable.',
+        '. This site stays readable.' +
+        // The chat asks for each step outside the workspace; the learner should know why and how to avoid it.
+        (status.isOutputOutsideProject
+          ? ' This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
+          : ''),
     )
   }
   const at = wording.formatTime(status.finishedAt)
   if (status.state === 'succeeded') {
-    // The identity is "<revision or no-revision>+<digest of the sources>".
-    const separator = status.identity.lastIndexOf('+')
-    const revision =
-      separator < 0 ? status.identity : status.identity.slice(0, separator)
-    const index = separator < 0 ? '' : status.identity.slice(separator + 1)
+    const offerReload =
+      wording.pageLoadedAtMs !== undefined &&
+      Date.parse(status.finishedAt) > wording.pageLoadedAtMs
+    // Without a Git repository no revision was checked, and neither were added files.
+    if (status.revision === undefined)
+      return describe(
+        'Updated',
+        ' at ' +
+          at +
+          ' (index ' +
+          status.index +
+          '; no Git revision recorded, so added files are not checked).',
+        [],
+        offerReload,
+      )
     return describe(
       'Updated',
-      revision === 'no-revision'
-        ? ' at ' + at + ' (index ' + index + '; no Git revision recorded).'
-        : ' at ' +
-            at +
-            ' to revision ' +
-            revision +
-            (index ? ' (index ' + index + ').' : '.'),
+      ' at ' +
+        at +
+        ' to revision ' +
+        status.revision +
+        ' (index ' +
+        status.index +
+        ').',
       [],
-      wording.pageLoadedAtMs !== undefined &&
-        Date.parse(status.finishedAt) > wording.pageLoadedAtMs,
+      offerReload,
     )
   }
   if (status.state === 'already-current')
@@ -127,23 +149,29 @@ export function describeWikiUpdate(
   const replaced = status.site === 'replaced'
   if (status.state === 'failed') {
     const trimmed = status.reason.trim()
-    const isShortened = trimmed.length > wording.reasonLimitChars
+    // A sentence Codebook wrote ends with its next step, so it is shown whole; only an agent's, the CLI's or a thrown error's text is cut.
+    const isShortened =
+      !status.isCodebookSentence && trimmed.length > wording.reasonLimitChars
     const shown = isShortened
       ? trimmed.slice(0, wording.reasonLimitChars).trimEnd() + '…'
       : trimmed
     // A reason from a thrown error often has no full stop; it must not run into the next sentence.
     const sentence = /[.!?…]$/.test(shown) ? shown : shown + '.'
-    return replaced
-      ? describe(
-          'Update needs another run',
-          ' (' + at + '): ' + sentence + ' This run replaced the site on disk.',
-          isShortened ? [trimmed] : [],
-        )
-      : describe(
-          'Update failed',
-          ' at ' + at + ': ' + sentence + ' The last usable site is kept.',
-          isShortened ? [trimmed] : [],
-        )
+    const detail = isShortened ? [trimmed] : []
+    if (replaced)
+      return describe(
+        'Update needs another run',
+        ' (' + at + '): ' + sentence + ' This run replaced the site on disk.',
+        detail,
+      )
+    // A Wiki that is gone was neither kept nor replaced; the reason says what to do.
+    if (status.site === 'missing')
+      return describe('Update failed', ' at ' + at + ': ' + sentence, detail)
+    return describe(
+      'Update failed',
+      ' at ' + at + ': ' + sentence + ' The last usable site is kept.',
+      detail,
+    )
   }
   if (status.state === 'cancelled') {
     if (status.host === 'cursor')
@@ -152,7 +180,8 @@ export function describeWikiUpdate(
         ' at ' +
           at +
           (replaced
-            ? '. Cursor Agent was stopped after it replaced the site on disk; check the freshness label above.'
+            ? '. Cursor Agent was stopped after it replaced the site on disk; ' +
+              freshnessStep
             : '. Cursor Agent was stopped. The last usable site is kept.'),
       )
     return describe(
@@ -160,7 +189,7 @@ export function describeWikiUpdate(
       ' at ' +
         at +
         (replaced
-          ? '. A new site was published just before; check the freshness label above.'
+          ? '. A new site was published just before; ' + freshnessStep
           : '. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself. Nothing has been replaced so far.'),
     )
   }
@@ -174,7 +203,7 @@ export function describeWikiUpdate(
           ' and was stopped at ' +
           at +
           (replaced
-            ? ' after it replaced the site on disk; check the freshness label above.'
+            ? ' after it replaced the site on disk; ' + freshnessStep
             : '. The last usable site is kept. Press Update LLM Wiki to try again.'),
       )
     return describe(
@@ -184,7 +213,7 @@ export function describeWikiUpdate(
         ', so Codebook stopped watching at ' +
         at +
         (replaced
-          ? '. The site on disk changed during the watch; check the freshness label above.'
+          ? '. The site on disk changed during the watch; ' + freshnessStep
           : '. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.'),
     )
   }
@@ -197,12 +226,11 @@ export function describeWikiUpdate(
         : '')
     const detail = isShortened ? status.paths.slice() : []
     const many = status.paths.length > 1
+    const notStarted = ' (' + at + '): '
     if (status.cause === 'edited-page')
       return describe(
         'Update not started',
-        ' (' +
-          at +
-          '): ' +
+        notStarted +
           (many ? 'generated pages were' : 'a generated page was') +
           ' edited by hand (' +
           named +
@@ -213,24 +241,59 @@ export function describeWikiUpdate(
           ', then press Update LLM Wiki again.',
         detail,
       )
+    if (status.cause === 'missing-page')
+      return describe(
+        'Update not started',
+        notStarted +
+          (many ? 'generated pages are' : 'a generated page is') +
+          ' missing (' +
+          named +
+          '). Restore ' +
+          (many ? 'them' : 'it') +
+          ' from Git or the editor’s local history; if you cannot, move the Wiki folder aside and ask the editor chat "/codebook Generate the LLM Wiki for this project".',
+        detail,
+      )
+    if (status.cause === 'special-file')
+      return describe(
+        'Update not started',
+        notStarted +
+          'the Wiki folder holds ' +
+          (many ? 'links or special files' : 'a link or special file') +
+          ' (' +
+          named +
+          '), which the publisher refuses. Move ' +
+          (many ? 'them' : 'it') +
+          ' out of the Wiki folder, then press Update LLM Wiki again.',
+        detail,
+      )
     if (status.cause === 'edited-manifest')
       return describe(
         'Update not started',
-        ' (' +
-          at +
-          '): the Wiki’s manifest (' +
+        notStarted +
+          'the Wiki’s manifest (' +
           named +
-          ') was changed after it was published, and the publisher will not replace it. Keep a copy of your change, ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+          ') was changed after it was published, and the publisher will not replace it. Keep a copy of your change, a' +
+          recoveryStep,
+        detail,
+      )
+    if (status.cause === 'unreadable-manifest')
+      return describe(
+        'Update not started',
+        notStarted +
+          'Codebook cannot read the Wiki’s manifest (' +
+          named +
+          '). A' +
+          recoveryStep,
         detail,
       )
     if (status.cause === 'unfinished-publish')
       return describe(
         'Update not started',
-        ' (' +
-          at +
-          '): an earlier publish did not finish (' +
+        notStarted +
+          'an earlier publish did not finish (' +
           named +
-          '). Ask the editor chat to run the Codebook publisher’s recovery, then press Update LLM Wiki again.',
+          '). A' +
+          recoveryStep,
         detail,
       )
     return describe(
@@ -243,7 +306,7 @@ export function describeWikiUpdate(
         named +
         '). ' +
         (replaced
-          ? 'The site on disk changed during the run; check the freshness label above.'
+          ? 'The site on disk changed during the run; ' + freshnessStep
           : 'Nothing was replaced.') +
         ' Move or rename ' +
         (many ? 'them' : 'the file') +
