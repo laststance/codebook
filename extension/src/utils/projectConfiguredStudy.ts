@@ -3,6 +3,7 @@ import type { StudyProjection, StudyProjectionInput } from '../studyModel'
 
 import { citationLearningState } from './citationLearningState'
 import { describeStudy } from './describeStudy'
+import { movedStopDeclaredLine } from './movedStopDeclaredLine'
 
 /** Projects one sealed browser item and its complete citation ledger for {@link projectStudy}, never granting control to another run. @example projectConfiguredStudy(input).progressByItem.length // 1 */
 export function projectConfiguredStudy(
@@ -32,10 +33,18 @@ export function projectConfiguredStudy(
   )
   const placeholder =
     '// Configured source is unavailable. Open the article or retry preparation.\n'
+  // Before the first pause of the live run the highlight stands where the stop is expected: a binding the adapter acknowledged, else the line the breakpoint was requested at. Any other study shows its declared line.
+  const isLiveRun =
+    study?.instanceId === live?.instanceId && study?.runId === live?.runId
   const source =
     observation?.source ??
     (captured
-      ? { ...captured, line: study!.configuration.source.line }
+      ? {
+          ...captured,
+          line:
+            (isLiveRun ? input.plannedStopLine : undefined) ??
+            study!.configuration.source.line,
+        }
       : { text: placeholder, hash: sha256(placeholder), line: 1 })
   const anchors = study?.descriptor?.anchors,
     states = input.citationSources
@@ -110,6 +119,7 @@ export function projectConfiguredStudy(
     selectedItem,
     observation,
     source,
+    sourceDeclaredLine: movedStopDeclaredLine(study, observation),
     currentSourceAvailable,
     sourceChanged,
     selectedUnderstanding,

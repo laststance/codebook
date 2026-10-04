@@ -147,6 +147,9 @@ declare function acquireVsCodeApi(): {
 /** Supplies a nonce-scoped thin reader; {@link StudyWorkspace} posts typed snapshots separately from HTML. @example studyHtml('context') */
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID()
+  // The values hint and its button stand where their arrival moves no transport control: above the controls in the summary, whose transport is fixed to the bottom and grows upward, and below them in the bottom panel, whose transport starts at the top.
+  const valuesHint =
+    '<p id="playback-hint" class="muted" role="status" aria-live="polite"></p><button id="playback-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button>'
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
 <p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
 <header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title">Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header>
@@ -166,8 +169,8 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
 <section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved Node test entry selected in Saved studies. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. This test has no application video or synchronized application replay.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it does not create application video or claim synchronized application replay.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; application video is unavailable.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
-<section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden>This saved study cannot be opened. It can still be deleted.</p><p id="study-repairable" class="muted" hidden>This saved study's catalog checkpoint is missing or out of date. Use Retry storage / refresh to repair it; it can also be deleted.</p><div id="delete-study-row" class="row" hidden><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p></section>
-<section id="recording-transport" aria-label="Recorded playback" hidden><div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p id="playback-hint" class="muted" role="status" aria-live="polite"></p><button id="playback-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button></section>
+<section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden>This saved study cannot be opened. It can still be deleted.</p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden>This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study.</p><div id="delete-study-row" class="row" hidden><button id="repair-study" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><div id="study-files" hidden><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy path</button><button type="button" data-action="retry">Retry storage / refresh</button></div></div></section>
+<section id="recording-transport" aria-label="Recorded playback" hidden>${kind === 'context' ? valuesHint : ''}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${kind === 'moments' ? valuesHint : ''}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()})</script></body></html>`
 }
@@ -189,13 +192,20 @@ function studyClient(
   let openingChoice: { studyId: string; requestId: number } | undefined
   // Counts this pane's open requests; each webview counts its own, and the host answers only the webview that asked. Each document starts from its load time, so a reply to a request of the document before it never names a request of this one.
   let openRequestCount = Date.now()
+  // Counts this pane's delete requests the same way: the host echoes the number in every state of the removal, and two panes that each ask never share one.
+  let removalRequestCount = Date.now()
   // The removal outcome this pane stopped showing because the learner chose an entry the host is not told about.
   let dismissedRemoval: string | undefined
-  // This pane's own delete request, so only the pane the learner used moves focus when the request is answered.
-  let removalRequest:
-    { studyId: string; started: boolean; outcomeAtRequest: string } | undefined
+  // This pane's own delete request by its number, which the host echoes in every state of that removal, so only the pane the learner used moves focus when the request is answered.
+  let removalRequest: { request: number; started: boolean } | undefined
+  // In a window without a Trash: the entry whose files this pane last asked the host to list, and the Study message it asked under.
+  let filesRequest: { studyId: string; revision: number } | undefined
   let scrubbing = false
   let nodeHistoryScrubbing = false
+  // A Show Variables button that left while it held this pane's focus, and where that focus goes: paid when the Study message is rendered if this document has the focus, else at its next focus event, so a pane the learner left for Run and Debug takes no focus back.
+  let transportFocusOwed:
+    | { leaving: HTMLElement; preferred: readonly string[]; section: string }
+    | undefined
   let inputRevision = 0
   let poseTransaction:
     | {
@@ -339,9 +349,9 @@ function studyClient(
         : null
     if (!target || (target instanceof HTMLButtonElement && target.disabled))
       return
-    // A stop already shown in the native debugger keeps its focusable Inspect, which sends nothing.
+    // The selected event's control and the Inspect of a stop already shown in the native debugger stay focusable, and send nothing.
     if (
-      target.dataset.inspectNodeHistoryStop &&
+      target.dataset.nodeHistorySequence &&
       target.getAttribute('aria-disabled') === 'true'
     )
       return
@@ -444,13 +454,13 @@ function studyClient(
       !studyId
     )
       return
-    removalRequest = {
-      studyId,
-      started: false,
-      // An outcome that is already shown is not the answer to this request.
-      outcomeAtRequest: JSON.stringify(current?.studyRemoval),
-    }
-    send({ type: 'delete-study', studyId })
+    const request = ++removalRequestCount
+    removalRequest = { request, started: false }
+    send({ type: 'delete-study', studyId, removalRequest: request })
+  })
+  element('copy-study-files').addEventListener('click', () => {
+    const studyId = chosenStudyId()
+    if (studyId) send({ type: 'copy-study-files', studyId })
   })
   element('node-history-previous').addEventListener('click', () => {
     if (current?.nodeHistory && (current.nodeHistoryPage ?? 0) > 0)
@@ -494,6 +504,11 @@ function studyClient(
       'node-history-playback-position',
       `${(Number(nodePlayhead.value) / options.secondMs).toFixed(2)} s`,
     )
+    // Assistive technology hears the time under the thumb while it moves, before the host answers the seek.
+    nodePlayhead.setAttribute(
+      'aria-valuetext',
+      `${seconds(Number(nodePlayhead.value))} of recorded test time`,
+    )
   })
   nodePlayhead.addEventListener('change', () => {
     nodeHistoryPlayback('seek', Number(nodePlayhead.value))
@@ -504,12 +519,15 @@ function studyClient(
     nodePlayhead.addEventListener(scrubEnd, () => {
       nodeHistoryScrubbing = false
     })
-  element('playhead').addEventListener('pointerdown', () => {
+  // Only a moved thumb holds the playhead: a press without a drag fires no input and no change, and must not stop it from following later seeks.
+  element('playhead').addEventListener('input', () => {
     scrubbing = true
   })
-  element('playhead').addEventListener('blur', () => {
-    scrubbing = false
-  })
+  // A scrub that ends without a change event (focus lost, pointer cancelled) releases the playhead as well.
+  for (const scrubEnd of ['blur', 'pointercancel'])
+    element('playhead').addEventListener(scrubEnd, () => {
+      scrubbing = false
+    })
   element('playhead').addEventListener('change', (event) => {
     scrubbing = false
     if (event.target instanceof HTMLInputElement)
@@ -951,6 +969,8 @@ function studyClient(
         chosen.format === 'node-test-history',
         options.studyRemovalRefusals.nodeHistory,
       ],
+      // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
+      [chosen.format === 'newer', options.studyRemovalRefusals.newerFormat],
       [
         message.unstoppedStudyId === chosen.id,
         options.studyRemovalRefusals.runNotStopped,
@@ -962,7 +982,7 @@ function studyClient(
     ]
     return refusals.find(([applies]) => applies)?.[1] ?? ''
   }
-  /** Says why the delete button cannot be used, first match wins: a chosen entry that is still opening, no entry, then the entry's own reason. Empty when it can be used, and while a removal is in progress, which the status line names instead. @example removalReason(message, undefined, false) // => 'Choose a saved study to delete.' */
+  /** Says why the delete button cannot be used, first match wins: a chosen entry that is still opening, no entry, then the entry's own reason. Empty when it can be used, and while a removal is in progress, which the status line names instead. In a window without a Trash the sentence for no entry says what choosing one gives there. @example removalReason(message, undefined, false) // => 'Choose a saved study to delete.' */
   const removalReason = (
     message: StudyViewMessage,
     chosen: SavedStudyEntry | undefined,
@@ -970,17 +990,23 @@ function studyClient(
   ): string => {
     if (inProgress) return ''
     if (openingChoice) return options.studyRemovalRefusals.studyOpening
-    if (!chosen) return options.studyRemovalRefusals.nothingChosen
+    if (!chosen)
+      return message.removalWithoutTrash
+        ? options.studyFilesNothingChosen
+        : options.studyRemovalRefusals.nothingChosen
     return chosenStudyRefusal(message, chosen)
   }
-  /** Shows whether the delete button can be used and the reason beside it; with no saved study there is nothing to delete and nothing to explain. @example showRemovalControl(message, '', false) */
+  /** Shows whether the delete button can be used and the reason beside it; with no saved study there is nothing to delete and nothing to explain. A window without a Trash gets no delete button, so its row stays only for the repair button. @example showRemovalControl(message, '', false) */
   const showRemovalControl = (
     message: StudyViewMessage,
     reason: string,
     inProgress: boolean,
   ): void => {
-    const hasStudies = message.studies.length > 0
-    element('delete-study-row').hidden = !hasStudies
+    const hasStudies = message.studies.length > 0,
+      withoutTrash = Boolean(message.removalWithoutTrash)
+    element('delete-study').hidden = withoutTrash
+    element('delete-study-row').hidden =
+      !hasStudies || (withoutTrash && element('repair-study').hidden)
     if (inProgress || reason)
       element('delete-study').setAttribute('aria-disabled', 'true')
     else element('delete-study').removeAttribute('aria-disabled')
@@ -996,30 +1022,106 @@ function studyClient(
   /** Says whether a removal ended without moving the whole study, which the status line shows as an error. @example removalFailed({ status: 'refused', studyId }) // => true */
   const removalFailed = (removal: StudyRemoval): boolean =>
     removal !== undefined && ['refused', 'failed'].includes(removal.status)
-  /** Shows the last removal's progress or outcome under the delete button. @example showRemovalStatus(message.studyRemoval) */
-  const showRemovalStatus = (removal: StudyRemoval): void => {
-    const shown = visibleRemoval(removal)
+  /** Shows the last removal's progress or outcome under the delete button. The answer of a window without a Trash comes with the study's files and is no failed request of the learner's, so it is not marked as an error. @example showRemovalStatus(visibleRemoval(message.studyRemoval)) */
+  const showRemovalStatus = (shown: StudyRemoval): void => {
     text('delete-study-status', shown?.text ?? '')
     element('delete-study-status').classList.toggle(
       'error',
-      removalFailed(shown),
+      removalFailed(shown) && !shown?.files,
     )
   }
-  /** Reads the status of the removal this pane asked for; nothing when the host reports no removal or one of another study. @example ownRemovalStatus(removalRequest, message.studyRemoval) // => 'moved' */
-  const ownRemovalStatus = (
-    request: { studyId: string },
-    removal: StudyRemoval,
-  ): string | undefined =>
-    removal?.studyId === request.studyId ? removal.status : undefined
-  /** Says whether this pane's delete request has not started and has no answer yet: the host reports no refusal for it, or only the refusal that was already shown when the learner asked again, which belongs to the earlier request. @example awaitsOwnAnswer(removalRequest, message.studyRemoval, 'refused') */
-  const awaitsOwnAnswer = (
-    request: NonNullable<typeof removalRequest>,
-    removal: StudyRemoval,
-    ownStatus: string | undefined,
-  ): boolean =>
-    !request.started &&
-    (ownStatus !== 'refused' ||
-      JSON.stringify(removal) === request.outcomeAtRequest)
+  /** Names the note of a chosen entry that cannot be opened: the repair note for a stale catalog checkpoint, the entry's own sentence for a study a newer Codebook saved, else the delete-only note; nothing for an entry that opens. @example studyNoteId(staleEntry) // => 'study-repairable' */
+  const studyNoteId = (
+    chosen: SavedStudyEntry | undefined,
+  ): 'study-unopenable' | 'study-newer' | 'study-repairable' | undefined => {
+    if (!cannotBeOpened(chosen)) return undefined
+    if (canBeRepaired(chosen)) return 'study-repairable'
+    return chosen?.format === 'newer' ? 'study-newer' : 'study-unopenable'
+  }
+  /**
+   * Shows the one note of the chosen entry, describes the list and the delete button by it, and offers Repair saved study beside the repair note.
+   * When the repair button leaves while it holds the keyboard focus (the repair succeeded), the focus returns to the Saved studies list instead of falling to the document body.
+   * Called by {@link renderStudyRemoval} before the delete control is shown.
+   * @param chosen - The entry chosen in the list, if any.
+   * @example showStudyNote(staleEntry)
+   */
+  const showStudyNote = (chosen: SavedStudyEntry | undefined): void => {
+    const shownNote = studyNoteId(chosen)
+    for (const noteId of [
+      'study-unopenable',
+      'study-newer',
+      'study-repairable',
+    ])
+      element(noteId).hidden = noteId !== shownNote
+    // The catalog's own sentence names both format numbers; the refusal stands in for an entry without one.
+    text(
+      'study-newer',
+      shownNote === 'study-newer'
+        ? (chosen?.reason ?? options.studyRemovalRefusals.newerFormat)
+        : '',
+    )
+    if (shownNote)
+      element('studies').setAttribute('aria-describedby', shownNote)
+    else element('studies').removeAttribute('aria-describedby')
+    element('delete-study').setAttribute(
+      'aria-describedby',
+      `${shownNote ? `${shownNote} ` : ''}delete-study-reason delete-study-status`,
+    )
+    const repair = element('repair-study'),
+      heldFocus = document.activeElement === repair
+    repair.hidden = shownNote !== 'study-repairable'
+    if (heldFocus && repair.hidden)
+      element('studies').focus({ preventScroll: true })
+  }
+  /**
+   * In a window without a Trash, asks the host for the files of the chosen entry, which the host names only in its answer to a delete request; called by {@link renderStudyRemoval}.
+   * Nothing is asked while the entry cannot be removed anyway, once the host answered for it, or twice under one Study message.
+   * @param message - The current Study message.
+   * @param chosen - The entry chosen in the list, if any.
+   * @param reason - Why the entry cannot be removed now; empty when it can.
+   * @example askForStudyFiles(message, entry, '')
+   */
+  const askForStudyFiles = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry | undefined,
+    reason: string,
+  ): void => {
+    if (!message.removalWithoutTrash || !chosen || reason) return
+    // The host's answer for this entry is already shown: its files, or its own refusal.
+    if (message.studyRemoval?.studyId === chosen.id) return
+    // A render that is no new Study message (a choice in the list, the host's reply to an open request) asks nothing again.
+    if (
+      filesRequest?.studyId === chosen.id &&
+      filesRequest.revision === message.revision
+    )
+      return
+    filesRequest = { studyId: chosen.id, revision: message.revision }
+    send({
+      type: 'delete-study',
+      studyId: chosen.id,
+      removalRequest: ++removalRequestCount,
+    })
+  }
+  /** Lists the files the host named for the removal by hand of the chosen entry, with Copy path and Retry storage / refresh beside them; hidden in a window with a Trash and until the host answered for that entry. @example showStudyFiles(message, visibleRemoval(message.studyRemoval), entry.id) */
+  const showStudyFiles = (
+    message: StudyViewMessage,
+    shown: StudyRemoval,
+    chosenId: string,
+  ): void => {
+    const files =
+      (message.removalWithoutTrash &&
+        shown?.studyId === chosenId &&
+        shown.files) ||
+      []
+    element('study-files').hidden = !files.length
+    replace('study-files-list', files, () =>
+      files.map((path) => {
+        const item = document.createElement('li')
+        item.textContent = path
+        return item
+      }),
+    )
+  }
   /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
   const focusRestsOnDeleteButton = (): boolean =>
     document.hasFocus() &&
@@ -1031,7 +1133,8 @@ function studyClient(
     element(moved ? 'studies' : 'delete-study').focus({ preventScroll: true })
   }
   /**
-   * Follows this pane's own delete request so that only the pane the learner used moves focus, once: while a removal is in progress the request has started (or, for another study's removal, was not taken); it is answered when that removal ends, when Cancel clears the field, or when the host refuses at once.
+   * Follows this pane's own delete request by the number the host echoes, so that only the pane the learner used moves focus, once: a removal in progress under that number has started the request, and one under another number means the host did not take it (it takes one removal at a time and never answers the second); the request is answered when a state that is not in progress carries its number, or when Cancel clears the field after it started.
+   * A refusal that was shown before, also one with the same words, carries another number and answers nothing.
    * @param removal - The removal the host reports.
    * @param inProgress - Whether that removal is confirming or moving.
    * @example answerRemovalRequest(message.studyRemoval, false)
@@ -1040,19 +1143,20 @@ function studyClient(
     removal: StudyRemoval,
     inProgress: boolean,
   ): void => {
-    const request = removalRequest
-    if (!request) return
-    const ownStatus = ownRemovalStatus(request, removal)
+    const asked = removalRequest
+    if (!asked) return
+    const isOwn = removal?.request === asked.request
     if (inProgress) {
-      removalRequest = ownStatus ? { ...request, started: true } : undefined
+      removalRequest = isOwn ? { ...asked, started: true } : undefined
       return
     }
-    if (awaitsOwnAnswer(request, removal, ownStatus)) return
+    // No state of this request yet: the host has not answered it.
+    if (!isOwn && !asked.started) return
     removalRequest = undefined
-    focusAfterRemoval(ownStatus === 'moved')
+    focusAfterRemoval(isOwn && removal?.status === 'moved')
   }
   /**
-   * Renders the Saved studies section's delete control: whether it can be used and why not, the note for an entry that cannot be opened, the last removal's outcome, and the focus after this pane's own request was answered.
+   * Renders the Saved studies section's delete control: the note for an entry that cannot be opened with its repair button, whether the delete button can be used and why not, the last removal's outcome, the files a window without a Trash lists for removal by hand, and the focus after this pane's own request was answered.
    * Called by {@link showChosenEntry} on every Study message and on the host's reply to an open request, by {@link askHostToOpen} when the learner chooses an entry the host opens, and by {@link chooseUnopenable} when the learner chooses an entry that cannot be opened.
    * @param message - The current Study message.
    * @example renderStudyRemoval(message)
@@ -1060,18 +1164,82 @@ function studyClient(
   const renderStudyRemoval = (message: StudyViewMessage): void => {
     const chosenId = chosenStudyId(),
       chosen = message.studies.find((study) => study.id === chosenId),
-      inProgress = removalInProgress(message.studyRemoval)
-    showRemovalControl(
-      message,
-      removalReason(message, chosen, inProgress),
-      inProgress,
-    )
-    element('study-unopenable').hidden =
-      !cannotBeOpened(chosen) || canBeRepaired(chosen)
-    element('study-repairable').hidden = !canBeRepaired(chosen)
-    showRemovalStatus(message.studyRemoval)
+      inProgress = removalInProgress(message.studyRemoval),
+      reason = removalReason(message, chosen, inProgress),
+      shownRemoval = visibleRemoval(message.studyRemoval)
+    showStudyNote(chosen)
+    showRemovalControl(message, reason, inProgress)
+    showRemovalStatus(shownRemoval)
+    showStudyFiles(message, shownRemoval, chosenId)
+    askForStudyFiles(message, chosen, reason)
     answerRemovalRequest(message.studyRemoval, inProgress)
   }
+  /**
+   * Shows or hides a Show Variables button, and remembers where the keyboard focus goes when the button leaves while it holds this pane's focus; called for the replay's and the Node history's button on every Study message.
+   * @param buttonId - The Show Variables button.
+   * @param isOffered - Whether the selected moment's native values are not loaded, so the button is shown.
+   * @param preferred - Selectors of that transport's controls in the order the focus tries them, Play first.
+   * @param section - Id of the section whose first usable control takes the focus when none of the preferred ones can.
+   * @example offerShowVariables('playback-show-variables', false, options.replayTransportFocus, 'recording-transport')
+   */
+  const offerShowVariables = (
+    buttonId: string,
+    isOffered: boolean,
+    preferred: readonly string[],
+    section: string,
+  ): void => {
+    const control = element(buttonId)
+    // Read before the button is hidden: an element that is no longer rendered loses the focus to the document body.
+    if (!isOffered && document.activeElement === control)
+      transportFocusOwed = { leaving: control, preferred, section }
+    control.hidden = !isOffered
+  }
+  /**
+   * Finds the control that takes the focus of a Show Variables button that left: the first preferred transport control that is shown and enabled (Play can be disabled at a recording's end or on a history's last event), else the first such control of the section.
+   * @param owed - The button that left, the preferred selectors and the section.
+   * @returns The control, or nothing when the section shows no enabled control.
+   * @example usableTransportControl(transportFocusOwed)?.id // => 'playback-toggle'
+   */
+  const usableTransportControl = (
+    owed: NonNullable<typeof transportFocusOwed>,
+  ): HTMLElement | undefined =>
+    [
+      ...owed.preferred.map((selector) => document.querySelector(selector)),
+      ...Array.from(element(owed.section).querySelectorAll('button,input')),
+    ].find(
+      (control): control is HTMLButtonElement | HTMLInputElement =>
+        (control instanceof HTMLButtonElement ||
+          control instanceof HTMLInputElement) &&
+        control !== owed.leaving &&
+        !control.disabled &&
+        control.getClientRects().length > 0,
+    )
+  /** Moves the focus a Show Variables button left behind to its transport, once; called after a Study message was rendered while this document has the focus, and at the document's next focus event otherwise. A learner who already put the focus on another control keeps it. @example payTransportFocus() */
+  const payTransportFocus = (): void => {
+    const owed = transportFocusOwed
+    if (!owed) return
+    transportFocusOwed = undefined
+    if (
+      document.activeElement !== document.body &&
+      document.activeElement !== owed.leaving
+    )
+      return
+    usableTransportControl(owed)?.focus({ preventScroll: true })
+  }
+  window.addEventListener('focus', payTransportFocus)
+  /**
+   * Makes each title that its two-line clamp cuts a tab stop, so the keyboard can open it (a focused title is shown whole), and takes the tab stop from a title that fits; called after every Study message and when the pane is resized.
+   * A focused title is not measured: it is shown whole and would read as fitting.
+   * @example offerClampedTitles()
+   */
+  const offerClampedTitles = (): void => {
+    for (const heading of [element('title'), element('learning-title')]) {
+      if (document.activeElement === heading) continue
+      if (heading.scrollHeight > heading.clientHeight) heading.tabIndex = 0
+      else heading.removeAttribute('tabindex')
+    }
+  }
+  window.addEventListener('resize', offerClampedTitles)
   window.addEventListener('message', (event) => {
     const message:
       | StudyViewMessage
@@ -1211,7 +1379,7 @@ function studyClient(
           ? 'Playback stopped — presentation unavailable'
           : pending
             ? 'Loading matching image, source and values…'
-            : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}`,
+            : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}${recording.applicationCovered ? ` · ${options.applicationCovered.label}` : ''}`,
       )
       text(
         'playback-position',
@@ -1245,8 +1413,12 @@ function studyClient(
           : '',
       )
       // The hint comes with a control that opens Run and Debug and expands Variables in one click.
-      element('playback-show-variables').hidden =
-        failed || !recording.nativeValuesUninspected
+      offerShowVariables(
+        'playback-show-variables',
+        !failed && Boolean(recording.nativeValuesUninspected),
+        options.replayTransportFocus,
+        'recording-transport',
+      )
       text('playback-diagnostic', failed ? diagnostic : '')
       element('playback-diagnostics').hidden = !failed || !diagnostic
       const toggle = element('playback-toggle')
@@ -1351,6 +1523,8 @@ function studyClient(
       (value) => value.id === model.selection.itemId,
     )
     text('title', item?.title ?? 'Codebook study')
+    // The heading is clamped to two lines in a narrow replay; its tooltip keeps the whole title for the pointer.
+    element('title').title = item?.title ?? 'Codebook study'
     const selectedProfile = message.profiles.find(
         (profile) => profile.id === model.selection.profile,
       ),
@@ -1459,12 +1633,17 @@ function studyClient(
     button('stop')!.textContent = liveProfile
       ? `Stop ${message.liveTitle ?? liveProfile.title}`
       : 'Stop'
-    element('loading').hidden = !message.loading
+    // A recorded moment another tab covers is recorded and only hidden: the line says that and what brings it back, and the selected observation stays readable.
+    const isApplicationCovered =
+      Boolean(recording?.applicationCovered) && !message.loading
+    element('loading').hidden = !message.loading && !isApplicationCovered
     text(
       'loading',
       recording?.readiness === 'failed'
         ? 'Recorded context unavailable. Reload after resolving the reported problem.'
-        : 'Loading the selected observation…',
+        : isApplicationCovered
+          ? options.applicationCovered.remedy
+          : 'Loading the selected observation…',
     )
     element('selected').hidden = message.loading
     for (const tab of Array.from(
@@ -1501,7 +1680,8 @@ function studyClient(
         ? 'No captured source at this time. The source pane shows an explicit placeholder.'
         : !model.observation && !model.currentSourceAvailable
           ? 'No current source version could be verified.'
-          : `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line} · ${model.source.hash.slice(0, 12)}`,
+          : // A stop the debugger moved names the line it paused on and the line it was declared on.
+            `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line}${model.sourceDeclaredLine === undefined ? '' : ` (declared on line ${model.sourceDeclaredLine})`} · ${model.source.hash.slice(0, 12)}`,
     )
     text(
       'understanding-label',
@@ -1778,19 +1958,28 @@ function studyClient(
           placeholder.textContent = 'No saved study yet'
           return [placeholder]
         }
-        return message.studies.map((study) => {
-          const option = document.createElement('option')
-          option.value = study.id
-          option.textContent = studyLabel(
-            study,
-            studyKindLabel(study, message.profiles),
-          )
-          // A configured study that cannot be opened can still be chosen for deletion; a Node test history cannot be deleted here.
-          option.disabled =
-            study.metadata === 'unavailable' &&
-            study.format === 'node-test-history'
-          return option
-        })
+        // With studies listed and none chosen (after a removal) the list reads this prompt instead of a blank; it cannot be picked and is left out of the open list.
+        const prompt = document.createElement('option')
+        prompt.value = ''
+        prompt.textContent = 'Choose a saved study'
+        prompt.disabled = true
+        prompt.hidden = true
+        return [
+          prompt,
+          ...message.studies.map((study) => {
+            const option = document.createElement('option')
+            option.value = study.id
+            option.textContent = studyLabel(
+              study,
+              studyKindLabel(study, message.profiles),
+            )
+            // A configured study that cannot be opened can still be chosen for deletion; a Node test history cannot be deleted here.
+            option.disabled =
+              study.metadata === 'unavailable' &&
+              study.format === 'node-test-history'
+            return option
+          }),
+        ]
       })
       // An entry that cannot be opened stays chosen until the learner chooses another or it leaves the list.
       if (
@@ -1969,13 +2158,14 @@ function studyClient(
         nodePlayhead.max = '0'
         nodePlayhead.value = '0'
       }
-      // Assistive technology reads the selected test time, not the raw millisecond value.
-      nodePlayhead.setAttribute(
-        'aria-valuetext',
-        playbackState?.positionMs === undefined
-          ? 'No recorded test time selected'
-          : `${seconds(playbackState.positionMs)} of recorded test time`,
-      )
+      // Assistive technology reads the selected test time, not the raw millisecond value; during a scrub the thumb's own time stays.
+      if (!nodeHistoryScrubbing)
+        nodePlayhead.setAttribute(
+          'aria-valuetext',
+          playbackState?.positionMs === undefined
+            ? 'No recorded test time selected'
+            : `${seconds(playbackState.positionMs)} of recorded test time`,
+        )
       if (!nodeHistoryScrubbing)
         text(
           'node-history-playback-position',
@@ -2002,8 +2192,12 @@ function studyClient(
         'node-history-hint',
         position?.nativeValuesUninspected ? options.nativeValuesHint : '',
       )
-      element('node-history-show-variables').hidden =
-        !position?.nativeValuesUninspected
+      offerShowVariables(
+        'node-history-show-variables',
+        Boolean(position?.nativeValuesUninspected),
+        options.nodeTransportFocus,
+        'node-history',
+      )
       text(
         'node-history-output',
         message.nodeHistoryOutput ??
@@ -2075,7 +2269,9 @@ function studyClient(
             select.type = 'button'
             select.dataset.nodeHistorySequence = String(entry.sequence)
             select.textContent = isSelected ? 'Selected event' : 'Select event'
-            select.disabled = Boolean(recording || isSelected)
+            // The selected control stays focusable so keyboard focus survives the press; it then sends nothing.
+            select.disabled = Boolean(recording)
+            if (isSelected) select.setAttribute('aria-disabled', 'true')
             select.setAttribute('aria-pressed', String(isSelected))
             article.append(select)
             if (entry.type === 'stop') {
@@ -2145,6 +2341,9 @@ function studyClient(
     element('study-content').inert = false
     element('study-content').hidden = false
     element('bootstrap-status').hidden = true
+    // Every control is in its state for this message now; a pane without the focus (the learner is in Run and Debug) waits for its next focus event.
+    if (document.hasFocus()) payTransportFocus()
+    offerClampedTitles()
     // A newly followed pause should reveal its interpretation and facts without requiring a learner scroll past run controls.
     if (shouldRevealFollowedPause && !message.loading) {
       element('live-content').scrollIntoView({
@@ -2171,5 +2370,12 @@ function studyClient(
         : {}),
     })
   })
+  /** Tells the host whether this document holds the keyboard focus, which the host cannot ask a webview view; called at the window's focus and blur events and once at load. The host reads the Learning summary's last report when that view is hidden. @example reportFocus(true) */
+  const reportFocus = (focused: boolean): void =>
+    api.postMessage({ type: 'pane-focus', focused })
+  window.addEventListener('focus', () => reportFocus(true))
+  window.addEventListener('blur', () => reportFocus(false))
   api.postMessage({ type: 'ready' })
+  // A document loaded into a pane that already has the focus gets no focus event.
+  if (document.hasFocus()) reportFocus(true)
 }

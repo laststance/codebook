@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { SUMMARY_FOCUS_RELEASE_WAIT_MS } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
 import { RecordingStore } from '../recordingStore'
@@ -3194,6 +3195,187 @@ test("in Cursor, Show Variables that took the Learning summary's place in the si
       ).length,
       1,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's source highlight standing, before the first pause, where the run requested its stop; fails_when=the reader does not hand the run's planned line to the pane's model, so the highlight stays on a declared line the debugger cannot pause on and jumps at the pause; why_new=Cycle 0045 SD-16 (the projection read the configuration's declared line and the reader passed nothing of the run's journal); seam=the fake runtime's view gains the journal entry a run writes when it requests a stop after its declared line
+test('before the first pause of a run whose stop was requested after its declared line, the Study pane and the source highlight stand on the requested line', async () => {
+  // Arrange: a prepared run that has not paused, whose journal says its stop, declared on line 1, was requested on line 2.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await waitUntil(
+      () =>
+        harness.reader.inspect().view?.model.selection.studyId !== undefined,
+      'the reader to select the live run',
+      2_000,
+    )
+    /** The line of the source editor the reader showed last. */
+    const highlightedLine = (): number | undefined =>
+      harness.displayedSourceLines().at(-1)
+    const declaredLine = harness.configuration.source.line
+    await waitUntil(
+      () => highlightedLine() === declaredLine,
+      'the source shown at its declared line',
+      2_000,
+    )
+    const modelLineBeforeTheRequestIsKnown =
+      harness.reader.inspect().view!.model.source.line
+    const runtime = harness.runtimes[0]!,
+      view = runtime.view.bind(runtime)
+
+    // Act: the run journals the request, and the reader's periodic refresh follows it.
+    runtime.view = () => ({
+      ...view(),
+      events: [
+        ...view().events,
+        {
+          sequence: view().events.length + 1,
+          elapsedMs: 0,
+          wallTime: new Date(0).toISOString(),
+          type: 'breakpoint.armed-after-declared-line',
+          detail: {
+            participant: 'browser',
+            declared: { line: declaredLine, column: 1 },
+            armed: { line: declaredLine + 1, column: 1 },
+          },
+        },
+      ],
+    })
+    await waitUntil(
+      () => highlightedLine() !== declaredLine,
+      'the source highlight to follow the requested line',
+      2_000,
+    ).catch(() => undefined)
+
+    // Assert: the model and the source editor's highlight both stand on the requested line, without a pause.
+    assert.equal(harness.reader.inspect().view!.model.observation, undefined)
+    assert.equal(modelLineBeforeTheRequestIsKnown, declaredLine)
+    assert.equal(
+      harness.reader.inspect().view!.model.source.line,
+      declaredLine + 1,
+    )
+    assert.equal(highlightedLine(), declaredLine + 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+/** Counts how often the reader ran the editor's command that focuses the active editor group. @example focusEditorGroupRuns(harness.commands) // => 1 */
+function focusEditorGroupRuns(commands: readonly string[]): number {
+  return commands.filter(
+    (command) => command === 'workbench.action.focusActiveEditorGroup',
+  ).length
+}
+
+/** Waits past the bound in which a hidden summary's report that it lost the focus can still arrive, so a focus command that was going to run has run. @example await pastSummaryFocusRelease() */
+function pastSummaryFocusRelease(): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(resolve, SUMMARY_FOCUS_RELEASE_WAIT_MS + 150),
+  )
+}
+
+// Value: protects=the keyboard staying usable after the learner closes the side bar from the Learning summary in Cursor; fails_when=the summary's view is hidden while its document holds the focus and nothing moves the focus, so it stays in the hidden webview and no visible element has it; why_new=Cycle 0045 NF-17 as DR-20 (native observation of 2026-10-04, Cursor 3.23.12: the active element was still the summary's hidden iframe after its side bar closed); seam=the pane's focus report is delivered as its message, and the fake summary view is hidden as the editor hides it
+test('closing the side bar while the Learning summary holds the keyboard focus moves the focus to the active editor group', async () => {
+  // Arrange: a recording is open with its summary in front, and the summary's document reported that it gained the focus.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receive({ type: 'pane-focus', focused: true })
+    const runsBefore = focusEditorGroupRuns(harness.commands)
+
+    // Act: the learner closes the side bar and the document reports nothing more; later the view is hidden once more without a new report.
+    harness.hideSummary()
+    const runsAtTheHideEvent = focusEditorGroupRuns(harness.commands)
+    await pastSummaryFocusRelease()
+    const runsAfterClosing = focusEditorGroupRuns(harness.commands)
+    harness.hideSummary()
+    await pastSummaryFocusRelease()
+
+    // Assert: one focus command for the summary that held the focus, after the wait for its report, and none for the repeated event.
+    assert.equal(runsAtTheHideEvent, runsBefore)
+    assert.equal(runsAfterClosing, runsBefore + 1)
+    assert.equal(focusEditorGroupRuns(harness.commands), runsBefore + 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the focus of a chat, a terminal or Run and Debug the learner went on to; fails_when=the reader runs the editor-group focus command for every hidden summary, also after its document reported that it lost the focus; why_new=Cycle 0045 NF-17 as DR-20 (package S2 found the host had no focus signal and did not ship a rule that would take the focus from where the learner types); seam=the pane's two focus reports are delivered as its messages
+test('closing it after the learner went to another part leaves the focus where it is', async () => {
+  // Arrange: the summary's document gained the focus and lost it again when the learner went to another part of the editor.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receive({ type: 'pane-focus', focused: true })
+    harness.receive({ type: 'pane-focus', focused: false })
+    const runsBefore = focusEditorGroupRuns(harness.commands)
+
+    // Act
+    harness.hideSummary()
+    await pastSummaryFocusRelease()
+
+    // Assert
+    assert.equal(focusEditorGroupRuns(harness.commands), runsBefore)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the view the learner opened in the summary's place keeping the keyboard (the Explorer in Cursor's side bar, the chat in VS Code's secondary side bar); fails_when=the reader acts at the visibility event, before the summary's document could report that it lost the focus, and pulls the focus out of the view the learner just opened; why_new=Cycle 0045 NF-17 (the hide is the editor's event and the report a message from the webview, so the report can arrive second); seam=the fake summary view is hidden first and the pane's report delivered after it
+test('opening another view in the Learning summary’s place leaves the keyboard focus in that view when the summary reports the lost focus after it was hidden', async () => {
+  // Arrange: the summary's document holds the focus.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receive({ type: 'pane-focus', focused: true })
+    const runsBefore = focusEditorGroupRuns(harness.commands)
+
+    // Act: the editor hides the summary's view, and only then the document's report that it lost the focus arrives.
+    harness.hideSummary()
+    harness.receive({ type: 'pane-focus', focused: false })
+    await pastSummaryFocusRelease()
+
+    // Assert
+    assert.equal(focusEditorGroupRuns(harness.commands), runsBefore)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables ending with the keyboard focus in Run and Debug in Cursor; fails_when=the summary that Run and Debug displaced in the shared side bar is taken for a closed side bar and the focus is sent to the editor group, away from Variables; why_new=Cycle 0045 NF-17 with DR-24 (the Variables focus command hides the summary on purpose there, and the document's blur report can arrive after the view was hidden); seam=the harness's Variables focus command hides the summary, as Cursor's shared side bar does
+test('in Cursor, Show Variables pressed in the Learning summary leaves the keyboard focus in Run and Debug when its view takes the summary’s place', async () => {
+  // Arrange: Cursor's shared side bar, a recording open with its summary in front, and the summary's document holding the focus.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.useHostAppName('Cursor')
+    harness.shareSummarySideBarWithRunAndDebug()
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.receive({ type: 'pane-focus', focused: true })
+    const summaryInFrontBeforeThePress = harness.summary.visible,
+      runsBefore = focusEditorGroupRuns(harness.commands)
+
+    // Act: the press, with no report of the summary's document arriving at all.
+    await harness.reader.action('show-variables')
+    await pastSummaryFocusRelease()
+
+    // Assert: Run and Debug took the summary's place, and no command moved the focus out of it.
+    assert.equal(summaryInFrontBeforeThePress, true)
+    assert.equal(harness.summary.visible, false)
+    assert.equal(focusEditorGroupRuns(harness.commands), runsBefore)
   } finally {
     await harness.close()
   }

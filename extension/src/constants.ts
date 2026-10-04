@@ -852,5 +852,7 @@ export const RECORDING_WINDOW_FOCUS_WAIT_MS = 10_000
 /** How long the status bar's Open replay command waits for its load to end, so that it can show a failed load's reason as a notification: the wait for the window's focus and one owned replay settle. A load still running then is left to finish without a notice. */
 export const OPEN_REPLAY_RESULT_WAIT_MS =
   RECORDING_WINDOW_FOCUS_WAIT_MS + PRESENTATION_SETTLE_CEILING_MS
+/** How long the reader waits, after the Learning summary's view was hidden while its document held the keyboard focus, for that document's report that it lost the focus. The report travels from the webview and can arrive after the editor's visibility event: when it comes (the learner opened another view or part), nothing is done; when it does not, the focus is still in the hidden webview and goes to the active editor group. */
+export const SUMMARY_FOCUS_RELEASE_WAIT_MS = 300
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1

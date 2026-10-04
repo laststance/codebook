@@ -50,6 +50,7 @@ import {
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
   SUMMARY_DISPLACED_OFFER,
+  SUMMARY_FOCUS_RELEASE_WAIT_MS,
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_ANSWERED_KEY,
   SUMMARY_PLACEMENT_CONTEXT_KEY,
@@ -164,6 +165,7 @@ import { libraryHasRoom } from './utils/libraryHasRoom'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
+import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
 import {
@@ -285,6 +287,8 @@ const messageSchema = z.discriminatedUnion('type', [
     ...revisionShape,
     studyId: studyIdSchema,
   }),
+  // A pane's document says when it gains and when it loses the keyboard focus; the reader keeps the Learning summary's last report.
+  z.strictObject({ type: z.literal('pane-focus'), focused: z.boolean() }),
   z.strictObject({
     type: z.literal('node-history'),
     ...revisionShape,
@@ -500,6 +504,12 @@ export class StudyWorkspace {
   private summaryComposition = false
   private summaryView?: vscode.WebviewView
   private summaryDocumentActive = false
+  // What the Learning summary's document last reported about the keyboard focus; the editor gives a webview view no focus state to read.
+  private summaryHeldFocus = false
+  // The wait for a hidden summary's report that it lost the focus; see {@link releaseHiddenSummaryFocus}.
+  private summaryFocusRelease?: ReturnType<typeof setTimeout>
+  // Set while Show Variables runs its commands: Run and Debug takes the focus on purpose then, also where its view hides the summary.
+  private isShowingNativeVariables = false
   /** The Move View offers {@link offerSummaryPlacement} made in this editor session; each occasion is offered at most once per session. */
   private readonly summaryPlacementOffersMade =
     new Set<SummaryPlacementOccasion>()
@@ -4950,7 +4960,14 @@ export class StudyWorkspace {
     if (action === 'outline')
       await vscode.commands.executeCommand('codebook.learningOutline.focus')
     // One click replaces opening Run and Debug, expanding Variables and expanding its first scope by hand.
-    if (action === 'show-variables') await this.showNativeVariables()
+    if (action === 'show-variables') {
+      this.isShowingNativeVariables = true
+      try {
+        await this.showNativeVariables()
+      } finally {
+        this.isShowingNativeVariables = false
+      }
+    }
     if (action === 'arrange') {
       try {
         // A Study click can precede Cursor's native focus notification after unmaximizing Application.
@@ -6836,6 +6853,8 @@ export class StudyWorkspace {
       study,
       live,
       liveDescriptor,
+      plannedStopLine:
+        record?.runtime && plannedStopLine(record.runtime.view().events),
       progress: this.progress,
       baselines: this.baselines,
       currentSourceAvailable: this.currentSourceAvailable,
@@ -7174,6 +7193,8 @@ export class StudyWorkspace {
       initial.model.source.hash,
       initial.model.observation?.id,
       initial.model.selection.follow,
+      // Before the first pause the shown line follows the run: the declared line, then the line the stop was requested at or bound on. An observation's line never changes.
+      initial.model.observation ? undefined : initial.model.source.line,
     ])
     if (
       !forceSource &&
@@ -8208,9 +8229,38 @@ export class StudyWorkspace {
     )
   }
 
+  /**
+   * Gives the keyboard focus to the active editor group when the Learning summary's view was hidden while its document held the focus; called by that view's visibility listener.
+   * Cursor leaves the focus in the hidden webview when its side bar is closed, so no visible element has it; VS Code moves it to the editor itself, where the command changes nothing.
+   * A summary whose document last reported that it lost the focus (the learner went on to a chat, a terminal or Run and Debug) is left alone, and so is one that Show Variables hid: there Run and Debug holds the focus on purpose.
+   * The document's report that it lost the focus can arrive after the view was hidden (the learner opened another view in the summary's place), so the move waits {@link SUMMARY_FOCUS_RELEASE_WAIT_MS} for it and is dropped when it comes.
+   * @example this.releaseHiddenSummaryFocus()
+   */
+  private releaseHiddenSummaryFocus(): void {
+    if (!this.summaryHeldFocus || this.isShowingNativeVariables) return
+    clearTimeout(this.summaryFocusRelease)
+    this.summaryFocusRelease = setTimeout(() => {
+      // The document reported inside the bound that it lost the focus, the summary is shown again, or the reader is closing: the focus is where the learner put it.
+      if (
+        !this.summaryHeldFocus ||
+        this.summaryView?.visible ||
+        this.closing ||
+        this.disposed
+      )
+        return
+      this.summaryHeldFocus = false
+      void vscode.commands
+        .executeCommand('workbench.action.focusActiveEditorGroup')
+        .then(undefined, (error) => this.report('reader', error))
+    }, SUMMARY_FOCUS_RELEASE_WAIT_MS)
+  }
+
   /** Withdraws replay controls on explicit departure or close while leaving the native sidebar and other chat containers intact. @example this.clearLearningSummary() */
   private clearLearningSummary(): void {
     this.summaryDocumentActive = false
+    // The document that reported the focus is replaced; its successor reports for itself.
+    this.summaryHeldFocus = false
+    clearTimeout(this.summaryFocusRelease)
     this.lastRendered = undefined
     if (this.summaryView)
       this.summaryView.webview.html =
@@ -8358,6 +8408,8 @@ export class StudyWorkspace {
               if (this.summaryView === view) {
                 this.summaryView = undefined
                 this.summaryDocumentActive = false
+                this.summaryHeldFocus = false
+                clearTimeout(this.summaryFocusRelease)
                 this.lastRendered = undefined
               }
             })
@@ -8367,6 +8419,8 @@ export class StudyWorkspace {
                 this.lastPublished = undefined
                 this.publish()
               }
+              if (this.summaryView === view && !view.visible)
+                this.releaseHiddenSummaryFocus()
             })
             if (this.recordingActive && this.summaryComposition) {
               this.summaryDocumentActive = true
@@ -10304,6 +10358,12 @@ export class StudyWorkspace {
     const message = parsed.data
     // Only an operation-local listener can accept these validated receipts; they never acknowledge rendering or a learner action.
     if (message.type === 'codebook-focus-receipt') return
+    // Kept for the moment the summary's view is hidden; a report of another pane changes nothing.
+    if (message.type === 'pane-focus') {
+      if (owner !== undefined && owner === this.summaryView)
+        this.summaryHeldFocus = message.focused
+      return
+    }
     await this.initialize()
     // Initialization can outlive a panel handoff; retired renderers never acknowledge or control its successor.
     if (
