@@ -148,6 +148,33 @@ function endedStatus(
 }
 
 /**
+ * Words why a start was refused that names no blocking path; called by {@link WikiUpdateRun.refuseStart} for the `failed` state it records.
+ * @param refusal - The block found before the start.
+ * @returns
+ * - A `failed` refusal: its reason, marked as a Codebook sentence only when the refusal is
+ * - A conflict (one that names no path reaches here): a sentence Codebook wrote, since a conflict without a path could not tell the learner what to move
+ * @example
+ * refusalReason({ kind: 'failed', reason: 'No LLM Wiki exists yet.', isCodebookSentence: true }) // => { reason: 'No LLM Wiki exists yet.', isCodebookSentence: true }
+ * refusalReason({ kind: 'conflict', paths: [], cause: 'edited-page' })                           // => { reason: 'The update was blocked, but no blocking file was named.', isCodebookSentence: true }
+ */
+function refusalReason(
+  refusal: WikiUpdateRefusal,
+): Pick<
+  Extract<WikiUpdateRefusal, { kind: 'failed' }>,
+  'reason' | 'isCodebookSentence'
+> {
+  if (refusal.kind === 'failed')
+    return {
+      reason: refusal.reason,
+      ...(refusal.isCodebookSentence ? { isCodebookSentence: true } : {}),
+    }
+  return {
+    reason: 'The update was blocked, but no blocking file was named.',
+    isCodebookSentence: true,
+  }
+}
+
+/**
  * Holds the one Wiki update run of an editor window so the command, the `/update` link and the browser button share it.
  *
  * Why: a second start while a run is active must be refused in all three entries, and the reader needs a snapshot to show running and result states.
@@ -261,18 +288,7 @@ export class WikiUpdateRun {
             state: 'failed',
             host,
             finishedAt,
-            ...(refusal.kind === 'failed'
-              ? {
-                  reason: refusal.reason,
-                  ...(refusal.isCodebookSentence
-                    ? { isCodebookSentence: true }
-                    : {}),
-                }
-              : {
-                  reason:
-                    'The update was blocked, but no blocking file was named.',
-                  isCodebookSentence: true,
-                }),
+            ...refusalReason(refusal),
             site: 'kept',
             ...output,
           }
