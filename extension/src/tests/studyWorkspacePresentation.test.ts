@@ -1506,15 +1506,16 @@ test('editor AI can return a saved recording to its current run without repeatin
   let endpoint: Awaited<ReturnType<typeof startServer>> | undefined
   let client: Client | undefined
   try {
-    await harness.reader.openRecording(harness.studyId)
-    await harness.controller.settle()
+    // The run is started while the reader follows it; a start made while the reader shows the recording is refused (OBS-1).
     next = service.start({
       instanceId: service.instanceId,
       profile: PROFILE_ID,
       configuration: harness.configuration,
-      key: 'after-saved-recording',
+      key: 'before-saved-recording',
     })
     await service.record(next).preparation
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
     endpoint = await startServer(service)
     const transport = new StreamableHTTPClientTransport(
       new URL(endpoint.descriptor.url),
@@ -4377,3 +4378,68 @@ for (const reader of ['study-workspace', 'living-book'] as const)
       await harness.close()
     }
   })
+
+// Value: protects=a run started while the open reader shows a saved study ending before the application gets any input, with the step that makes the next start possible; fails_when=the run is admitted, starts the application and fails about 25 s later at its first capture with "Learner is viewing history; current capture was not displayed.", which names no step; why_new=Cycle 0045 finding OBS-1 (native observation round, and again in owed check 2: run 303345e4 ended after 25.6 s); seam=the recorded reader harness with the real service and reader
+test('a run started while the reader shows a saved study is refused before any input and names the return to the current run', async () => {
+  // Arrange: the open reader shows a saved study's recording, so it does not follow the current run.
+  const harness = await recordedReaderHarness()
+  const service = harness.service
+  let refused: ReturnType<typeof service.start> | undefined,
+    repeated: ReturnType<typeof service.start> | undefined
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const shown = harness.reader.presentationState(),
+      runtimesBefore = harness.runtimes.length
+    // Act
+    refused = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'while-the-reader-shows-a-saved-study',
+    })
+    const refusedRecord = service.record(refused)
+    await refusedRecord.preparation
+    await waitUntil(() => refusedRecord.stopped, 'the refused run ended', 1_000)
+    // Assert
+    assert.equal(shown.state, 'open')
+    assert.equal(shown.reader.followingCurrentRun, false)
+    assert.equal(shown.reader.contentRevision, 3)
+    assert.equal(refusedRecord.error?.code, 'PRESENTATION_UNAVAILABLE')
+    assert.equal(
+      refusedRecord.error?.message,
+      "The run was not started: the reader shows saved history and does not follow the current run (reader.followingCurrentRun is false), so none of this run's captures would be displayed. Call codebook_return_current with expectedRevision 3 (reader.contentRevision), then start again with a new key.",
+    )
+    // No runtime was created: the application was not started and got no input.
+    assert.equal(refusedRecord.runtime, undefined)
+    assert.equal(harness.runtimes.length, runtimesBefore)
+    // The step the text names makes the next start possible.
+    const returned = await harness.reader.returnToCurrent({
+      presentationId: shown.presentationId,
+      expectedRevision: shown.reader.contentRevision,
+    })
+    repeated = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'after-the-return-to-the-current-run',
+    })
+    await service.record(repeated).preparation
+    assert.equal(returned.reader.followingCurrentRun, true)
+    assert.equal(service.record(repeated).error, undefined)
+    assert.equal(service.record(repeated).prepared, true)
+    // The status help, which names followingCurrentRun, says the same.
+    assert.equal(
+      (await service.status()).presentation?.instructions.includes(
+        'Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. A run started while an open reader has followingCurrentRun false is not started: it ends before any application input and names this step; start again with a new key after it.',
+      ),
+      true,
+    )
+  } finally {
+    try {
+      if (repeated) await service.stop(repeated)
+    } finally {
+      await harness.close()
+    }
+  }
+})
