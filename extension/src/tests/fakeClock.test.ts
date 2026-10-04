@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 import {
+  advanceClock,
   advanceClockUntil,
   enableFakeClock,
   resetFakeClock,
@@ -50,4 +51,28 @@ test('a wait spends no fake time while a real file read is pending', async (cont
   // Assert
   assert.equal(waitedMs, 0)
   assert.equal(movedMs, 0)
+})
+
+// Value: protects=the faked time a test stands at when it reads the product's state before a bound that begins after file work (a read, then a deadline); fails_when=advanceClock takes one 50 ms step per real turn whatever is pending, so the product sets its timer after the clock has already moved and the test reads its state far earlier than it means to; why_new=Cycle 0045 H1-F1 (studyWorkspaceEntryObstacles read its state about 1,050 faked ms before the bound it named); seam=none
+test('advancing the fake clock spends no fake time while a real file read is pending', async (context) => {
+  // Arrange: work under the clock reads files for 30 real ms and then sets a 200 ms timer, as product code sets a deadline after its storage work.
+  enableFakeClock(context)
+  const fakedAtMs = performance.now()
+  const readingStartedMs = realNow()
+  const timer: { setAfterMs?: number; firedAfterMs?: number } = {}
+  const working = (async () => {
+    while (realNow() - readingStartedMs < 30) await readFile(__filename)
+    timer.setAfterMs = Math.round(performance.now() - fakedAtMs)
+    setTimeout(() => {
+      timer.firedAfterMs = Math.round(performance.now() - fakedAtMs)
+    }, 200)
+  })()
+
+  // Act
+  await advanceClock(context, 200)
+  await working
+  resetFakeClock(context)
+
+  // Assert: the timer was set before any fake time passed, and fired when the advance reached the time it was due.
+  assert.deepEqual(timer, { setAfterMs: 0, firedAfterMs: 200 })
 })

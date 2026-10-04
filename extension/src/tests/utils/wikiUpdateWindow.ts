@@ -31,7 +31,7 @@ export type HeldUpdateStep = 'freshness-inspection' | 'chat-open'
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
  * @param options.chatFails - Makes VS Code's chat command throw.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt and the run's abort signal.
- * @param options.cancellable - Collects the Cancel button of each progress notification.
+ * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
@@ -196,7 +196,8 @@ export async function openWikiUpdateWindow(options: {
             errors.push(message)
             return Promise.resolve(undefined)
           },
-          ...(options.cancellable ? { withProgress } : {}),
+          // A real editor always has it, so every test runs the product's notification path; only collecting the Cancel buttons is optional.
+          withProgress,
         },
       },
       './environment': { requireWorkspace: () => projectRoot },
