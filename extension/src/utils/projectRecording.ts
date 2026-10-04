@@ -89,50 +89,40 @@ export function projectRecording(
   const available = (id: string) =>
     context?.interpretationAvailability.find((value) => value.id === id)
       ?.elapsedMs
-  const atPosition = (value: { id: string }) => {
-    const elapsed = available(value.id)
-    return elapsed !== undefined && elapsed !== null && elapsed <= positionMs
-  }
-  const savedLater = (id: string): ExplanationSavedLater | undefined => {
-    const elapsed = available(id)
-    // No receipt in the journal, or one past the film's end: the explanation was saved after the recording ended.
-    if (elapsed === undefined || elapsed === null || elapsed > recordingEndMs)
-      return 'after-recording-ended'
+  // An explanation without a receipt in the journal was saved after the recording ended.
+  const savedMs = (value: { id: string }) =>
+    available(value.id) ?? Number.POSITIVE_INFINITY
+  // In a stop's own recorded pause that stop shows what was saved until the pause ended; everywhere else only what was saved by the playhead.
+  const shownUntilMs =
+    hasHistoricalState && interval ? interval.endMs : positionMs
+  const isShown = (value: { id: string }, order: number) =>
+    savedMs(value) <= shownUntilMs || (hasHistoricalState && order === 0)
+  const savedLater = (savedAtMs: number): ExplanationSavedLater | undefined => {
+    if (savedAtMs > recordingEndMs) return 'after-recording-ended'
     // Without a sealed interval the recording does not say whether the pause was still held at that time.
     if (!interval) return undefined
-    return elapsed <= interval.endMs
+    return savedAtMs <= interval.endMs
       ? 'while-pause-held'
       : 'after-run-continued'
-  }
-  const shownBeforeSaved = (value: { id: string }, order: number) => {
-    // Only a stop's own recorded pause shows an explanation ahead of its saved time.
-    if (!hasHistoricalState) return false
-    const elapsed = available(value.id)
-    return (
-      order === 0 ||
-      Boolean(
-        interval && typeof elapsed === 'number' && elapsed <= interval.endMs,
-      )
-    )
   }
   // Keep interpretation availability bound to the selected recorded source.
   const observation = currentObservation && {
     ...currentObservation,
-    interpretations: currentObservation.interpretations.flatMap(
-      (value, order): ShownInterpretation[] => {
-        if (atPosition(value)) return [value]
-        if (!shownBeforeSaved(value, order)) return []
-        const saved = savedLater(value.id)
-        return [saved ? { ...value, savedLater: saved } : value]
-      },
-    ),
+    interpretations: currentObservation.interpretations
+      .filter(isShown)
+      .map((value): ShownInterpretation => {
+        // An explanation shown ahead of the time it was saved at says when that was.
+        const saved =
+          savedMs(value) > positionMs ? savedLater(savedMs(value)) : undefined
+        return saved ? { ...value, savedLater: saved } : value
+      }),
   }
   const shownIds = new Set(
     observation?.interpretations.map((value) => value.id),
   )
   const laterInterpretations =
     observed?.interpretations
-      .filter((value) => !atPosition(value) && !shownIds.has(value.id))
+      .filter((value) => savedMs(value) > positionMs && !shownIds.has(value.id))
       .map((value) => ({
         ...value,
         availableMs: available(value.id) ?? null,
