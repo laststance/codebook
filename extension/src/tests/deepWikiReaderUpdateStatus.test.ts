@@ -6,13 +6,13 @@ import { serveMinimalWiki } from './utils/serveMinimalWiki'
 
 test('the Wiki reader answers the current update state at api/update-status', async () => {
   // Arrange
-  const wiki = await serveMinimalWiki(() => ({
+  const wiki = await serveMinimalWiki((outputDirectory) => ({
     state: 'failed',
     host: 'cursor',
     finishedAt: '2026-10-03T12:10:00.000Z',
     reason: 'Cursor Agent exited with code 1.',
     site: 'kept',
-    outputDirectory: '/repo/.codebook/wiki',
+    outputDirectory,
     outputLabel: '.codebook/wiki',
   }))
   const publishedAt = new Date('2026-10-03T11:50:00.000Z')
@@ -29,7 +29,7 @@ test('the Wiki reader answers the current update state at api/update-status', as
       finishedAt: '2026-10-03T12:10:00.000Z',
       reason: 'Cursor Agent exited with code 1.',
       site: 'kept',
-      outputDirectory: '/repo/.codebook/wiki',
+      outputDirectory: wiki.outputDirectory,
       outputLabel: '.codebook/wiki',
       sitePublishedAt: '2026-10-03T11:50:00.000Z',
     })
@@ -152,13 +152,13 @@ test('a HEAD request for the update state stays refused', async () => {
 
 test('the update state is served while a publish has left the manifest unreadable', async () => {
   // Arrange
-  const wiki = await serveMinimalWiki(() => ({
+  const wiki = await serveMinimalWiki((outputDirectory) => ({
     state: 'running',
     host: 'vscode',
     startedAt: '2026-10-03T12:03:00.000Z',
     timeoutMs: 900_000,
     candidateStaged: false,
-    outputDirectory: '/repo/.codebook/wiki',
+    outputDirectory,
     outputLabel: '.codebook/wiki',
   }))
   await writeFile(wiki.manifestPath, '{ not json')
@@ -195,6 +195,33 @@ test('a page the last update removed sends the browser to the overview of the sa
     assert.equal(followed.url, wiki.reader.url)
     assert.match(await followed.text(), /Wiki/)
     assert.equal(otherFile.status, 404)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a reader of one Wiki folder answers idle while the window’s update run is for another folder', async () => {
+  // Arrange: the output setting changed after this reader was opened, and the window's run is for the new folder.
+  const wiki = await serveMinimalWiki(() => ({
+    state: 'running',
+    host: 'vscode',
+    startedAt: '2026-10-03T12:03:00.000Z',
+    timeoutMs: 900_000,
+    candidateStaged: false,
+    outputDirectory: '/repo/docs/wiki',
+    outputLabel: 'docs/wiki',
+  }))
+  const publishedAt = new Date('2026-10-03T11:50:00.000Z')
+  await utimes(wiki.manifestPath, publishedAt, publishedAt)
+  try {
+    // Act
+    const response = await fetch(new URL('api/update-status', wiki.reader.url))
+
+    // Assert
+    assert.deepEqual(await response.json(), {
+      state: 'idle',
+      sitePublishedAt: '2026-10-03T11:50:00.000Z',
+    })
   } finally {
     await wiki.close()
   }

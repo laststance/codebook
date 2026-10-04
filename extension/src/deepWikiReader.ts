@@ -185,7 +185,7 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - Current Wiki update run state served at `api/update-status`. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
@@ -228,9 +228,16 @@ export async function startDeepWikiReader(
         sendGetOnly(response)
         return
       }
+      const windowStatus = readUpdateStatus()
+      // The window holds one run state whatever folder that run is for; after the output setting changed, a reader of another folder has no run of its own.
+      const ownStatus: WikiUpdateStatus =
+        windowStatus.state === 'idle' ||
+        windowStatus.outputDirectory === outputDirectory
+          ? windowStatus
+          : { state: 'idle' }
       // The publish time lets the page tell a publish after the run ended from a source that went back by itself.
       sendJson(response, 200, {
-        ...readUpdateStatus(),
+        ...ownStatus,
         sitePublishedAt: await readWikiPublishedAt(outputDirectory),
       } satisfies WikiUpdateStatusAnswer)
       return
