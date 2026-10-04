@@ -450,6 +450,32 @@ test('a publish Codebook cannot check against the source passes the reason on an
   }
 })
 
+test('the bound a Cursor update is stopped at is the bound its page and its request name', async () => {
+  // Arrange
+  let boundTheAgentIsStoppedAt: number | undefined
+  let timeoutOnThePage: number | undefined
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async (_root, _prompt, _signal, timeoutMs) => {
+      boundTheAgentIsStoppedAt = timeoutMs
+      const running = wiki.status()
+      timeoutOnThePage =
+        running.state === 'running' ? running.timeoutMs : undefined
+      return 'Updated'
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(timeoutOnThePage, 900_000)
+    assert.equal(boundTheAgentIsStoppedAt, 900_000)
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a Cursor update that runs past its bound ends as timed out, the state VS Code reports for the same event', async () => {
   // Arrange
   const wiki = await openWikiWindow({

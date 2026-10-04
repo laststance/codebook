@@ -373,6 +373,10 @@ export const WIKI_CURSOR_REQUEST_TIMEOUT_MS = 120_000
 export const WIKI_CURSOR_UPDATE_TIMEOUT_MS = 900_000
 export const WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES = 1_048_576
 export const WIKI_CURSOR_TERMINATION_GRACE_MS = 5_000
+/** How long a Cursor Wiki update's agent gets to stop by itself when the editor window closes, before its process group is killed; well below the few seconds the extension host itself has left. */
+export const WIKI_CURSOR_SHUTDOWN_GRACE_MS = 2_000
+/** The abort reason a closing editor window gives a Wiki update run, so the Cursor agent gets {@link WIKI_CURSOR_SHUTDOWN_GRACE_MS} instead of the learner's cancel grace. */
+export const WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON = 'WikiUpdateWindowClosing'
 /** File name of the manifest the Wiki publisher writes into an output or candidate folder. */
 export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
 /** File name of the Wiki publisher's receipt in an output or candidate folder. */

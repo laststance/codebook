@@ -23,6 +23,7 @@ import {
   WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
+  WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
 } from './constants'
 import {
   deployCursorSkill,
@@ -74,6 +75,7 @@ import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
 import { selectActiveWikiCandidate } from './utils/selectActiveWikiCandidate'
+import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
@@ -153,6 +155,8 @@ export function activate(
     /** Publish token of the site the run started from; the end compares against it to say kept or replaced. */
     tokenAtStart: string | undefined
     startedAtMs: number
+    /** The bound the run announces on the page and in its request, and the one it is stopped at. */
+    timeoutMs: number
     /** Stops the run: the learner's Cancel and the closing window both abort it. */
     controller: AbortController
   }
@@ -566,7 +570,7 @@ export function activate(
     isExtensionStopping = true
     // A closing window must not leave a watch or an unattended agent behind.
     const stoppedWikiRun = activeWikiRun
-    stoppedWikiRun?.controller.abort()
+    stoppedWikiRun?.controller.abort(WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON)
     try {
       await stop()
       await repositoryReader?.dispose()
@@ -574,20 +578,12 @@ export function activate(
     } finally {
       try {
         // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer.
-        if (stoppedWikiRun) {
-          let graceTimer: NodeJS.Timeout | undefined
-          await Promise.race([
+        if (stoppedWikiRun)
+          await settledWithin(
             // How the run ended is recorded by the run itself; shutdown only waits for it.
             stoppedWikiRun.settled.catch(() => undefined),
-            new Promise<void>((resolveGrace) => {
-              graceTimer = setTimeout(
-                resolveGrace,
-                WIKI_CURSOR_TERMINATION_GRACE_MS,
-              )
-            }),
-          ])
-          clearTimeout(graceTimer)
-        }
+            WIKI_CURSOR_TERMINATION_GRACE_MS,
+          )
       } finally {
         await deepWikiReader?.close()
       }
@@ -727,7 +723,7 @@ export function activate(
             inspectPublishedWiki(run.projectRoot, run.outputDirectory),
           findBlockingFiles: () => probeWikiCandidates(run),
           signal: run.controller.signal,
-          timeoutMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
+          timeoutMs: run.timeoutMs,
           pollMs: WIKI_UPDATE_WATCH_POLL_MS,
         })
         await finishWikiUpdate(run, {
@@ -759,7 +755,12 @@ export function activate(
   ): Promise<void> => {
     const update = async (token?: vscode.CancellationToken): Promise<void> => {
       token?.onCancellationRequested(() => run.controller.abort())
-      await runCursorWikiUpdate(run.projectRoot, query, run.controller.signal)
+      await runCursorWikiUpdate(
+        run.projectRoot,
+        query,
+        run.controller.signal,
+        run.timeoutMs,
+      )
       // A successful CLI exit alone does not prove that the correct project's site is readable.
       if ((await realpath(requireWorkspace())) !== run.projectRoot)
         throw new Error(
@@ -876,6 +877,9 @@ export function activate(
         host,
         tokenAtStart,
         startedAtMs: Date.now(),
+        timeoutMs: isCursorHost
+          ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
+          : WIKI_UPDATE_WATCH_TIMEOUT_MS,
         controller: new AbortController(),
       }
       /** Makes the run reachable for the closing window until its watch or agent has stopped. */
@@ -886,13 +890,10 @@ export function activate(
           if (activeWikiRun === tracked) activeWikiRun = undefined
         })
       }
-      const timeoutMs = isCursorHost
-        ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
-        : WIKI_UPDATE_WATCH_TIMEOUT_MS
-      wikiUpdateRun.begin(run.host, wikiOutput, timeoutMs)
+      wikiUpdateRun.begin(run.host, wikiOutput, run.timeoutMs)
       const query = buildWikiUpdatePrompt({
         manifestPath: join(outputDirectory, WIKI_MANIFEST_FILE),
-        timeoutMs,
+        timeoutMs: run.timeoutMs,
         // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
         isReplyRead: !isCursorHost,
       })
