@@ -4,7 +4,7 @@ import { thrownMessage } from './thrownMessage'
 const SETUP_STEP = 'Run Codebook: Set Up AI Chat'
 
 /**
- * Words the one notification a learner reads when the saved AI chat setup could not reconnect at editor start; called by `activate` when its reconnect fails.
+ * Words the one notification a learner reads when the saved AI chat setup could not reconnect at editor start; called by {@link activate} when its reconnect fails.
  *
  * Why: the notice was the thrown value's string form with the setup step appended, which printed "Error:", named the step twice when the reason already gave it, and ended with two full stops. The reason is shown as its message, ends with exactly one full stop, and is followed by the setup step only when it does not name that step itself.
  *

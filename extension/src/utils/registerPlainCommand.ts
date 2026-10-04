@@ -7,7 +7,7 @@ import { thrownMessage } from './thrownMessage'
  * Registers one Codebook command whose failure the editor cannot turn into a link; the only place of the extension that calls the editor's `registerCommand`.
  *
  * Why: when a command run from a keybinding, a status bar item or a menu rejects, the editor shows the rejection's message in a notification of its own and renders `[label](command:…)` in it as a link. A Codebook command's error can quote outside text (a setting, a path, a Wiki manifest), so every command rejects with that message passed through {@link plainNotificationText}; the thrown value stays reachable as the `cause`. The `no-restricted-syntax` rule in `eslint.config.mjs` refuses a direct `registerCommand` anywhere else in `src`.
- * Trigger: `activate` binds it to `vscode.commands` as its local `registerCommand(command, handler)` and registers every command through it.
+ * Trigger: {@link activate} binds it to `vscode.commands` as its local `registerCommand(command, handler)` and registers every command through it.
  *
  * @param commands - The editor's `vscode.commands`. It is a parameter because the tests load one module with a fake `vscode`, which a utility's own import would not receive.
  * @param command - The command identifier, as contributed in `package.json`.

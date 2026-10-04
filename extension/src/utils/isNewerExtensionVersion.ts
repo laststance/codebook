@@ -4,7 +4,7 @@
  * Versions are compared number by number from the left (`0.2.28`, also with a fourth number); a missing number counts as 0.
  *
  * @param candidate - The version to judge, for example the `extensionVersion` a skill receipt records.
- * @param reference - The version it is compared with, for example `EXTENSION_VERSION` of the running window.
+ * @param reference - The version it is compared with, for example {@link EXTENSION_VERSION} of the running window.
  * @returns
  * - `true` when `candidate` is a later version than `reference`
  * - `false` when it is the same or an earlier one, or when either text is not dotted numbers (an unreadable version never blocks an update)

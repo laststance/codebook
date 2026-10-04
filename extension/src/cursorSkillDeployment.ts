@@ -516,7 +516,20 @@ async function inspectManagedSkill(
   }
 }
 
-/** Installs or updates only a receipted user skill when Cursor setup is requested; another skill or later edit is preserved. @example await deployCursorSkill('/ext', '/private', '/home') */
+/**
+ * Installs or updates only a receipted user skill when Cursor setup is requested; another skill or later edit is preserved. Called by the setup command of {@link activate}; the work is {@link deploySkill} with the `setup` entry.
+ *
+ * @param extensionPath - The running installation, whose bundled skill is deployed.
+ * @param storageRoot - Codebook's private storage, which holds the receipt and the storage lock.
+ * @param homeRoot - The home folder whose `.cursor/skills/codebook/SKILL.md` is managed; tests pass a temporary one.
+ * @returns
+ * - `installed`: no skill was there
+ * - `updated`: the receipted, unedited skill held other bytes
+ * - `restored`: the receipted skill was missing
+ * - `current`: the receipted skill already holds this installation's bytes
+ * @throws When a skill Codebook does not own, or a later edit or replacement, is in the way (nothing is changed), and when the storage lock is held by another writer.
+ * @example await deployCursorSkill('/ext', '/private', '/home') // => { status: 'installed', path, sha256, version }
+ */
 export async function deployCursorSkill(
   extensionPath: string,
   storageRoot: string,

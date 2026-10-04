@@ -16,7 +16,7 @@ type NoticeWindow = Pick<
  * Shows one non-modal editor notification whose text the editor cannot turn into a link; the only place of the extension that calls the editor's `show…Message` for a notification.
  *
  * Why: the editor renders `[label](command:…)` in a notification as a link that runs a command, and almost every Codebook notification quotes outside text (a path, a setting, an error's own words). One helper applies {@link plainNotificationText} to every message, so a new notification cannot forget it; the `no-restricted-syntax` rule in `eslint.config.mjs` refuses a direct call anywhere else in `src`. Only a modal confirmation (`{ modal: true }`) still calls the editor itself.
- * Trigger: `activate` binds it to `vscode.window` as its local `showNotice(severity, message, ...actions)`; {@link StudyWorkspace} and {@link RepositoryReader} call it with `vscode.window`.
+ * Trigger: {@link activate} binds it to `vscode.window` as its local `showNotice(severity, message, ...actions)`; {@link StudyWorkspace} and {@link RepositoryReader} call it with `vscode.window`.
  *
  * @param window - The editor's `vscode.window`. It is a parameter because the tests load one module with a fake `vscode`, which a utility's own import would not receive.
  * @param severity - Which notification the editor shows.
