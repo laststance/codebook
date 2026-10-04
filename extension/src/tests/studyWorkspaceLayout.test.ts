@@ -4407,3 +4407,49 @@ test('a recorded seek made while the bottom panel is maximized gives a collapsed
     await harness.close()
   }
 })
+
+for (const command of [
+  'Arrange Study Workspace',
+  'Open Study Workspace',
+] as const)
+  for (const layout of ['a recording', 'the Study layout'] as const)
+    // Value: protects=the two commands a learner reaches for when the Application pane is a strip giving that pane its height back; fails_when=Arrange restores without applying a grid, or Open returns because a layout receipt of the same mode exists, so the Application group stays at the 70 px of its tab row above a tall source; why_new=Cycle 0045 NF-10 with PC-1.1 (Cursor: neither command repaired the collapse a maximized seek left; the collapse is that of the Application group alone, the source group is tall); seam=workspace harness with a native layout whose rows the test sets in pixels
+    test(`${command} gives a collapsed Application group its normal height, in ${layout}`, async () => {
+      // Arrange: the editor area is visible; the Application group sits at the height of its tab row above a tall source group, as a maximized bottom panel leaves it when it is restored.
+      const harness = await recordedReaderHarness(true)
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      try {
+        if (layout === 'a recording') {
+          await harness.reader.openRecording(harness.studyId)
+          await harness.controller.settle()
+        } else await harness.reader.open()
+        const arranged = await harness.reader.readPresentationState(),
+          applicationHeightArranged = harness.groupHeightPx(1)
+        harness.maximizePanel()
+        await harness.editor.commands.executeCommand(
+          'workbench.action.focusFirstEditorGroup',
+        )
+        const collapsed = {
+          application: harness.groupHeightPx(1),
+          source: harness.groupHeightPx(2),
+        }
+
+        // Act
+        if (command === 'Arrange Study Workspace')
+          await harness.reader.action('arrange')
+        else await harness.reader.open()
+
+        // Assert
+        const state = await harness.reader.readPresentationState()
+        assert.equal(arranged.layoutConfirmed, true)
+        assert.equal(applicationHeightArranged, 420)
+        assert.deepEqual(collapsed, { application: 70, source: 770 })
+        assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+        assert.equal(harness.groupHeightPx(1), 420)
+        assert.equal(harness.groupHeightPx(2), 420)
+        assert.equal(state.layoutConfirmed, true)
+        assert.equal(state.reason, undefined)
+      } finally {
+        await harness.close()
+      }
+    })

@@ -4390,6 +4390,12 @@ export class StudyWorkspace {
       )
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
+      // The arrangement above leaves a layout it owns as it is; "Open Study Workspace" on an open reader still gives an Application group that sits at the height of its tab row its height back.
+      if (!firstOpen && origin === 'study' && this.layoutReceipt) {
+        await this.reapplyConfirmedLayout(this.layoutReceipt, true)
+        this.assertLifetime(lifetime)
+        signal?.throwIfAborted()
+      }
       // Replay visibility can invalidate source readiness until its next ACK; retain layout ownership and project current readiness separately.
       // An enlarged pane needs explicit Restore; a later Open must not certify its retained grid receipt.
       if (!this.presentationTransition && !this.enlargedLayoutReceipt)
@@ -6998,11 +7004,14 @@ export class StudyWorkspace {
    * Gives the Study panes the sizes of the confirmed layout back after a source reveal into a hidden editor area; called by {@link renderSelection}.
    * The measured grid is applied as it was confirmed, as Restore does after Enlarge; panes or groups that changed meanwhile are left alone.
    * A layout that was no longer confirmed before the reveal keeps the sizes it has, unless the returned editor area left the Application group at its minimum height beside a taller source group: that strip is the editor's doing, and the last confirmed grid undoes it.
+   * {@link open} calls it too, for "Open Study Workspace" on an open reader: there only the collapsed Application group is repaired, whatever the confirmation says.
    * @param receipt - The layout that was arranged before the reveal.
+   * @param onlyCollapsed - `true` to apply the grid only when the Application group sits at its minimum height beside a taller group.
    * @example if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
    */
   private async reapplyConfirmedLayout(
     receipt: NonNullable<StudyWorkspace['layoutReceipt']>,
+    onlyCollapsed = false,
   ): Promise<void> {
     if (
       receipt !== this.layoutReceipt ||
@@ -7013,7 +7022,7 @@ export class StudyWorkspace {
       return
     // The collapse of the owned Application group is read on its own: the other groups of an unconfirmed layout may have any size.
     if (
-      !this.presentationConfirmed &&
+      (onlyCollapsed || !this.presentationConfirmed) &&
       !(
         receipt.panes.appColumn !== undefined &&
         isCollapsedEditorGroup(
