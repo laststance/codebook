@@ -527,6 +527,26 @@ test('a Cursor agent that ends its turn without publishing is a failure that kep
   }
 })
 
+// Value: protects=the browser's update link starting nothing unless the learner confirms it in the editor, since any page can open that link; fails_when=a dismissed confirmation still starts the update, so a chat request is sent and a watch begins; why_new=Cycle 0045 D-L7 (no test dismissed the confirmation through this window); seam=none
+test("dismissing the confirmation of the browser's update link starts no update: no chat request, no watch, and the update state stays idle", async () => {
+  // Arrange: the learner dismisses the modal confirmation.
+  const wiki = await openWikiWindow({ declineConfirmation: true })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.confirmations, [
+      'Update this project’s LLM Wiki with the editor agent?',
+    ])
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.equal(wiki.status().state, 'idle')
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a second start from the browser link is refused before the confirmation is shown and says where the progress is', async () => {
   // Arrange
   const wiki = await openWikiWindow()
@@ -676,11 +696,16 @@ test('closing the window while a VS Code update is watched stops the watch and s
 test('closing the window stops the Cursor agent and waits until its process has closed', async () => {
   // Arrange
   const agent = { sawAbort: false, hasClosed: false }
+  let reportAgentStarted = (): void => {}
+  const agentStarted = new Promise<void>((resolveStarted) => {
+    reportAgentStarted = resolveStarted
+  })
   const wiki = await openWikiWindow({
     cursor: true,
     // This agent ends only when its run is aborted, and then needs a moment to close, like a real process.
     cursorAgent: (_root, _prompt, signal) =>
       new Promise((_resolve, reject) => {
+        reportAgentStarted()
         signal?.addEventListener('abort', () => {
           agent.sawAbort = true
           setTimeout(() => {
@@ -691,7 +716,8 @@ test('closing the window stops the Cursor agent and waits until its process has 
       }),
   })
   const click = wiki.clickUpdate()
-  await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+  // The update has passed its start checks once the agent is called, however long they took.
+  await agentStarted
   const whileRunning = wiki.status()
 
   // Act
@@ -785,13 +811,24 @@ test(
   { timeout: 5_000 },
   async () => {
     // Arrange
+    let agentStarts = 0
+    let reportAgentStarted = (): void => {}
+    const agentStarted = new Promise<void>((resolveStarted) => {
+      reportAgentStarted = resolveStarted
+    })
     const wiki = await openWikiWindow({
       cursor: true,
       constants: { WIKI_CURSOR_TERMINATION_GRACE_MS: 100 },
-      cursorAgent: () => new Promise(() => {}),
+      // This agent never ends, also not when its run is aborted.
+      cursorAgent: () => {
+        agentStarts += 1
+        reportAgentStarted()
+        return new Promise(() => {})
+      },
     })
     void wiki.clickUpdate()
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+    // The update has passed its start checks once the agent is called, however long they took.
+    await agentStarted
     const closeStartedAtMs = Date.now()
 
     // Act
@@ -799,6 +836,7 @@ test(
 
     // Assert
     const waitedMs = Date.now() - closeStartedAtMs
+    assert.equal(agentStarts, 1)
     assert.ok(
       waitedMs >= 90 && waitedMs < 2_000,
       `the window waited ${waitedMs} ms for a grace of 100 ms`,
