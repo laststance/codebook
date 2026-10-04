@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import {
+  readerSeams,
   recordedReaderHarness,
   workspaceHarness,
 } from './studyWorkspaceHarness'
@@ -1973,6 +1974,95 @@ test('a live entry in Cursor stays confirmed when the editor rebuilds the source
     assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
     // The editor rebuilt the source group: it is another object in the same column, and the chat keeps its tab in the group behind the two panes.
     assert.notEqual(sourceGroup, sourceGroupBefore)
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(chat.tab))?.viewColumn,
+      3,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the layout confirmation of a live run that starts from the three-pane Study layout an agent's selection arranged in Cursor; fails_when=the entry closes the context pane and its group, the editor replaces every group object with each of those tab changes, and the run reaches ready with "The native editor layout receipt no longer matches the Study panes." and no layout receipt; why_new=Cycle 0045 NF-6, open again after the second native round (owed check 2, take o2b: confirmed before the start, no receipt at ready; the first part's test entered from a reader the test opened itself, with the Application pane in front); seam=workspace harness with a separate editor part, the fake editor's group object replacement and the reader's refresh
+test("a live entry from the three-pane Study layout stays confirmed when the context pane's group closes and the editor replaces every group object", async () => {
+  // Arrange: as the editor API reported it in Cursor before the start: a selection made with the learner's file focused arranged the three panes, the file stayed in front of the Application pane in the first group, the captured source is in the second, the Study pane in the third and the Agent chat's group is the fourth.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  try {
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const closed = harness.reader.presentationState()
+    const selected = await harness.reader.changePresentation({
+      presentationId: closed.presentationId,
+      expectedRevision: closed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    const firstGroupBefore = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )
+    console.log(
+      JSON.stringify({
+        selected: [selected.layoutConfirmed, selected.panes, selected.reason],
+        active: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        groups: harness.groups.map((g) => [
+          g.viewColumn,
+          g.tabs.map(
+            (t: any) =>
+              (t === g.activeTab ? '*' : '') +
+              (t.label ?? t.input?.viewType ?? String(t.input?.uri).slice(-22)),
+          ),
+        ]),
+      }),
+    )
+    // Cursor closes the context pane's tab, and then its group, a moment after the entry disposed the pane: while the entry measures the main editor.
+    harness.closeDisposedPanelTabsDuringLayoutRead()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+
+    // Act: the reader's own refresh enters the run, as it does after an agent's start.
+    await readerSeams(harness)
+      .refresh()
+      .catch(() => undefined)
+
+    // Assert
+    const ready = harness.reader.inspect().presentation
+    console.log(
+      JSON.stringify({
+        ready: [ready.layoutConfirmed, ready.panes, ready.reason],
+        errors: readerSeams(harness).errorLines(),
+        live: readerSeams(harness).isLiveArrangement(),
+        active: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        groups: harness.groups.map((g) => [
+          g.viewColumn,
+          g.tabs.map(
+            (t: any) =>
+              (t === g.activeTab ? '*' : '') +
+              (t.label ?? t.input?.viewType ?? String(t.input?.uri).slice(-22)),
+          ),
+        ]),
+      }),
+    )
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.panes.contextColumn, 3)
+    assert.equal(firstGroupBefore?.activeTab, learnerFile.tab)
+    assert.equal(readerSeams(harness).isLiveArrangement(), true)
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+    assert.equal(ready.layoutConfirmed, true)
+    assert.equal(ready.reason, undefined)
+    assert.equal(ready.panes.appColumn, 1)
+    assert.equal(ready.panes.sourceColumn, 2)
+    assert.equal(ready.panes.contextColumn, undefined)
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    // The context pane's group is gone, and the chat keeps its tab in the group behind the two panes.
     assert.equal(
       harness.groups.find((group) => group.tabs.includes(chat.tab))?.viewColumn,
       3,

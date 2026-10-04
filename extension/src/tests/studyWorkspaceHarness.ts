@@ -491,6 +491,8 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  // Cursor 3.23.12 closes a disposed panel's tab, and a moment later the group it left empty, while a layout read is pending.
+  let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
   let replacesGroupObjectsOnTabChanges = false
   /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
@@ -1382,12 +1384,26 @@ export async function workspaceHarness(
             if (group.activeTab === nativeTab) group.activeTab = undefined
           }
           // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
-          if (closeDisposedPanelTabsLater && emptied.length)
+          if (closeDisposedPanelTabsDuringLayoutRead) {
+            const emptiedColumns = emptied.map((group) => group.viewColumn)
+            // The tab's close gives every group a new object; the emptied group's close, which follows it, does so again.
+            replaceGroupObjects()
+            for (const group of groups.filter(
+              (candidate) =>
+                candidate !== separateEditorPart?.group &&
+                emptiedColumns.includes(candidate.viewColumn),
+            ))
+              removeEmptiedGroup(group)
+          } else if (closeDisposedPanelTabsLater && emptied.length)
             for (const group of emptied) removeEmptiedGroup(group)
           else replaceGroupObjects()
         }
         // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
-        if (closeDisposedPanelTabsLater) pendingDisposedTabCloses.push(closeTab)
+        if (
+          closeDisposedPanelTabsLater ||
+          closeDisposedPanelTabsDuringLayoutRead
+        )
+          pendingDisposedTabCloses.push(closeTab)
         else closeTab()
         for (const listener of disposed) listener()
       },
@@ -1957,7 +1973,12 @@ export async function workspaceHarness(
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
             // The disposed panels' tabs close one task after this read is answered.
             const dueTabCloses = pendingDisposedTabCloses.splice(0)
-            if (dueTabCloses.length)
+            if (dueTabCloses.length && closeDisposedPanelTabsDuringLayoutRead) {
+              // Cursor's closes arrive while the read is pending: the reader's listeners see them before the answer.
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              for (const close of dueTabCloses) close()
+              await new Promise<void>((resolve) => setImmediate(resolve))
+            } else if (dueTabCloses.length)
               setImmediate(() => {
                 for (const close of dueTabCloses) close()
               })
@@ -2916,6 +2937,15 @@ export async function workspaceHarness(
      */
     closeDisposedPanelTabsLater(): void {
       closeDisposedPanelTabsLater = true
+    },
+    /**
+     * Makes the fake editor close a disposed panel's tab, and then the group that tab left empty, while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). The reader's listeners see both closes before the read they interrupt is answered. That both fall into one layout read is the model's choice of moment: the trace gives their order and their distance of 11 ms, not what the reader awaited.
+     * @example
+     * harness.replaceGroupObjectsOnTabChanges()
+     * harness.closeDisposedPanelTabsDuringLayoutRead()
+     */
+    closeDisposedPanelTabsDuringLayoutRead(): void {
+      closeDisposedPanelTabsDuringLayoutRead = true
     },
     automaticallyClosedColumns: () => [...automaticallyClosedColumns],
     useCursorGroupWrappers(twoEventContraction = false): void {

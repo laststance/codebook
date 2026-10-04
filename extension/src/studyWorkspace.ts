@@ -8829,29 +8829,49 @@ export class StudyWorkspace {
           return
         }
       }
-      let grid = await this.readMainEditorGrid(
-        signal,
-        assertCurrent,
-        focus?.acquireSourceFocus,
-        beforeScopeFocus,
-      )
+      const retiredIdentity =
+        retiredContextGroup &&
+        this.editorGroupIdentities.get(retiredContextGroup)
+      /** Says how far the editor has closed the retired context pane: its tab first, then the group that tab left empty. */
+      const retirementStage = (): 'tab' | 'group' | 'gone' =>
+        this.hasRetiredStudyPaneTab()
+          ? 'tab'
+          : retiredIdentity !== undefined &&
+              vscode.window.tabGroups.all.some(
+                (group) =>
+                  this.editorGroupIdentities.get(group) === retiredIdentity,
+              )
+            ? 'group'
+            : 'gone'
+      /** Measures the main editor, and measures it again when the editor closed the retired pane's tab or its emptied group while the measurement waited: Cursor does both a moment after the pane was disposed. */
+      const measure = async (): ReturnType<
+        StudyWorkspace['readMainEditorGrid']
+      > => {
+        const stage = retiredContextGroup && retirementStage()
+        try {
+          return await this.readMainEditorGrid(
+            signal,
+            assertCurrent,
+            focus?.acquireSourceFocus,
+            beforeScopeFocus,
+          )
+        } catch (error) {
+          assertCurrent()
+          // Any other change during the measurement is the learner's and keeps its refusal.
+          if (stage === undefined || stage === retirementStage()) throw error
+          return measure()
+        }
+      }
+      let grid = await measure()
       // The editor closes a disposed pane's tab a moment after dispose(); a grid it measured before that still counts the retired Study group as occupied.
       if (retiredContextGroup && this.hasRetiredStudyPaneTab()) {
         await this.retiredStudyPaneClosed(signal)
         assertCurrent()
-        grid = await this.readMainEditorGrid(
-          signal,
-          assertCurrent,
-          focus?.acquireSourceFocus,
-          beforeScopeFocus,
-        )
+        grid = await measure()
       }
       const groupCount = this.studyGroupCount()
       // Cursor gives every group a new object with each tab change, so the retired group is known by its identity as well as by its object.
-      const lastGroup = grid.groups.at(-1),
-        retiredIdentity =
-          retiredContextGroup &&
-          this.editorGroupIdentities.get(retiredContextGroup)
+      const lastGroup = grid.groups.at(-1)
       const retiredGroup =
         lastGroup !== undefined &&
         (lastGroup === retiredContextGroup ||
