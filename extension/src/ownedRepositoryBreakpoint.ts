@@ -110,6 +110,28 @@ type RegistrationReceipt = {
 /** Where the adapter verified the owned breakpoint, kept beside the receipt so the run can compare a pause with it; absent while pending or when the reply named no whole position. */
 type VerifiedRegistration = { verifiedAt?: VerifiedPlace }
 
+/**
+ * Reads the place a binding is verified at; called by {@link OwnedRepositoryBreakpoint.verifiedPlaces} before it compares that place with the requested line.
+ * @param binding - The owned breakpoint's parsed entry of a setBreakpoints reply or `breakpoint` event.
+ * @returns The line and column of a verified binding that names both; `undefined` for a pending binding and for one without a whole position.
+ * @example
+ * wholeVerifiedPosition({ verified: true, line: 35, column: 5 }) // => { line: 35, column: 5 }
+ * wholeVerifiedPosition({ verified: true, line: 35 })            // => undefined
+ */
+function wholeVerifiedPosition(binding: {
+  verified: boolean
+  line?: number
+  column?: number
+}): VerifiedPlace | undefined {
+  if (
+    !binding.verified ||
+    binding.line === undefined ||
+    binding.column === undefined
+  )
+    return undefined
+  return { line: binding.line, column: binding.column }
+}
+
 /** Removes only one installed breakpoint and requires its selected adapter's replacement ACK before continuation. @example await owned.retire(selected, signal) */
 export class OwnedRepositoryBreakpoint {
   readonly breakpoint: vscode.SourceBreakpoint
@@ -281,13 +303,8 @@ export class OwnedRepositoryBreakpoint {
     line?: number
     column?: number
   }): VerifiedRegistration & { movedTo?: VerifiedPlace } {
-    if (
-      !binding.verified ||
-      binding.line === undefined ||
-      binding.column === undefined
-    )
-      return {}
-    const verifiedAt = { line: binding.line, column: binding.column }
+    const verifiedAt = wholeVerifiedPosition(binding)
+    if (!verifiedAt) return {}
     return verifiedAt.line === this.line
       ? { verifiedAt }
       : { verifiedAt, movedTo: verifiedAt }
@@ -539,23 +556,86 @@ export class OwnedRepositoryBreakpoint {
    */
   onEvent(session: vscode.DebugSession, event: DebugProtocol.Event): void {
     if (event.event !== 'breakpoint' || this.retirement) return
-    const registration = this.registrations.get(session.id),
-      parsed = breakpointEventSchema.safeParse(event.body)
-    const receipt = registration?.receipt
-    if (
-      !receipt ||
-      registration.failure ||
-      !parsed.success ||
-      parsed.data.breakpoint.id !== receipt.breakpointId ||
-      !parsed.data.breakpoint.verified ||
-      (parsed.data.breakpoint.source?.path &&
-        resolve(parsed.data.breakpoint.source.path) !== resolve(this.path))
+    const acknowledged = this.acknowledgedRegistration(session)
+    if (acknowledged)
+      this.takeBreakpointNews(
+        acknowledged.registration,
+        acknowledged.receipt,
+        event,
+      )
+  }
+
+  /**
+   * Gives {@link onEvent} the session's registration only when the adapter acknowledged the owned breakpoint, since only an acknowledged breakpoint has news.
+   * @param session - The debug session that sent the event.
+   * @returns The registration with its receipt, or `undefined` when the session has none, the adapter has not answered yet, or it refused the request. A registration whose latest news names a refused place is given, so later news can restore it.
+   * @example
+   * this.acknowledgedRegistration(session)?.receipt.breakpointId // => 4
+   */
+  private acknowledgedRegistration(session: vscode.DebugSession) {
+    const registration = this.registrations.get(session.id)
+    if (!registration?.receipt || registration.failure) return undefined
+    return { registration, receipt: registration.receipt }
+  }
+
+  /**
+   * Tells {@link ownedBreakpointOfEvent} whether a breakpoint the adapter reports is verified and lies in the owned source; news that names no source is taken as the owned one's.
+   * @param breakpoint - The breakpoint of a `breakpoint` event.
+   * @returns `false` for an unverified breakpoint and for one that names another file.
+   * @example
+   * this.isVerifiedInOwnedSource({ id: 4, verified: true, source: { path: '/other/file.ts' } }) // => false
+   */
+  private isVerifiedInOwnedSource(
+    breakpoint: z.infer<typeof breakpointEventSchema>['breakpoint'],
+  ): boolean {
+    if (!breakpoint.verified) return false
+    return !(
+      breakpoint.source?.path &&
+      resolve(breakpoint.source.path) !== resolve(this.path)
     )
-      return
-    const { verifiedAt, ...moved } = this.verifiedPlaces(parsed.data.breakpoint)
+  }
+
+  /**
+   * Reads the breakpoint a `breakpoint` event reports when it is news about the acknowledged owned one; called by {@link takeBreakpointNews}.
+   * @param event - A DAP `breakpoint` event of the session.
+   * @param receipt - The receipt of the adapter's acknowledgement, whose breakpoint id tells the owned breakpoint from every other.
+   * @returns The reported breakpoint, or `undefined` for a body that does not parse, another breakpoint's id, an unverified breakpoint and another source.
+   * @example
+   * this.ownedBreakpointOfEvent(event, receipt) // => { id: 4, verified: true, line: 35, column: 5 }
+   */
+  private ownedBreakpointOfEvent(
+    event: DebugProtocol.Event,
+    receipt: RegistrationReceipt,
+  ) {
+    const parsed = breakpointEventSchema.safeParse(event.body)
+    if (!parsed.success) return undefined
+    const { breakpoint } = parsed.data
+    if (breakpoint.id !== receipt.breakpointId) return undefined
+    return this.isVerifiedInOwnedSource(breakpoint) ? breakpoint : undefined
+  }
+
+  /**
+   * Records where the adapter's news puts the acknowledged breakpoint; called by {@link onEvent} for a `breakpoint` event of a session whose registration is acknowledged.
+   * @param registration - The session's registration, which gains the verified place and a rebuilt receipt, or the refused place.
+   * @param receipt - The registration's receipt as it stood when the event arrived.
+   * @param event - The DAP `breakpoint` event.
+   * @example
+   * this.takeBreakpointNews(registration, receipt, { seq: 9, type: 'event', event: 'breakpoint', body: { reason: 'changed', breakpoint: { id: 4, verified: true, line: 35, column: 5 } } })
+   */
+  private takeBreakpointNews(
+    registration: {
+      receipt?: RegistrationReceipt
+      refusedAt?: VerifiedPlace
+    } & VerifiedRegistration,
+    receipt: RegistrationReceipt,
+    event: DebugProtocol.Event,
+  ): void {
+    const breakpoint = this.ownedBreakpointOfEvent(event, receipt)
+    if (!breakpoint) return
+    const { verifiedAt, ...moved } = this.verifiedPlaces(breakpoint)
     if (!verifiedAt) return
     // The adapter moved the acknowledged breakpoint to a place the owner refuses: the earlier receipt no longer stands.
-    if (!this.acknowledgesPosition(parsed.data.breakpoint)) {
+    if (!this.acknowledgesPosition(breakpoint)) {
       registration.refusedAt = verifiedAt
       return
     }
