@@ -175,6 +175,7 @@ import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
+import { unconfirmedCompositionRefusal } from './utils/unconfirmedCompositionRefusal'
 import {
   type ChangedLayoutPart,
   unconfirmedLayoutReason,
@@ -736,7 +737,8 @@ export class StudyWorkspace {
           : 'closed',
       layoutConfirmed,
       preference: { ...this.presentationPreference },
-      reason,
+      // The reason of an earlier refused change says nothing about a layout that is confirmed now.
+      reason: layoutConfirmed ? undefined : reason,
       playbackRevision: this.recordingActive
         ? this.playback?.state().revision
         : undefined,
@@ -1175,6 +1177,9 @@ export class StudyWorkspace {
     if (input.action === 'focus') return this.focusCurrentPresentation(input)
     if (this.liveComposition || this.summaryComposition) {
       this.assertCompositionAllows(input)
+      // Selecting the arrangement that is confirmed already changes nothing: it is read once more without taking the focus, and only a layout that no longer holds is arranged again.
+      if (input.action === 'select' && this.presentationState().layoutConfirmed)
+        return this.confirmCompositionNoop(input)
       const transition = {
         id: this.presentationId,
         cancellation: new AbortController(),
@@ -1245,7 +1250,7 @@ export class StudyWorkspace {
         if (!restored.layoutConfirmed)
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
-            'The live Study layout could not be confirmed after Restore.',
+            unconfirmedCompositionRefusal(this.summaryComposition),
             this.coveredSourceCause() ?? restored.reason,
           )
         return restored
@@ -1386,6 +1391,38 @@ export class StudyWorkspace {
     this.presentationOperation = pending
     this.publish()
     return pending.then(() => this.presentationState())
+  }
+
+  /**
+   * Answers a selection of the live or recording arrangement that is confirmed already; called by {@link admitPresentation}. The state is read once more as a status read does, without taking the focus.
+   * @param input - The admitted selection.
+   * @returns The confirmed state; or, when the read finds the layout changed, what arranging it again answers.
+   * @example
+   * ```ts
+   * if (input.action === 'select' && this.presentationState().layoutConfirmed) return this.confirmCompositionNoop(input)
+   * ```
+   */
+  private confirmCompositionNoop(
+    input: PresentationIntent,
+  ): Promise<PresentationState> {
+    const lifetime = this.lifetime
+    const checking: Promise<PresentationState> = this.readPresentationState()
+      .then((state) => {
+        this.assertLifetime(lifetime)
+        if (this.presentationOperation === checking)
+          this.presentationOperation = undefined
+        // The read unconfirms a layout that changed, so the repeated request takes the arranging branch.
+        if (!state.layoutConfirmed) return this.changePresentation(input)
+        this.presentationReason = undefined
+        this.errors.delete('presentation')
+        return { ...state, state: 'open' as const }
+      })
+      .finally(() => {
+        if (this.presentationOperation === checking)
+          this.presentationOperation = undefined
+      })
+    this.presentationOperation = checking
+    return checking
   }
 
   /** Rechecks actual native geometry before a same-mode no-op, retaining the revision only when no repair is needed. @example await this.confirmPresentationNoop(input) */
@@ -2212,6 +2249,11 @@ export class StudyWorkspace {
         assertCurrent()
         // The open entered a live run or a recording and arranged its two panes: no Study pane exists whose render the transfer below waits for.
         if (this.liveComposition || this.summaryComposition) {
+          // A recording's source is shown by the recording's own load, which the open only began: the selection waits for it instead of refusing while it is opening.
+          if (this.summaryComposition) {
+            await this.settleOwnedPlayback(signal)
+            assertCurrent()
+          }
           const entered = this.confirmEnteredComposition(input)
           await returnForeignFocus?.().catch(() => undefined)
           return entered
@@ -2480,7 +2522,7 @@ export class StudyWorkspace {
     if (!entered.layoutConfirmed)
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
-        'The live Study layout could not be confirmed after Restore.',
+        unconfirmedCompositionRefusal(this.summaryComposition),
         this.coveredSourceCause() ?? entered.reason,
       )
     this.errors.delete('layout')

@@ -4054,7 +4054,7 @@ test('a live selection refused because a tab covers the captured source names th
 
 for (const reader of ['closed', 'open'] as const)
   // Value: protects=an agent's presentation select during its own paused run in Cursor ending with the live panes confirmed and the agent's chat focused, whether the Study workspace was closed or already followed the run; fails_when=the selection is refused for the focused chat tab, the live panes lose their groups to the group objects Cursor replaces, or the focus stays in the main editor after the layout was measured; why_new=Cycle 0045 cause 7 with NF-19 (the baseline round's Cursor run: the select was refused and the run showed no stopped source); seam=workspace harness with the controlled runtime, a separate editor part and the fake editor's group object replacement
-  test(`a presentation select during a paused live run, made while the agent chat's tab has the focus in Cursor, confirms the live panes and gives the chat the focus back, with the reader ${reader}`, async () => {
+  test(`a presentation ${reader === 'open' ? 'restore' : 'select'} during a paused live run, made while the agent chat's tab has the focus in Cursor, confirms the live panes and gives the chat the focus back, with the reader ${reader}`, async () => {
     // Arrange: Cursor replaces every tab group object with each tab change; the agent's chat is a tab of its own editor part and has the keyboard focus while its run is paused.
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
@@ -4070,7 +4070,8 @@ for (const reader of ['closed', 'open'] as const)
         presentationId: state.presentationId,
         expectedRevision: state.presentationControlRevision,
         mode: 'study-workspace',
-        action: 'select',
+        // A select of the live layout that is confirmed already is answered without arranging (Cycle 0045 cause 12 (e)); on the open reader the arrangement is asked for with a restore.
+        action: reader === 'open' ? 'restore' : 'select',
       })
       // Assert
       const chatGroup = harness.groups.find((group) =>
@@ -4180,7 +4181,7 @@ for (const action of ['select', 'restore'] as const)
 
 for (const reader of ['closed', 'open'] as const)
   // Value: protects=an agent's presentation select during its own paused run in the state of a real Cursor chat submission (the chat input holds the keyboard, the editor names the file the debugger opened in the Application's group, no text editor is active) ending with the live panes confirmed and the keyboard back in the chat; fails_when=the selection is refused for the text tab without an active text editor, or the keyboard stays on that file after the measurement focused the first editor group; why_new=Cycle 0045 cause 12 (a) (N14-b2: the debugger's source shared group 1 with the Application pane and every presentation call was refused); seam=workspace harness with the controlled runtime, a separate editor part that holds the keyboard and the fake editor's group object replacement
-  test(`a presentation select during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
+  test(`a presentation ${reader === 'open' ? 'restore' : 'select'} during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
     // Arrange: the debugger's file is a tab of the first group; the chat's own editor part holds the keyboard, so the editor names that file's tab and no active text editor.
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
@@ -4205,7 +4206,8 @@ for (const reader of ['closed', 'open'] as const)
         presentationId: state.presentationId,
         expectedRevision: state.presentationControlRevision,
         mode: 'study-workspace',
-        action: 'select',
+        // A select of the live layout that is confirmed already is answered without arranging (Cycle 0045 cause 12 (e)); on the open reader the arrangement is asked for with a restore.
+        action: reader === 'open' ? 'restore' : 'select',
       })
       // Assert
       const chatGroup = harness.groups.find((group) =>
@@ -4675,6 +4677,116 @@ test('a selection made while another editor part holds the keyboard, in an edito
     // The keyboard is on the captured source the arrangement placed last.
     assert.equal(chat.focused(), false)
     assert.equal(harness.editor.window.activeTextEditor?.viewColumn, 2)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's selection after the learner watched a replay and closed the Study workspace: the reader still holds that recording, and the selection arranges its panes and answers confirmed once the recorded source is shown; fails_when=the selection is answered while the recorded source is still opening, with "The live Study layout could not be confirmed after Restore." and the panes it opened left behind, again at every repeat; why_new=Cycle 0045 cause 12 (e) (obs15 P4: two selects refused after 473 ms and 446 ms with the cause "The recorded source is opening in its native pane."); seam=the recorded reader harness, focusMutableDraft
+test("a selection made on a closed reader that holds a recording arranges the recording's panes and answers confirmed once the recorded source is shown", async () => {
+  // Arrange: a recording was opened and the Study workspace closed; the learner types in a file.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.close()
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const closed = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: closed.presentationId,
+      expectedRevision: closed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(closed.state, 'closed')
+    assert.equal(closed.reader.contentTab, 'recording')
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.reader.contentTab, 'recording')
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 1)
+        ?.tabs.includes(learnerFile.tab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a repeated selection on a reader whose recording layout is confirmed answering confirmed without arranging, measuring by focus or focusing anything; fails_when=the selection runs the whole arrangement again (the expand command, the grid, a focus hand-over), which in Cursor ended with "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved." although nobody touched the window; why_new=Cycle 0045 cause 12 (e) (obs15 P4, third select); seam=the recorded reader harness and its command log
+test('a repeated selection on the confirmed layout of a recording answers confirmed and runs no layout or focus command', async () => {
+  // Arrange: the reader shows a recording in its two confirmed panes; the keyboard is in the captured source.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const confirmed = await harness.reader.readPresentationState(),
+      commandsBefore = harness.commands.length
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: confirmed.presentationId,
+      expectedRevision: confirmed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(confirmed.layoutConfirmed, true)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(
+      selected.presentationControlRevision,
+      confirmed.presentationControlRevision,
+    )
+    // One layout read, as a status read makes it; nothing was expanded, applied or focused.
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'vscode.getEditorLayout',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the reason of a refused presentation change leaving the state once the layout is confirmed; fails_when=a status read answers layoutConfirmed true beside the sentence of an earlier refusal, which an agent relays as the current state; why_new=Cycle 0045 cause 12 (e) (obs15 P4: state open, layoutConfirmed true and reason "Error: The live Study layout could not be confirmed after Restore." two seconds after a refused select); seam=workspace harness, addOpaqueTab
+test('the reason of a refused selection is gone from the presentation state once the layout is confirmed', async () => {
+  // Arrange: a selection was refused for an image the learner opened by a single click (a preview Codebook cannot keep); the learner then keeps that tab open and opens the Study workspace.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const image = harness.addOpaqueTab('logo.png', 1)
+    image.isPreview = true
+    const closed = harness.reader.presentationState()
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: closed.presentationId,
+        expectedRevision: closed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      }),
+    )
+    const refused = harness.reader.presentationState()
+    image.isPreview = false
+    // Act
+    await harness.reader.open()
+    // Assert
+    const opened = await harness.reader.readPresentationState()
+    assert.equal(
+      refused.reason,
+      'Error: A destination group contains a foreign preview: "logo.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+    )
+    assert.equal(opened.layoutConfirmed, true)
+    assert.equal(opened.reason, undefined)
   } finally {
     await harness.close()
   }
