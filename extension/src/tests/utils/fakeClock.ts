@@ -80,7 +80,7 @@ function step(context: TestContext, durationMs: number): void {
  * @param context - The running test's context.
  * @example
  * enableFakeClock(context)
- * await advanceClock(context, 4_000) // four fake seconds, a few real milliseconds
+ * await advanceClock(context, 4_000) // four fake seconds in about half a real one
  * resetFakeClock(context)
  */
 export function enableFakeClock(context: TestContext): void {
@@ -107,25 +107,21 @@ export function resetFakeClock(context: TestContext): void {
 }
 
 /**
- * Moves a test's faked clock forward by an exact amount; real work gets an event-loop turn before every step.
+ * Moves a test's faked clock forward by an exact amount, for a test that reads the product's state at a chosen faked time before or after one of its bounds.
+ *
+ * It steps as {@link advanceClockUntil} does: the clock moves only while no real file work is pending, so a timer the product sets after its file work counts from the faked time the test stood at when it asked.
  *
  * @param context - The test whose clock {@link enableFakeClock} faked.
  * @param durationMs - Fake time to pass.
+ * @throws When real file work stays pending for {@link PENDING_FILE_WORK_TURN_LIMIT} event-loop turns.
  * @example await advanceClock(context, 4_000)
  */
 export async function advanceClock(
   context: TestContext,
   durationMs: number,
 ): Promise<void> {
-  for (
-    let elapsedMs = 0;
-    elapsedMs < durationMs;
-    elapsedMs += FAKE_CLOCK_STEP_MS
-  ) {
-    await realTurn()
-    step(context, Math.min(FAKE_CLOCK_STEP_MS, durationMs - elapsedMs))
-  }
-  await realTurn()
+  // A condition that never holds walks the whole duration: both waits share one stepping.
+  await advanceClockUntil(context, () => false, durationMs)
 }
 
 /**
