@@ -7,6 +7,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { thrownMessage } from '../utils/thrownMessage'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { retainLiveRun } from './utils/retainLiveRun'
 import { retainStoppedRun } from './utils/retainStoppedRun'
 
 test('internal browser setup stops do not consume the configured learning pause or prevent its later completion', async (context) => {
@@ -124,6 +125,86 @@ test('a browser stop whose binding the debugger moved to another column after ar
   assert.equal(run.view().finalOutcome, 'demonstrated')
 })
 
+// Cycle 0045 (T-4): red while a pause at another column of the bound line was taken as the stop's only when the 3 s wait for the armed column had ended; the wait is held open here and never released.
+test('a browser stop whose binding moved to another column after arming commits at the re-read column while the wait for the armed column is still open', async (context) => {
+  // Arrange: the stop is armed at 1:1; afterwards the adapter reports the breakpoint, and pauses, at 1:7. The wait for a pause at the armed column never ends by itself.
+  const { run, bindFirstStopAt, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA,MAAM',
+    })
+  await run.prepare()
+  bindFirstStopAt(1, 7)
+  holdSourceBoundWait()
+
+  // Act: the stop is given one second to commit, a third of the wait's own bound.
+  run.action('moved-after-arming', 'repository-click')
+  const stop = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'stop committed at the re-read column',
+    1_000,
+  ).catch(() => undefined)
+  const failuresWhileWaiting = run.view().failures.join('; ')
+  await run.stop()
+
+  // Assert
+  assert.equal(failuresWhileWaiting, '')
+  assert.equal(stop?.source.line, 1)
+  assert.equal(stop?.source.column, 7)
+  assert.equal(
+    JSON.stringify(journalDetails(run, 'cdp.held-pause-adopted')),
+    '[{"participant":"browser","url":"webpack-internal:///(app-pages-browser)/./src/theme.ts","line":1,"column":7,"hitBreakpoints":["mapped-source"],"place":"src/theme.ts:1","declared":"src/theme.ts:1"}]',
+  )
+})
+
+// Cycle 0045 (T-4, 0042-SR14 stays): a pause at another column of the bound line whose binding, read again, still names the armed column is the debugger's own; red when such a pause is taken as the stop's at once (the stop then fails its frame check at 1:7).
+test('a pause held at another column of the bound line while the stop is announced keeps waiting when the binding read again did not move, and the stop is captured at its own column', async (context) => {
+  // Arrange: the first stop is bound at 1:1; generated 0:6 is another statement of that line, at source 1:7. The debugger pauses there for itself, and its announcement of the declared stop is read before that pause is resumed.
+  const {
+    run,
+    suppressInputPause,
+    emitCdpPauseAt,
+    emitStopped,
+    manualResume,
+    emitCdpPause,
+    holdSourceBoundWait,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA,MAAM',
+  })
+  suppressInputPause()
+  holdSourceBoundWait()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().operation?.inputDispatched,
+    'input dispatched',
+  )
+  emitCdpPauseAt({
+    scriptId: 'actual',
+    lineNumber: 0,
+    columnNumber: 6,
+    functionName: '',
+    hitBreakpoints: ['adapter-internal'],
+  })
+  emitStopped()
+  // Act: the debugger resumes its own pause and the declared stop pauses at its bound column.
+  await setTimeout(50)
+  const adoptedWhileHeld = journalDetails(run, 'cdp.held-pause-adopted').length
+  manualResume()
+  emitCdpPause()
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at its own column')
+  await run.stop()
+
+  // Assert
+  assert.equal(adoptedWhileHeld, 0)
+  assert.equal(stop.source.column, 1)
+  assert.equal(journalDetails(run, 'cdp.adapter-pause-retired').length, 1)
+  assert.equal(journalDetails(run, 'cdp.held-pause-adopted').length, 0)
+})
+
 // Value: protects=a run whose sealed source map the position scanner rejects; fails_when=the scanner's error escapes as an unexplained crash after input, or the run is prepared on a map it cannot read; why_new=Cycle 0036 C07d (no test fed the scanner a rejected map); seam=none
 test('a sealed source map with a malformed segment is refused at preparation, before any input', async (context) => {
   // Arrange: 'AA' is a segment of two fields, which no source map allows.
@@ -188,6 +269,28 @@ test('an unsatisfied before condition names the failing predicate without clicki
   await run.stop()
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (SM-12): red while the run recognised the wait's timeout by comparing its message with a copy of the wait's sentence, so a wait that worded its timeout differently ended the run with the bare sentence and the failing condition was lost.
+test('a before condition that never holds is still named when the wait words its own timeout differently', async (context) => {
+  // Arrange: the declared element stays hidden, and the wait ends with its timeout type under another sentence than its own.
+  const { run, setReady, wordBeforeTimeoutAs, mouse } =
+    await configuredRuntimeHarness(context)
+  setReady(false)
+  wordBeforeTimeoutAs('The page did not get ready in time')
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert
+  // The run is loaded in its own module context, so its error is read by shape, not by `instanceof`.
+  assert.equal(
+    thrownMessage(failure),
+    'Timed out waiting for configured before conditions: condition 1 (visible) not-visible.',
+  )
+  assert.equal(mouse.length, 0)
 })
 
 // Value: protects=the agent reading in the run's failure that its text is on the page beside other text and how to correct a before condition; fails_when=the relation the page reported is dropped on the way to the timeout text, or the fix sentence drifts; why_new=a text mismatch ended a natural run with only "text-mismatch" (Cycle 0039, N8-a); seam=none
@@ -840,6 +943,90 @@ test('renewing a held pause for every replay frame adds no events to the run jou
 
   // Assert
   assert.equal(eventsAfterRenewals, eventsBeforeRenewals)
+})
+
+// Cycle 0045 (R2-F3): the browser twin; red while the run's status became paused-browser when the debugger announced the stop, before the stop's image and observation were committed.
+test('a read of the run resource made between a browser pause and its committed observation does not answer a paused state without the observation', async (context) => {
+  // Arrange: the debugger has announced the browser stop and the run is inspecting it; the renderer has not confirmed the stop's image yet.
+  const { run, holdCapture, directory } =
+    await configuredRuntimeHarness(context)
+  const image = holdCapture('paused-browser')
+  await run.prepare()
+  const { service, record } = retainLiveRun(context, run, directory)
+  /** Reads the run resource as an agent does and keeps what tells a pause it can act on from one it cannot. */
+  const readRunState = async () => {
+    const resource = await readResource(service, service.uri(record.id))
+    assert.ok('text' in resource)
+    const state = JSON.parse(resource.text)
+    return {
+      state: state.state,
+      runtimeState: state.runtimeState,
+      nextActions: state.nextActions,
+      observations: state.observations.length,
+      browserPhase: state.participants.browser.phase,
+      browserResumable: state.participants.browser.resumable,
+      continuationOffered:
+        state.participants.browser.continueArguments !== undefined,
+    }
+  }
+  run.action('one', 'repository-click')
+  await image.started
+  // Act: the run resource is read in that window, and again once the observation is committed.
+  const betweenPauseAndObservation = await readRunState()
+  image.release()
+  await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'browser stop committed',
+  )
+  const afterTheObservation = await readRunState()
+  await run.stop()
+  // Assert
+  assert.deepEqual(betweenPauseAndObservation, {
+    state: 'acting',
+    runtimeState: 'acting',
+    nextActions: ['stop', 'read-history'],
+    observations: 0,
+    browserPhase: 'running',
+    browserResumable: false,
+    continuationOffered: false,
+  })
+  assert.deepEqual(afterTheObservation, {
+    state: 'paused-browser',
+    runtimeState: 'paused-browser',
+    nextActions: ['continue-browser', 'stop', 'read-history'],
+    observations: 1,
+    browserPhase: 'paused',
+    browserResumable: true,
+    continuationOffered: true,
+  })
+})
+
+// Cycle 0045 (SM-2): red while a deadline counted as the pause hold when its length equalled the hold's; the run is loaded with an active bound of 300 s, the hold's own length, so only what the deadline is for can tell the two apart.
+test('a pending stack refresh is not renewed as a pause hold while a replay is read', async (context) => {
+  // Arrange: a held pause whose stack the debugger refreshes (continued without a resume) and never announces again.
+  const { run, advance, holdContinuation } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    { runtimeConstants: { ACTIVE_TIMEOUT_MS: 300_000 } },
+  )
+  const debuggerEvents = holdContinuation()
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => run.view().snapshots[0], 'held pause')
+  debuggerEvents.dap()
+  advance(100_000)
+
+  // Act: a replay moment is presented, then the refresh's own 300 s pass.
+  run.renewPauseHold()
+  advance(200_000)
+  await run.stop()
+
+  // Assert
+  assert.equal(
+    run.view().failures.join('; '),
+    'Native stack refresh did not confirm the retained pause',
+  )
 })
 
 test('a late action cannot reset the original ten-minute run deadline', async (context) => {
@@ -2051,6 +2238,12 @@ const journalDetails = (
     .events.filter((event) => event.type === type)
     .map((event) => JSON.parse(JSON.stringify(event.detail)))
 
+/** Reads every journal entry of one type of a run, with its place on the journal clock. @example journalEvents(run, 'cdp.resumed').at(-1)?.elapsedMs // 412.7 */
+const journalEvents = (
+  run: Awaited<ReturnType<typeof configuredRuntimeHarness>>['run'],
+  type: string,
+) => run.view().events.filter((event) => event.type === type)
+
 const SECOND_STOP = [
   {
     line: 1,
@@ -2108,10 +2301,17 @@ test('a next stop’s pause that waited for the preceding continuation’s recei
   const resumed = journalDetails(run, 'cdp.resumed').at(-1)
   assert.equal(journalDetails(run, 'cdp.pause-observed').length, 2)
   assert.ok(resumed && typeof resumed === 'object' && 'pausedForMs' in resumed)
+  assert.ok(typeof resumed.pausedForMs === 'number')
+  // Cycle 0045 (X7-E2.4): "at least 60 ms" also held for a clock restarted at the replay whenever the rest of the test took 60 ms; the duration is compared with the journal's own clock between the pause's one observation and its resume. The 10 ms allow for rounding and for the turn between a clock read and its journal entry; a clock restarted at the replay is off by the 60 ms waited before it.
+  const journalClockMs =
+    (journalEvents(run, 'cdp.resumed').at(-1)?.elapsedMs ?? Number.NaN) -
+    (journalEvents(run, 'cdp.pause-observed').at(-1)?.elapsedMs ?? Number.NaN)
   assert.equal(
-    typeof resumed.pausedForMs === 'number' && resumed.pausedForMs >= 60,
+    Math.abs(resumed.pausedForMs - journalClockMs) <= 10,
     true,
+    `pausedForMs ${resumed.pausedForMs} against ${journalClockMs} ms between the observation and the resume on the journal clock`,
   )
+  assert.equal(resumed.pausedForMs >= 60, true)
 })
 
 // Cycle 0044 (0042-SR14 / 0042-ER-limit1): red while a pause on the expected stop's line at another column counted as that stop, so the adapter's resume of it ended the run as a foreign resume.

@@ -39,6 +39,8 @@ export function createSourceBoundWaitHold(turnLimit = HELD_WAIT_TURN_LIMIT) {
       for (let turn = 0; signal || turn < turnLimit; turn++) {
         signal?.throwIfAborted()
         const value = await read()
+        // The real wait refuses a read that ended after the run was cancelled, also a truthy one.
+        signal?.throwIfAborted()
         if (value) return value
         // The test released the hold: the wait ends as its own bound would.
         if (isReleased) break

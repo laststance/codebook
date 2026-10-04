@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { z } from 'zod'
+
 import {
   ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION,
   SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
@@ -12,6 +14,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { pausedIntervalBoundary } from '../utils/pausedIntervalBoundary'
 
 import { nativeParticipantsHarness } from './utils/nativeParticipantsHarness'
+import { retainLiveRun } from './utils/retainLiveRun'
 import { retainStoppedRun } from './utils/retainStoppedRun'
 
 const pauseReady = async (
@@ -1644,7 +1647,7 @@ test('a run does not complete while the server is still paused at a pause the de
   }, 'input acknowledged')
   // Act: the run reaches its wait for the adapter's pause to be resumed (Cycle 0044, 0042-SR34: an observable event instead of a 150 ms sleep); then the adapter resumes its pause.
   await waitUntil(
-    () => harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
+    () => harness.waitInProgress(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
     'the wait for the adapter pause to be resumed',
   )
   const whilePaused = {
@@ -3311,7 +3314,28 @@ test('the harness holds only the next declared stop: after the held stop is rele
 })
 
 // Cycle 0044 (0042-SR8): harness self-test; red when the run's wait for an accepted stop's own pause no longer carries the description the harness substitutes.
-test('the harness’s substitution of the wait for an accepted stop’s own pause engages for that wait', async (context) => {
+// Cycle 0045 (X7-E3.4): the case enabled neither seam and read only that a wait of that name was entered, which the harness records before it decides; it now enables each seam and reads that the harness answered the wait itself.
+for (const seam of ['holdSourceBoundWait', 'expireSourceBoundWait'] as const)
+  test(`the harness’s substitution of the wait for an accepted stop’s own pause engages for that wait when ${seam} enabled it`, async (context) => {
+    // Arrange
+    const harness = await nativeParticipantsHarness(context, ['server'])
+    await harness.run.prepare()
+    harness[seam]()
+    // Act
+    harness.run.action('once', 'repository-click')
+    await pauseReady(harness, 'server')
+    await harness.run.stop()
+    // Assert
+    assert.equal(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION, 'source-bound CDP stop')
+    assert.equal(harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION), true)
+    assert.equal(
+      harness.waitSubstituted(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+      true,
+    )
+  })
+
+// Cycle 0045 (X7-E3.4): the other half of the self-test; a wait no seam was enabled for goes to the real wait.
+test('the harness leaves the wait for an accepted stop’s own pause to the real wait when no seam enabled its substitution', async (context) => {
   // Arrange
   const harness = await nativeParticipantsHarness(context, ['server'])
   await harness.run.prepare()
@@ -3320,8 +3344,49 @@ test('the harness’s substitution of the wait for an accepted stop’s own paus
   await pauseReady(harness, 'server')
   await harness.run.stop()
   // Assert
-  assert.equal(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION, 'source-bound CDP stop')
   assert.equal(harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION), true)
+  assert.equal(
+    harness.waitSubstituted(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    false,
+  )
+})
+
+// Cycle 0045 (D-L11): harness self-test; red while the harness only remembered that a wait was entered, so a test that waited for the next wait of the same name went on at once.
+test('a bounded wait that has ended is no longer reported as in progress, so a test waiting for the next one does not act early', async (context) => {
+  // Arrange: two server stops; the wait for the first stop's own pause ended when that stop was captured.
+  const harness = await nativeParticipantsHarness(context, ['server', 'server'])
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  const afterTheFirstWait = {
+    entered: harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    inProgress: harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+  }
+  // Act: the second stop is announced before its pause, so the run is inside the next wait of that name until the pause arrives.
+  harness.holdSourceBoundWait()
+  await harness.run.continue('server', first.pause)
+  const beforeTheSecondWait = harness.waitInProgress(
+    SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
+  )
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the wait for the second stop’s own pause',
+  )
+  const snapshotsInsideTheSecondWait = harness.run.view().snapshots.length
+  nextStop.paused()
+  const second = await pauseReady(harness, 'server')
+  const afterTheSecondWait = harness.waitInProgress(
+    SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
+  )
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(afterTheFirstWait, { entered: true, inProgress: false })
+  assert.equal(beforeTheSecondWait, false)
+  assert.equal(snapshotsInsideTheSecondWait, 1)
+  assert.equal(second.pause.generation, 2)
+  assert.equal(afterTheSecondWait, false)
 })
 
 // Cycle 0044 (0042-SR11): red while any cdp.resumed after a commit, also the resume of the other participant's instrumentation pause, ended the held stop's paused interval in the replay.
@@ -3372,6 +3437,123 @@ test('the runtime’s own instrumentation pause and resume in the browser while 
       instrumentationResume.sequence < intervalEnd.sequence,
     true,
   )
+})
+
+/** Reads the run resource as an agent does and keeps what tells a pause it can act on from one it cannot. @example (await readRunState(service, record)).state // 'acting' */
+const readRunState = async (
+  service: ReturnType<typeof retainLiveRun>['service'],
+  record: ReturnType<typeof retainLiveRun>['record'],
+) => {
+  const resource = await readResource(service, service.uri(record.id))
+  assert.ok('text' in resource)
+  const run = z
+    .object({
+      state: z.string(),
+      runtimeState: z.string(),
+      nextActions: z.array(z.string()),
+      observations: z.array(z.object({ participant: z.string() })),
+      participants: z.object({
+        server: z.object({
+          phase: z.string(),
+          resumable: z.boolean(),
+          snapshotUri: z.string().optional(),
+          continueArguments: z.object({}).optional(),
+        }),
+      }),
+    })
+    .parse(JSON.parse(resource.text))
+  return {
+    state: run.state,
+    runtimeState: run.runtimeState,
+    nextActions: run.nextActions,
+    observations: run.observations.map(
+      (observation) => observation.participant,
+    ),
+    serverPhase: run.participants.server.phase,
+    serverResumable: run.participants.server.resumable,
+    serverSnapshotListed: run.participants.server.snapshotUri !== undefined,
+    continuationOffered:
+      run.participants.server.continueArguments !== undefined,
+  }
+}
+
+// Cycle 0045 (R2-F3): red while the run's status became paused-server when the debugger announced the stop, before the stop was inspected; a read in that window (seen in Cursor, second native round) answered a pause with no observation and no continuation.
+test('a read of the run resource made between a server pause and its committed observation does not answer a paused state without the observation', async (context) => {
+  // Arrange: the debugger has announced the server stop and the run is inspecting it; the adapter has not answered the binding read yet.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  const { service, record } = retainLiveRun(
+    context,
+    harness.run,
+    harness.directory,
+  )
+  const bindingRead = harness.holdBindingLookup()
+  harness.run.action('once', 'repository-click')
+  await bindingRead.started
+  // Act: the run resource is read in that window, and again once the observation is committed.
+  const betweenPauseAndObservation = await readRunState(service, record)
+  bindingRead.release()
+  await pauseReady(harness, 'server')
+  const afterTheObservation = await readRunState(service, record)
+  await harness.run.stop()
+  // Assert
+  assert.deepEqual(betweenPauseAndObservation, {
+    state: 'acting',
+    runtimeState: 'acting',
+    nextActions: ['stop', 'read-history'],
+    observations: [],
+    serverPhase: 'running',
+    serverResumable: false,
+    serverSnapshotListed: false,
+    continuationOffered: false,
+  })
+  assert.deepEqual(afterTheObservation, {
+    state: 'paused-server',
+    runtimeState: 'paused-server',
+    nextActions: ['continue-server', 'stop', 'read-history'],
+    observations: ['server'],
+    serverPhase: 'paused',
+    serverResumable: true,
+    serverSnapshotListed: true,
+    continuationOffered: true,
+  })
+})
+
+// Cycle 0045 (X7-C2.3): red while the end of any owned debug session ended a held stop's paused interval in the replay, also of a child session the stop is not paused in.
+test('a worker session of the browser that ends while a server stop is held leaves that stop’s replay interval ending at its continuation', async (context) => {
+  // Arrange: the server stop is committed and held for the learner.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  const worker = {
+    ...harness.sessions.browser,
+    id: 'browser-worker',
+    parentSession: harness.sessions.browser,
+  }
+  // Act: the debugger attaches a worker of the page and that session ends; then the declared stop is continued.
+  harness.run.addSession(worker)
+  harness.run.terminated(worker)
+  await harness.run.continue('server', server.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after the stop',
+  )
+  await harness.run.stop()
+  // Assert
+  const events = harness.run.view().events
+  const workerEnd = events.find(
+    (event) =>
+      event.type === 'session.terminated' &&
+      event.elapsedMs >= server.elapsedMs,
+  )
+  const intervalEnd = pausedIntervalBoundary(server, events)
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(
+    JSON.stringify(workerEnd?.detail),
+    '{"sessionId":"browser-worker"}',
+  )
+  assert.equal(intervalEnd?.type, 'continue.accepted')
 })
 
 // Cycle 0044 (0042-SR27): run-level test on the server harness's clock; red when the deadline's place sentence is not added for a server pause (only the browser shape was tested).
@@ -3570,6 +3752,126 @@ test('a debugger hook that pauses and resumes 130 times journals 100 of those pa
   )
 })
 
+// Cycle 0045 (found with B-M2): red while the resume of a pause from before the action, which nothing holds, was journaled as cdp.resumed without a cap although its observation was only counted past the cap (130 resumes instead of 100).
+test('130 pauses the debugger makes and resumes before the action are journaled up to the limit with their resumes, and the rest of both are counted', async (context) => {
+  // Arrange: the run is prepared and no input has been sent.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  // Act
+  for (let turn = 0; turn < 130; turn++) {
+    emitEntryBreakpointPause(harness)
+    harness.emitResume('server')
+  }
+  await harness.run.stop()
+  // Assert
+  assert.equal(journalDetails(harness, 'cdp.pause-observed').length, 100)
+  assert.equal(journalDetails(harness, 'cdp.resumed').length, 100)
+  // 30 pauses and their 30 resumes are counted instead of journaled.
+  assert.deepEqual(
+    journalDetails(harness, 'cdp.adapter-pauses-not-journaled'),
+    [{ count: 60, journalLimit: 100 }],
+  )
+})
+
+// Cycle 0045 (B-L4, DX-18): red while a failed read of the other participant's earlier pauses, made before any resume was requested, ended the run as "Continue uncertain: …".
+test('a continuation that cannot read the other participant’s earlier pauses ends saying that no resume was sent, not as an uncertain continuation', async (context) => {
+  // Arrange: the server stop is captured; the browser stop is next, and the browser channel fails the read of its earlier pauses.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  harness.failEarlierPauseRead('browser', 'Inspector channel closed')
+  // Act
+  const cause = await harness.run.continue('server', server.pause).then(
+    () => 'continued',
+    (error: unknown) => String(error),
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(cause, 'Error: Inspector channel closed')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Next declared stop could not be continued to: the earlier pauses of the browser could not be read (Inspector channel closed), and no resume was sent. Earlier observations stay.',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method === 'continue'),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
+
+// Cycle 0045 (B-M2): red while instrumentation pauses were counted against the cap of the pauses the debugger makes for itself (the later pause was not journaled) and their resumes were journaled without a cap (130 instead of 100).
+test('130 instrumentation pauses of the runtime leave the journal room for a later pause the debugger makes for itself, and their resumes past the cap are counted, not journaled', async (context) => {
+  // Arrange: the only declared stop is captured and continued, and the after conditions are still open.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  harness.holdInput()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  harness.announceScript(
+    'server',
+    'chunk',
+    'webpack-internal:///(action-browser)/./app/lib/chunk.ts',
+  )
+  // Act: the runtime pauses 130 times for a source map and is resumed each time; then the debugger pauses once for its entry breakpoint and resumes it.
+  for (let turn = 0; turn < 130; turn++) {
+    harness.emitUnannouncedPause('server', {
+      scriptId: 'chunk',
+      lineNumber: 0,
+      columnNumber: 0,
+      functionName: '',
+      hitBreakpoints: [],
+      reason: 'instrumentation',
+    })
+    harness.emitResume('server')
+  }
+  emitEntryBreakpointPause(harness)
+  harness.emitResume('server')
+  harness.releaseInput()
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after the pauses',
+  )
+  await harness.run.stop()
+  // Assert
+  const observedReasons = journalDetails(harness, 'cdp.pause-observed').map(
+    (detail) =>
+      detail && typeof detail === 'object' && 'reason' in detail
+        ? detail.reason
+        : undefined,
+  )
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(
+    observedReasons.filter((reason) => reason === 'instrumentation').length,
+    100,
+  )
+  // The declared stop's own pause and the debugger's later pause, both journaled beside the 100.
+  assert.equal(
+    observedReasons.filter((reason) => reason !== 'instrumentation').length,
+    2,
+  )
+  assert.equal(retiredPauses(harness).length, 1)
+  // 100 resumes of instrumentation pauses and the resume of the declared stop at its continuation.
+  assert.equal(journalDetails(harness, 'cdp.resumed').length, 101)
+  // 30 instrumentation pauses and their 30 resumes are counted instead of journaled.
+  assert.deepEqual(
+    journalDetails(harness, 'cdp.adapter-pauses-not-journaled'),
+    [{ count: 60, journalLimit: 100 }],
+  )
+})
+
 // Cycle 0044 (0042-SR15): red while a stack refresh during the wait for the stop's own pause ended the run with "Unowned continuation invalidated live pause" instead of the binding that explains it.
 test('a stack refresh while a server stop bound on another line is still waited for does not hide the binding failure', async (context) => {
   // Arrange: the breakpoint binds on line 2 and the runtime pauses there; the wait for a pause on the declared line is held open.
@@ -3585,7 +3887,7 @@ test('a stack refresh while a server stop bound on another line is still waited 
   const wait = harness.holdSourceBoundWait()
   harness.run.action('once', 'repository-click')
   await waitUntil(
-    () => harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
     'the wait for the stop’s own pause',
   )
   // Act: the debugger refreshes the paused stack (continued, then stopped again, with no runtime resume), and then the wait ends.
@@ -3602,6 +3904,45 @@ test('a stack refresh while a server stop bound on another line is still waited 
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation: 1:1. ${MAPPING_HINTS}`,
   )
+})
+
+// Cycle 0045 (ST-8): the guard of the deferred refresh had no test; green before, and red when every stop that follows a deferred refresh is consumed as its re-announcement (the guard removed).
+test('a stop announced on another thread after a stack refresh that came while a server stop’s own pause was awaited ends the run instead of passing as the refresh’s re-announcement', async (context) => {
+  // Arrange: the breakpoint binds on line 2 and the runtime pauses there; the wait for a pause on the declared line is held open, and the debugger refreshes the paused stack (continued, with no runtime resume).
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  harness.pauseAt('server', 1, 0)
+  harness.bindAt('server', 2, 1)
+  harness.movePausedFrame(2)
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the wait for the stop’s own pause',
+  )
+  emitServerEvent(harness, 962, 'continued')
+  // Act: the stop that follows is announced for thread 2, not for the refreshed thread 1.
+  harness.run.onEvent(harness.sessions.server, {
+    type: 'event',
+    seq: 963,
+    event: 'stopped',
+    body: { reason: 'breakpoint', threadId: 2 },
+  })
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unexpected stop invalidated native stack refresh',
+  )
+  assert.deepEqual(
+    journalDetails(harness, 'dap.pause-refresh-deferred-stop'),
+    [],
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
 })
 
 // Cycle 0044 (0042-SR16): red while a throw inside the deadline's timer escaped it and the run was never failed.
@@ -3645,7 +3986,7 @@ test('after conditions that held only while the server was paused at the debugge
   emitEntryBreakpointPause(harness)
   harness.releaseInput()
   await waitUntil(
-    () => harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
+    () => harness.waitInProgress(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
     'the wait for the adapter pause to be resumed',
   )
   const readsWhilePaused = harness.afterReads()
@@ -3749,6 +4090,43 @@ test('a server pause no debugger stop announced that is resumed within three sec
   assert.equal(retiredPauses(harness).length, 1)
 })
 
+// Cycle 0045 (B-L8): red while the bound was 3,000 typed beside the capture bound; the run is loaded with a capture bound of 5 s, so a bound that does not follow it retires nothing after 5 s and names 3000 ms.
+test('a pause no stop announced counts as the adapter’s own for exactly as long as a stop’s own pause is awaited', async (context) => {
+  // Arrange: the wait for a stop's own pause is bounded by 5 s in this run; the first server stop is continued and the next one has not paused.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    {
+      ...TWO_LINE_SERVER_MODULE,
+      manualClock: true,
+      runtimeConstants: { CAPTURE_TIMEOUT_MS: 5_000 },
+    },
+  )
+  await harness.run.prepare()
+  harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  // Act: one pause of the adapter lasts exactly that bound, the next one a millisecond longer.
+  emitEntryBreakpointPause(harness)
+  harness.advance(5_000)
+  harness.emitResume('server')
+  const failuresAfterTheBound = harness.run.view().failures.join('; ')
+  const retiredAfterTheBound = retiredPauses(harness).length
+  emitEntryBreakpointPause(harness)
+  harness.advance(5_001)
+  harness.emitResume('server')
+  await harness.run.stop()
+  // Assert
+  assert.equal(failuresAfterTheBound, '')
+  assert.equal(retiredAfterTheBound, 1)
+  assert.equal(
+    harness.run.view().failures[0],
+    'Manual or competing resume invalidated live pause: the server pause at src/mode.ts:2 that no debugger stop announced was resumed after more than 5000 ms, longer than the debugger holds a pause of its own',
+  )
+  assert.equal(retiredPauses(harness).length, 1)
+})
+
 // Cycle 0044 review B-H1: red while the one-second bound of a stop that still waits for its own pause stayed in force after the last stop had been captured and continued, so the adapter's own pause in the after phase ended the run.
 test('a server pause the debugger makes for itself after the last stop was continued and resumes after more than a second, within its three seconds, is retired and the run does not fail', async (context) => {
   // Arrange: the only declared stop is captured and continued, the after conditions are still open, and the adapter pauses for itself.
@@ -3783,7 +4161,7 @@ test('a pause held in an accepted server stop’s module that is resumed during 
   harness.holdSourceBoundWait()
   harness.run.action('once', 'repository-click')
   await waitUntil(
-    () => harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
     'the wait for the stop’s own pause',
   )
   // Act: the held pause is resumed from outside after a human delay.
@@ -3847,7 +4225,7 @@ test('a run does not complete while the browser is paused for the runtime’s ow
   })
   harness.releaseInput()
   await waitUntil(
-    () => harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
+    () => harness.waitInProgress(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION),
     'the wait for open pauses to be resumed',
   )
   // Act

@@ -14,6 +14,7 @@ import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
 import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
@@ -26,6 +27,10 @@ import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import {
+  loadConstantsWith,
+  type RuntimeConstantOverrides,
+} from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
@@ -63,6 +68,8 @@ export async function configuredRuntimeHarness(
       /** Column the first stop is declared at instead of column 1. */
       declaredColumn?: number
     }
+    /** Replaces runtime bounds in the run and in the constants it reads ({@link loadConstantsWith}), so a test can make two bounds equal and see what depends on their values. */
+    runtimeConstants?: RuntimeConstantOverrides
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -156,6 +163,8 @@ export async function configuredRuntimeHarness(
   const sourceBoundWait = createSourceBoundWaitHold()
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
+  // The sentence the wait for the before conditions words its timeout with instead of its own.
+  let beforeTimeoutSentence: string | undefined
   // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
   let verifiableLines: number[] | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
@@ -600,6 +609,9 @@ export async function configuredRuntimeHarness(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
+      ...(options.runtimeConstants
+        ? await loadConstantsWith(options.runtimeConstants)
+        : {}),
       './ownedRepositoryBreakpoint': breakpointModule,
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
@@ -694,6 +706,9 @@ export async function configuredRuntimeHarness(
             const value = await read()
             signal?.throwIfAborted()
             if (value) return value
+            // A wait is free to word its timeout; the run must know it by its type.
+            if (beforeTimeoutSentence)
+              throw new WaitTimeoutError(beforeTimeoutSentence)
             return waitUntil(read, description, 0, signal)
           }
           if (
@@ -886,6 +901,10 @@ export async function configuredRuntimeHarness(
     failBeforeWith(failure: BeforeFailure): void {
       ready = false
       beforeFailure = failure
+    },
+    /** Makes the wait for before conditions that do not hold end with a timeout of the wait's error type worded as this sentence, instead of the wait's own wording. @example harness.wordBeforeTimeoutAs('The page was not ready in time') */
+    wordBeforeTimeoutAs(sentence: string): void {
+      beforeTimeoutSentence = sentence
     },
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {

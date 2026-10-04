@@ -68,6 +68,8 @@ import { PauseGate, type PauseIdentity } from './runtimeSupport/pauseGate'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { settleCleanup } from './runtimeSupport/utils/settleCleanup'
 import { sha256 } from './runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
+import { waitTimeoutText } from './runtimeSupport/utils/waitTimeoutText'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { assertConfiguredDescriptor } from './utils/assertConfiguredDescriptor'
 import { assertConfiguredSourceDocuments } from './utils/assertConfiguredSourceDocuments'
@@ -174,6 +176,8 @@ type DebugParticipant = {
   scriptUrls: Map<string, string>
   /** The journal clock when the last pause was observed; cleared by its resume. */
   pauseObservedAtMs?: number
+  /** Whether the last observed pause was journaled or only counted; cleared by its resume. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled or counted with it. */
+  pauseJournaled?: boolean
   /** A DAP presentation refresh awaiting its matching stop and source check; the CDP target stays paused. */
   refresh?: {
     pause: PauseIdentity
@@ -259,9 +263,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
+  /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
+  private instrumentationPauseCount = 0
   /** How many idle `continued` events were read; journaled under the same cap. */
   private idleContinuedCount = 0
-  /** How many pauses and idle `continued` events past the cap were left out of the journal; cleanup journals the count. */
+  /** How many pauses, resumes of pauses that were only counted and idle `continued` events past their caps were left out of the journal; cleanup journals the count. */
   private unjournaledAdapterEvents = 0
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
@@ -1423,7 +1429,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
   }
 
-  /** Journals every pause the runtime reports and, during an action, hands it to {@link admitPause}; only a browser pause in a run that declares no browser stop keeps its own short bound. @example this.onCdpPaused('server', event) */
+  /** Journals the pauses the runtime reports (a declared stop's always; the runtime's instrumentation pauses and every other pause each up to {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT}, the rest counted) and, during an action, hands a pause to {@link admitPause}; only a browser pause in a run that declares no browser stop keeps its own short bound. @example this.onCdpPaused('server', event) */
   private onCdpPaused(
     name: Participant,
     event: Protocol.Debugger.PausedEvent,
@@ -1431,10 +1437,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning) return
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
-    // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap.
-    const journaled =
-      this.isPauseOfStop(event, this.expectedStop(name)) ||
-      this.offStopPauseCount++ < REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
+    const isInstrumentation = event.reason === 'instrumentation'
+    // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
+    const journaled = isInstrumentation
+      ? this.instrumentationPauseCount++ <
+        REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
+      : this.isPauseOfStop(event, this.expectedStop(name)) ||
+        this.offStopPauseCount++ < REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
+    participant.pauseJournaled = journaled
     if (journaled)
       this.evidence.record('cdp.pause-observed', {
         participant: name,
@@ -1449,7 +1459,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     else this.unjournaledAdapterEvents++
     // The runtime's own instrumentation pause is nobody's stop, but it is open until its resume and completion waits for that.
-    if (event.reason === 'instrumentation') {
+    if (isInstrumentation) {
       participant.instrumentationPaused = true
       return
     }
@@ -2022,7 +2032,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         success: response.success,
       })
   }
-  /** Reserves stops in declared order, retaining per-session generations across participant transitions. @example run.onEvent(selected, stopped) */
+  /** Reserves stops in declared order, retaining per-session generations across participant transitions. An accepted stop starts the pause hold and its inspection; the status becomes `paused-<participant>` only when {@link inspect} commits the observation. @example run.onEvent(selected, stopped) */
   onEvent(session: vscode.DebugSession, event: DebugProtocol.Event): void {
     const name = this.participantName(session)
     if (this.cleaning || !name) return
@@ -2110,11 +2120,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       }
       this.acceptedStop = true
       const pause = participant.gate.stop(session.id, body.threadId!)
-      this.status = `paused-${name}`
-      this.progressDeadline(
-        REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-        'Repository pause hold deadline exceeded',
-      )
+      // The run's status stays what it was until inspect has committed the observation: a read in between must not answer a pause it can neither read nor continue.
+      this.holdPauseDeadline()
       this.evidence.record('dap.stopped', {
         participant: name,
         ...pause,
@@ -2303,10 +2310,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         'Native stack refresh changed the captured source location',
       )
     participant.refresh = undefined
-    this.progressDeadline(
-      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-      'Repository pause hold deadline exceeded',
-    )
+    this.holdPauseDeadline()
     this.evidence.record('dap.pause-refreshed', {
       participant: name,
       ...refresh.pause,
@@ -2314,7 +2318,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       column: frame.column,
     })
   }
-  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. @example this.onCdpResumed('server') */
+  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
     const participant = this.participants[name],
@@ -2322,11 +2326,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         participant.pauseObservedAtMs,
         this.evidence.elapsedMs(),
       )
+    // Only a pause that was observed and left out of the journal is not journaled; a resume whose pause was never observed is journaled as before.
+    const isPauseOnlyCounted = participant.pauseJournaled === false
     participant.pauseObservedAtMs = undefined
-    // The runtime's own instrumentation pause ended; it never was a stop of this run.
+    participant.pauseJournaled = undefined
+    // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
     if (participant.instrumentationPaused) {
       participant.instrumentationPaused = false
-      this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
+      this.journalUnheldResume(name, pausedForMs, isPauseOnlyCounted)
       return
     }
     const transient = this.transientBrowserPause
@@ -2351,12 +2358,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     const stopped = participant.stopped
     participant.stopped = undefined
+    // A pause from before the action is held by nothing; past the journal's cap its resume is counted, as its observation was.
+    if (!stopped) {
+      this.journalUnheldResume(name, pausedForMs, isPauseOnlyCounted)
+      return
+    }
     this.evidence.record('cdp.resumed', {
       participant: name,
-      generation: stopped?.generation,
+      generation: stopped.generation,
       pausedForMs,
     })
-    if (!stopped) return
     const continuation = this.continuation
     if (
       !continuation ||
@@ -2372,6 +2383,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (name === 'browser') this.browser.resumeViewport()
     this.beginAfter(continuation)
   }
+  /**
+   * Journals the resume of a pause nothing holds (the runtime's instrumentation pause, a pause from before the action) as `cdp.resumed`, or counts it when its observation was only counted, so a loop of such pauses stays under the journal's cap; called by {@link onCdpResumed}.
+   * @param name - The participant whose runtime resumed.
+   * @param pausedForMs - How long the pause lasted on the journal clock, when its start was observed.
+   * @param isPauseOnlyCounted - Whether the pause's observation was left out of the journal.
+   * @example
+   * ```ts
+   * this.journalUnheldResume('server', 2, false) // journals cdp.resumed { participant: 'server', pausedForMs: 2 }
+   * ```
+   */
+  private journalUnheldResume(
+    name: Participant,
+    pausedForMs: number | undefined,
+    isPauseOnlyCounted: boolean,
+  ): void {
+    if (isPauseOnlyCounted) this.unjournaledAdapterEvents++
+    else this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
+  }
   /** Rejects loss of either selected target while retaining owned-root teardown. @example run.terminated(child) */
   terminated(session: vscode.DebugSession): void {
     this.activeSessions.delete(session.id)
@@ -2382,7 +2411,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Finds the runtime pause that belongs to an accepted debugger stop, called by {@link inspect}.
-   * The pause may be read after its `stopped`, so the wait is bounded; it takes only a pause at the stop's place (its bound line, or before that is known its declared line or a line its rule accepts), which {@link admitPause} stored.
+   * The pause may be read after its `stopped`, so the wait is bounded; it takes only a pause at the stop's place (its bound line, or before that is known its declared line or a line its rule accepts), which {@link admitPause} stored. A pause held on a browser stop's bound line at another column is taken at once when the binding, read again, names that column ({@link pauseAtMovedColumn}); every other held pause is judged only when the wait has ended.
    * @param stop - The declared stop whose `stopped` was accepted.
    * @returns The stop's pause, not yet bound to a generation.
    * @throws The wait's timeout when no pause arrives at the stop's place and no pause held while the stop was expected stayed elsewhere in its module.
@@ -2395,9 +2424,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): Promise<NonNullable<DebugParticipant['stopped']>> {
     const participant = this.participants[stop.participant]
+    // The held pause whose column was already compared with the binding read again; one read per held pause is enough.
+    let comparedPause: Protocol.Debugger.PausedEvent | undefined
     try {
       return await waitUntil(
-        () => {
+        async () => {
           // A pause held since before the stop's turn that outlasted the adapter's bound is not about to be resumed; the wait ends with its text.
           const early = this.pauseHeldBeforeTurn(stop)
           if (
@@ -2407,12 +2438,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           )
             throw this.earlyPauseFailure(stop, early)
           const candidate = participant.stopped
-          return candidate &&
+          if (
+            candidate &&
             candidate.generation === undefined &&
             candidate.event.callFrames[0]?.location.scriptId ===
               stop.script?.scriptId
-            ? candidate
-            : undefined
+          )
+            return candidate
+          const held = this.pauseHeldForStop(stop)
+          if (!held || held.event === comparedPause) return undefined
+          comparedPause = held.event
+          return this.pauseAtMovedColumn(stop, held)
         },
         SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION,
         CAPTURE_TIMEOUT_MS,
@@ -2428,6 +2464,54 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         : this.pauseHeldBeforeTurn(stop)
       throw early ? this.earlyPauseFailure(stop, early) : error
     }
+  }
+
+  /**
+   * Takes a pause held for an accepted browser stop on its bound line at another column as that stop's pause without waiting for the bound of {@link pauseOfAcceptedStop}, when the debugger moved the stop's binding to that column after it was armed.
+   * The binding is read again once: only when it names the held pause's column is the pause the announced one. A pause the debugger makes for itself at another statement of that line leaves the binding where it was and keeps waiting for its resume, and a held pause on any other line is judged when the wait has ended ({@link adoptPauseHeldInModule}).
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @param held - The pause held for that stop in its module ({@link pauseHeldForStop}).
+   * @returns
+   * - The adopted pause, when the re-read binding is on the stop's bound line at the held pause's column and the pause is still held
+   * - `undefined` for a server stop, a pause on another line, a binding that did not move to the pause's column or could not be read, and a pause that was resumed while the binding was read
+   * @example
+   * ```ts
+   * await this.pauseAtMovedColumn(stop, held) // the stop armed at 22:5 whose breakpoint and pause are now at 22:12 is taken at once
+   * ```
+   */
+  private async pauseAtMovedColumn(
+    stop: PreparedStop,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): Promise<DebugParticipant['stopped']> {
+    const participant = this.participants[stop.participant],
+      location = held.event.callFrames[0]?.location
+    // Only a browser stop has a binding from arming that can move along its line; a pause on another line waits for the bound.
+    if (
+      stop.participant !== 'browser' ||
+      !stop.bound ||
+      !location ||
+      !isPauseAtStop(held.event, this.pauseTarget(stop))
+    )
+      return undefined
+    // A binding that cannot be read now decides nothing: the pause stays held and the end of the wait judges it.
+    const binding = verifiedPlaceSchema.safeParse(
+      await awaitResponse(
+        participant.selected!.getDebugProtocolBreakpoint(
+          stop.breakpoint!.breakpoint,
+        ),
+        'held browser binding',
+        this.abort.signal,
+      ).catch(() => undefined),
+    )
+    // The pause may have been resumed while the binding was read.
+    if (
+      participant.unannouncedPause !== held ||
+      !binding.success ||
+      binding.data.line !== stop.bound.line ||
+      binding.data.column !== stop.verifier.originalColumn(location)
+    )
+      return undefined
+    return this.adoptPauseHeldInModule(stop)
   }
 
   /**
@@ -2469,7 +2553,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Adopts a pause that stayed elsewhere in an accepted stop's module as that stop's pause, called by {@link pauseOfAcceptedStop} after its wait ended.
+   * Adopts a pause that stayed elsewhere in an accepted stop's module as that stop's pause, called by {@link pauseOfAcceptedStop} after its wait ended and by {@link pauseAtMovedColumn} as soon as the binding read again names the held pause's column.
    * The adapter resumes its own pauses within milliseconds, so a pause that outlasted the wait in the stop's own module, held while that stop was the expected one, is the announced one: a binding on another line, or another breakpoint in that file. A pause in any other script, or one held before the stop's turn, is left alone (see {@link pauseHeldForStop}).
    * @param stop - The declared stop whose `stopped` was accepted.
    * @returns The adopted pause, or `undefined` when the run was cancelled or no such pause is held.
@@ -2522,7 +2606,16 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       : undefined
   }
 
-  /** Seals actual configured values and renderer pixels only while the exact source-bound pause remains current. @example await this.inspect(pause) */
+  /**
+   * Seals actual configured values and renderer pixels only while the exact source-bound pause remains current, called by {@link onEvent} for an accepted debugger stop.
+   * When the observation is committed it publishes, in one synchronous step, the snapshot, the status `paused-<participant>` and the ready snapshot that offers the continuation; until then the run's status is the one before the stop, so a read of the run never finds a paused state without its observation.
+   * @param pause - The identity the pause gate gave the accepted stop.
+   * @throws The failure that ends the run when the pause changed, its binding or frame is refused, or the evidence cannot be saved; a failed image or required inspection is thrown after the snapshot was committed, so its facts stay readable.
+   * @example
+   * ```ts
+   * this.track(this.inspect(pause))
+   * ```
+   */
   private async inspect(pause: PauseIdentity): Promise<void> {
     const stop = this.stops[this.stopIndex]!,
       participant = this.participants[stop.participant],
@@ -2760,11 +2853,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       participant.gate.invalidate(true)
       throw inspectionFailure
     }
+    // The paused state is published in one step with the observation (above) and the continuation it offers (the ready snapshot), so no read sees one without the others.
+    this.status = phase
     this.snapshotReady = true
     await this.persist()
   }
 
-  /** Reserves one exact tuple before source revalidation; only owned retired breakpoints can lead to an acknowledged continuation. @example await run.continue('browser', pause) */
+  /**
+   * Continues the committed pause of a declared stop, called by the service for `codebook_continue` and for the Study pane's Continue.
+   * Reserves the exact pause before source revalidation, then arms the next declared stop and reads the other participant's earlier pauses before it requests the resume; only an owned, retired breakpoint leads to an acknowledged continuation.
+   * @param name - The participant whose committed pause is continued.
+   * @param pause - The pause identity the caller copied from the run's view.
+   * @throws `conflict: stale, foreign or unverified pause` without ending the run; every later failure ends the run and is thrown on. The run's reason is "Next declared stop was not armed and no resume was sent: …" or "Next declared stop could not be continued to: … and no resume was sent. …" for the two steps that come before the resume, and "Continue uncertain: …" otherwise.
+   * @example
+   * ```ts
+   * await run.continue('browser', pause)
+   * ```
+   */
   async continue(name: Participant, pause: PauseIdentity): Promise<void> {
     const stop = this.stops[this.stopIndex],
       participant = this.participants[name]
@@ -2843,22 +2948,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Makes one round trip on a participant's inspector channel, called by {@link continue} before the continuation exists.
    * Events on one channel keep their order, so every pause the participant sent before it answered has been read when this returns.
    * @param name - The participant whose next stop was armed.
+   * @throws What the round trip failed with, after the run was failed with a sentence that says that no resume was sent: this read comes before the resume is requested, so its failure is never an uncertain continuation.
    * @example
    * ```ts
    * await this.deliverEarlierPauses('browser')
    * ```
    */
   private async deliverEarlierPauses(name: Participant): Promise<void> {
-    const cdp = this.participants[name].cdp
-    if (!cdp) throw new Error('Selected native proxy unavailable')
-    await awaitResponse(
-      cdp.request('Runtime.evaluate', {
-        expression: 'undefined',
-        returnByValue: true,
-      }),
-      'earlier pause delivery',
-      this.abort.signal,
-    )
+    try {
+      const cdp = this.participants[name].cdp
+      if (!cdp) throw new Error('Selected native proxy unavailable')
+      await awaitResponse(
+        cdp.request('Runtime.evaluate', {
+          expression: 'undefined',
+          returnByValue: true,
+        }),
+        'earlier pause delivery',
+        this.abort.signal,
+      )
+    } catch (error) {
+      // Nothing has been resumed yet, so the record says exactly that, as for a next stop that could not be armed.
+      this.fail(
+        `Next declared stop could not be continued to: the earlier pauses of the ${name} could not be read (${thrownMessage(error)}), and no resume was sent. Earlier observations stay.`,
+      )
+      throw error
+    }
   }
   /** Starts after verification once all three independent continuation acknowledgements name the original generation. @example this.beginAfter(continuation) */
   private beginAfter(continuation: Continuation): void {
@@ -3023,7 +3137,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     phase: 'before' | 'after',
     failure: ConfiguredDomFailure,
   ): string {
-    return `Timed out waiting for configured ${phase} conditions: ${this.failedConditionText(phase, failure)}`
+    return `${waitTimeoutText(this.conditionsWaitDescription(phase))}: ${this.failedConditionText(phase, failure)}`
+  }
+  /** Names the wait for a phase's declared DOM conditions, so the wait {@link waitForDom} starts and the text {@link conditionTimeoutText} composes name the same thing. @example this.conditionsWaitDescription('after') // 'configured after conditions' */
+  private conditionsWaitDescription(phase: 'before' | 'after'): string {
+    return `configured ${phase} conditions`
   }
   /**
    * Names a declared DOM condition that did not hold, with the page's reason and the hint that corrects it, for {@link conditionTimeoutText} and {@link changedAfterCaptureReason}.
@@ -3066,10 +3184,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       'Repository after conditions held before the after image was captured and no longer held when they were read again after it'
     return `${failure ? `${observed}: ${this.failedConditionText('after', failure)}` : `${observed}.`} The page changed during the capture, so the result is not demonstrated. Declare in configuration.action.after a condition that still holds once the action has finished, then start a new run.`
   }
-  /** Polls conditions without repeating application input; setup and after verification call it. @example await this.waitForDom('after') */
+  /**
+   * Polls the declared DOM conditions without repeating application input; setup ({@link prepareOwned}) and after verification ({@link observeAfter}) call it.
+   * @param phase - Whether the conditions guard the input or prove the result.
+   * @throws The text of {@link conditionTimeoutText} when the wait timed out ({@link WaitTimeoutError}, however the wait worded it) and the page named a condition; the invalid-selector text at once; any other failure of the wait unchanged.
+   * @example
+   * ```ts
+   * await this.waitForDom('after')
+   * ```
+   */
   private async waitForDom(phase: 'before' | 'after'): Promise<void> {
     let lastResult: z.infer<typeof domResultSchema> | undefined
-    const timeoutMessage = `Timed out waiting for configured ${phase} conditions`
     try {
       await waitUntil(
         async () => {
@@ -3089,18 +3214,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           return lastResult.ready
         },
-        `configured ${phase} conditions`,
+        this.conditionsWaitDescription(phase),
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
     } catch (error) {
-      if (
-        !error ||
-        typeof error !== 'object' ||
-        !('message' in error) ||
-        error.message !== timeoutMessage ||
-        !lastResult?.failure
-      )
+      // Only the wait's own timeout is completed with the condition the page named last; the type says so, whatever the wait's sentence is.
+      if (!(error instanceof WaitTimeoutError) || !lastResult?.failure)
         throw error
       throw new Error(this.conditionTimeoutText(phase, lastResult.failure))
     }
@@ -3296,10 +3416,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
       return
     // No journal entry: a playing replay renews on every frame, and the bounded journal must keep its room for the run's own events.
-    this.progressDeadline(
-      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
-      'Repository pause hold deadline exceeded',
-    )
+    this.holdPauseDeadline()
   }
   /** Revokes every completion token immediately and schedules cleanup after the failing activity can settle. @example run.fail('source changed') */
   fail(reason: string): void {
@@ -3461,13 +3578,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     })
     await this.evidence.flush()
   }
-  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
+  /**
+   * Starts the pause hold, the deadline of a pause that is kept for the learner, called when a declared stop is accepted ({@link onEvent}), when a stack refresh confirmed the retained pause ({@link verifyStackRefresh}) and by {@link renewPauseHold}.
+   * It is the only place that marks the running deadline as the hold, so what a deadline is for decides whether a replay may renew it, never its length.
+   * @example
+   * ```ts
+   * this.holdPauseDeadline() // the pause is released REPOSITORY_PAUSE_HOLD_TIMEOUT_MS from now unless renewed
+   * ```
+   */
+  private holdPauseDeadline(): void {
+    this.progressDeadline(
+      REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
+      'Repository pause hold deadline exceeded',
+    )
+    this.holdingPause = true
+  }
+  /** Applies the current active/hold/setup budget independently from the pending input's whole-run protocol timeout; an expiry while a participant is paused with no announced stop also says where. A reason given as a function is read at expiry, for a text that depends on what is known only then. Every deadline started here is no pause hold; {@link holdPauseDeadline} marks the one that is. @example this.progressDeadline(ACTIVE_TIMEOUT_MS, 'after timed out') */
   private progressDeadline(
     milliseconds: number,
     reason: string | (() => string),
   ): void {
     clearTimeout(this.progressTimer)
-    this.holdingPause = milliseconds === REPOSITORY_PAUSE_HOLD_TIMEOUT_MS
+    this.holdingPause = false
     // The pause that explains an expiry arrives after the deadline's text was chosen, so the text is completed when it expires.
     this.progressTimer = setTimeout(
       () => this.fail(this.expiredDeadlineText(reason, milliseconds)),

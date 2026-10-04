@@ -1,3 +1,5 @@
+import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
+
 export const API_VERSION = '1.6'
 export const EXTENSION_VERSION = '0.2.28'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
@@ -654,8 +656,8 @@ export const REPOSITORY_PAUSE_URL_LIMIT_CHARS = 512
 export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 /** How many pauses away from the expected stop (and how many idle `continued` events) one run journals; past it only their count is kept, so a hook that pauses in a loop cannot use up the journal. */
 export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
-/** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced. */
-export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = 3_000
+/** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
+export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
 /** The same bound while the participant's stop is accepted and its own pause is still awaited: the held pause may then be the announced one, which the adapter never resumes by itself. */
 export const REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS = 1_000
 /** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */
