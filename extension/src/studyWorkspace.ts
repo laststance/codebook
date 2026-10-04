@@ -5286,7 +5286,10 @@ export class StudyWorkspace {
       }
       try {
         this.catalog = await this.library.list()
-        const id = this.selection.studyId ?? this.catalog[0]?.id
+        // A study a newer Codebook saved cannot be read here; the newest entry that is not one is shown first.
+        const id =
+          this.selection.studyId ??
+          this.catalog.find((entry) => entry.format !== 'newer')?.id
         if (id) {
           this.selectedArchive = await this.readSavedArchive(id)
           this.selectArchive(this.selectedArchive)

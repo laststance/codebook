@@ -4153,6 +4153,44 @@ test('a saved study in a newer format is listed with its note, adds no storage e
   }
 })
 
+// Value: protects=after a rollback the reader still opens on a study it can read; fails_when=the reader tries to open the newest entry although a newer Codebook saved it, shows no study and reports its note as a storage failure (RT-1, PC-4.1); why_new=a newer format was never the first entry of the list; seam=the library directory, into which the test writes a file as a newer Codebook would name it, and a second reader over the same storage
+test('a reader that starts with a study of a newer Codebook as its newest entry shows the newest study it can read, without a storage line', async () => {
+  // Arrange: two saved studies and no saved selection; the newer of them was saved again in format 5, so the list shows it first.
+  const harness = await workspaceHarness()
+  try {
+    const readable = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:01.000Z',
+      ),
+      savedAgainByNewer = await saveEarlierStudy(
+        harness,
+        '2026-09-20T00:00:02.000Z',
+      )
+    await writeFile(
+      join(
+        harness.reader.inspect().libraryDirectory!,
+        `${savedAgainByNewer.id}.study.v5.json`,
+      ),
+      JSON.stringify({ ...savedAgainByNewer, version: 5 }),
+    )
+    const restarted = harness.createReader()
+    try {
+      // Act
+      await restarted.learningStorage()
+      // Assert
+      const view = restarted.inspect().view!
+      assert.equal(view.studies[0]?.id, savedAgainByNewer.id)
+      assert.equal(view.studies[0]?.format, 'newer')
+      assert.equal(view.model.selection.studyId, readable.id)
+      assert.deepEqual(structuredClone(view.errors), [])
+    } finally {
+      await restarted.dispose()
+    }
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the pane that asked to delete a study is answered each time it asks, also when the answer has the words of the one before; fails_when=a second refusal with the same sentence equals the first, so it is not published and the pane's request stays unanswered (A-L5, AD-14); why_new=a refusal carried no field of its request; seam=none
 test('a delete request refused twice with the same sentence is answered with each request’s own number', async () => {
   // Arrange: an open reader, and a study no catalog lists, so every delete request for it is refused with the same sentence.
