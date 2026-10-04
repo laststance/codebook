@@ -82,7 +82,7 @@ const repositoryInspectionSchema = z.strictObject({
 })
 /** The rule every stop's inspections follow, said where an agent reads last before it declares a run: the description of each `inspections` field in the input schema of `codebook_start`, for both profiles. */
 const INSPECTIONS_RULE_DESCRIPTION =
-  'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
+  'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop\'s line runs, so a binding that the stop\'s own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.'
 /** The inspections of one declared stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of both profiles is this schema. */
 export const stopInspectionsSchema = z
   .array(repositoryInspectionSchema)
