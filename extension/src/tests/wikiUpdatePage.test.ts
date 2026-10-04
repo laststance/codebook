@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
+import type * as DeepWikiReaderModule from '../deepWikiReader'
+
 import { openFakeWikiPage } from './utils/fakeWikiPage'
+import { loadModule } from './utils/loadModule'
 import { readServedWikiScript } from './utils/readServedWikiScript'
 import { serveMinimalWiki } from './utils/serveMinimalWiki'
 
@@ -1141,5 +1148,61 @@ test("the page tests stop with the reader's status when it does not serve the pa
     })
   } finally {
     await wiki.close()
+  }
+})
+
+test('the page reads the update state from the route the reader serves', async () => {
+  // Arrange: a reader whose update route has another name than today's, served from a one-page Wiki.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-route-')),
+  )
+  const outputDirectory = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(outputDirectory, { recursive: true })
+  await writeFile(
+    join(outputDirectory, 'index.html'),
+    '<!doctype html><body>Wiki</body>',
+  )
+  await writeFile(
+    join(outputDirectory, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
+    resolve(__dirname, '../deepWikiReader.js'),
+    {
+      './constants': {
+        ...constants,
+        WIKI_UPDATE_STATUS_ROUTE: 'api/update-state',
+      },
+    },
+    // The loaded reader parses each request's address.
+    { URL },
+  )
+  const reader = await startDeepWikiReader(
+    outputDirectory,
+    projectRoot,
+    async () => ({ handoff: 'unused' }),
+  )
+  try {
+    const script = await (
+      await fetch(new URL('codebook-qa.js', reader.url))
+    ).text()
+
+    // Act
+    const page = await openFakeWikiPage(script, 'current-shell')
+    const servedRoute = await fetch(new URL('api/update-state', reader.url))
+
+    // Assert
+    assert.equal(page.reader.requests[0], 'api/update-state')
+    assert.equal(servedRoute.status, 200)
+    assert.equal((await servedRoute.json()).state, 'idle')
+  } finally {
+    await reader.close()
+    await rm(projectRoot, { recursive: true, force: true })
   }
 })

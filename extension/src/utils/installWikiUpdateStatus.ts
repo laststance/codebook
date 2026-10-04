@@ -10,6 +10,10 @@ export type WikiUpdateStatusAnswer = WikiUpdateStatus & {
 export type WikiUpdatePageSettings = {
   /** Path prefix of the reader that served the page, for example "/w/<token>/". */
   readerPrefix: string
+  /** Route under the prefix that answers the update state; the reader names it, so the page asks where the reader listens. */
+  updateStatusRoute: string
+  /** Route under the prefix that answers the freshness of the Wiki. */
+  freshnessRoute: string
   /** The one wording shared with the editor notification, embedded next to this function. */
   describeUpdate: typeof describeWikiUpdate
   /** How often the page asks for the update state while a run is active or awaited (ms). */
@@ -41,6 +45,8 @@ export type WikiUpdatePageSettings = {
  * ```ts
  * installWikiUpdateStatus({
  *   readerPrefix: '/w/3f9a/',
+ *   updateStatusRoute: 'api/update-status',
+ *   freshnessRoute: 'api/freshness',
  *   describeUpdate: describeWikiUpdate,
  *   statusPollMs: 2_000,
  *   idlePollMs: 15_000,
@@ -201,7 +207,7 @@ export function installWikiUpdateStatus(
   }
   const readFreshness = async (): Promise<void> => {
     try {
-      const answer = await readFromReader('api/freshness')
+      const answer = await readFromReader(settings.freshnessRoute)
       if (
         typeof answer !== 'object' ||
         answer === null ||
@@ -413,7 +419,7 @@ export function installWikiUpdateStatus(
     const lookNumber = lookCount
     let isFreshnessDue = isReturn
     try {
-      const answer = await readFromReader('api/update-status')
+      const answer = await readFromReader(settings.updateStatusRoute)
       // A newer look is under way; its answer is the one to show.
       if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))

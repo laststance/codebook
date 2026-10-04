@@ -381,6 +381,14 @@ export const WIKI_CURSOR_SHUTDOWN_GRACE_MS = 2_000
 export const WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON = 'WikiUpdateWindowClosing'
 /** File name of the manifest the Wiki publisher writes into an output or candidate folder. */
 export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
+/** File name of a generated Wiki's overview page: the page the browser entry opens, the one every Wiki owns and the one a request without a page falls back to. */
+export const WIKI_ENTRY_FILE = 'index.html'
+/** Route of the Wiki reader that answers the update run's state; the reader hands it to its page script, so both sides take the name from here. */
+export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
+/** Route of the Wiki reader that answers how the Wiki stands against the source; handed to the page script like {@link WIKI_UPDATE_STATUS_ROUTE}. */
+export const WIKI_FRESHNESS_ROUTE = 'api/freshness'
+/** Route of the Wiki reader that takes a repository question from its own page. */
+export const WIKI_QUESTION_ROUTE = 'api/ask'
 /** File name of the Wiki publisher's receipt in an output or candidate folder. */
 export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
 /** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */

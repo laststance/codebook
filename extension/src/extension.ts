@@ -23,6 +23,7 @@ import {
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_ENTRY_FILE,
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
@@ -660,7 +661,7 @@ export function activate(
   const currentDeepWiki = async () => {
     const { projectRoot, outputDirectory } = await wikiLocation()
     await assertWikiOwner(projectRoot, outputDirectory)
-    const entry = join(outputDirectory, 'index.html')
+    const entry = join(outputDirectory, WIKI_ENTRY_FILE)
     await readFile(entry)
     return { projectRoot, outputDirectory, entry }
   }

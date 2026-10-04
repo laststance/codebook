@@ -9,15 +9,19 @@ import { join, relative, sep } from 'node:path'
 
 import {
   MS_PER_MINUTE,
+  WIKI_ENTRY_FILE,
+  WIKI_FRESHNESS_ROUTE,
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_MANIFEST_FILE,
   WIKI_QUESTION_LIMIT_CHARS,
+  WIKI_QUESTION_ROUTE,
   WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
   WIKI_UPDATE_SHOWN_PATH_LIMIT,
   WIKI_UPDATE_START_WAIT_MS,
   WIKI_UPDATE_STATUS_POLL_MS,
   WIKI_UPDATE_STATUS_RETRY_LIMIT,
+  WIKI_UPDATE_STATUS_ROUTE,
 } from './constants'
 import type {
   WikiAnswer,
@@ -60,7 +64,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE} });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
@@ -76,7 +80,7 @@ const qaClient = `(function () {
     if (!question) return;
     output.style.display = 'block'; output.textContent = 'Asking the editor model…';
     try {
-      var response = await fetch(prefix + 'api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
+      var response = await fetch(prefix + '${WIKI_QUESTION_ROUTE}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
       var result = await response.json();
       if (!response.ok) throw new Error(result.error || 'The editor model could not answer.');
       if (result.handoff) { output.textContent = result.handoff; return; }
@@ -123,7 +127,7 @@ export async function readDeepWikiManifest(
     assets = manifest.assets,
     includedSources = manifest.includedSources
   const paths = [
-    'index.html',
+    WIKI_ENTRY_FILE,
     ...pages.map((page) =>
       typeof page === 'object' && page !== null && 'path' in page
         ? page.path
@@ -217,9 +221,9 @@ export async function startDeepWikiReader(
       return
     }
     const relativePath =
-      decodeURIComponent(url.pathname.slice(prefix.length)) || 'index.html'
+      decodeURIComponent(url.pathname.slice(prefix.length)) || WIKI_ENTRY_FILE
     // The update state needs no manifest, so it answers while a publish is replacing the site.
-    if (relativePath === 'api/update-status') {
+    if (relativePath === WIKI_UPDATE_STATUS_ROUTE) {
       if (request.method !== 'GET') {
         sendGetOnly(response)
         return
@@ -234,7 +238,7 @@ export async function startDeepWikiReader(
     // An agent may publish a new owned directory while this reader stays open.
     const { files, sources, revision, excludedPaths } =
       await readDeepWikiManifest(outputDirectory, projectRoot)
-    if (relativePath === 'api/freshness') {
+    if (relativePath === WIKI_FRESHNESS_ROUTE) {
       if (request.method !== 'GET') {
         sendGetOnly(response)
         return
@@ -252,7 +256,7 @@ export async function startDeepWikiReader(
       )
       return
     }
-    if (relativePath === 'api/ask') {
+    if (relativePath === WIKI_QUESTION_ROUTE) {
       if (
         request.method !== 'POST' ||
         request.headers.origin !== origin ||
@@ -311,7 +315,7 @@ export async function startDeepWikiReader(
     if (!files.has(relativePath)) {
       // A page the last update removed or renamed sends the learner to the overview instead of a JSON error.
       if (relativePath.endsWith('.html')) {
-        response.writeHead(302, { Location: `${prefix}index.html` })
+        response.writeHead(302, { Location: `${prefix}${WIKI_ENTRY_FILE}` })
         response.end()
         return
       }
@@ -365,7 +369,7 @@ export async function startDeepWikiReader(
       throw new Error('DeepWiki reader did not acquire a loopback address.')
     origin = `http://127.0.0.1:${address.port}`
     return {
-      url: `${origin}${prefix}index.html`,
+      url: `${origin}${prefix}${WIKI_ENTRY_FILE}`,
       close: (): Promise<void> =>
         new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
