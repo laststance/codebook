@@ -18,6 +18,42 @@ export type WikiUpdateMarkerClaim =
   | { heldBy: WikiUpdateMarker }
 
 /**
+ * Lets only the failure "a marker file is already there" pass; called by {@link claimWikiUpdateMarker} with what its exclusive write threw, before it reads the marker in the way.
+ * @param error - What the exclusive write threw.
+ * @throws The given error itself when its code is not `EEXIST` (for example a read-only folder).
+ * @example
+ * rethrowUnlessMarkerExists(Object.assign(new Error('file already exists'), { code: 'EEXIST' })) // returns, the marker in the way is looked at next
+ */
+function rethrowUnlessMarkerExists(error: unknown): void {
+  if (systemErrorCode(error) !== 'EEXIST') throw error
+}
+
+/**
+ * Decides what the marker in the way means for this claim; called by {@link claimWikiUpdateMarker} with what {@link readLiveWikiUpdateMarker} has just read, before it removes a stale marker.
+ * @param heldBy - Another window's live marker, or `undefined` when the marker in the way is nobody's live run.
+ * @param isLastAttempt - Whether the write was already tried again after a removal; a marker still in the way then is not removed a second time.
+ * @param error - What the exclusive write threw.
+ * @returns
+ * - Another window's run is live: the claim that names it, and the marker file stays
+ * - A stale marker, or the reservation of a stopped watch, with one attempt left: `undefined`, so the caller removes it and writes once more
+ * @throws The given error itself when the marker is in the way again on the last attempt.
+ * @example
+ * claimOfLiveHolder({ pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 }, false, error)
+ * // => { heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }
+ * claimOfLiveHolder(undefined, false, error) // => undefined
+ */
+function claimOfLiveHolder(
+  heldBy: WikiUpdateMarker | undefined,
+  isLastAttempt: boolean,
+  error: unknown,
+): Extract<WikiUpdateMarkerClaim, { heldBy: WikiUpdateMarker }> | undefined {
+  // A live run holds the Wiki. A stopped watch's reservation does not: the start check let this start pass it (its bound is over, or the learner chose to go on).
+  if (heldBy && heldBy.watchEndedAtMs === undefined) return { heldBy }
+  if (isLastAttempt) throw error
+  return undefined
+}
+
+/**
  * Writes this window's marker beside the Wiki when a run begins, exclusively, so that of two windows that start at the same moment only one runs.
  *
  * Why: a look at the marker and the start of a run are two steps; only an exclusive write decides a race between two windows. A marker in the way that no live window's run owns (a killed editor's, this window's own from a run that already ended, or the reservation of a stopped watch, which the start check has let pass) is removed and the write is tried once more.
@@ -60,14 +96,14 @@ export async function claimWikiUpdateMarker(
         },
       }
     } catch (error) {
-      if (systemErrorCode(error) !== 'EEXIST') throw error
+      rethrowUnlessMarkerExists(error)
       const heldBy = await readLiveWikiUpdateMarker(
         outputDirectory,
         marker.windowId,
       )
-      // A live run holds the Wiki. A stopped watch's reservation does not: the start check let this start pass it (its bound is over, or the learner chose to go on).
-      if (heldBy && heldBy.watchEndedAtMs === undefined) return { heldBy }
-      if (isLastAttempt) throw error
+      // Another window's live run ends the claim; a marker that is nobody's live run is removed for the one retry.
+      const liveHolder = claimOfLiveHolder(heldBy, isLastAttempt, error)
+      if (liveHolder) return liveHolder
       await rm(markerPath, { force: true })
     }
   }
