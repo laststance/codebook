@@ -121,22 +121,36 @@ export async function workspaceHarness(
       return runtime
     },
   })
-  const saveStatus = {
-    name: '',
-    text: '',
-    tooltip: '',
-    command: undefined as unknown,
-    visible: false,
-    show(): void {
-      this.visible = true
-    },
-    hide(): void {
-      this.visible = false
-    },
-    dispose(): void {
-      this.visible = false
-    },
+  /** Builds one fake status bar item. It counts the assignments of its command, because the editor turns every assigned command object into a new internal command and disposes the one before. @example createStatusItem().commandAssignments // => 0 */
+  const createStatusItem = () => {
+    let assignedCommand: unknown
+    return {
+      name: '',
+      text: '',
+      tooltip: '',
+      commandAssignments: 0,
+      get command(): unknown {
+        return assignedCommand
+      },
+      set command(value: unknown) {
+        this.commandAssignments++
+        assignedCommand = value
+      },
+      visible: false,
+      show(): void {
+        this.visible = true
+      },
+      hide(): void {
+        this.visible = false
+      },
+      dispose(): void {
+        this.visible = false
+      },
+    }
   }
+  const saveStatus = createStatusItem()
+  /** The identifier of every status bar item the reader created, in order; the first one is `saveStatus`, a later one would be a second control in the status bar. */
+  const createdStatusItemIds: string[] = []
   let changed = (): void => {}
   const disposable = () => ({ dispose(): void {} })
   let outlineUpdates = 0
@@ -2109,7 +2123,12 @@ export async function workspaceHarness(
       },
       StatusBarAlignment: { Right: 2 },
       window: {
-        createStatusBarItem: () => saveStatus,
+        createStatusBarItem: (id: string) => {
+          createdStatusItemIds.push(id)
+          return createdStatusItemIds.length === 1
+            ? saveStatus
+            : createStatusItem()
+        },
         state: windowState,
         onDidChangeWindowState: (
           callback: (state: typeof windowState) => void,
@@ -2516,6 +2535,7 @@ export async function workspaceHarness(
       return { started, release }
     },
     saveStatus,
+    createdStatusItemIds,
     reader,
     createReader,
     groups,
@@ -3866,6 +3886,8 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
+    publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */
     selectNoStudy: (): void => reader['selectNoStudy'](),
     /** The reader's error lines, as its panes show them. */

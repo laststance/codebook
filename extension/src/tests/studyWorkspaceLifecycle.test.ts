@@ -7,12 +7,14 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import type { PresentationPoseCapture } from '../presentationSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
 import {
   workspaceHarness,
   openRetainedStudy,
+  readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 for (const stage of [
@@ -1602,6 +1604,98 @@ test('the workspace harness historical debugger ends a wait for native Variables
 
     // Assert
     assert.equal(answerAtTheClose, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a click on "Open replay" in the status bar opening the recording; fails_when=every publish of the reader assigns a new command object to the status entry, so the host disposes the command the entry was drawn with and a click between two publishes ends in the host's "Actual command not found"; why_new=Cycle 0045 NF-23 (Cursor showed that toast on one Open replay click); seam=the harness's status item counts the assignments of its command
+test('the Open replay entry keeps its command while the reader publishes again without a change, so a click between two publishes still opens the recording', async () => {
+  // Arrange: a saved recording, whose status bar entry offers Open replay.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.saveLearningReplay(harness.studyId)
+    const openReplayCommand = harness.saveStatus.command
+    const assignmentsAtSave = harness.saveStatus.commandAssignments
+
+    // Act: the reader publishes three more times while nothing about the entry changes.
+    for (let publishCount = 0; publishCount < 3; publishCount++)
+      readerSeams(harness).publish()
+
+    // Assert: the host was handed no new command object, so the entry drawn with the first one still runs it.
+    assert.deepEqual(structuredClone(openReplayCommand), {
+      title: 'Open learning replay',
+      command: 'codebook.openLearningReplay',
+      arguments: [harness.studyId],
+    })
+    assert.equal(harness.saveStatus.commandAssignments - assignmentsAtSave, 0)
+    assert.equal(harness.saveStatus.command, openReplayCommand)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=design decision 2A, one recording control in the status bar: Save learning replay during the run, Open replay after the save; fails_when=the reader offers the run's recording while it is unsaved, or creates a second status bar item for it, which would put a replay session beside a paused live session in Call Stack; why_new=Cycle 0045 NF-2 as DR-6 (closed as no defect, pinned); seam=the harness records every status bar item the reader creates
+test('while a run records the status bar offers Save learning replay and no second recording control, and after the save the same item offers Open replay', async () => {
+  // Arrange: a run that is paused at its first stop and still recording.
+  const harness = await workspaceHarness(true, true)
+  try {
+    harness.acknowledgeContext()
+    harness.service.environment.build.sourceHash = sha256(
+      'recording-control-pin-build',
+    )
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'recording-control-pin',
+    })
+    const record = [...harness.service.records.values()][0]!
+    await record.preparation
+    harness.clock(100)
+    await harness.reader.action('click')
+    const studyId = `${harness.service.instanceId}_${record.id}`
+    const whileRecording = {
+      runStopped: record.stopped,
+      text: harness.saveStatus.text,
+      command: structuredClone(harness.saveStatus.command),
+      visible: harness.saveStatus.visible,
+      statusItems: [...harness.createdStatusItemIds],
+    }
+
+    // Act
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Assert
+    assert.deepEqual(whileRecording, {
+      runStopped: false,
+      text: '$(record) Recording explanation · Save learning replay',
+      command: {
+        title: 'Save learning replay',
+        command: 'codebook.saveLearningReplay',
+        arguments: [studyId],
+      },
+      visible: true,
+      statusItems: ['codebook.learningSave'],
+    })
+    assert.deepEqual(
+      {
+        text: harness.saveStatus.text,
+        command: structuredClone(harness.saveStatus.command),
+        visible: harness.saveStatus.visible,
+        statusItems: [...harness.createdStatusItemIds],
+      },
+      {
+        text: '$(warning) Learning partially saved · Open replay',
+        command: {
+          title: 'Open learning replay',
+          command: 'codebook.openLearningReplay',
+          arguments: [studyId],
+        },
+        visible: true,
+        statusItems: ['codebook.learningSave'],
+      },
+    )
   } finally {
     await harness.close()
   }

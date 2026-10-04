@@ -352,6 +352,8 @@ interface LeftoverTabClose {
 export class StudyWorkspace {
   private service?: StudyService
   private learningSaveItem?: vscode.StatusBarItem
+  /** The command and study of the object last assigned to {@link learningSaveItem}'s `command`; {@link publishLearningSave} assigns a new object only when they change, because the host disposes the previous object's internal command at every assignment. */
+  private learningSaveCommandKey?: string
   private learningSave?: {
     studyId: string
     status: 'saving' | 'saved' | 'partial' | 'failed'
@@ -5446,7 +5448,7 @@ export class StudyWorkspace {
     }
   }
 
-  /** Keeps capture/save reachable beside native chat; publish updates it without changing editor focus. @example this.publishLearningSave() */
+  /** Keeps capture/save reachable beside native chat: every {@link publish} calls it, and it updates the status bar item without changing editor focus and assigns the item's command only when the command or its study changed. @example this.publishLearningSave() */
   private publishLearningSave(): void {
     if (this.disposed) return
     const record = this.currentRecord(),
@@ -5490,20 +5492,25 @@ export class StudyWorkspace {
     item.tooltip =
       saved?.detail ??
       'Finish this Codebook recording and save learning replay. This stops only its owned runtime; missing history or summary is reported as partial.'
-    item.command =
+    const opensReplay = saved?.status === 'saved' || saved?.status === 'partial'
+    const command =
       saved?.status === 'saving'
         ? undefined
         : {
-            title:
-              saved?.status === 'saved' || saved?.status === 'partial'
-                ? 'Open learning replay'
-                : 'Save learning replay',
-            command:
-              saved?.status === 'saved' || saved?.status === 'partial'
-                ? 'codebook.openLearningReplay'
-                : 'codebook.saveLearningReplay',
+            title: opensReplay
+              ? 'Open learning replay'
+              : 'Save learning replay',
+            command: opensReplay
+              ? 'codebook.openLearningReplay'
+              : 'codebook.saveLearningReplay',
             arguments: [studyId],
           }
+    const commandKey = JSON.stringify([command?.command, studyId])
+    // The host makes a new internal command of every assigned object and disposes the one before, so an entry still drawn with the earlier one fails on a click ("Actual command not found"): assign only a changed command or study.
+    if (commandKey !== this.learningSaveCommandKey) {
+      this.learningSaveCommandKey = commandKey
+      item.command = command
+    }
     item.show()
   }
 
