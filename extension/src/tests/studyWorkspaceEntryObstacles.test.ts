@@ -340,6 +340,123 @@ test('Close Study Workspace ends the maximized editor group that a Read of a pan
   }
 })
 
+// Value: protects=the learner's side bars after a Read and Close Study Workspace: the primary side bar and the secondary one (the Agent pane in Cursor) are open again as before the Read, and the closed reader's state carries no reason of the reading that ended; fails_when=the editor's maximize command hid both bars, Close ends the maximization and neither bar comes back, so the window stays without its file explorer and its chat until the learner finds the two toggle commands, and the closed state still reads "Focused explanation. …" at the ready of the next run; why_new=Cycle 0045 NF-22 (obs15 P4, `c3-before.json`, `c3-after-read.json`, `c3-after-close.json` in Cursor 3.23.12 and `v-*.json` in VS Code 1.140.0: both bars at width 0 after Close); seam=the workspace harness's side bar model (the maximize command hides both bars, leaving the maximization shows neither) and its maximized group
+test('closing the Study workspace after a Read brings back the side bars the Read hid', async () => {
+  // Arrange: both side bars are open; the learner reads the explanation enlarged, which hides them.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    const duringRead = {
+      ...harness.sideBars(),
+      maximized: harness.maximizedEditorGroup(),
+      reason: harness.reader.presentationState().reason,
+    }
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(duringRead, {
+      primary: false,
+      auxiliary: false,
+      hasKeyboard: false,
+      maximized: true,
+      reason:
+        'Focused explanation. The three-pane Study split is not confirmed. Use the pane controls or Restore layout.',
+    })
+    // Both bars are open again, and the keyboard is in the editor, not in a side bar.
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.maximizedEditorGroup(), false)
+    const closed = harness.reader.presentationState()
+    assert.equal(closed.state, 'closed')
+    assert.equal(closed.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const open of [
+  { primary: false, auxiliary: true },
+  { primary: true, auxiliary: false },
+  { primary: false, auxiliary: false },
+])
+  // Value: protects=a side bar the learner keeps closed staying closed through a Read and its end: only the bars the Read hid come back; fails_when=the end of the Read shows both bars whatever the learner had, so a learner who works without the file explorer or without the chat gets it opened by every Read; why_new=Cycle 0045 NF-22 (the fix shows bars again; the editor API does not say which bars are open, so the reader measures the editor area's width); seam=the workspace harness's side bar model and its pixel layout read
+  test(`a side bar the learner had closed before the Read stays closed, with the primary side bar ${open.primary ? 'open' : 'closed'} and the secondary one ${open.auxiliary ? 'open' : 'closed'}`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars(open)
+    try {
+      await harness.reader.open()
+      await harness.reader.action('read-context')
+      const duringRead = harness.sideBars()
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.deepEqual(duringRead, {
+        primary: false,
+        auxiliary: false,
+        hasKeyboard: false,
+      })
+      assert.deepEqual(harness.sideBars(), { ...open, hasKeyboard: false })
+      // A bar that was closed is not touched: its show command is not run.
+      assert.equal(
+        harness.commands.includes('workbench.action.focusSideBar'),
+        open.primary,
+      )
+      assert.equal(
+        harness.commands.includes('workbench.action.focusAuxiliaryBar'),
+        open.auxiliary,
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner's side bars after a Read and the pane's Restore: the three panes are arranged again between the bars that were open before the Read, with the layout confirmed; fails_when=Restore ends the maximization and arranges the panes across the whole window, with the file explorer and the chat still hidden; why_new=Cycle 0045 NF-22 (a Restore that leaves the reading belongs to the same row as Close); seam=the workspace harness's side bar model and its pixel layout read
+test('a Restore that ends a Read brings back the side bars the Read hid and confirms the three panes between them', async () => {
+  // Arrange: the primary side bar is open, the secondary one closed; the learner reads the explanation enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    const duringRead = harness.sideBars()
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(duringRead, {
+      primary: false,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.maximizedEditorGroup(), false)
+    const restored = await harness.reader.readPresentationState()
+    assert.equal(restored.layoutConfirmed, true)
+    assert.equal(restored.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=Restore leaving the enlarged Study pane while a tab the learner keeps covers the captured source, and saying which tab and what clears it; fails_when=the Restore finds the source not shown and enlarges the Study pane again, so the pane fills the window after every Restore and no tab is named; why_new=Cycle 0045 NF-22 with PC-1.10 (a kept tab that is no text editor is its own case, and the step the refusal names makes the next Restore possible); seam=addOpaqueTab, focusOpaqueTab, the fake editor's maximized group
 test('Restore beside a kept image tab leaves the enlarged Study pane and names the tab that keeps the panes from being arranged', async () => {
   // Arrange: the learner keeps an image open in front of the captured source and read the explanation enlarged.
@@ -390,3 +507,149 @@ test('Restore beside a kept image tab leaves the enlarged Study pane and names t
     await harness.close()
   }
 })
+
+for (const entry of ['Open replay', 'Open Study Workspace'] as const) {
+  // Value: protects=an entry that is refused because the main editor never reports the keyboard focus the measurement gave it leaving the window as it found it; fails_when=the entry creates the Application pane first, the refusal leaves that pane open with the keyboard, and the chat does not get the keyboard back because the editor still names its group; why_new=Cycle 0045 finding S1-F3 (the rule a select and a restore follow since cause 12 (b) did not hold for Open replay and Open Study Workspace; natively item 2's first try of the owed checks left the Application pane open with the keyboard after `codebook_playback open`); seam=the recorded reader harness with a separate editor part whose group the editor names as active, the fake editor's unreported pane focus beside the chat, and the fake clock for the five seconds of the wait
+  test(`${entry} refused while Cursor's chat holds the keyboard opens no pane and leaves the keyboard focus where it was`, async (context) => {
+    // Arrange: Cursor names the chat's group as the active one and its input has the keyboard; the first group shows a settings page, so the measurement can only focus the Application pane the entry places there, and Cursor reports no focus of that pane.
+    const harness = await recordedReaderHarness()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    harness.groups.at(-1)!.tabs = []
+    harness.groups.at(-1)!.activeTab = undefined
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    harness.leavePaneFocusUnreportedBesideChat()
+    try {
+      harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+      chat.focusTab()
+      const tabsBefore = harness.groups.map((group) => [...group.tabs]),
+        layoutBefore = structuredClone(harness.editorLayout())
+
+      // Act: the five seconds of the wait for the focus report pass on a faked clock.
+      let refusal: string | undefined
+      if (entry === 'Open replay') {
+        await harness.reader.openRecording(harness.studyId)
+        enableFakeClock(context)
+        await advanceClockUntil(
+          context,
+          () => harness.controller.state().readiness === 'failed',
+          6_000,
+        )
+        refusal = harness.controller.state().reason
+      } else {
+        const opening = harness.reader.open().then(
+          () => 'opened',
+          (error: unknown) => String(error),
+        )
+        enableFakeClock(context)
+        await advanceClockUntilSettled(context, opening, 6_000)
+        refusal = await opening
+      }
+      resetFakeClock(context)
+
+      // Assert
+      assert.equal(
+        refusal,
+        'Error: The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s after Codebook focused its first editor group. Click into a file in the main editor, then try again.',
+      )
+      assert.equal(harness.counts().panels, 0)
+      assert.deepEqual(
+        harness.groups.map((group) => [...group.tabs]),
+        tabsBefore,
+      )
+      assert.equal(chat.focused(), true)
+      assert.equal(harness.reader.presentationState().state, 'closed')
+      // The grid is as the entry found it: no editor group was opened for the focus return.
+      assert.equal(harness.groups.length, 3)
+      assert.deepEqual(harness.editorLayout(), layoutBefore)
+    } finally {
+      resetFakeClock(context)
+      await harness.close()
+    }
+  })
+
+  for (const [named, replacesGroupObjects] of [
+    ["the chat's group", true],
+    ['a text tab without an active text editor', false],
+    ['a text tab without an active text editor', true],
+  ] as const)
+    // Value: protects=an entry made while Cursor's chat holds the keyboard being arranged, with the chat having the keyboard again afterwards; fails_when=the Application pane is created before the main editor is measured, where Cursor reports no focus while it names the chat's group, so the entry ends with a refusal after five seconds, or the keyboard stays in the main editor after the measurement borrowed it; why_new=Cycle 0045 finding S1-F3 (the early measurement and the focus return of cause 12 held for a select and a restore only); seam=the recorded reader harness with a separate editor part, focusMutableDraft, the fake editor's group object replacement and its unreported pane focus beside the chat
+    test(`${entry} made while Cursor's chat holds the keyboard and the editor names ${named} arranges the panes and gives the chat its focus back, ${replacesGroupObjects ? 'also when the editor replaces every tab group object with each tab change' : 'in an editor that keeps its tab group objects'}`, async () => {
+      // Arrange: the first group shows the learner's file beside a settings page and the group below is empty; the chat's own editor part holds the keyboard.
+      const harness = await recordedReaderHarness()
+      harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+      harness.groups.at(-1)!.tabs = []
+      harness.groups.at(-1)!.activeTab = undefined
+      const chat = harness.addSeparateEditorPart()
+      if (replacesGroupObjects) harness.replaceGroupObjectsOnTabChanges()
+      // Cursor keeps naming the chat's group after the measurement focused the first group.
+      if (named === "the chat's group")
+        harness.leavePaneFocusUnreportedBesideChat()
+      try {
+        const settings = harness.addOpaqueTab('Cursor Settings', 1),
+          learnerFile = harness.focusMutableDraft('login-form.tsx', 1)
+        if (named === "the chat's group") chat.focusTab()
+        else chat.focus()
+        const before = {
+          chatHasKeyboard: chat.focused(),
+          hasActiveTextEditor:
+            harness.editor.window.activeTextEditor !== undefined,
+          chatGroupNamed:
+            harness.editor.window.tabGroups.activeTabGroup.tabs.includes(
+              chat.tab,
+            ),
+        }
+
+        // Act
+        if (entry === 'Open replay') {
+          await harness.reader.openRecording(harness.studyId)
+          await harness.controller.settle()
+        } else await harness.reader.open()
+
+        // Assert
+        const state = harness.reader.presentationState(),
+          firstGroup = harness.groups.find((group) => group.viewColumn === 1)!,
+          chatGroup = harness.groups.find((group) =>
+            group.tabs.includes(chat.tab),
+          )
+        assert.deepEqual(before, {
+          chatHasKeyboard: true,
+          hasActiveTextEditor: false,
+          chatGroupNamed: named === "the chat's group",
+        })
+        assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+        if (entry === 'Open replay') {
+          assert.equal(harness.controller.state().reason, undefined)
+          assert.equal(harness.controller.state().readiness, 'ready')
+        }
+        assert.equal(state.state, 'open')
+        assert.equal(state.layoutConfirmed, true)
+        assert.equal(state.panes.appColumn, 1)
+        assert.equal(state.panes.sourceColumn, 2)
+        assert.equal(
+          state.panes.contextColumn,
+          entry === 'Open replay' ? undefined : 3,
+        )
+        // No tab was closed: the learner's file and the settings page are still tabs of the first group.
+        assert.equal(firstGroup.tabs.includes(learnerFile.tab), true)
+        assert.equal(firstGroup.tabs.includes(settings), true)
+        assert.deepEqual(harness.tabCloseRequests(), [])
+        // The measurement borrowed the keyboard for the main editor; the chat has it again through Cursor's own command, and no editor group was opened for that.
+        assert.equal(chatGroup?.viewColumn, entry === 'Open replay' ? 3 : 4)
+        assert.equal(harness.groups.length, entry === 'Open replay' ? 3 : 4)
+        assert.equal(
+          harness.commands
+            .filter((command) =>
+              /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+                command,
+              ),
+            )
+            .at(-1),
+          'composer.focusComposer',
+        )
+        assert.equal(chat.focused(), true)
+      } finally {
+        await harness.close()
+      }
+    })
+}

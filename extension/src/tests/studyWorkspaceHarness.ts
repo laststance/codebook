@@ -44,6 +44,8 @@ const NATIVE_VARIABLES_REFRESH_MS = 400
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 /** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
 const DISPOSED_TAB_CLOSE_DELAY_MS = 20
+/** The fake window of {@link workspaceHarness}'s side bar model, in pixels as Cursor 3.23.12 showed it (Cycle 0045 NF-22, obs15 P4): primary side bar 214, editor area 660, secondary side bar 461. */
+const SIDE_BAR_WINDOW_PX = { window: 1335, primary: 214, auxiliary: 461 }
 /**
  * How the fake host's Variables view missed the presented stop, as observed in VS Code 1.140:
  * - `'never-opened'`: Run and Debug was not opened in this editor session; the view asks for the stop's scopes as soon as it is shown, fills its tree a moment later and expands nothing by itself
@@ -539,6 +541,18 @@ export async function workspaceHarness(
   let staleNamedGroup: (typeof groups)[number] | undefined
   // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
   let keyboardOnBody = false
+  /** Which side bars the fake window shows, once a test models them with `modelSideBars`; the editor area then has the width they leave. */
+  let sideBars: { primary: boolean; auxiliary: boolean } | undefined
+  /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
+  let keyboardInSideBar = false
+  // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
+  let activeStackItem: unknown, focusEditorOnBreak: boolean | undefined
+  // Every text document the reader showed, with the group and whether it left the keyboard focus where it was.
+  const textDocumentShows: {
+    name: string
+    viewColumn: number | undefined
+    preserveFocus: boolean
+  }[] = []
   // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
   let revealsPanelsLater = false,
     applyingLaterReveal = false
@@ -969,7 +983,9 @@ export async function workspaceHarness(
         group.activeTab = group.tabs.at(-1)
         closedActiveLeftover = true
       }
-      if (heldDeadPane && !group.tabs.length) emptiedByDeadPane.push(group)
+      // With `closeEmptyGroups` on (the model of `closeDisposedPanelTabsLater`), the editor also removes a group whose last tab the reader closed.
+      if ((heldDeadPane || closeDisposedPanelTabsLater) && !group.tabs.length)
+        emptiedByDeadPane.push(group)
     }
     // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
     for (const emptied of emptiedByDeadPane) {
@@ -1460,6 +1476,12 @@ export async function workspaceHarness(
         )
           keyboardOnBody = true
         const closeTab = (): void => {
+          // The pane was focused again after its disposal (a group focus command reached its group before the editor closed its tab): the keyboard goes with the closing tab, and the editor focuses nothing in its place.
+          if (
+            !separateEditorPart?.focused &&
+            activeTabGroup.activeTab === nativeTab
+          )
+            keyboardOnBody = true
           const emptied = groups.filter(
             (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
           )
@@ -2032,8 +2054,24 @@ export async function workspaceHarness(
           }
           if (name === 'workbench.action.toggleMaximizeEditorGroup')
             maximizedEditorGroup = !maximizedEditorGroup
-          if (name === 'workbench.action.maximizeEditorHideSidebar')
+          if (name === 'workbench.action.maximizeEditorHideSidebar') {
             maximizedEditorGroup = true
+            // The command hides both side bars, and no later command of the editor brings them back by itself (both editors, obs15 P4).
+            if (sideBars) sideBars = { primary: false, auxiliary: false }
+          }
+          if (sideBars && name === 'workbench.action.closeSidebar')
+            sideBars.primary = false
+          // The two focus commands show a hidden side bar, leave an open one as it is, and give it the keyboard.
+          if (sideBars && name === 'workbench.action.focusSideBar') {
+            sideBars.primary = true
+            keyboardInSideBar = true
+          }
+          if (sideBars && name === 'workbench.action.focusAuxiliaryBar') {
+            sideBars.auxiliary = true
+            keyboardInSideBar = true
+          }
+          if (name === 'workbench.action.focusActiveEditorGroup')
+            keyboardInSideBar = false
           // The activated group is in view before the command answers: another group that takes the focus comes back at the minimum heights.
           if (name === 'workbench.action.focusFirstEditorGroup')
             returnHiddenEditorArea()
@@ -2099,13 +2137,15 @@ export async function workspaceHarness(
             const primaryEditor = visibleSourceEditors.find(
               (editor) => editor.group === primaryGroup,
             )
-            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the chat's group stays the named one; a text editor the first group shows is reported as the active text editor, a pane is not reported at all.
+            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
             if (
               leavesPaneFocusUnreportedBesideChat &&
               separateEditorPart &&
-              (staleNamedGroup ?? activeTabGroup) === separateEditorPart.group
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.focused)
             ) {
-              staleNamedGroup = separateEditorPart.group
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
               activeTabGroup = primaryGroup
               separateEditorPart.focused = false
               if (primaryGroup.activeTab?.input instanceof TabInputText)
@@ -2172,6 +2212,21 @@ export async function workspaceHarness(
                   : value,
               ),
             )
+            // With modelled side bars the main editor's columns are read in pixels of the area the bars leave, as the editor reports them.
+            if (
+              sideBars &&
+              reportedLayout === editorLayout &&
+              layout.orientation === 0
+            ) {
+              const areaPx =
+                  SIDE_BAR_WINDOW_PX.window -
+                  (sideBars.primary ? SIDE_BAR_WINDOW_PX.primary : 0) -
+                  (sideBars.auxiliary ? SIDE_BAR_WINDOW_PX.auxiliary : 0),
+                columns: { size: number }[] = layout.groups,
+                total = columns.reduce((sum, column) => sum + column.size, 0)
+              for (const column of columns)
+                column.size = Math.round((column.size / total) * areaPx)
+            }
             // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
             if (settlementPending) {
               editorLayout = structuredClone(settledLayout)
@@ -2422,6 +2477,11 @@ export async function workspaceHarness(
             document instanceof Uri
               ? await openSourceDocument(document)
               : document
+          textDocumentShows.push({
+            name: basename(sourceDocument.uri.path),
+            viewColumn: options?.viewColumn,
+            preserveFocus: Boolean(options?.preserveFocus),
+          })
           sourceColumn =
             options?.viewColumn === undefined
               ? sourceColumn
@@ -2443,6 +2503,16 @@ export async function workspaceHarness(
           const showsAnotherTab = group.activeTab !== tab
           group.activeTab = tab
           if (!options?.preserveFocus) {
+            // Cursor beside the chat: a text editor that takes the keyboard is reported as the active text editor, while the chat's group stays the named one until a tab or group changes (as after the command that focuses the first editor group).
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              separateEditorPart &&
+              !showsAnotherTab &&
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.focused)
+            )
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
             activeTabGroup = group
             innerFocusedPanel = undefined
             if (separateEditorPart) separateEditorPart.focused = false
@@ -2544,15 +2614,19 @@ export async function workspaceHarness(
         },
       },
       debug: {
-        // No test of this harness pauses a native debug session; the Application pane then always preserves the keyboard focus when it is revealed.
-        activeStackItem: undefined,
+        // Unset unless a test pauses a debug session with `setActiveStackItem`; the Application pane then always preserves the keyboard focus when it is revealed.
+        get activeStackItem() {
+          return activeStackItem
+        },
       },
       workspace: {
         getConfiguration: (section: string) => ({
           get: (key: string) =>
             section === 'codebook' && key === 'savedStudyLimit'
               ? savedStudyCapacity
-              : undefined,
+              : section === 'debug' && key === 'focusEditorOnBreak'
+                ? focusEditorOnBreak
+                : undefined,
         }),
         onDidChangeConfiguration: (
           listener: (event: {
@@ -3208,6 +3282,28 @@ export async function workspaceHarness(
     /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
     keyboardOnBody: () => keyboardOnBody,
     /**
+     * Gives the fake window a primary and a secondary side bar that are open or closed, as the learner has them, and makes the fake editor behave as both editors were seen to (Cycle 0045 NF-22, obs15 P4): `workbench.action.maximizeEditorHideSidebar` hides both bars, and leaving that maximization (`workbench.action.minimizeOtherEditors`, a new layout, closing the panes) shows neither again. `workbench.action.closeSidebar` hides the primary one; `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` show their bar when it is hidden and give it the keyboard. No API of the editor says which bars are open: a layout read of columns answers in pixels of the editor area the bars leave (214 + 660 + 461 = 1335 with both open).
+     * @example
+     * harness.modelSideBars({ primary: true, auxiliary: false })
+     */
+    modelSideBars(open: { primary: boolean; auxiliary: boolean }): void {
+      sideBars = { ...open }
+    },
+    /** The side bars the fake window shows now, and whether one of them has the keyboard; `undefined` bars without `modelSideBars`. @example harness.sideBars() // => { primary: true, auxiliary: true, hasKeyboard: false } */
+    sideBars: () => ({ ...sideBars, hasKeyboard: keyboardInSideBar }),
+    /**
+     * Sets what the fake editor reports as the selected stack item of Run and Debug: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
+     * @example
+     * harness.focusMutableDraft('actions.ts', 2)
+     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     */
+    setActiveStackItem(item: unknown, focusesEditorOnBreak?: boolean): void {
+      activeStackItem = item
+      focusEditorOnBreak = focusesEditorOnBreak
+    },
+    /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
+    textDocumentShows: () => [...textDocumentShows],
+    /**
      * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
      * @example harness.revealPanelsLater()
      */
@@ -3215,7 +3311,7 @@ export async function workspaceHarness(
       revealsPanelsLater = true
     },
     /**
-     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the chat's group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while the chat has the keyboard, whether it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2) or a group of the main editor (obs15 R: a recording opened from the chat input while the editor named the captured source's group): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the named group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
      * @example
      * const chat = harness.addSeparateEditorPart()
      * harness.leavePaneFocusUnreportedBesideChat()

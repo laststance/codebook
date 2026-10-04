@@ -9,6 +9,7 @@ import {
   AGENT_STORAGE_DIRECTORY,
   APPLICATION_PANE_CLOSED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
+  HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
@@ -143,6 +144,7 @@ import {
   describeViewportDelivery,
   type ViewportDeliveryLog,
 } from './utils/describeViewportDelivery'
+import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
@@ -170,6 +172,7 @@ import {
   type PaneOpenRequest,
   readOpenRequest,
 } from './utils/readOpenRequest'
+import { recordingNotShownReason } from './utils/recordingNotShownReason'
 import { retainEditorReadingPosition } from './utils/retainEditorReadingPosition'
 import { savedStudyIdentityLine } from './utils/savedStudyIdentityLine'
 import { selectStudy } from './utils/selectStudy'
@@ -525,6 +528,11 @@ export class StudyWorkspace {
   private arranging?: Promise<void>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
+  /** What {@link rememberSideBarsBeforeRead} measured before a Read's maximize command hid the side bars, for {@link showSideBarsHiddenByRead}: whether the primary side bar was open (`undefined` when the editor area's width could not be read) and the editor area's width without it. */
+  private sideBarsBeforeRead?: {
+    primaryVisible: boolean | undefined
+    widthWithoutPrimaryPx: number | undefined
+  }
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
   private layoutReceipt?: {
@@ -639,6 +647,8 @@ export class StudyWorkspace {
   private presentationOperation?: Promise<PresentationState>
   /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
   private replayLoadAwaitingReady = false
+  /** The playback presentation revision of the read that {@link open}'s reveal restarted, for {@link loadPlayback}: that read leaves the arrangement to the entry. */
+  private recordingRevealedByEntry?: number
   private presentationWrite?: Promise<void>
   private placingPresentation = false
   private presentationEditorScope?: {
@@ -710,13 +720,16 @@ export class StudyWorkspace {
     // A successful Restore can still lack one native receipt; expose that missing condition to the next public recovery step.
     let reason = this.presentationReason
     if (!reason && this.opened && !this.closing && !layoutConfirmed) {
-      if (!currentSourceReady)
-        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover.
+      if (!currentSourceReady) {
+        const playback = this.playback?.state()
+        // The reader's own pending recorded presentation is still placing the source: nothing for the learner to recover. A recording whose load failed shows no source until it is opened again.
         reason =
-          this.playback?.state().readiness === 'loading'
+          playback?.readiness === 'loading'
             ? 'The recorded source is opening in its native pane.'
-            : 'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
-      else if (!matchingColumns)
+            : this.recordingActive && playback?.readiness === 'failed'
+              ? recordingNotShownReason(playback.reason)
+              : 'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.'
+      } else if (!matchingColumns)
         reason =
           'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
       else if (!matchingLayoutReceipt)
@@ -1213,6 +1226,7 @@ export class StudyWorkspace {
             'workbench.action.minimizeOtherEditors',
           )
           this.maximizedByRead = false
+          await this.showSideBarsHiddenByRead()
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
@@ -1295,8 +1309,13 @@ export class StudyWorkspace {
           this.sourceUri?.toString())
     )
       return this.restoreStudyArrangement(input)
+    // A restore of the confirmed layout made while no Study pane and no text editor has the keyboard (an agent's call from the chat, right after its own selection) is answered like that selection: nothing is arranged again and the keyboard stays where it is.
     if (
-      input.action === 'select' &&
+      (input.action === 'select' ||
+        (input.action === 'restore' &&
+          !this.app?.active &&
+          !this.contextPanel?.active &&
+          !vscode.window.activeTextEditor)) &&
       input.mode === state.mode &&
       state.layoutConfirmed &&
       state.preference.status !== 'unknown'
@@ -1455,7 +1474,25 @@ export class StudyWorkspace {
         const layout = await this.readPassivePresentationLayout()
         this.assertLifetime(lifetime)
         transition.cancellation.signal.throwIfAborted()
-        // Beside a focused tab that is no text editor (an agent chat in its own editor part) nobody can focus the main editor first: the panes are arranged again below, which measures it.
+        const receipt = this.layoutReceipt
+        // Another editor part (an agent chat) has the keyboard, so the main grid cannot be measured without taking it: while no tab or group changed since the last arrangement, its confirmation is answered again, marked as not measured, as a status read answers it.
+        if (
+          layout === undefined &&
+          receipt &&
+          this.presentationState().layoutConfirmed &&
+          this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) &&
+          this.sameStudyPanePositions(receipt.panes)
+        ) {
+          this.errors.delete('presentation')
+          this.presentationReason = undefined
+          this.requestedPresentation = undefined
+          return {
+            ...this.presentationState(),
+            state: 'open' as const,
+            layoutMeasured: false as const,
+          }
+        }
+        // Once a tab or group changed beside a focused tab of another editor part, nobody can focus the main editor first: the panes are arranged again below, which measures it.
         if (layout === undefined && !this.retainForeignTabFocus(undefined))
           throw new StudyError(
             'PRESENTATION_UNAVAILABLE',
@@ -1551,6 +1588,7 @@ export class StudyWorkspace {
           'workbench.action.minimizeOtherEditors',
         )
         this.maximizedByRead = false
+        await this.showSideBarsHiddenByRead()
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
@@ -1982,8 +2020,11 @@ export class StudyWorkspace {
         'PRESENTATION_UNAVAILABLE',
         foreignPreviewObstacle(this.editorTabName(activeTab), activeColumn),
       )
-    // A captured source the editor shows without a text editor (a leftover of an earlier session it would not close, or another workspace's) is told by what the tab is: its document is a captured source. It has no reading position to return to.
-    if (this.isCapturedSourceInput(activeTab.input))
+    // A captured source the editor shows without a text editor (a leftover of an earlier session it would not close, or another workspace's) is told by what the tab is: its document is a captured source. It has no reading position to return to. One whose text editor is visible is the reader's own source named beside another editor part that holds the keyboard (Cursor's chat input after a selection made from it): it stays as it is, like a learner's file in that state.
+    if (
+      this.isCapturedSourceInput(activeTab.input) &&
+      !this.hasVisibleTextEditor(activeTab.input.uri, activeColumn)
+    )
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         tabWithoutEditorObstacle(this.editorTabName(activeTab), activeColumn),
@@ -2016,12 +2057,20 @@ export class StudyWorkspace {
       return undefined
     const group = vscode.window.tabGroups.activeTabGroup,
       tab = group.activeTab
-    // The editor can still name a Study pane's tab as the active one while another editor part has the keyboard: that is no foreign tab to return to.
+    const namedUri =
+      tab?.input instanceof vscode.TabInputText
+        ? tab.input.uri.toString()
+        : undefined
+    // A text tab named as the active tab while its text editor is visible and no text editor is active: another editor part (the chat input) holds the keyboard, and the editor does not name that part's group. That holds for a learner's file and for the reader's own captured source. A text tab that has no text editor at all says nothing about another part.
+    const heldByAnotherPart =
+      tab?.input instanceof vscode.TabInputText &&
+      this.hasVisibleTextEditor(tab.input.uri, group.viewColumn)
+    // The editor can still name a Study pane's tab as the active one while another editor part has the keyboard: that is no foreign tab to return to. A captured source without a text editor has no focus that could be kept.
     if (
       !tab ||
       tab === activatedByClose ||
       tab.isPreview ||
-      this.isCapturedSourceInput(tab.input) ||
+      (this.isCapturedSourceInput(tab.input) && !heldByAnotherPart) ||
       (tab.input instanceof vscode.TabInputWebview &&
         isCodebookPaneViewType(
           tab.input.viewType,
@@ -2041,19 +2090,7 @@ export class StudyWorkspace {
     const showsThatTab = (candidate: vscode.TabGroup): boolean =>
       candidate.activeTab?.label === tab.label &&
       inputKind(candidate.activeTab.input) === inputKind(tab.input)
-    const namedUri =
-      tab.input instanceof vscode.TabInputText
-        ? tab.input.uri.toString()
-        : undefined
-    // A learner's file named as the active tab while its text editor is visible and no text editor is active: another editor part (the chat input) holds the keyboard, and the editor does not name that part's group. A text tab that has no text editor at all says nothing about another part.
-    const heldByAnotherPart =
-        namedUri !== undefined &&
-        vscode.window.visibleTextEditors.some(
-          (editor) =>
-            editor.viewColumn === column &&
-            editor.document.uri.toString() === namedUri,
-        ),
-      heldUri = heldByAnotherPart ? namedUri : undefined
+    const heldUri = heldByAnotherPart ? namedUri : undefined
     const borrowsBefore = this.mainEditorFocusBorrows
     return async (): Promise<void> => {
       // Groups the arrangement opened or closed in the main editor shift the column of a group behind them.
@@ -2122,6 +2159,97 @@ export class StudyWorkspace {
     return count !== undefined && this.hasMainEditorFocus(count)
       ? count
       : undefined
+  }
+
+  /**
+   * Measures which side bars are open before {@link readStudyPane} maximizes a pane, and hides the primary one for that measurement.
+   * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link showSideBarsHiddenByRead} reads it once more when both bars are hidden.
+   * @returns Once {@link sideBarsBeforeRead} holds the measurement. A grid whose top level is rows gives no width: the primary side bar's state is then unknown.
+   * @example
+   * ```ts
+   * await this.rememberSideBarsBeforeRead() // sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874 } for columns of 363 + 297 beside a side bar of 214
+   * ```
+   */
+  private async rememberSideBarsBeforeRead(): Promise<void> {
+    const widthPx = await this.readEditorAreaWidthPx()
+    await vscode.commands
+      .executeCommand('workbench.action.closeSidebar')
+      .then(undefined, () => undefined)
+    const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
+    this.sideBarsBeforeRead = {
+      primaryVisible:
+        widthPx === undefined || widthWithoutPrimaryPx === undefined
+          ? undefined
+          : widthWithoutPrimaryPx - widthPx > HIDDEN_SIDE_BAR_MIN_GAIN_PX,
+      widthWithoutPrimaryPx,
+    }
+  }
+
+  /**
+   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}.
+   * Only the bars that were open before the Read are shown: the primary one as {@link rememberSideBarsBeforeRead} measured it, the secondary one when the editor area without both bars is wider than it was without the primary one alone. A bar whose state could not be measured (rows at the top level of the grid give no width) is shown. The editor's commands that show a bar leave an open bar as it is and give the bar the keyboard, which the active editor group gets back.
+   * @returns `true` when a bar was shown and the active editor group focused again, `false` when no Read's measurement was pending or both bars were closed before it.
+   * @example
+   * ```ts
+   * await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+   * this.maximizedByRead = false
+   * await this.showSideBarsHiddenByRead()
+   * ```
+   */
+  private async showSideBarsHiddenByRead(): Promise<boolean> {
+    const before = this.sideBarsBeforeRead
+    if (!before) return false
+    this.sideBarsBeforeRead = undefined
+    const widthPx = await this.readEditorAreaWidthPx()
+    const showsAuxiliary =
+        widthPx === undefined ||
+        before.widthWithoutPrimaryPx === undefined ||
+        widthPx - before.widthWithoutPrimaryPx > HIDDEN_SIDE_BAR_MIN_GAIN_PX,
+      showsPrimary = before.primaryVisible !== false
+    const run = (command: string): Thenable<unknown> =>
+      vscode.commands.executeCommand(command).then(undefined, () => undefined)
+    if (showsAuxiliary) await run('workbench.action.focusAuxiliaryBar')
+    if (showsPrimary) await run('workbench.action.focusSideBar')
+    if (!showsAuxiliary && !showsPrimary) return false
+    await run('workbench.action.focusActiveEditorGroup')
+    return true
+  }
+
+  /**
+   * Reads the width of the editor area for {@link rememberSideBarsBeforeRead} and {@link showSideBarsHiddenByRead}.
+   * @returns The width {@link editorAreaWidthPx} finds in the editor's layout, or `undefined` when the layout has no columns at its top level or the read failed.
+   * @example
+   * ```ts
+   * const widthPx = await this.readEditorAreaWidthPx() // => 660 for the three-pane Study layout between Cursor's two side bars
+   * ```
+   */
+  private async readEditorAreaWidthPx(): Promise<number | undefined> {
+    return editorAreaWidthPx(
+      await vscode.commands
+        .executeCommand<unknown>('vscode.getEditorLayout')
+        .then(undefined, () => undefined),
+    )
+  }
+
+  /**
+   * Tells whether a text editor shows a document in an editor group now, for {@link capturePresentationFocus} and {@link retainForeignTabFocus}: a text tab the editor names as active without an active text editor has its editor visible while another editor part holds the keyboard, and has none when the editor could not load it.
+   * @param uri - The document of the named tab.
+   * @param column - The view column of the group that shows the tab.
+   * @returns `true` when one of the visible text editors shows that document in that column.
+   * @example
+   * ```ts
+   * this.hasVisibleTextEditor(tab.input.uri, group.viewColumn) // => true for "Captured-login-form.tsx" in group 2 while Cursor's chat input has the keyboard
+   * ```
+   */
+  private hasVisibleTextEditor(
+    uri: vscode.Uri,
+    column: vscode.ViewColumn,
+  ): boolean {
+    return vscode.window.visibleTextEditors.some(
+      (editor) =>
+        editor.viewColumn === column &&
+        editor.document.uri.toString() === uri.toString(),
+    )
   }
 
   /**
@@ -2845,10 +2973,15 @@ export class StudyWorkspace {
       try {
         // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
         assertReadFocus()
+        // The maximize command hides both side bars and nothing of the editor brings them back: which of them are open is measured first, once per reading, and from then on the reading is ended by Restore or Close, which show them again.
+        if (!this.maximizedByRead) {
+          this.maximizedByRead = true
+          await this.rememberSideBarsBeforeRead()
+          assertReadFocus()
+        }
         await vscode.commands.executeCommand(
           'workbench.action.maximizeEditorHideSidebar',
         )
-        this.maximizedByRead = true
         assertReadFocus()
         focusedPane.assertCurrent()
         assertPlacement()
@@ -3022,6 +3155,7 @@ export class StudyWorkspace {
         'workbench.action.minimizeOtherEditors',
       )
       this.maximizedByRead = false
+      await this.showSideBarsHiddenByRead()
       assertRetained()
       const expanded = retained
         ? await this.readPassivePresentationLayout()
@@ -4209,6 +4343,11 @@ export class StudyWorkspace {
       historyRequest = this.historyRequest
     const firstOpen = !this.opened
     let unarrangedApp: vscode.WebviewPanel | undefined
+    // An entry takes the keyboard from no editor part that holds it (an agent chat): what a measurement borrows goes back at the end. A selection or restore returns it itself, after its own last layout read.
+    const returnForeignFocus =
+      origin === 'presentation'
+        ? undefined
+        : this.retainForeignTabFocus(undefined)
     // Polling and source watchers cannot reveal a reader until cold entry has reserved its native destinations.
     if (firstOpen) this.reserveSourceEntry(signal)
     const cancel = (): void => {
@@ -4228,9 +4367,8 @@ export class StudyWorkspace {
         const firstInput = vscode.window.tabGroups.all.find(
           (group) => group.viewColumn === vscode.ViewColumn.One,
         )?.activeTab?.input
-        // For a selection or restore made while a tab of another editor part holds the keyboard (the Agent chat), the main editor is measured once before any pane exists, when its first group shows a text editor: Cursor reports the focus the measurement gives a text editor, and not the focus it gives the Application pane once that is in front of it while the editor names the chat's group.
+        // While a tab of another editor part holds the keyboard (the Agent chat), the main editor is measured once before any pane exists, when its first group shows a text editor: Cursor reports the focus the measurement gives a text editor, and not the focus it gives the Application pane once that is in front of it while the editor names the chat's group. That holds for a selection, a restore, Open replay and Open Study Workspace alike.
         if (
-          origin === 'presentation' &&
           this.retainForeignTabFocus(undefined) &&
           firstInput instanceof vscode.TabInputText &&
           vscode.window.visibleTextEditors.some(
@@ -4299,8 +4437,8 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       signal?.throwIfAborted()
       this.installReaders()
-      // A selection or restore that is refused before anything was arranged closes the Application pane it created.
-      const createsApp = origin === 'presentation' && firstOpen && !this.app
+      // A first entry that is refused before anything was arranged closes the Application pane it created.
+      const createsApp = firstOpen && !this.app
       this.ensureApp()
       if (createsApp) unarrangedApp = this.app
       await this.settleInitialApp(signal, lifetime)
@@ -4507,8 +4645,13 @@ export class StudyWorkspace {
           signal,
         )
       }
-      if (this.recordingActive && (firstOpen || !this.replayViewport))
+      if (this.recordingActive && (firstOpen || !this.replayViewport)) {
+        const pendingBefore = this.playback?.state().presentationRevision
         this.playback?.reveal()
+        const pending = this.playback?.state().presentationRevision
+        // The reveal of a recording that was never read to its end reads it again; this entry arranges that recording's panes, so the read does not open the reader a second time.
+        if (pending !== pendingBefore) this.recordingRevealedByEntry = pending
+      }
       // Capture ownership after explicit view reveals finish resizing the native workbench.
       await this.arrange(
         signal,
@@ -4577,6 +4720,8 @@ export class StudyWorkspace {
       }
       if (request === this.readerOpenNumber)
         this.initialAppPlacement = undefined
+      // Last, because the editor answers a layout read for the focused editor part.
+      await returnForeignFocus?.().catch(() => undefined)
     } catch (error) {
       // A failed first entry remains retryable without retiring a newer Open or discarding accepted native effects.
       if (
@@ -4586,8 +4731,14 @@ export class StudyWorkspace {
         !this.closing
       )
         this.opened = false
-      // The refusal leaves the window as the selection found it.
-      if (unarrangedApp && unarrangedApp === this.app) unarrangedApp.dispose()
+      // The refusal leaves the window as the entry found it. The pane is released first: its close handler would read the disposal as the learner closing the pane and cancel the recording load whose refusal is being answered.
+      if (unarrangedApp && unarrangedApp === this.app) {
+        this.app = undefined
+        unarrangedApp.dispose()
+      }
+      // A newer focus of the learner stays; the keyboard a measurement borrowed goes back to the editor part that held it.
+      if (!this.closing && lifetime === this.lifetime)
+        await returnForeignFocus?.().catch(() => undefined)
       throw error
     } finally {
       if (request === this.readerOpenNumber) this.releaseSourceEntry()
@@ -5074,6 +5225,8 @@ export class StudyWorkspace {
     this.presentationControlRevision = 0
     this.presentationConfirmed = false
     this.requestedPresentation = undefined
+    // A closed reader carries no reason of a reading or a refused change that ended with it.
+    this.presentationReason = undefined
     this.repositoryRecordingOpen = undefined
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
@@ -5084,6 +5237,7 @@ export class StudyWorkspace {
     this.playback?.hide()
     this.clearLearningSummary()
     const pending = (this.closingPromise = (async () => {
+      let restoredSideBars = false
       // One bound for every storage wait of this close, counted from the first of them: a writer that never returns is waited for once, not once per wait.
       let storageDeadlineMs: number | undefined
       const storageTimeLeftMs = (): number =>
@@ -5137,6 +5291,8 @@ export class StudyWorkspace {
         await vscode.commands
           .executeCommand('workbench.action.minimizeOtherEditors')
           .then(undefined, () => undefined)
+        // The Read also hid the side bars; the bars it hid are shown again while the panes still give the editor area its columns.
+        restoredSideBars = await this.showSideBarsHiddenByRead()
       }
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
@@ -5152,11 +5308,24 @@ export class StudyWorkspace {
       this.app?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
-      // The tabs are closed without moving the focus, so the keyboard a closed pane or source held would fall to the page body: the group the editor now shows as active takes it.
-      if (closesKeyboardHolder && vscode.window.state.focused)
+      // The tabs are closed without moving the focus, so the keyboard a closed pane or source held would fall to the page body: the group the editor shows as active takes it, once the editor has closed the disposed panes' tabs. A group focused before that is the one that still shows a closing pane, and the keyboard goes with that tab a moment later.
+      if (
+        (closesKeyboardHolder || restoredSideBars) &&
+        vscode.window.state.focused
+      ) {
+        await waitUntil(
+          () =>
+            !this.hasUnownedPaneTab(
+              'codebook.scopedBrowser',
+              'codebook.studyContext',
+            ),
+          "the closed panes' tabs to leave their groups",
+          PRESENTATION_READY_TIMEOUT_MS,
+        ).catch(() => undefined)
         await vscode.commands
           .executeCommand('workbench.action.focusActiveEditorGroup')
           .then(undefined, () => undefined)
+      }
       clearTimeout(this.citationRefreshTimer)
       this.citationRevision++
       this.citationKey = undefined
@@ -5984,7 +6153,12 @@ export class StudyWorkspace {
       this.report('playback-preference', error)
     }
     signal.throwIfAborted()
-    await this.open(signal, origin)
+    // A read that an entry's own reveal restarted (the reader was closed before the recording was read to its end) belongs to that entry, which arranges the recording's panes: opening the reader again from here would be refused by the presentation change that made the entry.
+    if (
+      this.recordingRevealedByEntry !==
+      this.playback!.state().presentationRevision
+    )
+      await this.open(signal, origin)
     signal.throwIfAborted()
     await this.ensureReplayViewport(signal)
     signal.throwIfAborted()
@@ -7137,7 +7311,10 @@ export class StudyWorkspace {
         if (this.closing || lifetime !== this.lifetime) return
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
-          preserveFocus,
+          // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
+          preserveFocus:
+            preserveFocus &&
+            !this.replacesEditorFocusedByPause(targetColumn, document.uri),
           preview: false,
           selection: new vscode.Range(position, position),
         })
@@ -7327,6 +7504,46 @@ export class StudyWorkspace {
     await vscode.commands.executeCommand(
       'vscode.setEditorLayout',
       JSON.parse(receipt.signature),
+    )
+  }
+
+  /**
+   * Says whether showing the captured source in a group would hide the text editor that the editor's debugger focused at a live pause; called by {@link renderSelection} before it shows the source.
+   *
+   * At a breakpoint the editor opens the paused file in the active group and gives it the keyboard focus (`debug.focusEditorOnBreak`,
+   * on by default). When that group is the source group, the captured source takes that file's place, and showing it while preserving
+   * the focus hides the focused editor without focusing anything: the keyboard focus falls to the document body. The Application
+   * pane's reveal follows the same rule for its own group ({@link BrowserViewport}).
+   *
+   * Where the learner went back to Cursor's chat after the pause the focus is not taken: the editor then names the chat's group, or
+   * reports no active text editor. In VS Code, where the chat is a side view, the editor reports the paused file as the active text
+   * editor in both cases, and the source takes the focus.
+   *
+   * @param column - The group the captured source is shown in.
+   * @param source - The captured source; a group that shows it already loses no editor.
+   * @returns `true` only while a debug session is paused beside a live run, the window is focused, and the group is the active group showing another text tab whose editor is the active text editor, with `debug.focusEditorOnBreak` not turned off.
+   * @example
+   * ```ts
+   * preserveFocus: preserveFocus && !this.replacesEditorFocusedByPause(targetColumn, document.uri)
+   * ```
+   */
+  private replacesEditorFocusedByPause(
+    column: vscode.ViewColumn,
+    source: vscode.Uri,
+  ): boolean {
+    if (this.recordingActive || vscode.debug.activeStackItem === undefined)
+      return false
+    const group = vscode.window.tabGroups.activeTabGroup,
+      shown = group.activeTab?.input
+    return (
+      vscode.window.state.focused &&
+      group.viewColumn === column &&
+      shown instanceof vscode.TabInputText &&
+      shown.uri.toString() !== source.toString() &&
+      vscode.window.activeTextEditor?.viewColumn === column &&
+      vscode.workspace
+        .getConfiguration('debug')
+        .get<boolean>('focusEditorOnBreak') !== false
     )
   }
 
@@ -8493,6 +8710,40 @@ export class StudyWorkspace {
         primarySelections = JSON.stringify(primaryEditor?.selections)
       const useCitation = Boolean(acquireSourceFocus && !identifiableFirst),
         mainGroupCount = count
+      const sourceUri = this.sourceUri?.toString(),
+        sourceColumn = this.studyPanePositions().sourceColumn
+      const namedInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input
+      // Beside another editor part that holds the keyboard (Cursor's chat), the editor reports the focus a text editor takes and not the focus a Codebook pane takes. With a pane in the first group, neither a Study pane nor a text editor focused and no pane's tab named as the active one, the main editor is entered through the reader's captured source instead, whose text editor is visible in its own group.
+      const sourceBorrow =
+        !useCitation &&
+        !panel &&
+        !editor &&
+        firstInput instanceof vscode.TabInputWebview &&
+        identifiableFirst &&
+        !(
+          namedInput instanceof vscode.TabInputWebview &&
+          isCodebookPaneViewType(
+            namedInput.viewType,
+            'codebook.scopedBrowser',
+            'codebook.studyContext',
+          )
+        )
+          ? vscode.window.visibleTextEditors.find(
+              (value) =>
+                value.viewColumn === sourceColumn &&
+                value.document.uri.toString() === sourceUri,
+            )
+          : undefined
+      /** Tells that the captured source's text editor, which the measurement focused, is the active text editor. */
+      const sourceEditorReported = (): boolean => {
+        const focused = vscode.window.activeTextEditor
+        return (
+          sourceBorrow !== undefined &&
+          focused?.viewColumn === sourceBorrow.viewColumn &&
+          focused?.document.uri.toString() ===
+            sourceBorrow.document.uri.toString()
+        )
+      }
       let didLearnerChangePrimaryTab = false
       const namedColumn = vscode.window.tabGroups.activeTabGroup.viewColumn
       /** Cursor reports the first group's text editor as the active text editor after the focus command and keeps naming the group it named before (the chat's) as the active tab group until a tab or group changes: that report is the main editor's focus too. */
@@ -8511,32 +8762,46 @@ export class StudyWorkspace {
       beforeScopeFocus?.(
         useCitation
           ? undefined
-          : {
-              matchesEditor: () => {
-                const focused = vscode.window.activeTextEditor
-                // Latch the captured primary target before its command; an away-and-back event must survive the delayed response.
-                return primaryEditor
-                  ? focused?.document.uri.toString() ===
-                      primaryEditor.document.uri.toString() &&
-                      focused.viewColumn === vscode.ViewColumn.One &&
-                      focused.document.version === primaryVersion &&
-                      JSON.stringify(focused.selections) === primarySelections
-                  : firstFocused()
+          : sourceBorrow
+            ? {
+                matchesEditor: sourceEditorReported,
+                matchesGroup: () => {
+                  const group = vscode.window.tabGroups.activeTabGroup,
+                    input = group.activeTab?.input
+                  return (
+                    group.viewColumn === sourceBorrow.viewColumn &&
+                    input instanceof vscode.TabInputText &&
+                    input.uri.toString() ===
+                      sourceBorrow.document.uri.toString()
+                  )
+                },
+              }
+            : {
+                matchesEditor: () => {
+                  const focused = vscode.window.activeTextEditor
+                  // Latch the captured primary target before its command; an away-and-back event must survive the delayed response.
+                  return primaryEditor
+                    ? focused?.document.uri.toString() ===
+                        primaryEditor.document.uri.toString() &&
+                        focused.viewColumn === vscode.ViewColumn.One &&
+                        focused.document.version === primaryVersion &&
+                        JSON.stringify(focused.selections) === primarySelections
+                    : firstFocused()
+                },
+                matchesGroup: () => {
+                  const group = vscode.window.tabGroups.activeTabGroup,
+                    input = group.activeTab?.input
+                  return (
+                    group.viewColumn === vscode.ViewColumn.One &&
+                    (firstInput instanceof vscode.TabInputText
+                      ? input instanceof vscode.TabInputText &&
+                        input.uri.toString() === firstInput.uri.toString()
+                      : firstInput instanceof vscode.TabInputWebview &&
+                        input instanceof vscode.TabInputWebview &&
+                        input.viewType === firstInput.viewType)
+                  )
+                },
               },
-              matchesGroup: () => {
-                const group = vscode.window.tabGroups.activeTabGroup,
-                  input = group.activeTab?.input
-                return (
-                  group.viewColumn === vscode.ViewColumn.One &&
-                  (firstInput instanceof vscode.TabInputText
-                    ? input instanceof vscode.TabInputText &&
-                      input.uri.toString() === firstInput.uri.toString()
-                    : firstInput instanceof vscode.TabInputWebview &&
-                      input instanceof vscode.TabInputWebview &&
-                      input.viewType === firstInput.viewType)
-                )
-              },
-            },
       )
       this.mainEditorFocusBorrows++
       if (useCitation) {
@@ -8544,6 +8809,14 @@ export class StudyWorkspace {
         assertCurrent()
         assertGroups()
         assertAcquiredFocus()
+      } else if (sourceBorrow) {
+        await vscode.window.showTextDocument(sourceBorrow.document, {
+          viewColumn: sourceBorrow.viewColumn,
+          preserveFocus: false,
+          preview: false,
+        })
+        assertCurrent()
+        assertGroups()
       } else {
         await vscode.commands.executeCommand(
           'workbench.action.focusFirstEditorGroup',
@@ -8571,7 +8844,9 @@ export class StudyWorkspace {
               'The primary editor selection changed during scope measurement; the newer learner focus was preserved.',
             )
           }
-          return firstFocused() || primaryEditorReported()
+          return (
+            firstFocused() || primaryEditorReported() || sourceEditorReported()
+          )
         },
         'identifiable primary editor focus',
         PRESENTATION_READY_TIMEOUT_MS,
@@ -9416,19 +9691,27 @@ export class StudyWorkspace {
    * @example if (retiredContextGroup && this.hasRetiredStudyPaneTab()) await this.retiredStudyPaneClosed(signal)
    */
   private hasRetiredStudyPaneTab(): boolean {
-    return (
-      !this.contextPanel &&
-      vscode.window.tabGroups.all.some((group) =>
-        group.tabs.some(
-          (tab) =>
-            tab.input instanceof vscode.TabInputWebview &&
-            isCodebookPaneViewType(
-              tab.input.viewType,
-              'codebook.studyContext',
-            ) &&
-            !this.inheritedPaneTabs.has(tab),
-        ),
-      )
+    return !this.contextPanel && this.hasUnownedPaneTab('codebook.studyContext')
+  }
+
+  /**
+   * Says whether the editor's tab model still holds a tab of a pane this reader disposed, for {@link hasRetiredStudyPaneTab} and {@link close}: the editor closes a disposed pane's tab a moment after the disposal.
+   * Asked while the reader holds no pane of the named kinds; an earlier host's leftover pane is not counted.
+   * @param kinds - The pane view types to look for.
+   * @returns `true` until the editor has closed every such tab.
+   * @example
+   * ```ts
+   * this.hasUnownedPaneTab('codebook.scopedBrowser', 'codebook.studyContext') // => true for about 100 ms after Close disposed both panes in Cursor
+   * ```
+   */
+  private hasUnownedPaneTab(...kinds: string[]): boolean {
+    return vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview &&
+          isCodebookPaneViewType(tab.input.viewType, ...kinds) &&
+          !this.inheritedPaneTabs.has(tab),
+      ),
     )
   }
 

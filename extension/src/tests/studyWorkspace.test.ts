@@ -13,6 +13,7 @@ import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import {
   workspaceHarness,
   saveOneStopNodeHistory,
+  readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
@@ -4009,3 +4010,72 @@ test('pressing Inspect again while the editor is still stopping the ended histor
     await harness.close()
   }
 })
+
+for (const situation of [
+  'the debugger focused that file at a pause',
+  'no debug session is paused',
+  'the learner turned off debug.focusEditorOnBreak',
+  "the learner went back to Cursor's chat after the pause and the editor names the chat's group",
+  "the learner went back to Cursor's chat after the pause and the editor still names the paused file's tab, with no active text editor",
+] as const) {
+  const takesFocus = situation === 'the debugger focused that file at a pause'
+  // Value: protects=the keyboard focus after a capture when the debugger opened its file in the source group: the captured source that replaces that file takes the focus it had, and takes none in every other state; fails_when=the source is shown over the focused file while preserving the focus, which hides the focused editor and leaves the keyboard focus on the document body until the learner clicks, or the source takes the focus from a learner who went back to the chat; why_new=Cycle 0045 NF-4, the source group's half (0037-F6's native run; `352287f` fixed the Application group only), with X7-A.4 for Cursor's two chat states; seam=workspace harness with the controlled runtime, focusMutableDraft, setActiveStackItem, textDocumentShows
+  test(
+    takesFocus
+      ? 'the captured source takes the keyboard focus when it replaces the file the debugger focused at a pause in the source group'
+      : `the captured source leaves the keyboard focus where it is when it replaces a file in the source group while ${situation}`,
+    async () => {
+      // Arrange: the reader follows a live run in its two panes; the paused file is the tab in front of the source group, with the keyboard focus unless the learner went back to the chat.
+      const harness = await workspaceHarness()
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      const chat = situation.includes("Cursor's chat")
+        ? harness.addSeparateEditorPart()
+        : undefined
+      try {
+        const receipt = harness.service.start({
+          instanceId: harness.service.instanceId,
+          profile: 'repository-browser',
+          configuration: harness.configuration,
+          key: randomUUID(),
+        })
+        const record = harness.service.record(receipt)
+        await record.preparation
+        await harness.reader.open()
+        const sourceColumn =
+          harness.reader.presentationState().panes.sourceColumn
+        harness.focusMutableDraft('actions.ts', 2)
+        if (situation !== 'no debug session is paused')
+          harness.setActiveStackItem(
+            { session: { id: 'live-next-server' }, threadId: 1 },
+            situation === 'the learner turned off debug.focusEditorOnBreak'
+              ? false
+              : undefined,
+          )
+        if (situation.includes("names the chat's group")) chat!.focusTab()
+        if (situation.includes('no active text editor')) chat!.focus()
+        const showsBefore = harness.textDocumentShows().length
+
+        // Act: the run reaches its stop and the reader shows the stop's captured source in the source group.
+        harness.service.action({
+          instanceId: harness.service.instanceId,
+          runId: record.id,
+          key: randomUUID(),
+          action: 'repository-click',
+        })
+        await readerSeams(harness).refresh()
+
+        // Assert
+        assert.equal(sourceColumn, 2)
+        assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
+          {
+            name: 'Captured-theme.ts',
+            viewColumn: 2,
+            preserveFocus: !takesFocus,
+          },
+        ])
+      } finally {
+        await harness.close()
+      }
+    },
+  )
+}

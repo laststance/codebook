@@ -1052,9 +1052,6 @@ test('first Study entry does not resize chat while a new application panel only 
   const chat = harness.addSeparateEditorPart(),
     draft = harness.focusMutableDraft()
   const registerPanel = harness.delayPanelRegistration('codebook.scopedBrowser')
-  const focus = harness.holdNextCommand(
-    'workbench.action.focusFirstEditorGroup',
-  )
   chat.focus()
   const opening = harness.reader.open()
   void opening.catch(() => undefined)
@@ -1065,24 +1062,25 @@ test('first Study entry does not resize chat while a new application panel only 
       'pending native application',
       1_000,
     )
-    // Assert: provisional wrapper flags must not authorize a layout command against the still-focused chat part.
-    assert.equal(
-      harness.commands.includes('workbench.action.focusFirstEditorGroup'),
-      false,
-    )
+    // Assert: the main editor was measured before the pane existed, with the one focus hand-over to the learner's file (Cycle 0045 S1-F3; the hand-over followed the pane's registration before). The pane's provisional wrapper flags authorize no layout command against the chat part.
+    const focusHandOvers = (): number =>
+      harness.commands.filter(
+        (command) => command === 'workbench.action.focusFirstEditorGroup',
+      ).length
+    assert.equal(focusHandOvers(), 1)
     assert.equal(harness.commands.includes('vscode.setEditorLayout'), false)
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
     registerPanel()
-    await focus.started
-    focus.release()
     await opening
+    assert.equal(focusHandOvers(), 1)
     assert.equal(harness.panelColumn('codebook.studyContext'), 3)
     assert.equal(harness.groups[3]!.tabs.includes(chat.tab), true)
     assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
     assert.deepEqual(chat.layout(), { orientation: 1, groups: [{ size: 743 }] })
+    // The chat, which held the keyboard when the entry began, has it again.
+    assert.equal(chat.focused(), true)
   } finally {
     registerPanel()
-    focus.release()
     await opening.catch(() => undefined)
     await harness.close()
   }
