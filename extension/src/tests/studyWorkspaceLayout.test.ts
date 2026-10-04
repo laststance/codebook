@@ -4035,3 +4035,210 @@ test('a group emptied by a moved pane in a two-row layout leaves the same layout
     await harness.close()
   }
 })
+
+/**
+ * Opens a recording in an editor that behaves like Cursor 3.23.12: the Agent chat is a tab of its own editor part, and every tab that opens, closes or comes to the front gives all editor groups new objects.
+ * @returns The recorded reader harness with the recording at its first position and the chat part.
+ * @example const { harness, chat } = await recordingInCursor()
+ */
+async function recordingInCursor() {
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  await harness.reader.openRecording(harness.studyId)
+  await harness.controller.settle()
+  return { harness, chat }
+}
+
+// Value: protects=the confirmed layout of a recording in Cursor across a seek that shows another source tab; fails_when=the group objects Cursor replaces with that tab change count as other groups (the Agent chat's group holds no tab Codebook knows), so the next status read answers layoutConfirmed false with "The Study arrangement is not confirmed. …" although no pixel of the grid changed; why_new=Cycle 0045 NF-5, normal panel height (observed on candidate 13: 2 of 2 seeks that changed the source tab); seam=workspace harness with a separate editor part and the fake editor's group object replacement
+test('a recorded seek in Cursor that shows another source tab leaves the layout confirmed', async () => {
+  // Arrange
+  const { harness, chat } = await recordingInCursor()
+  try {
+    const before = await harness.reader.readPresentationState(),
+      sourceBefore = harness.reader.inspect().sourceUri,
+      groupsBefore = [...harness.groups],
+      layoutBefore = harness.editorLayout()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(before.layoutConfirmed, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    // The seek showed another source tab, and the editor answered it with new group objects in the same columns and the same grid.
+    assert.notEqual(harness.reader.inspect().sourceUri, sourceBefore)
+    assert.equal(
+      harness.groups.some((group) => groupsBefore.includes(group)),
+      false,
+    )
+    assert.deepEqual(harness.editorLayout(), layoutBefore)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(chat.tab))?.viewColumn,
+      3,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height after a recorded seek made in Cursor with the bottom panel maximized; fails_when=the seek brings the hidden editor area back with the Application group at its 70 px minimum and the confirmed grid is not applied again, because the group objects Cursor replaced no longer count as the confirmed groups: a strip and layoutConfirmed false until Restore; why_new=Cycle 0045 NF-5, maximized panel (observed on candidate 13: 70 / 587 after 2 of 2 seeks); seam=workspace harness with a maximized bottom panel, a separate editor part and the fake editor's group object replacement
+test('a recorded seek made in Cursor while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const { harness } = await recordingInCursor()
+  try {
+    const applicationHeightBefore = harness.groupHeightPx(1),
+      confirmedBefore = (await harness.reader.readPresentationState())
+        .layoutConfirmed
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedBefore, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Restore of a recording's layout in Cursor ending confirmed although the editor names the Application group as the active group for one event while Codebook measures the main editor; fails_when=that announced detour of the focus is read as the learner choosing another tab, and Restore ends with "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved."; why_new=Cycle 0045 NF-7 (Cycle 0044 saw 2 of 5 presses fail; on candidate 13 six of six presses were confirmed, each with the Application group active for 25 to 46 ms before the source group); seam=workspace harness with a separate editor part, the fake editor's group object replacement and its split focus notifications
+test('Restore in Recording is confirmed when Cursor reports another active group for one event while the layout is applied', async () => {
+  // Arrange: the recorded source has the keyboard focus; the editor reports a group's activation before the text editor that goes with it.
+  const { harness } = await recordingInCursor()
+  try {
+    harness.usePrimaryFocusNotificationOrder('group first')
+    await harness.reader.action('source')
+    const state = harness.reader.presentationState(),
+      focusedBefore = harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      commandsBefore = harness.commands.length
+
+    // Act
+    const restored = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+
+    // Assert
+    assert.equal(focusedBefore, 2)
+    // The measurement focused the first group, where the Application pane is, and gave the focus back to the source.
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.focusFirstEditorGroup'),
+      true,
+    )
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 2)
+    assert.equal(restored.layoutConfirmed, true)
+    assert.equal(restored.reason, undefined)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const [change, changedPart] of [
+  [
+    'the grid changed',
+    'the editor grid no longer has the sizes of the confirmed layout',
+  ],
+  [
+    'an editor group was replaced',
+    'an editor group was opened, closed, moved or replaced since the layout was confirmed',
+  ],
+] as const)
+  // Value: protects=a learner or an agent reading, after a status read unconfirmed the Study layout, which comparison failed; fails_when=the reason is the same sentence for a resized grid and for a replaced editor group, so a report of an unconfirmed layout does not say what changed; why_new=Cycle 0045 NF-5 (in Cursor nobody could tell from "The Study arrangement is not confirmed. …" that no pixel of the grid had changed); seam=workspace harness with the fake editor
+  test(`a status read after ${change} says which part of the confirmed layout differs`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      await harness.reader.open()
+      const before = await harness.reader.readPresentationState()
+      if (change === 'the grid changed')
+        harness.changeEditorLayout({
+          orientation: 0,
+          groups: [
+            { size: 0.3, groups: [{ size: 0.5 }, { size: 0.5 }] },
+            { size: 0.7 },
+          ],
+        })
+      else harness.replaceEditorGroup('opened', 1)
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(before.layoutConfirmed, true)
+      assert.equal(before.reason, undefined)
+      assert.equal(state.layoutConfirmed, false)
+      assert.equal(
+        state.reason,
+        `The Study arrangement is not confirmed: ${changedPart}. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.`,
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized while the layout was no longer confirmed; fails_when=only a confirmed layout is given its grid back, so the returned editor area leaves the Application group a 70 px strip above the source until Restore; why_new=Cycle 0045 NF-5 with PC-1.1 (the second maximized seek of the observation: the first had left the layout unconfirmed); seam=workspace harness with a maximized bottom panel
+test('a recorded seek made while the bottom panel is maximized gives a collapsed Application group its height back also when the layout was no longer confirmed', async () => {
+  // Arrange: a status read found the grid resized, so the recording's layout is unconfirmed; then the learner maximizes the bottom panel.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.changeEditorLayout({
+      orientation: 1,
+      groups: [{ size: 0.4 }, { size: 0.6 }],
+    })
+    const unconfirmed = await harness.reader.readPresentationState(),
+      applicationHeightBefore = harness.groupHeightPx(1)
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(unconfirmed.layoutConfirmed, false)
+    assert.equal(applicationHeightBefore, 336)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.isPanelMaximized(), false)
+    // The last confirmed grid is applied again: the Application group is no strip of 70 px.
+    assert.equal(harness.groupHeightPx(1), 420)
+  } finally {
+    await harness.close()
+  }
+})

@@ -1094,7 +1094,7 @@ for (const loss of [
       assert.equal(
         failed.reason,
         loss === 'the workbench resized the split'
-          ? 'The Study arrangement is not confirmed. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
+          ? 'The Study arrangement is not confirmed: the editor grid no longer has the sizes of the confirmed layout. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
           : 'The native editor layout receipt no longer matches the Study panes. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.',
       )
       // Act: no pane is clicked first.

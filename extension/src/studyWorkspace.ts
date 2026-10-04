@@ -138,6 +138,7 @@ import { focusWebview } from './utils/focusWebview'
 import { foreignPreviewObstacle } from './utils/foreignPreviewObstacle'
 import { isBalancedEditorLayout } from './utils/isBalancedEditorLayout'
 import { isCodebookPaneViewType } from './utils/isCodebookPaneViewType'
+import { isCollapsedEditorGroup } from './utils/isCollapsedEditorGroup'
 import { isCollapsedEditorLayout } from './utils/isCollapsedEditorLayout'
 import {
   editorLayoutSchema,
@@ -164,6 +165,10 @@ import { studyEvidenceDirectory } from './utils/studyEvidenceDirectory'
 import { studyRemovalMessages } from './utils/studyRemovalMessages'
 import { tabWithoutEditorObstacle } from './utils/tabWithoutEditorObstacle'
 import { toPixelEditorLayout } from './utils/toPixelEditorLayout'
+import {
+  type ChangedLayoutPart,
+  unconfirmedLayoutReason,
+} from './utils/unconfirmedLayoutReason'
 import { untilAborted } from './utils/untilAborted'
 import { withoutStudy } from './utils/withoutStudy'
 import { webviewFocusReceiptSchema } from './webviewFocusSchemas'
@@ -488,6 +493,11 @@ export class StudyWorkspace {
     sourceTargetColumn?: vscode.ViewColumn
     pendingPanes?: ReturnType<StudyWorkspace['studyPanePositions']>
   }
+  /** Which comparison of the layout receipt a status read found changed; it speaks for that receipt only, so a later arrangement retires it. */
+  private changedLayoutPart?: {
+    receipt: NonNullable<StudyWorkspace['layoutReceipt']>
+    part: ChangedLayoutPart
+  }
   private enlargedLayoutReceipt?: {
     receipt: NonNullable<StudyWorkspace['layoutReceipt']>
     mode: PresentationMode
@@ -667,8 +677,11 @@ export class StudyWorkspace {
         reason =
           'The native editor layout receipt no longer matches the Study panes. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
       else
-        reason =
-          'The Study arrangement is not confirmed. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
+        reason = unconfirmedLayoutReason(
+          this.changedLayoutPart?.receipt === this.layoutReceipt
+            ? this.changedLayoutPart?.part
+            : undefined,
+        )
     }
     // A selected Node journal masks the live application, so agents must not read the reader as following the run.
     return {
@@ -712,16 +725,23 @@ export class StudyWorkspace {
     const layout = await this.readPassivePresentationLayout()
     // A hidden editor area (the bottom panel is maximized) reports its groups at their minimum heights: nothing was rearranged, and the editor gives the groups their sizes back with the area.
     if (isCollapsedEditorLayout(layout)) return this.presentationState()
+    // The first comparison that fails is the one the reason names; a moved pane has its own reason in the state.
+    let changedPart: ChangedLayoutPart | undefined
+    if (layout !== undefined && JSON.stringify(layout) !== receipt.signature)
+      changedPart = 'grid'
+    else if (
+      !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all)
+    )
+      changedPart = 'groups'
     if (
       !this.presentationTransition &&
       state.presentationId === this.presentationId &&
       state.presentationControlRevision === this.presentationControlRevision &&
       receipt === this.layoutReceipt &&
-      ((layout !== undefined && JSON.stringify(layout) !== receipt.signature) ||
-        !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) ||
-        !this.sameStudyPanePositions(receipt.panes))
+      (changedPart || !this.sameStudyPanePositions(receipt.panes))
     ) {
       this.presentationConfirmed = false
+      this.changedLayoutPart = changedPart && { receipt, part: changedPart }
       this.publish()
     }
     // An unmeasurable active part qualifies this response only; it cannot invalidate or certify the retained main grid.
@@ -6827,19 +6847,14 @@ export class StudyWorkspace {
    * the Application group stays a strip of its tab row and the Study pane shrinks to its minimum width, with the layout left unconfirmed.
    *
    * @param isPlacement - Whether a presentation placement or an arrangement owns the layout; it measures and confirms the grid itself.
-   * @returns The confirmed layout receipt to apply again after the reveal, or `undefined` when the area is visible or no confirmed Study layout exists.
+   * @returns The Study layout receipt to apply again after the reveal, or `undefined` when the area is visible or no Study layout was arranged. The receipt of a layout that is no longer confirmed is returned too: {@link reapplyConfirmedLayout} then only undoes a collapsed Application group.
    * @example const confirmedLayout = await this.confirmedLayoutBehindHiddenArea(Boolean(placement))
    */
   private async confirmedLayoutBehindHiddenArea(
     isPlacement: boolean,
   ): Promise<StudyWorkspace['layoutReceipt']> {
     const receipt = this.layoutReceipt
-    if (
-      isPlacement ||
-      this.arranging ||
-      !this.presentationConfirmed ||
-      receipt?.mode !== 'study'
-    )
+    if (isPlacement || this.arranging || receipt?.mode !== 'study')
       return undefined
     return (await this.editorAreaHidden()) ? receipt : undefined
   }
@@ -6847,7 +6862,8 @@ export class StudyWorkspace {
   /**
    * Gives the Study panes the sizes of the confirmed layout back after a source reveal into a hidden editor area; called by {@link renderSelection}.
    * The measured grid is applied as it was confirmed, as Restore does after Enlarge; panes or groups that changed meanwhile are left alone.
-   * @param receipt - The layout that was confirmed before the reveal.
+   * A layout that was no longer confirmed before the reveal keeps the sizes it has, unless the returned editor area left the Application group at its minimum height beside a taller source group: that strip is the editor's doing, and the last confirmed grid undoes it.
+   * @param receipt - The layout that was arranged before the reveal.
    * @example if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
    */
   private async reapplyConfirmedLayout(
@@ -6858,6 +6874,20 @@ export class StudyWorkspace {
       this.arranging ||
       !this.sameEditorGroups(receipt.groups, vscode.window.tabGroups.all) ||
       !this.sameStudyPanePositions(receipt.panes)
+    )
+      return
+    // The collapse of the owned Application group is read on its own: the other groups of an unconfirmed layout may have any size.
+    if (
+      !this.presentationConfirmed &&
+      !(
+        receipt.panes.appColumn !== undefined &&
+        isCollapsedEditorGroup(
+          await vscode.commands.executeCommand<unknown>(
+            'vscode.getEditorLayout',
+          ),
+          receipt.panes.appColumn,
+        )
+      )
     )
       return
     await vscode.commands.executeCommand(
@@ -8689,13 +8719,24 @@ export class StudyWorkspace {
         )
       }
       const groupCount = this.studyGroupCount()
+      // Cursor gives every group a new object with each tab change, so the retired group is known by its identity as well as by its object.
+      const lastGroup = grid.groups.at(-1),
+        retiredIdentity =
+          retiredContextGroup &&
+          this.editorGroupIdentities.get(retiredContextGroup)
+      const retiredGroup =
+        lastGroup !== undefined &&
+        (lastGroup === retiredContextGroup ||
+          (retiredIdentity !== undefined &&
+            this.editorGroupIdentities.get(lastGroup) === retiredIdentity))
+          ? lastGroup
+          : undefined
       // Only the just-retired, now-empty owned summary group can disappear during live entry.
       const canRetireContext =
         (this.liveComposition || this.summaryComposition) &&
-        retiredContextGroup !== undefined &&
+        retiredGroup !== undefined &&
         grid.groups.length === groupCount + 1 &&
-        grid.groups.at(-1) === retiredContextGroup &&
-        retiredContextGroup.tabs.length === 0
+        retiredGroup.tabs.length === 0
       if (grid.groups.length > groupCount && !canRetireContext) {
         this.layoutReceipt = undefined
         this.report(
@@ -8708,7 +8749,7 @@ export class StudyWorkspace {
       }
       this.layoutReceipt = undefined
       const retainedGroups = canRetireContext
-        ? grid.groups.filter((group) => group !== retiredContextGroup)
+        ? grid.groups.filter((group) => group !== retiredGroup)
         : grid.groups
       const measuredLayout =
         mode === 'study' && retainedGroups.length === groupCount
