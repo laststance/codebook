@@ -8,9 +8,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { z } from 'zod'
 
+import * as constants from '../constants'
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
 import type { LearningSummary } from '../learningSummarySchemas'
+import type * as ResourcesModule from '../resources'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -22,6 +24,7 @@ import {
   configuredServiceHarness,
   observeResult,
 } from './utils/configuredServiceHarness'
+import { loadModule } from './utils/loadModule'
 
 const receiptSchema = z.object({
   instanceId: z.string(),
@@ -963,7 +966,8 @@ test('configured help tells an agent when a binding on another line fails for ea
 })
 
 // Cycle 0044 (0042-DOC1): red while the deadline place forms and the pause journal fields were documented only in source and CHANGELOG.
-test('configured help tells an agent that a run waits for the debugger’s own pauses, how a deadline names a paused place, and which journal entries record pauses', async (context) => {
+// Cycle 0045 (B-L5): the journal sentences have their own test below; this one keeps the wait and the deadline's place.
+test('configured help tells an agent that a run waits for the debugger’s own pauses and how a deadline names a paused place', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -975,10 +979,115 @@ test('configured help tells an agent that a run waits for the debugger’s own p
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[4]?.includes(
-      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20 second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records every pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts) and every resume as cdp.resumed or cdp.adapter-pause-retired with pausedForMs.',
+      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20 second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records a pause as cdp.pause-observed',
     ),
     true,
   )
+})
+
+// Cycle 0045 (B-L5): red while the help said the journal records every pause and every resume, which is false past the cap, and named two of the four resume entries.
+test('the configured help names every journal entry of a pause and its resume and says that pauses away from a stop are journaled up to the limit', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.sequence[4]?.includes(
+      " The journal records a pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts): a declared stop's pause always, and of the pauses away from a stop the first 100 the runtime makes for its own instrumentation and the first 100 others of a run; the rest are counted in cdp.adapter-pauses-not-journaled when the run ends. A resume is recorded with pausedForMs under one of four names: cdp.resumed (a declared stop's pause, an instrumentation pause whose observation was journaled, or a pause from before the action), cdp.adapter-pause-retired (a pause the debugger made for itself and resumed in time, when its observation was journaled), cdp.browser-adapter-pause-retired (the same for a browser pause in a run that declares no browser stop) and cdp.unannounced-pause-resumed-late (a pause no stop announced that was resumed too late, which ends the run). Stop/seal and wait for current history/recording receipts.",
+    ),
+    true,
+  )
+  assert.doesNotMatch(help.text, /records every pause|every resume/)
+})
+
+// Cycle 0045 (B-L5, DX-19): red while "100", "3 seconds", "1 second" were typed in the help beside their constants; the help is loaded over other constants, so a number that is typed stays what it was.
+test('the configured help takes the journal limit, the two pause bounds and its two version numbers from the constants', async (context) => {
+  // Arrange: the help module is evaluated over a journal limit of 7, pause bounds of 4 s and 2 s, API 9.9 and a minimum extension version 8.8.8.
+  const { service } = await configuredServiceHarness(context)
+  const resources = await loadModule<typeof ResourcesModule>(
+    join(__dirname, '../resources.js'),
+    {
+      './constants': {
+        ...constants,
+        API_VERSION: '9.9',
+        CONFIGURED_MINIMUM_EXTENSION_VERSION: '8.8.8',
+        REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT: 7,
+        REPOSITORY_ADAPTER_PAUSE_LIMIT_MS: 4_000,
+        REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS: 2_000,
+      },
+    },
+  )
+  // Act
+  const help = await resources.readResource(
+    service,
+    'codebook://help/repository-browser',
+  )
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ entry: z.string(), sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.entry.startsWith('API 9.9, extension 8.8.8 or later. '),
+    true,
+  )
+  assert.equal(
+    contract.sequence[3]?.includes(
+      'the journal records it as cdp.adapter-pause-retired with its place and pausedForMs (the first 7 such pauses of a run; the rest are counted), and the run goes on. A pause no stop announced that is resumed only after more than 4 seconds, or after more than 2 seconds while a stop of that participant is announced and still waits for its own pause, ends the run as a manual or competing resume.',
+    ),
+    true,
+  )
+  assert.equal(
+    contract.sequence[4]?.includes(
+      'the first 7 the runtime makes for its own instrumentation and the first 7 others of a run;',
+    ),
+    true,
+  )
+})
+
+// Cycle 0045 (DX-19): red while the repository help named the path extension/README.md, which does not exist in a learner's workspace, and the Study help began a sentence with "API 1.2:".
+test('no help resource names a path under extension/, the tutorial is named by the README section, and the recording discovery says since which API it exists', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const helpUris = [
+    'codebook://help/errors',
+    'codebook://help/repository-browser',
+    'codebook://help/node-test',
+    'codebook://help/repository',
+    'codebook://help/studies',
+  ]
+  // Act
+  const texts: string[] = []
+  for (const uri of helpUris) {
+    const help = await readResource(service, uri)
+    assert.ok('text' in help)
+    texts.push(help.text)
+  }
+  // Assert
+  assert.deepEqual(
+    helpUris.filter((_uri, index) => texts[index]?.includes('extension/')),
+    [],
+  )
+  assert.equal(
+    z.object({ tutorial: z.string() }).parse(JSON.parse(texts[3] ?? ''))
+      .tutorial,
+    "the Codebook extension's README, section Learn this repository",
+  )
+  assert.equal(
+    z
+      .object({ recording: z.object({ discovery: z.string() }) })
+      .parse(JSON.parse(texts[4] ?? ''))
+      .recording.discovery.startsWith(
+        'Follow codebook_status.recording.libraryUri (since API 1.2), select a saved study recordingUri, then follow framesUri/nextUri',
+      ),
+    true,
+  )
+  assert.doesNotMatch(texts[4] ?? '', /API 1\.2:/)
 })
 
 // Cycle 0044 (0041-DOC1): red while only the CHANGELOG said that an after condition already true before input is refused, and the README left the per-phase fix to the help.
