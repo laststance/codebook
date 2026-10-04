@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { setTimeout } from 'node:timers/promises'
 
+import { readResource } from '../resources'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { thrownMessage } from '../utils/thrownMessage'
 
 import { configuredRuntimeHarness } from './utils/configuredRuntimeHarness'
+import { retainStoppedRun } from './utils/retainStoppedRun'
 
 test('internal browser setup stops do not consume the configured learning pause or prevent its later completion', async (context) => {
   // Arrange
@@ -1174,7 +1176,7 @@ test('a browser stop the debugger binds at another column of its declared line i
     .events.find((event) => event.type === 'breakpoint.bound')
   assert.equal(
     JSON.stringify(bound?.detail),
-    '{"verified":true,"line":1,"column":7,"requested":{"line":1,"column":1}}',
+    '{"verified":true,"line":1,"column":7,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1}}',
   )
   assert.equal(stop.source.line, 1)
   assert.equal(stop.source.column, 7)
@@ -1757,7 +1759,7 @@ test('a browser stop the debugger binds on the next line of its citation is arme
     .events.find((event) => event.type === 'breakpoint.bound')
   assert.equal(
     JSON.stringify(bound?.detail),
-    '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1}}',
+    '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1}}',
   )
   assert.equal(stop.source.line, 2)
   assert.equal(stop.source.column, 1)
@@ -1981,7 +1983,7 @@ test('a browser stop the debugger binds two lines below, across a line the seale
     .events.find((event) => event.type === 'breakpoint.bound')
   assert.equal(
     JSON.stringify(bound?.detail),
-    '{"verified":true,"line":3,"column":1,"requested":{"line":1,"column":1}}',
+    '{"verified":true,"line":3,"column":1,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1}}',
   )
   assert.equal(stop.source.line, 3)
   assert.equal(stop.source.column, 1)
@@ -2221,6 +2223,57 @@ test('a stop declared on a line the sealed map has no position on is requested a
     mappedLinesBetween: 0,
   })
   assert.equal(mouse.length, 2)
+})
+
+// Value: protects=an agent and kept evidence telling a stop's declared place from the place its breakpoint was requested at and from where it paused; fails_when=the inspection or the journal names the declared place only under "requested", so the requested place is nowhere; why_new=Cycle 0045 ER-8 (API 1.6 adds declaredSource and armed, no existing key changes its meaning); seam=the runtime harness's adapter, which verifies a breakpoint on line 2 only
+test('the inspection and the journal of a stop declared on an unmapped line name its declared, its armed and its bound place', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both, and the debugger verifies a breakpoint on line 2 only.
+  const { run, verifyBreakpointsOnlyOnLines } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: ';AACA',
+      fixture: {
+        source: '// toggles the theme\nconst nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    },
+  )
+  verifyBreakpointsOnlyOnLines([2])
+  await run.prepare()
+  run.action('one', 'repository-click')
+  await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the first mapped position after its declared line')
+  await run.stop()
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+
+  // Act
+  const inspection = await readResource(
+      service,
+      service.state(record).observations[0]!.inspectionUri,
+    ),
+    bound = run.view().events.find((event) => event.type === 'breakpoint.bound')
+
+  // Assert
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.equal(JSON.stringify(facts.declaredSource), '{"line":1,"column":1}')
+  assert.equal(JSON.stringify(facts.armed), '{"line":2,"column":1}')
+  assert.equal(facts.source.line, 2)
+  assert.equal(facts.source.column, 1)
+  assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
+  assert.equal(
+    JSON.stringify(bound?.detail),
+    '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1},"armed":{"line":2,"column":1}}',
+  )
 })
 
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).

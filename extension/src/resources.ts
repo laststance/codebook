@@ -4,6 +4,8 @@ import { z } from 'zod'
 
 import { CONFIGURED_PROFILE } from './configuredProfile'
 import {
+  API_VERSION,
+  CONFIGURED_MINIMUM_EXTENSION_VERSION,
   REPOSITORY_BROWSER_ACTION,
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
   REPOSITORY_MAP_LIMIT_BYTES,
@@ -26,7 +28,6 @@ import { nodeTestConfigSchema } from './nodeTestConfigSchemas'
 import { retainedRepositoryConfigSchema } from './repositoryConfigSchemas'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import type { StudyService } from './service'
-import { configuredStops } from './utils/configuredStops'
 import { describeStudy } from './utils/describeStudy'
 import { omittedDetail } from './utils/omittedDetail'
 import { readBoundedFile } from './utils/readBoundedFile'
@@ -140,8 +141,7 @@ export async function readResource(
       configurationSchema: z.toJSONSchema(retainedRepositoryConfigSchema, {
         io: 'input',
       }),
-      entry:
-        'API 1.5 / extension 0.2.0. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+      entry: `API ${API_VERSION}, extension ${CONFIGURED_MINIMUM_EXTENSION_VERSION} or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.`,
       additionalStops: `Version 1 appends up to seven {line,column,inspections} browser stops within the first selected citation. Version 2 declares participant (browser or server) for the first source/book.anchorIndex/inspections; each additionalStops entry has participant, source {path,hash,line,column}, anchorIndex and inspections, using its own retained article citation. Each stop needs a required value inspection and must be reached in order by the single action. Server stops use the owned Next worker and sealed action-browser modules; pending breakpoint registration is not a verified pause. Codebook arms only the next expected stop: the first stop before input, and each later stop inside the codebook_continue that follows the stop before it. A later stop's line can therefore execute earlier without pausing; declare stops in the order the action executes them. If a later stop is not hit within ${ACTIVE_TIMEOUT_SECONDS} seconds of the preceding continuation, the run fails with 'Repository continuation reached no next declared pause' and names that stop. If a later stop cannot be armed, that codebook_continue answers 'Continue was not confirmed.' with the arming error as its cause and sends no resume; the run ends with the reason 'Next declared stop was not armed and no resume was sent' (read the run resource), and earlier observations stay. Explain each committed pause and copy that participant's current continueArguments. All declared stops are required before after-condition success. Chronological order alone does not establish an async causal link.`,
       inspections:
         'Declare unique value:<path> or type:<path> inspections, at least one required value. Paths contain one to four ASCII identifier segments, excluding reserved roots and prototype access. Values are observed primitives, including the explicit {type:"undefined"} marker, not expected values. A value that is an object or a function is captured as the marker {type:"object"} or {type:"function"} and the run goes on: objects are not bounded, so its members are not captured facts; declare type:<path> or a primitive member such as value:credentials.email to capture one, and read the members in the native debugger state of the observation. Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. DOM conditions use literals, never patterns, and all conditions must hold: a text condition compares the element\'s whole textContent, trimmed and with whitespace runs collapsed on both sides; the texts of child elements are joined without a space, and CSS white-space, zero-width spaces and soft hyphens are not applied; an attribute condition compares the entire value exactly.',
@@ -151,7 +151,7 @@ export async function readResource(
       sequence: [
         'codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run.',
         "Poll the returned run resource until it becomes ready or terminal, or reaches preparationDeadlineAt. While preparing, preparationRemainingMs is computed from Codebook's clock; a positive value means the deadline has not passed even if a local time-zone display differs. An unchanged preparing state while the app loads is not a reason to stop it. Once repository-click appears in nextActions, read manifestUri and verify its configurationHash, accepted configuration, complete citation identity and exact source/JS/map hashes before input.",
-        "Send repository-click once with a stable action key. Read inspectionUri and sourceUri returned by the observation for actual declared values. The inspection's source is the bound position to cite; requestedSource is the position you declared. Bounded resources provide content chunks and nextUri; concatenate every chunk in order and parse JSON before claiming complete inspection. Call codebook_explain with the exact source.hash and captured fact keys, including value: or type: prefixes; wait for its committed explanationUri before continuing. Chat prose alone is not saved in Study. Include learningSummary for saved question, processing summary and sequence steps; classify each relationship as observed, source-derived or unknown. Bind source steps to exact same-run snapshot/source references. After the run is stopped and demonstrated, its terminalReference can bind an observed final-result step in a newly committed full summary.",
+        "Send repository-click once with a stable action key. Read inspectionUri and sourceUri returned by the observation for actual declared values. The inspection's source is the bound position to cite; requestedSource is the position you declared. declaredSource is the position you declared (requestedSource is its older name), armed the place Codebook requested the breakpoint at when that differs, source where it bound and paused: cite source. A saved study's learning resource gives armed as {line} only, and only when the requested line differs from the declared line; a request moved to another column of the declared line is in the live inspection and the journal only. When the debugger bound a stop on another line than you declared, its inspection carries place, one sentence that names the line the stop paused on: name that line as the place of the pause in the interpretation, in the learning summary and in your answer to the learner. codebook_explain refuses the first interpretation of such a stop when it does not contain the paused line's number; send it again under the same key with the line named. Bounded resources provide content chunks and nextUri; concatenate every chunk in order and parse JSON before claiming complete inspection. Call codebook_explain with the exact source.hash and captured fact keys, including value: or type: prefixes; wait for its committed explanationUri before continuing. Chat prose alone is not saved in Study. Include learningSummary for saved question, processing summary and sequence steps; classify each relationship as observed, source-derived or unknown. Bind source steps to exact same-run snapshot/source references. After the run is stopped and demonstrated, its terminalReference can bind an observed final-result step in a newly committed full summary.",
         "Use codebook_reveal for the immutable Study source, then copy the current paused participant continueArguments. That continue arms the next declared stop before it resumes. Earlier observations remain immutable. A manual or competing resume of a captured pause, or a second stop the debugger announces, invalidates this operation. A pause the debugger makes for itself away from the next declared stop's bound place and resumes by itself is retired: the journal records it as cdp.adapter-pause-retired with its place and pausedForMs (the first 100 such pauses of a run; the rest are counted), and the run goes on. A pause no stop announced that is resumed only after more than 3 seconds, or after more than 1 second while a stop of that participant is announced and still waits for its own pause, ends the run as a manual or competing resume. A stop announced for a pause that came before its turn (before the input was sent or before the preceding continuation was requested) fails naming that early pause.",
         `After continuation, poll for observed.afterVerified or explicit failure. A Continue response alone does not establish input acknowledgement, after conditions or renderer confirmation. A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its ${ACTIVE_TIMEOUT_SECONDS} second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop's module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records every pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts) and every resume as cdp.resumed or cdp.adapter-pause-retired with pausedForMs. Stop/seal and wait for current history/recording receipts.`,
         "Publish a new complete article revision containing the exact saved studyId/observationId/sourceHash link. Copy studyId from the terminal run resource and observationId from that resource's observations[].id; a debugger runtimeRunId is not a saved Study identity. Its default learning identity and full citation context stay the same. Open the linked observation or recording; replay after shutdown through the discovered recordingUri and playbackUri.",
@@ -459,15 +459,12 @@ export async function readResource(
   if (inspectionMatch?.[1]) {
     const snapshotUri = service.uri(record.id, inspectionMatch[1]),
       snapshot = service.snapshot(record, snapshotUri)
-    // Committed snapshots follow the declared stop order, so a snapshot's index names the stop it answers.
-    const declaredStop =
-      record.definition &&
-      configuredStops(record.definition.configuration)[
-        record.runtime
-          ?.view()
-          .snapshots.findIndex((committed) => committed.id === snapshot.id) ??
-          -1
-      ]
+    // The declared, requested and bound places of the stop this snapshot answers, from the run itself.
+    const boundPlace = service.boundPlace(record, snapshot),
+      declaredPlace = boundPlace && {
+        line: boundPlace.declaredLine,
+        column: boundPlace.declaredColumn,
+      }
     return readJsonPage(
       `${snapshotUri}/inspection`,
       {
@@ -475,6 +472,8 @@ export async function readResource(
         historical: true,
         pause: snapshot.pause,
         elapsedMs: snapshot.elapsedMs,
+        // Only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
+        ...(boundPlace?.place && { place: boundPlace.place }),
         // The position the debugger bound and paused at; it lies on the declared line or a later line the stop's binding rule accepts, and may differ from the requested column.
         source: {
           hash: snapshot.source.hash,
@@ -482,12 +481,12 @@ export async function readResource(
           column: snapshot.source.column,
           uri: `${snapshotUri}/source/typescript`,
         },
-        ...(declaredStop && {
-          requestedSource: {
-            line: declaredStop.source.line,
-            column: declaredStop.source.column,
-          },
+        // requestedSource keeps its meaning (the declared position); declaredSource says it under its own name, and armed is where the breakpoint was requested when that differs.
+        ...(declaredPlace && {
+          requestedSource: declaredPlace,
+          declaredSource: declaredPlace,
         }),
+        ...(boundPlace?.armed && { armed: boundPlace.armed }),
         values: snapshot.values,
         unavailableValues: snapshot.unavailableValues,
       },
