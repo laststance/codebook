@@ -321,13 +321,13 @@ The working context was compacted a fourth time, after the Cursor rows were reco
 
 ### Local review, 2026-10-04
 
-Local CodeRabbit CLI: NOT RUN (the owner has not run `coderabbit auth login` on this host; that coverage is missing, not clean). `open-code-review-delegate` on the range `c549da6..d1bb463`: OCR selected 126 reviewable files of 220 and excluded 94 (89 test files by its default path rule, two of them deleted; 4 Markdown files as an unsupported type; 1 deleted source file); its one rule group for TypeScript and JavaScript and one for the HTML shell were applied. The host reviewed the 126 files in four batches with delegated read-only reviewers: 126 reviewed, 0 skipped. This is not an independent external-provider review.
+Local CodeRabbit CLI: NOT RUN (the owner has not run `coderabbit auth login` on this host; that coverage is missing, not clean). `open-code-review-delegate` on the range `c549da6..d1bb463`: OCR selected 126 reviewable files of 220 and excluded 94 (89 test files by its default path rule, two of them deleted; 4 Markdown files as an unsupported type; 1 deleted source file); its one rule group for TypeScript and JavaScript and one for the HTML shell were applied. The host reviewed the 126 files in four batches with delegated read-only reviewers: 126 reviewed, 0 skipped. The Files column below adds up to 139, because the 13 helpers under `extension/src/tests/utils/` were given to batch C and to batch D; the four lists hold 126 different files. This is not an independent external-provider review.
 
 | Batch                                                                                                    | Files | Critical | High | Medium | Low |
 | -------------------------------------------------------------------------------------------------------- | ----: | -------: | ---: | -----: | --: |
 | A: `studyWorkspace.ts`, the replay debugger, the server, the publisher and shell, the pane               |    16 |        0 |    1 |      1 |   7 |
 | B: `extension.ts`, `configuredBrowserRun.ts`, the service, library, recording store, reader, CI workflow |    18 |        0 |    1 |      3 |   8 |
-| C: `extension/src/utils/`                                                                                |    90 |        0 |    1 |      2 |  10 |
+| C: `extension/src/utils/` (77 files) and the 13 helpers of `extension/src/tests/utils/`                  |    90 |        0 |    1 |      2 |  10 |
 | D: test harnesses and helpers                                                                            |    15 |        0 |    0 |      4 |  12 |
 
 No finding is critical. Five findings are defects this cycle's own changes introduced; they are fixed before the delivery (`12f1cff`), each with a test that is red without the fix (the compiled file reverted, the named test run, the file restored and compared):
