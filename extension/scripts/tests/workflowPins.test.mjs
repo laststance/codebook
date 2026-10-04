@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -86,6 +86,52 @@ function stepLines(workflow, name) {
     (line, index) => index > first && (line === '' || line.startsWith('- ')),
   )
   return lines.slice(first, next === -1 ? undefined : next)
+}
+
+/**
+ * Lists the path filters of a workflow's triggers, one list per `paths` key, so a pin can compare what starts a job with what the job runs.
+ * @param workflow - The workflow's text.
+ * @returns The entries of every `paths` list in file order; empty when no trigger is filtered.
+ * @example
+ * pathFiltersOf('on:\n  push:\n    paths:\n      - a.ts\n      - b.ts\n') // => [['a.ts', 'b.ts']]
+ */
+function pathFiltersOf(workflow) {
+  const lines = workflow.split('\n'),
+    filters = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() !== 'paths:') continue
+    const entries = []
+    // The list ends at the first line that is not one of its entries.
+    while (lines[index + 1]?.trim().startsWith('- ')) {
+      index += 1
+      entries.push(lines[index].trim().slice('- '.length))
+    }
+    filters.push(entries)
+  }
+  return filters
+}
+
+/**
+ * Lists the TypeScript sources a set of test files loads, directly and through relative imports, so a path filter can be compared with the files whose change can alter the tests' result.
+ * @param entries - The test files, as paths from the repository root.
+ * @returns The entries and every source they import, as sorted paths from the repository root with forward slashes.
+ * @example
+ * await sourcesLoadedBy(['extension/src/tests/isProcessGone.test.ts'])
+ * // => ['extension/src/tests/isProcessGone.test.ts', 'extension/src/utils/isProcessGone.ts', 'extension/src/utils/systemErrorCode.ts']
+ */
+async function sourcesLoadedBy(entries) {
+  const loaded = new Set(),
+    waiting = [...entries]
+  while (waiting.length > 0) {
+    const path = waiting.pop()
+    if (loaded.has(path)) continue
+    loaded.add(path)
+    const source = await repositoryText(path)
+    // A relative specifier names another source of the extension; a package or a Node module is not part of the filter.
+    for (const [, specifier] of source.matchAll(/from '(\.{1,2}\/[^']+)'/g))
+      waiting.push(`${posix.join(dirname(path), specifier)}.ts`)
+  }
+  return [...loaded].toSorted()
 }
 
 test('the fast build writes the build metadata once: neither the build:fast script nor the Reader DOM job runs build-metadata.mjs after it', async () => {
@@ -202,4 +248,80 @@ test('the Reader DOM job keeps the video encoder between runs under a key that n
       workflow.indexOf('- name: Install the video encoder'),
     'the encoder is downloaded before its cache is restored',
   )
+})
+
+test('the Windows storage lock job runs the lock test files on windows-latest and starts for every lock source those tests load', async () => {
+  // Arrange
+  const workflow = await repositoryText(
+    '.github/workflows/storage-locks-windows.yml',
+  )
+
+  // Act
+  const [pushFilter, pullRequestFilter, ...otherFilters] =
+    pathFiltersOf(workflow)
+  const loadedSources = await sourcesLoadedBy([
+    'extension/src/tests/withStorageLock.test.ts',
+    'extension/src/tests/isProcessGone.test.ts',
+    'extension/src/tests/currentStorageOwner.test.ts',
+    'extension/src/tests/isFromEarlierBoot.test.ts',
+    'extension/src/tests/isSameStorageMachine.test.ts',
+    'extension/src/tests/readBootIdentity.test.ts',
+  ])
+  const actionReferences = workflow
+    .split('\n')
+    .map((line) => line.trim().replace(/^- /, ''))
+    .filter((line) => line.startsWith('uses: '))
+  const settings = workflow.split('\n').map((line) => line.trim())
+
+  // Assert: both triggers have one filter, the workflow itself and every source the six test files load; only the
+  // two constants files, which most pull requests change, are left out.
+  assert.deepEqual(pushFilter, [
+    '.github/workflows/storage-locks-windows.yml',
+    'extension/src/tests/currentStorageOwner.test.ts',
+    'extension/src/tests/isFromEarlierBoot.test.ts',
+    'extension/src/tests/isProcessGone.test.ts',
+    'extension/src/tests/isSameStorageMachine.test.ts',
+    'extension/src/tests/readBootIdentity.test.ts',
+    'extension/src/tests/utils/answerKernelBootId.ts',
+    'extension/src/tests/withStorageLock.test.ts',
+    'extension/src/utils/claimStorageLockTakeover.ts',
+    'extension/src/utils/currentStorageOwner.ts',
+    'extension/src/utils/isFromEarlierBoot.ts',
+    'extension/src/utils/isLeftEmpty.ts',
+    'extension/src/utils/isProcessGone.ts',
+    'extension/src/utils/isRecordedOwnerGone.ts',
+    'extension/src/utils/isSameStorageMachine.ts',
+    'extension/src/utils/isStaleStorageLock.ts',
+    'extension/src/utils/placeStorageLock.ts',
+    'extension/src/utils/readBootIdentity.ts',
+    'extension/src/utils/readRecordedOwner.ts',
+    'extension/src/utils/removeStaleStorageClaims.ts',
+    'extension/src/utils/removeStaleStorageLock.ts',
+    'extension/src/utils/systemErrorCode.ts',
+    'extension/src/utils/withStorageLock.ts',
+  ])
+  assert.deepEqual(pullRequestFilter, pushFilter)
+  assert.deepEqual(otherFilters, [])
+  assert.deepEqual(
+    [
+      '.github/workflows/storage-locks-windows.yml',
+      ...loadedSources.filter(
+        (path) =>
+          path !== 'extension/src/constants.ts' &&
+          path !== 'extension/src/runtimeSupport/constants.ts',
+      ),
+    ],
+    pushFilter,
+  )
+  assert.equal(settings.includes('runs-on: windows-latest'), true)
+  assert.equal(settings.includes('name: Storage lock tests on Windows'), true)
+  assert.deepEqual(runCommandsOf(workflow), [
+    'git config --global core.autocrlf false',
+    'node scripts/build-fast.mjs',
+    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js',
+  ])
+  assert.deepEqual(actionReferences, [
+    'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
+    'uses: ./.github/actions/prepare',
+  ])
 })

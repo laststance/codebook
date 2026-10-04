@@ -62,6 +62,10 @@ import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
 } from './utils/classifyWikiUpdateEnd'
+import {
+  currentStorageOwner,
+  useEditorMachineId,
+} from './utils/currentStorageOwner'
 import { cursorRegistrationNotice } from './utils/cursorRegistrationNotice'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
@@ -110,6 +114,8 @@ export function activate(
     workspaceState: Pick<vscode.Memento, 'get' | 'update'>
   },
 ) {
+  // Before anything takes a storage lock: locks and the connection descriptor name this machine by the editor's id.
+  useEditorMachineId(vscode.env?.machineId, vscode.env?.remoteName)
   type Running = {
     endpoint: Awaited<ReturnType<typeof startServer>>
     environment: Awaited<ReturnType<typeof createEnvironment>>
@@ -258,10 +264,14 @@ export function activate(
           storageRoot,
           `${service.instanceId}${CONNECTION_DESCRIPTOR_SUFFIX}`,
         )
-        // The process id lets another window tell a descriptor left by a crashed window from a running one.
+        // The process id, with its machine and boot, lets another window tell a descriptor left by a crashed window from a running one.
         await writeFile(
           descriptorPath,
-          JSON.stringify({ ...endpoint.descriptor, pid: process.pid }),
+          JSON.stringify({
+            ...endpoint.descriptor,
+            pid: process.pid,
+            ...(await currentStorageOwner()),
+          }),
           {
             mode: PRIVATE_FILE_MODE,
             flag: 'wx',

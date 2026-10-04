@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -308,8 +308,7 @@ test('the run admission answers while another window holds the storage lock', as
   assert.equal(admitsNewStudy, false)
   // The lock was real: a save is refused while it is held.
   await assert.rejects(library.saveStudy(second.study), {
-    message:
-      'Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.',
+    message: `Learning storage is locked by another writer or an interrupted session (lock file: ${join(await realpath(directory), 'writer.lock')}). No data changed; retry after resolving the lock.`,
   })
 })
 

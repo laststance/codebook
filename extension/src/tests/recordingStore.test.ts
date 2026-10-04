@@ -287,6 +287,29 @@ test('a torn journal exposes only the verified prefix and never invents an end t
   assert.match(recovered.reason ?? '', /end time unknown/)
 })
 
+// Value: protects=a recording whose writer still runs under another user is never offered as an interrupted one; fails_when=every failed probe of the owner counts as "gone" (Cycle 0044 rows SS-6 and ST-12); why_new=the owner tests used a process id that does not exist, which answers ESRCH; seam=the process probe
+test('a recording whose owner process answers EPERM stays unfinalized, not interrupted', async (context) => {
+  // Arrange: a flushed recording whose header names process 4242 of this machine, which this user may not signal.
+  const { directory, binding, store } = await recordingHarness(context),
+    writer = await store.start(binding, 0)
+  writer.frame({ bytes: png, elapsedMs: 10, kind: 'stream' })
+  await writer.flush()
+  const header = await store.header(binding.studyId)
+  await writeFile(
+    join(store.path(binding.studyId), 'header.json'),
+    JSON.stringify({ ...header, owner: { ...header.owner, pid: 4242 } }),
+  )
+  context.mock.method(process, 'kill', (): true => {
+    throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+  })
+  // Act
+  const reopened = await new RecordingStore(directory, workspaceKey).read(
+    binding.studyId,
+  )
+  // Assert
+  assert.equal(reopened.status, 'unfinalized')
+})
+
 test('a failed final seal never advertises a completed recording even when the terminal journal record exists', async (context) => {
   // Arrange
   const { directory, binding, store } = await recordingHarness(

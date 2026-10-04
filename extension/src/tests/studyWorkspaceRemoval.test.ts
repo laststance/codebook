@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import {
+import fsPromises, {
   mkdir,
   readFile,
   readdir,
@@ -151,6 +151,32 @@ function holdArchiveRead(context: TestContext, studyId: string) {
     },
   )
   return { started, release }
+}
+
+/**
+ * Makes the removal of the storage lock file fail from now on, so a removal that holds the lock cannot release it and the lock stays, as a lock does whose file the editor may not delete.
+ * @param context - The test whose mocks are restored at its end.
+ * @param directory - The library directory whose `writer.lock` can no longer be removed.
+ * @example await refuseLockRelease(context, harness.reader.inspect().libraryDirectory!)
+ */
+async function refuseLockRelease(
+  context: TestContext,
+  directory: string,
+): Promise<void> {
+  const lockPath = join(await realpath(directory), 'writer.lock')
+  const unlinkBefore = fsPromises.unlink
+  context.mock.method(
+    fsPromises,
+    'unlink',
+    async (...input: Parameters<typeof unlinkBefore>) => {
+      if (input[0] === lockPath)
+        throw Object.assign(
+          new Error(`EPERM: operation not permitted, unlink '${lockPath}'`),
+          { code: 'EPERM' },
+        )
+      return unlinkBefore(...input)
+    },
+  )
 }
 
 /** Sends the Saved studies list's choice of one entry without waiting for the reader to show it, as a learner does who acts again at once. @example const opening = sendChoice(harness, 'history', study.id) */
@@ -993,7 +1019,10 @@ test('a removal while another window holds the storage lock deletes nothing and 
   const harness = await workspaceHarness()
   try {
     const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
-    const lock = join(harness.reader.inspect().libraryDirectory!, 'writer.lock')
+    const lock = join(
+      await realpath(harness.reader.inspect().libraryDirectory!),
+      'writer.lock',
+    )
     await writeFile(lock, '{"pid":1}')
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     // Act
@@ -1005,7 +1034,7 @@ test('a removal while another window holds the storage lock deletes nothing and 
       {
         status: 'failed',
         studyId: study.id,
-        text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Learning storage is locked by another writer or an interrupted session. No data changed; retry after resolving the lock.`,
+        text: `The saved study could not be moved to the ${TRASH}. Nothing was deleted. Learning storage is locked by another writer or an interrupted session (lock file: ${lock}). No data changed; retry after resolving the lock.`,
       },
     )
     assert.deepEqual(harness.trashMoves, [])
@@ -3239,9 +3268,9 @@ test('a reader closed while the neighbour of the removed study of a finished liv
   }
 })
 
-// Value: protects=a removal that moved every file says so even when the storage lock cannot be released, and no waiting checkpoint writes the study back; fails_when=the reader reads the lock's failure as "nothing was deleted", keeps the run as a checkpoint candidate and resumes its held-back write; why_new=no reader test made the lock release fail after the moves; seam=the editor's Trash, stubbed at the vscode boundary, which loses the lock file with the last move
+// Value: protects=a removal that moved every file says so even when the storage lock cannot be released, and no waiting checkpoint writes the study back; fails_when=the reader reads the lock's failure as "nothing was deleted", keeps the run as a checkpoint candidate and resumes its held-back write; why_new=no reader test made the lock release fail after the moves; seam=the editor's Trash, stubbed at the vscode boundary, from whose last move on the lock file can no longer be removed
 test('a removal whose storage lock cannot be released after every file moved reports the study as moved, names the lock in the reader and writes no waiting checkpoint', async (context) => {
-  // Arrange: a recorded, stopped and saved run; its next study save is held and a newer checkpoint waits behind it. A directory takes the lock file's place with the archive's move, so the lock stays.
+  // Arrange: a recorded, stopped and saved run; its next study save is held and a newer checkpoint waits behind it. From the archive's move on the lock file can no longer be removed, so the lock stays.
   const harness = await recordedReaderHarness()
   try {
     const directory = harness.reader.inspect().libraryDirectory!
@@ -3282,10 +3311,8 @@ test('a removal whose storage lock cannot be released after every file moved rep
     await readerSeams(harness).refresh()
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     harness.beforeTrashMoves(async (path) => {
-      if (path.endsWith('.study.v3.json')) {
-        await rm(join(directory, 'writer.lock'))
-        await mkdir(join(directory, 'writer.lock', 'kept'), { recursive: true })
-      }
+      if (path.endsWith('.study.v3.json'))
+        await refuseLockRelease(context, directory)
     })
     // Act: the learner confirms while the first save is in flight; every file then moves and the lock release fails.
     const removal = requestRemoval(harness, harness.studyId)
@@ -3874,8 +3901,8 @@ test('a removal of this window’s run waits for an explanation that is being wr
   }
 })
 
-// Value: protects=a removal that made room but left the storage lock in place names no next step that the lock would refuse; fails_when=the moved line says "Ask your editor agent to start the run again" while `writer.lock` stays (0040-D8); why_new=the next step was only tested with a released lock; seam=the editor's Trash, stubbed at the vscode boundary, which puts a directory in the lock file's place with the last move
-test('a removal that makes room for a refused run but cannot release the storage lock names no next step and keeps the refusal line', async () => {
+// Value: protects=a removal that made room but left the storage lock in place names no next step that the lock would refuse; fails_when=the moved line says "Ask your editor agent to start the run again" while `writer.lock` stays (0040-D8); why_new=the next step was only tested with a released lock; seam=the editor's Trash, stubbed at the vscode boundary, from whose last move on the lock file can no longer be removed
+test('a removal that makes room for a refused run but cannot release the storage lock names no next step and keeps the refusal line', async (context) => {
   // Arrange: a library full at one study, a run refused on it, and a Trash after whose last move the lock stays.
   const harness = await workspaceHarness()
   try {
@@ -3885,10 +3912,8 @@ test('a removal that makes room for a refused run but cannot release the storage
     await waitUntil(() => refused.record.stopped, 'the end of the refused run')
     const directory = harness.reader.inspect().libraryDirectory!
     harness.beforeTrashMoves(async (path) => {
-      if (path.endsWith('.study.v3.json')) {
-        await rm(join(directory, 'writer.lock'))
-        await mkdir(join(directory, 'writer.lock', 'kept'), { recursive: true })
-      }
+      if (path.endsWith('.study.v3.json'))
+        await refuseLockRelease(context, directory)
     })
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     // Act

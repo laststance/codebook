@@ -9,6 +9,14 @@ export const DYNAMIC_PORT = 0
 export const TOKEN_BYTES = 32
 export const PRIVATE_DIRECTORY_MODE = 0o700
 export const PRIVATE_FILE_MODE = 0o600
+/** Where a Linux kernel publishes the random identity of its current boot; other systems have no such file. */
+export const KERNEL_BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
+/** How far the boot time a storage owner recorded may lie before this boot's and still be the same boot. Each is the wall clock minus the uptime, so a clock correction moves it by seconds, while a restart moves it by at least the earlier session's length. */
+export const STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS = 60_000
+/** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
+export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
+/** What an editor that runs without its telemetry service answers as `vscode.env.machineId` on every computer; it identifies none. */
+export const EDITOR_MACHINE_ID_PLACEHOLDER = 'someValue.machineId'
 export const CURSOR_MCP_CATALOG_REFRESH_STEP_MS = 1
 export const CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES = 16_384
 export const CURSOR_MCP_CATALOG_LOCK_RETRIES = 3
