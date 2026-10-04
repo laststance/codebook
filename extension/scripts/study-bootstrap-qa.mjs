@@ -1056,6 +1056,31 @@ async function check(page, options, collected) {
       const spokenDuringScrub = await page
         .locator('#node-history-playhead')
         .getAttribute('aria-valuetext')
+      // What Chrome's own accessibility tree holds for the same thumb, beside the attribute (row NF-18, 0031-U6).
+      // The tree a debugging client is given carries the role, the name and the range, and has no field for `aria-valuetext`
+      // (a plain `<input type="range" aria-valuetext="…">` reads the same there), so the spoken sentence stays pinned by the case above.
+      const accessibility = await page.context().newCDPSession(page)
+      const { root } = await accessibility.send('DOM.getDocument')
+      const { nodeId: playheadNodeId } = await accessibility.send(
+        'DOM.querySelector',
+        { nodeId: root.nodeId, selector: '#node-history-playhead' },
+      )
+      const { nodes: playheadAccessibility } = await accessibility.send(
+        'Accessibility.getPartialAXTree',
+        { nodeId: playheadNodeId, fetchRelatives: false },
+      )
+      await accessibility.detach()
+      const rangeProperty = (name) =>
+        playheadAccessibility[0]?.properties?.find(
+          (property) => property.name === name,
+        )?.value?.value
+      const readFromAccessibilityTree = {
+        role: playheadAccessibility[0]?.role?.value,
+        name: playheadAccessibility[0]?.name?.value,
+        value: playheadAccessibility[0]?.value?.value,
+        minimum: rangeProperty('valuemin'),
+        maximum: rangeProperty('valuemax'),
+      }
       await page
         .locator('#node-history-playhead')
         .dispatchEvent('pointercancel', { bubbles: true })
@@ -1066,6 +1091,16 @@ async function check(page, options, collected) {
         passed:
           spokenUnderThumb === '150.00 s of recorded test time' &&
           spokenDuringScrub === '150.00 s of recorded test time',
+      })
+      cases.push({
+        name: 'Chrome’s accessibility tree gives the Node playhead as a slider named Recorded test time whose value is the time under the thumb',
+        actual: readFromAccessibilityTree,
+        passed:
+          readFromAccessibilityTree.role === 'slider' &&
+          readFromAccessibilityTree.name === 'Recorded test time' &&
+          readFromAccessibilityTree.value === 150000 &&
+          readFromAccessibilityTree.minimum === 0 &&
+          readFromAccessibilityTree.maximum === 400000,
       })
       // Arrange: two events, the second one unselected, with keyboard focus on its Select event (SD-1).
       await publish({ ...twoStops, nodeHistoryPosition: nodeStop })
