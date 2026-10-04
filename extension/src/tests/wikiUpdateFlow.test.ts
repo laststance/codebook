@@ -803,6 +803,34 @@ test('closing the window while a VS Code update is watched stops the watch and s
   assert.deepEqual(wiki.notices, [])
 })
 
+// Value: protects=the first press after a window was reloaded during a VS Code watch; fails_when=the closing window records that its chat "may still be updating", although the chat ended with the window, so the reloaded window refuses the press for up to fifteen minutes; why_new=Cycle 0045 local review wiki-1 #8; seam=none
+test('a window that was reloaded while it watched a VS Code update starts the next update at once', async () => {
+  // Arrange: one window before and after its reload shares the workspace state.
+  const workspaceState = new Map<string, unknown>()
+  const wiki = await openWikiWindow({ workspaceState })
+  await wiki.clickUpdate()
+  const whileWatched = wiki.status().state
+  await wiki.closeWindow()
+  const reloaded = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+    workspaceState,
+  })
+  try {
+    // Act
+    await reloaded.clickUpdate()
+
+    // Assert
+    assert.equal(whileWatched, 'running')
+    assert.equal(wiki.status().state, 'cancelled')
+    assert.equal(reloaded.status().state, 'running')
+    assert.equal(reloaded.chatRequests.length, 1)
+    assert.deepEqual(reloaded.errors, [])
+  } finally {
+    await reloaded.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
 // The bound is twice the default termination grace: an agent that is never started fails this test instead of hanging its file.
 test(
   'closing the window stops the Cursor agent and waits until its process has closed',

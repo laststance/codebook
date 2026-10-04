@@ -75,6 +75,7 @@ import { isWikiManifestOf } from './utils/isWikiManifestOf'
 import { isWikiUpdateTimeout } from './utils/isWikiUpdateTimeout'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
+import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
@@ -766,10 +767,12 @@ export function activate(
     })
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
-    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
-    const mayAgentStillWork =
-      run.host === 'vscode' &&
-      (end.state === 'cancelled' || end.state === 'timed-out')
+    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
+    const mayAgentStillWork = mayWikiChatStillPublish(
+      run.host,
+      end.state,
+      isExtensionStopping,
+    )
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
