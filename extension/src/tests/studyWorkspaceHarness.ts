@@ -2109,13 +2109,15 @@ export async function workspaceHarness(
             const primaryEditor = visibleSourceEditors.find(
               (editor) => editor.group === primaryGroup,
             )
-            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the chat's group stays the named one; a text editor the first group shows is reported as the active text editor, a pane is not reported at all.
+            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
             if (
               leavesPaneFocusUnreportedBesideChat &&
               separateEditorPart &&
-              (staleNamedGroup ?? activeTabGroup) === separateEditorPart.group
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.focused)
             ) {
-              staleNamedGroup = separateEditorPart.group
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
               activeTabGroup = primaryGroup
               separateEditorPart.focused = false
               if (primaryGroup.activeTab?.input instanceof TabInputText)
@@ -2478,9 +2480,11 @@ export async function workspaceHarness(
               leavesPaneFocusUnreportedBesideChat &&
               separateEditorPart &&
               !showsAnotherTab &&
-              (staleNamedGroup ?? activeTabGroup) === separateEditorPart.group
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.focused)
             )
-              staleNamedGroup = separateEditorPart.group
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
             activeTabGroup = group
             innerFocusedPanel = undefined
             if (separateEditorPart) separateEditorPart.focused = false
@@ -3254,7 +3258,7 @@ export async function workspaceHarness(
       revealsPanelsLater = true
     },
     /**
-     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the chat's group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while the chat has the keyboard, whether it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2) or a group of the main editor (obs15 R: a recording opened from the chat input while the editor named the captured source's group): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the named group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
      * @example
      * const chat = harness.addSeparateEditorPart()
      * harness.leavePaneFocusUnreportedBesideChat()

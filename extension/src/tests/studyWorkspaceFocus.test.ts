@@ -1497,6 +1497,64 @@ test("the fake editor leaves the keyboard on the page body when a disposed pane'
   }
 })
 
+// Value: protects=reader tests meeting Cursor as it answers the command that focuses the first editor group while the chat input has the keyboard and the editor names a group of the main editor: a pane in the first group is not reported as focused and the named group stays the named one; fails_when=the fake reports the pane's focus in that state, which Cursor does not, so a measurement that waits for that report passes in the tests and ends after five seconds in the editor; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: a recording opened from the chat input while the editor named the captured source's group was never read; the wait for the first group's focus ran out); seam=the fake editor with a separate editor part, leavePaneFocusUnreportedBesideChat and its panes
+test("the fake Cursor reports no focus of a pane in the first group while the chat input has the keyboard and the editor names the captured source's group", async () => {
+  // Arrange: the three Study panes are open, the Application pane is the tab the first group shows; the learner clicked into the captured source and then into the chat input.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    const source = harness.editor.window.visibleTextEditors.find(
+      (editor) => editor.document.uri.scheme === 'codebook-source',
+    )
+    assert.ok(source)
+    await harness.editor.window.showTextDocument(source.document, {
+      viewColumn: 2,
+      preserveFocus: false,
+    })
+    chat.focus()
+    let groupEvents = 0
+    harness.editor.window.tabGroups.onDidChangeTabGroups(() => {
+      groupEvents++
+    })
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+
+    // Assert: the pane has the keyboard, and nothing the editor API offers says so.
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.deepEqual(
+      {
+        paneWithKeyboard: harness.focusedPanel(),
+        reportedActive: application?.active,
+        namedColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+        activeTextEditor: harness.editor.window.activeTextEditor?.viewColumn,
+        groupEvents,
+        chatHasKeyboard: chat.focused(),
+      },
+      {
+        paneWithKeyboard: 'codebook.scopedBrowser',
+        reportedActive: false,
+        namedColumn: 2,
+        activeTextEditor: undefined,
+        groupEvents: 0,
+        chatHasKeyboard: false,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests meeting Cursor as it answers a text editor that is shown with the keyboard while it names the chat's group: the editor is reported as the active text editor and the chat's group stays the named one; fails_when=the fake names the shown editor's group as the active tab group, which Cursor does only after the next tab or group change, so a measurement that waits for that name passes in the tests and is refused in the editor; why_new=Cycle 0045 cause 12 (e), second native result (the measurement enters the main editor through the captured source's text editor when the first group shows a pane); seam=the fake editor with a separate editor part and leavePaneFocusUnreportedBesideChat
 test("the fake Cursor reports a text editor shown with the keyboard beside the chat as the active text editor and keeps naming the chat's group", async () => {
   // Arrange: the editor names the chat's group, whose input has the keyboard; the first group shows a file.
