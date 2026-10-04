@@ -820,26 +820,46 @@ export class LearningLibrary {
       }
     >()
     for (const name of await readdir(this.directory)) {
-      const storage = STUDY_STORAGE_FORMATS.find((format) =>
-          name.endsWith(format.archiveSuffix),
-        ),
-        newer = storage ? undefined : newerStudyArchive(name)
-      if (!storage && !newer) continue
-      const id = studyIdSchema.parse(
-          storage ? name.slice(0, -storage.archiveSuffix.length) : newer?.id,
-        ),
-        version = storage?.version ?? newer?.version ?? 0,
+      const archive = this.archiveOfName(name)
+      if (!archive) continue
+      const id = studyIdSchema.parse(archive.id),
         prior = entries.get(id)
-      if (!prior || version > prior.version)
+      if (!prior || archive.version > prior.version)
         entries.set(id, {
           id,
           path: join(this.directory, name),
-          format: storage?.format ?? 'newer',
-          version,
+          format: archive.format,
+          version: archive.version,
         })
     }
     // More archives than the maximum (a study restored from the Trash into a full library) stay listed, so the learner can delete them; admission refuses new studies until the count is below the limit.
     return [...entries.values()]
+  }
+
+  /**
+   * Reads which study a file of the library directory is the archive of, and in which format; called by {@link entries} for every file name.
+   * @param name - A file name of the library directory.
+   * @returns The unvalidated study id with the format and its number: a known format by its suffix, `newer` for a format number this Codebook does not know yet. `undefined` for a file that is no study archive.
+   * @example this.archiveOfName('a_b.study.v3.json') // => { id: 'a_b', format: 'v3', version: 3 }
+   */
+  private archiveOfName(name: string):
+    | {
+        id: string
+        format: Exclude<StudyCatalogEntry['format'], 'node-test-history'>
+        version: number
+      }
+    | undefined {
+    const storage = STUDY_STORAGE_FORMATS.find((format) =>
+      name.endsWith(format.archiveSuffix),
+    )
+    if (storage)
+      return {
+        id: name.slice(0, -storage.archiveSuffix.length),
+        format: storage.format,
+        version: storage.version,
+      }
+    const newer = newerStudyArchive(name)
+    return newer && { ...newer, format: 'newer' }
   }
 
   /** Validates bounded sidecar identity before showing its last validated outcome in the catalog. @example await this.readMetadata(id) */

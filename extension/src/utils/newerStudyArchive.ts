@@ -17,10 +17,10 @@ const NUMBERED_STUDY_ARCHIVE = /^(.+)\.study\.v(\d+)\.json$/
 export function newerStudyArchive(
   name: string,
 ): { id: string; version: number } | undefined {
-  const [, id, number] = NUMBERED_STUDY_ARCHIVE.exec(name) ?? []
-  if (id === undefined || number === undefined) return undefined
-  const version = Number(number)
+  const match = NUMBERED_STUDY_ARCHIVE.exec(name)
+  if (!match) return undefined
+  const version = Number(match[2])
   return Number.isSafeInteger(version) && version > CROSS_RUNTIME_STUDY_VERSION
-    ? { id, version }
+    ? { id: match[1]!, version }
     : undefined
 }
