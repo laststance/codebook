@@ -33,18 +33,34 @@ function isSafeOwnedPath(path: string): boolean {
   )
 }
 
-/** Reads the `ownedFiles` hashes the publisher wrote into a manifest; empty for a manifest published before hashes were recorded. */
+/**
+ * Lists the entries of a manifest's `ownedFiles` record; called by {@link readOwnedFileHashes} before any entry is checked.
+ * @param manifest - The parsed manifest.
+ * @returns Every key of `ownedFiles` with its value, whatever its type, in the record's order; empty when the manifest has no `ownedFiles` or it is no object.
+ * @example
+ * ownedFileEntries({ ownedFiles: { 'index.html': 'a1b2…' } }) // => [['index.html', 'a1b2…']]
+ * ownedFileEntries({ pages: [] })                             // => []
+ */
+function ownedFileEntries(manifest: object): Array<[string, unknown]> {
+  return 'ownedFiles' in manifest &&
+    typeof manifest.ownedFiles === 'object' &&
+    manifest.ownedFiles !== null
+    ? Object.entries(manifest.ownedFiles)
+    : []
+}
+
+/**
+ * Reads the `ownedFiles` hashes the publisher wrote into a manifest; called by {@link listChangedOwnedFiles} for the files it compares with the disk.
+ * @param manifest - The parsed manifest.
+ * @returns Each published path with its recorded hash, in the manifest's order; empty for a manifest published before hashes were recorded. An entry whose hash is no string, or whose path is not one the publisher accepts ({@link isSafeOwnedPath}), is left out.
+ * @example
+ * readOwnedFileHashes({ ownedFiles: { 'index.html': 'a1b2…', '../outside': 'c3d4…' } }) // => [['index.html', 'a1b2…']]
+ */
 function readOwnedFileHashes(
   manifest: object,
 ): Array<[path: string, sha256: string]> {
-  if (
-    !('ownedFiles' in manifest) ||
-    typeof manifest.ownedFiles !== 'object' ||
-    manifest.ownedFiles === null
-  )
-    return []
   const hashes: Array<[string, string]> = []
-  for (const [path, sha256] of Object.entries(manifest.ownedFiles))
+  for (const [path, sha256] of ownedFileEntries(manifest))
     // Only paths inside the output are read; a manifest cannot point the check elsewhere.
     if (typeof sha256 === 'string' && isSafeOwnedPath(path))
       hashes.push([path, sha256])
