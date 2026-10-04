@@ -1,7 +1,31 @@
 import type { RetainedStudy } from '../retainedStudySchemas'
 
-import { declaredStopOfSnapshot } from './declaredStopOfSnapshot'
+import {
+  declaredStopOfSnapshot,
+  type DeclaredStopOfSnapshot,
+} from './declaredStopOfSnapshot'
 import { describeBoundPlace } from './describeBoundPlace'
+
+/**
+ * Gives a stop's declared line when the observation paused on another line; called by {@link movedStopDeclaredLine} once the observation's declared stop is found.
+ * @param declared - The observation's declared stop.
+ * @param observation - The observation whose source the pane shows.
+ * @returns
+ * - The declared line, when {@link describeBoundPlace} finds the stop moved
+ * - `undefined` when it paused on its declared line
+ * @example
+ * declaredLineOfMovedStop(declared, observation) // => 73 for a stop declared on line 73 that paused on line 75
+ */
+function declaredLineOfMovedStop(
+  declared: DeclaredStopOfSnapshot,
+  observation: RetainedStudy['observations'][number],
+): number | undefined {
+  const place = describeBoundPlace({
+    declared,
+    bound: { line: observation.source.line, column: observation.source.column },
+  })
+  return place.isMoved ? place.declaredLine : undefined
+}
 
 /**
  * Gives the line the agent declared for an observation's stop when the debugger bound that stop on another line, so the Study pane's source label can name both lines; called by {@link projectConfiguredStudy} for a live or saved study and by {@link projectPlaybackStudy} for the stop shown at a replay's position.
@@ -26,9 +50,5 @@ export function movedStopDeclaredLine(
     observation.id,
   )
   if (!declared) return undefined
-  const place = describeBoundPlace({
-    declared,
-    bound: { line: observation.source.line, column: observation.source.column },
-  })
-  return place.isMoved ? place.declaredLine : undefined
+  return declaredLineOfMovedStop(declared, observation)
 }
