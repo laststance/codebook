@@ -815,6 +815,20 @@ export const CHROME_LINUX_EXECUTABLE_NAMES = [
   'chromium',
   'chromium-browser',
 ] as const
+/** How long "no Chrome found on PATH" is given again without a new search; a browser installed in that time is found by the first prerequisite check after it. */
+export const CHROME_NOT_FOUND_REUSE_MS = 10_000
+/** The directory that holds the profile folder of every managed browser run; short and fixed, because Chrome and the debugger resolve the path before they start. */
+export const MANAGED_PROFILE_ROOT = '/tmp'
+/** What the name of every managed browser profile folder begins with; the rest is random. */
+export const MANAGED_PROFILE_PREFIX = 'codebook-browser-'
+/** The file in a managed browser profile folder that names the editor process, the machine and the boot that made it. Only a folder that carries it is ever removed by a later run. */
+export const MANAGED_PROFILE_OWNER_FILE = 'codebook-owner.json'
+/** How many profile folders the start of a managed run looks at for ones a killed editor left; more than that wait for a later run. */
+export const MANAGED_PROFILE_SWEEP_LIMIT = 64
+/** How often the removal of a run's own profile folder is tried again while something in it is still busy. */
+export const MANAGED_PROFILE_REMOVAL_RETRIES = 3
+/** The pause before the first retry of that removal; each further retry waits this much longer. */
+export const MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS = 100
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */

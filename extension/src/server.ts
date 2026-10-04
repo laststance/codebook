@@ -179,12 +179,13 @@ export async function startServer(service: StudyService, now = Date.now) {
             request.method === 'POST' &&
             isInitializeRequest(body)
           ) {
+            let replaced: [string, Session] | undefined
             if (sessions.size + pendingSessions.size >= MAX_SESSIONS) {
               // Clients that end without DELETE leave idle sessions behind; the least recently seen one makes room, and only busy sessions refuse.
               const idle = [...sessions].filter(
                 ([, candidate]) => !candidate.active,
               )
-              const replaced = idle.reduce<(typeof idle)[number] | undefined>(
+              replaced = idle.reduce<(typeof idle)[number] | undefined>(
                 (oldest, entry) =>
                   !oldest || entry[1].lastSeen < oldest[1].lastSeen
                     ? entry
@@ -199,9 +200,6 @@ export async function startServer(service: StudyService, now = Date.now) {
                 )
                 return
               }
-              // Remove before closing so a concurrent initialize cannot pick the same session.
-              sessions.delete(replaced[0])
-              await replaced[1].protocol.close()
             }
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: randomUUID,
@@ -225,10 +223,15 @@ export async function startServer(service: StudyService, now = Date.now) {
               lastSeen: now(),
               active: 0,
             }
+            // The replaced session leaves and the new one takes its slot in one step, before anything is awaited: an initialize that arrives while the replaced session closes counts the new one and cannot pick the same session.
+            if (replaced) sessions.delete(replaced[0])
             pendingSessions.add(session)
             try {
+              // Best effort: no client can reach the replaced session any more, and its failed close must not refuse the new client.
+              await replaced?.[1].protocol.close().catch(() => undefined)
               await session.protocol.connect(transport)
             } catch (error) {
+              // One scope from the reserved slot to the connected session: whatever fails in between gives the slot back.
               pendingSessions.delete(session)
               await session.protocol.close()
               throw error

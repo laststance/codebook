@@ -12,7 +12,10 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
-import { listVitestTestFiles } from '../utils/listVitestTestFiles'
+import {
+  listVitestTestFiles,
+  type VitestListingReleaseFailure,
+} from '../utils/listVitestTestFiles'
 
 /**
  * Writes a stand-in Vitest CLI that records how it was started, then behaves as the given script body.
@@ -46,6 +49,20 @@ ${body}
         env: Record<string, string>
       },
   }
+}
+
+/**
+ * Removes the private folder a listing kept because its release failed, so that a test of such a listing leaves nothing in the temporary directory, also when it fails.
+ * @param vitest - The stand-in Vitest of the test, whose recorded start names the folder.
+ * @example
+ * await removeKeptListingFolder(vitest) // the folder of '--json=/tmp/codebook-vitest-list-x/files.json' is gone
+ */
+async function removeKeptListingFolder(
+  vitest: Awaited<ReturnType<typeof stubVitest>>,
+): Promise<void> {
+  const started = await vitest.started().catch(() => undefined)
+  const output = started?.argv[2]?.slice('--json='.length)
+  if (output) await rm(dirname(output), { recursive: true, force: true })
 }
 
 test('listing runs the owned Vitest in the repository with the run environment and returns the files it would select', async () => {
@@ -285,11 +302,13 @@ test('a finished listing still returns its files while an exited member of its g
 })
 
 // Cycle 0044 (0041-F4): red while a release that never saw the group end threw inside `finally`, replacing the finished list, and the folder was removed anyway.
-test('a finished listing still returns its files and keeps its folder when its group never stops answering as unreaped', async (context) => {
+// Cycle 0045 (C-L2): red while that failed release was dropped without a word to the caller.
+test('a finished listing whose process group cannot be confirmed as ended returns its files and reports the failed release with the folder it left', async (context) => {
   // Arrange
   const vitest = await stubVitest(
     `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
   )
+  const reported: VitestListingReleaseFailure[] = []
   const kill = process.kill.bind(process)
   context.mock.property(process, 'platform', 'darwin')
   // macOS keeps answering EPERM for a group whose exited member its parent never reaps.
@@ -311,6 +330,7 @@ test('a finished listing still returns its files and keeps its folder when its g
       filter: 'src/a.test.ts',
       excludes: [],
       signal: new AbortController().signal,
+      onReleaseFailed: (failure) => reported.push(failure),
     }).then(
       (files) => files,
       (error: unknown) => error,
@@ -323,8 +343,162 @@ test('a finished listing still returns its files and keeps its folder when its g
       (await stat(dirname(output))).isDirectory(),
       'the listing folder is kept while the group may still write it',
     )
-    await rm(dirname(output), { recursive: true, force: true })
+    assert.equal(reported.length, 1)
+    assert.equal(Number.isInteger(reported[0]!.processGroup), true)
+    assert.deepEqual(reported, [
+      {
+        processGroup: reported[0]!.processGroup,
+        directory: dirname(output),
+        reason:
+          'Error: Timed out waiting for Vitest listing process group exit',
+      },
+    ])
   } finally {
+    await removeKeptListingFolder(vitest)
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0045 (AD-12): red while every failed release was dropped, so a finished listing was returned although a member of its group could not be signalled.
+test('a finished listing whose process group has a member the user may not signal fails with that refusal instead of returning its files, and reports the folder it left', async (context) => {
+  // Arrange
+  const vitest = await stubVitest(
+    `writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));`,
+  )
+  const reported: VitestListingReleaseFailure[] = []
+  const kill = process.kill.bind(process)
+  context.mock.property(process, 'platform', 'linux')
+  // Outside macOS, EPERM for a group means a live member of another user.
+  context.mock.method(
+    process,
+    'kill',
+    (pid: number, signal?: string | number): true => {
+      if (pid < 0)
+        throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+      return kill(pid, signal)
+    },
+  )
+  try {
+    // Act
+    const outcome: unknown = await listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      workspace: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: new AbortController().signal,
+      onReleaseFailed: (failure) => reported.push(failure),
+    }).then(
+      (files) => files,
+      (error: unknown) => error,
+    )
+    // Assert
+    const started = await vitest.started()
+    const directory = dirname(started.argv[2]!.slice('--json='.length))
+    assert.equal(reported.length, 1)
+    const processGroup = reported[0]!.processGroup
+    assert.equal(Number.isInteger(processGroup), true)
+    assert.deepEqual(reported, [
+      { processGroup, directory, reason: 'Error: kill EPERM' },
+    ])
+    assert.ok(outcome instanceof Error)
+    assert.equal(
+      outcome.message,
+      `Vitest listed the test files, but Codebook could not end the listing's process group ${processGroup} (Error: kill EPERM), so a process of that group may still run. The test was not started, and the listing's folder ${directory} is kept. Start the run again.`,
+    )
+    assert.deepEqual(
+      outcome.cause,
+      Object.assign(new Error('kill EPERM'), { code: 'EPERM' }),
+    )
+    assert.ok(
+      (await stat(directory)).isDirectory(),
+      'the listing folder is kept while a member of the group may still write it',
+    )
+  } finally {
+    await removeKeptListingFolder(vitest)
+    await rm(vitest.directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0045 (AD-12): a helper outside the group that holds the error stream also holds the listing's end, so the listing ends only with its deadline or the run; red while the release that then fails was dropped without a word.
+test('a listing whose helper left the process group and keeps its error stream open is reported as not released and names its folder', async () => {
+  // Arrange: the helper starts its own process group, inherits the listing's error stream and outlives the launcher, which writes its list and ends.
+  const vitest = await stubVitest(`
+import { spawn } from 'node:child_process';
+const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 'ignore', 'inherit'] });
+helper.unref();
+writeFileSync(output, JSON.stringify([{ file: '/repo/src/a.test.ts' }]));
+writeFileSync('started-helper.json', JSON.stringify({ launcher: process.pid, helper: helper.pid }));
+`)
+  const reported: VitestListingReleaseFailure[] = []
+  const cancellation = new AbortController()
+  let processes: { launcher: number; helper: number } | undefined
+  try {
+    const listing = listVitestTestFiles({
+      node: process.execPath,
+      program: vitest.program,
+      workspace: vitest.directory,
+      filter: 'src/a.test.ts',
+      excludes: [],
+      signal: cancellation.signal,
+      onReleaseFailed: (failure) => reported.push(failure),
+    }).then(
+      (files) => files,
+      (error: unknown) => error,
+    )
+    processes = await waitUntil(
+      async () =>
+        readFile(join(vitest.directory, 'started-helper.json'), 'utf8').then(
+          (text) => JSON.parse(text) as { launcher: number; helper: number },
+          () => undefined,
+        ),
+      'listing helper start',
+      5_000,
+    )
+    const launcher = processes.launcher
+    await waitUntil(
+      () => {
+        try {
+          process.kill(launcher, 0)
+          return false
+        } catch {
+          return true
+        }
+      },
+      'listing launcher exit',
+      5_000,
+    )
+    // Act: the launcher has written its list and ended, and the listing still waits for the stream the helper holds.
+    cancellation.abort(new Error('run cancelled'))
+    const outcome: unknown = await listing
+    // Assert
+    const started = await vitest.started()
+    const directory = dirname(started.argv[2]!.slice('--json='.length))
+    assert.ok(outcome instanceof Error)
+    assert.equal(outcome.message, 'run cancelled')
+    assert.deepEqual(reported, [
+      {
+        processGroup: launcher,
+        directory,
+        reason: 'Error: Timed out waiting for Vitest listing exit',
+      },
+    ])
+    assert.ok(
+      (await stat(directory)).isDirectory(),
+      'the listing folder is kept while the helper may still write it',
+    )
+    assert.doesNotThrow(
+      () => process.kill(processes!.helper, 0),
+      'the helper outside the group still runs, which is what the report is about',
+    )
+  } finally {
+    // Only this test's own synthetic helper is ended.
+    cancellation.abort(new Error('run cancelled'))
+    if (processes)
+      try {
+        process.kill(processes.helper, 'SIGKILL')
+      } catch {}
+    await removeKeptListingFolder(vitest)
     await rm(vitest.directory, { recursive: true, force: true })
   }
 })

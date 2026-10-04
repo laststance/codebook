@@ -10,6 +10,7 @@ import {
   type StorageOwnerIdentity,
 } from './readRecordedOwner'
 import { systemErrorCode } from './systemErrorCode'
+import { withoutBootTime } from './withoutBootTime'
 
 /** Says whether a path exists, without following a final link; only a path that is absent counts as absent, one that cannot be inspected may exist. @example await isPresent('/storage/agent/instance.connection.json') // => true */
 function isPresent(path: string): Promise<boolean> {
@@ -17,13 +18,6 @@ function isPresent(path: string): Promise<boolean> {
     () => true,
     (error: unknown) => systemErrorCode(error) !== 'ENOENT',
   )
-}
-
-/** Leaves a boot time out of the identity a connection descriptor is judged by. A descriptor lives as long as its window, and a clock corrected in that time moves the boot time this process computes, so only a kernel boot id, which no clock moves, may call a descriptor's owner one of an earlier boot. @example withoutBootTime({ hostname: 'workstation', boot: { startedAtMs: 1_790_000_000_000 } }) // => { hostname: 'workstation', boot: undefined } */
-function withoutBootTime(identity: StorageOwnerIdentity): StorageOwnerIdentity {
-  return identity.boot && 'id' in identity.boot
-    ? identity
-    : { ...identity, boot: undefined }
 }
 
 /**

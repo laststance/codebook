@@ -113,6 +113,10 @@ import { waitForNextRunState } from './utils/waitForNextRunState'
 const SAVE_LEARNING_SUMMARY_ADVICE =
   "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it."
 
+/** What the run resource tells an agent beside a browser profile folder that the run's cleanup could not remove: the run is released, and nobody is asked to delete anything. */
+const BROWSER_PROFILE_LEFT_ADVICE =
+  'The run is released and its outcome is unchanged; only the folder of its own browser profile could not be removed. Do nothing: Codebook removes the folder at the start of a later run, after this editor window was closed or reloaded.'
+
 export interface Explanation {
   id: string
   instanceId: string
@@ -1764,6 +1768,11 @@ export class StudyService {
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,
       resourcesReleased: runtime?.resourcesReleased ?? record.stopped,
+      // Present only when the run's own browser profile folder could not be removed; the run is released all the same.
+      browserProfileLeft: runtime?.browserProfileLeft && {
+        ...runtime.browserProfileLeft,
+        advice: BROWSER_PROFILE_LEFT_ADVICE,
+      },
       activeSessionIds: runtime?.activeSessionIds ?? [],
       captures: Object.entries(runtime?.captures ?? {}).map(
         ([phase, capture]) => ({

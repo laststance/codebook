@@ -7,7 +7,7 @@ import {
 
 /**
  * Chooses the Chrome executable that the repository-browser prerequisite checks, so an unset `codebook.chromeExecutable` means the host's usual Chrome.
- * Called by the environment's prerequisite check before every status and start.
+ * Called by {@link createChromeExecutableLookup}, which remembers a PATH search between the environment's prerequisite checks (every status and start).
  * @param configured - The `codebook.chromeExecutable` value; empty when the learner never set it.
  * @param platform - The extension host's platform (a WSL remote host is `linux`).
  * @param searchPath - The extension host's PATH, searched only on Linux.

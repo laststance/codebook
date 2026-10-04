@@ -12,9 +12,9 @@ import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
 import { isEndpointClosed } from '../runtimeSupport/utils/isEndpointClosed'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
-import { isUnreapedProcessGroupError } from './isUnreapedProcessGroupError'
+import { isProcessGroupGone } from './isProcessGroupGone'
 import { readNodeInspectorEndpoint } from './readNodeInspectorEndpoint'
-import { systemErrorCode } from './systemErrorCode'
+import { signalProcessGroup } from './signalProcessGroup'
 import { verifyServerInspectorOwnership } from './verifyServerInspectorOwnership'
 
 /** Acquires one owned process group synchronously for {@link ConfiguredBrowserRun}, exposing cancellable readiness and bounded shutdown. @example const app = launchDevelopmentServer(target, node, record); await app.ready(signal) */
@@ -214,16 +214,9 @@ export function launchDevelopmentServer(
     async close(): Promise<void> {
       const attempt = (closing ??= (async () => {
         if (child.pid) {
-          try {
-            process.kill(-child.pid, 'SIGTERM')
-          } catch (cause) {
-            // A group whose exited members macOS has not reaped yet answers EPERM; the exit wait below decides.
-            if (
-              systemErrorCode(cause) !== 'ESRCH' &&
-              !isUnreapedProcessGroupError(cause)
-            )
-              throw cause
-          }
+          const processGroup = child.pid
+          // A group whose exited members macOS has not reaped yet answers EPERM; both utilities wait for it instead of failing the release.
+          signalProcessGroup(processGroup, 'SIGTERM')
           const waitForExit = async (): Promise<void> => {
             await awaitResponse(
               exited,
@@ -232,16 +225,7 @@ export function launchDevelopmentServer(
               REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
             )
             await waitUntil(
-              () => {
-                try {
-                  process.kill(-child.pid!, 0)
-                  return false
-                } catch (cause) {
-                  if (systemErrorCode(cause) === 'ESRCH') return true
-                  if (isUnreapedProcessGroupError(cause)) return false
-                  throw cause
-                }
-              },
+              () => isProcessGroupGone(processGroup),
               'owned Next process group exit',
               REPOSITORY_APPLICATION_EXIT_TIMEOUT_MS,
             )
@@ -250,15 +234,7 @@ export function launchDevelopmentServer(
           try {
             await waitForExit()
           } catch {
-            try {
-              process.kill(-child.pid, 'SIGKILL')
-            } catch (cause) {
-              if (
-                systemErrorCode(cause) !== 'ESRCH' &&
-                !isUnreapedProcessGroupError(cause)
-              )
-                throw cause
-            }
+            signalProcessGroup(processGroup, 'SIGKILL')
             await waitForExit()
           }
         }

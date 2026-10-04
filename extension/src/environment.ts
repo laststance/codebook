@@ -29,7 +29,7 @@ import {
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
 import { configuredStops } from './utils/configuredStops'
-import { resolveChromeExecutable } from './utils/resolveChromeExecutable'
+import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 
 export interface StudyPresentation {
@@ -131,6 +131,8 @@ export async function createEnvironment(
       if (!run.view().cleaned && run.activeSessions.size)
         run.evidence.record('focus.changed', { sessionId: session?.id })
   })
+  // One lookup for the window's life: it remembers the last PATH search between prerequisite checks.
+  const lookUpChromeExecutable = createChromeExecutableLookup()
   const resolvePrerequisites = async () => {
     const missing: string[] = []
     let nodeExecutable: string | undefined
@@ -156,7 +158,7 @@ export async function createEnvironment(
       )
     }
     const nodeMissing = [...missing]
-    const binary = await resolveChromeExecutable(
+    const binary = await lookUpChromeExecutable(
       configuration.get<string>('chromeExecutable', ''),
       process.platform,
       process.env.PATH,
