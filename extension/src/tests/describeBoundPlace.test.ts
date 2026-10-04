@@ -143,12 +143,12 @@ test('a moved stop whose requested line can pause is told which column to declar
   assert.ok(declared)
 
   // Act
-  const onDeclaredLine = describeBoundPlace({
+  const requestedOnDeclaredLine = describeBoundPlace({
       declared,
       bound: { line: 2, column: 1 },
       pausable: { line: 1, column: 3 },
     }),
-    afterDeclaredLine = describeBoundPlace({
+    requestedAfterDeclaredLine = describeBoundPlace({
       declared,
       bound: { line: 3, column: 1 },
       armed: { line: 2, column: 9 },
@@ -157,12 +157,15 @@ test('a moved stop whose requested line can pause is told which column to declar
 
   // Assert
   assert.equal(
-    onDeclaredLine.place,
+    requestedOnDeclaredLine.place,
     'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 1 can pause at column 3; declare that column to stop there.',
   )
   assert.equal(
-    afterDeclaredLine.place,
+    requestedAfterDeclaredLine.place,
     'src/theme.ts: this stop paused on line 3, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 3. Name line 3 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 2 can pause at column 5; declare line 2 at that column to stop there.',
   )
-  assert.equal(JSON.stringify(onDeclaredLine.pausable), '{"line":1,"column":3}')
+  assert.equal(
+    JSON.stringify(requestedOnDeclaredLine.pausable),
+    '{"line":1,"column":3}',
+  )
 })
