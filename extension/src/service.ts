@@ -216,6 +216,20 @@ interface StudyRecordState {
   nodeHistoryFailure?: string
 }
 
+/**
+ * Tells {@link StudyService.selectPresentation} whether a command selects a layout that is retired, so that only a reader already in that layout may keep it.
+ * @param input - The presentation command.
+ * @returns `true` for a `select` of any mode but {@link SELECTABLE_PRESENTATION_MODE}; `false` for that mode and for every other action.
+ * @example
+ * selectsRetiredMode({ ...identity, action: 'select', mode: 'living-book' }) // => true
+ * selectsRetiredMode({ ...identity, action: 'restore', mode: 'living-book' }) // => false
+ */
+function selectsRetiredMode(input: PresentationCommand): boolean {
+  return (
+    input.action === 'select' && input.mode !== SELECTABLE_PRESENTATION_MODE
+  )
+}
+
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile: REPOSITORY_BROWSER_PROFILE, key: "study-1", configuration}) */
 export class StudyService {
   readonly instanceId = randomUUID()
@@ -570,16 +584,32 @@ export class StudyService {
     } catch (error) {
       // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
       const readerClosed = !this.playbackController.state().readerOpen
-      throw new StudyError(
-        String(error).includes('Stale playback revision')
-          ? 'STALE_PLAYBACK'
-          : 'PLAYBACK_UNAVAILABLE',
-        String(error),
-        readerClosed
-          ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
-          : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
-      )
+      throw this.playbackRefusal(error, readerClosed, input)
     }
+  }
+
+  /**
+   * Words the refusal of a historical control the shared controller rejected; called by {@link playback} with what the controller threw.
+   * @param error - What the controller threw; its text is the refusal's message.
+   * @param readerClosed - Whether the replay reader is closed, which only `open` recovers.
+   * @param input - The refused command; its study is named in the recovery for a closed reader.
+   * @returns A `STALE_PLAYBACK` error for a stale revision, otherwise `PLAYBACK_UNAVAILABLE`, with the recovery for a closed reader or the playback resource to read first.
+   * @example throw this.playbackRefusal(new Error('Stale playback revision'), false, input) // code 'STALE_PLAYBACK'
+   */
+  private playbackRefusal(
+    error: unknown,
+    readerClosed: boolean,
+    input: PlaybackCommand,
+  ): StudyError {
+    return new StudyError(
+      String(error).includes('Stale playback revision')
+        ? 'STALE_PLAYBACK'
+        : 'PLAYBACK_UNAVAILABLE',
+      String(error),
+      readerClosed
+        ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
+        : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
+    )
   }
 
   /** Discovers the reader lifetime separately from the server without opening a view; called by MCP resources. @example (await service.presentationState(instanceId)).presentationId */
@@ -609,7 +639,7 @@ export class StudyService {
   /** Routes explicit mode intent to the shared reader after checking server identity, without runtime input. @example await service.selectPresentation(input) */
   async selectPresentation(input: PresentationCommand) {
     this.assertMutable(input.instanceId)
-    this.environment.assertWorkspace?.()
+    this.assertWorkspace()
     if (!this.presentationController)
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
@@ -617,8 +647,7 @@ export class StudyService {
       )
     // Living book and Guided walkthrough are retired: a reader whose saved preference still names one keeps it, but nothing selects one anew.
     if (
-      input.action === 'select' &&
-      input.mode !== SELECTABLE_PRESENTATION_MODE &&
+      selectsRetiredMode(input) &&
       (await this.presentationController.readPresentationState()).mode !==
         input.mode
     )
@@ -628,6 +657,15 @@ export class StudyService {
       )
     await this.presentationController.changePresentation(input)
     return this.presentationState(input.instanceId)
+  }
+
+  /**
+   * Runs the host's workspace check when it has one; called by {@link selectPresentation} before the reader is asked for anything.
+   * @throws What the environment's check throws for a workspace that may not be changed.
+   * @example this.assertWorkspace()
+   */
+  private assertWorkspace(): void {
+    this.environment.assertWorkspace?.()
   }
 
   /** Returns only the current reader from selected history to live execution through a versioned native control. @example await service.returnToCurrent({instanceId,presentationId,expectedRevision:4}) */
