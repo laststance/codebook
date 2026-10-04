@@ -625,12 +625,18 @@ export async function workspaceHarness(
    * Gives every editor group a new TabGroup object, as Cursor 3.23.12 does whenever a tab opened, another tab of a group became active, a tab closed, or a group opened or closed (obs13 items 7 and 8: 19 of 19 events that name every group); a no-op unless `replaceGroupObjectsOnTabChanges` is on.
    * The view columns, the tabs and the keyboard focus stay, and every holder of a group object is pointed at the new one. The Tab objects are kept: Cursor replaces them too and reports a tab of unknown input with `input` undefined.
    * @param closed - Groups the same change closed; they are reported as closed and get no new object.
+   * @param opened - The group the same change opened; it is reported as opened and keeps its object.
    * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
    */
-  function replaceGroupObjects(closed: typeof groups = []): void {
+  function replaceGroupObjects(
+    closed: typeof groups = [],
+    opened?: (typeof groups)[number],
+  ): void {
     if (!replacesGroupObjectsOnTabChanges) return
     const replacements = new Map(
-      groups.map((group) => [group, { ...group, tabs: [...group.tabs] }]),
+      groups
+        .filter((group) => group !== opened)
+        .map((group) => [group, { ...group, tabs: [...group.tabs] }]),
     )
     /** Names the new object of a group that survived, and leaves a group that is gone as it is. */
     const replaced = (group: (typeof groups)[number]) =>
@@ -641,7 +647,11 @@ export async function workspaceHarness(
       separateEditorPart.group = replaced(separateEditorPart.group)
     for (const editor of visibleSourceEditors)
       editor.group = replaced(editor.group)
-    changedGroups({ opened: [], closed, changed: [...groups] })
+    changedGroups({
+      opened: opened ? [opened] : [],
+      closed,
+      changed: [...replacements.values()],
+    })
   }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
@@ -686,30 +696,7 @@ export async function workspaceHarness(
       }
     if (replacesGroupObjectsOnTabChanges) {
       // Cursor names the opened group and gives every surviving group a new object in the same event.
-      const survivors = new Map(
-        groups
-          .filter((candidate) => candidate !== group)
-          .map((candidate) => [
-            candidate,
-            { ...candidate, tabs: [...candidate.tabs] },
-          ]),
-      )
-      groups.splice(
-        0,
-        groups.length,
-        ...groups.map((candidate) => survivors.get(candidate) ?? candidate),
-      )
-      activeTabGroup = survivors.get(activeTabGroup) ?? activeTabGroup
-      if (separateEditorPart)
-        separateEditorPart.group =
-          survivors.get(separateEditorPart.group) ?? separateEditorPart.group
-      for (const editor of visibleSourceEditors)
-        editor.group = survivors.get(editor.group) ?? editor.group
-      changedGroups({
-        opened: [group],
-        closed: [],
-        changed: [...survivors.values()],
-      })
+      replaceGroupObjects([], group)
       return group
     }
     changedGroups({ opened: [group], closed: [], changed: retained })
