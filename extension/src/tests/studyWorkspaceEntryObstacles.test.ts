@@ -86,7 +86,7 @@ test(
       // Act: the 10 s wait for the work window's focus passes on a faked clock.
       await harness.reader.openRecording(harness.studyId)
       enableFakeClock(context)
-      await advanceClock(context, 9_000)
+      await advanceClock(context, 9_950)
       const readinessBeforeBound = harness.controller.state().readiness
       const refusedAfterMs = await advanceClockUntil(
         context,
