@@ -209,6 +209,54 @@ test('a start whose anchor index selects a citation without its source line name
   )
 })
 
+// Cycle 0045 (ST-11): the sentences of a later stop were not asserted; green on 6a7a0b8, its controls are the index and the two version branches of describeCitationMismatch.
+test('a later stop whose anchor index selects a citation without its line is named by its additionalStops field: the entry itself in version 1, its source and anchorIndex in version 2', async (context) => {
+  // Arrange: node "theme" cites src/theme.ts:1-1 (index 0) and src/mode.ts:1-1 (index 1).
+  const { books, configuration, control } = await preparationHarness(context)
+  const inspections = configuration.inspections
+  // Act / Assert: a version 1 later stop shares the first stop's file and index, so only its line can leave the citation.
+  await assert.rejects(
+    prepareRepositoryStudy(
+      {
+        ...configuration,
+        additionalStops: [{ line: 2, column: 1, inspections }],
+      },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.book.anchorIndex 0 selects citation src/theme.ts:1-1, which does not contain configuration.additionalStops[0] src/theme.ts:2. Node "theme" has citations 0..1; no citation covers src/theme.ts:2; publish a revision that cites it or choose a cited line.',
+    },
+  )
+  // A version 2 later stop declares its own source and index.
+  await assert.rejects(
+    prepareRepositoryStudy(
+      {
+        ...configuration,
+        version: 2,
+        participant: 'browser',
+        additionalStops: [
+          {
+            participant: 'browser',
+            source: configuration.source,
+            anchorIndex: 1,
+            inspections,
+          },
+        ],
+      },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.additionalStops[0].anchorIndex 1 selects citation src/mode.ts:1-1, which does not contain configuration.additionalStops[0].source src/theme.ts:1. Node "theme" has citations 0..1; index 0 (src/theme.ts:1-1) covers src/theme.ts:1.',
+    },
+  )
+})
+
 test('a secondary citation edit rejects preparation even when the selected breakpoint file has not changed', async (context) => {
   // Arrange
   const { books, configuration, control, directory, library } =
