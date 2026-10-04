@@ -186,6 +186,14 @@ type DebugParticipant = {
   }
   expectedResumeRequests: number
 }
+/** A server debug session whose native proxy was verified to inspect the launched worker; {@link ConfiguredBrowserRun.selectServer} collects them and selects one. */
+type ServerMatch = {
+  session: vscode.DebugSession
+  cdp: Cdp
+  identity: Awaited<
+    ReturnType<ReturnType<typeof launchDevelopmentServer>['verifyInspector']>
+  >
+}
 type Continuation = {
   participant: Participant
   pause: PauseIdentity
@@ -1027,9 +1035,64 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return true
     if (stop.scan.complete) return false
     // The scan stopped at its size limit before it found a later position: any remaining line that could hold code may be where the stop is requested, which the debugger's break locations decide when it is armed.
+    return this.hasLaterCodeLine(stop, endLine)
+  }
+
+  /**
+   * Reads the sealed source text for a line after a declared stop's line that could hold code, for {@link canLaterLineBind} when the stop's map was too large to scan completely.
+   * @param stop - The declared stop whose own line has no position.
+   * @param endLine - The last line of the stop's citation.
+   * @returns `true` when a line after the declared one, up to `endLine`, is neither blank nor a comment; `false` when the declared line is the citation's last or every later line is blank or comment-only.
+   * @example
+   * ```ts
+   * this.hasLaterCodeLine(stop, 95) // false for a stop declared above nothing but comments
+   * ```
+   */
+  private hasLaterCodeLine(stop: PreparedStop, endLine: number): boolean {
     for (let line = stop.source.line + 1; line <= endLine; line++)
       if (!isBlankOrCommentLine(stop.bundle.source, line)) return true
     return false
+  }
+
+  /**
+   * Tells {@link bindBoundPlace} whether an earlier stop is another declaration of the same participant and file: one on another line, whose bound place must not be this stop's too.
+   * @param candidate - An earlier declared stop.
+   * @param stop - The declared stop whose binding was accepted by its rule.
+   * @returns `true` for a stop of the same participant in the same original file that is declared on another line; `false` for one declared on the same line (a statement that runs twice).
+   * @example
+   * ```ts
+   * this.isDeclaredElsewhereInFile(this.stops[0], this.stops[1]) // true for src/theme.ts:1 and src/theme.ts:3
+   * ```
+   */
+  private isDeclaredElsewhereInFile(
+    candidate: PreparedStop,
+    stop: PreparedStop,
+  ): boolean {
+    return (
+      candidate.participant === stop.participant &&
+      candidate.bundle.sourcePath === stop.bundle.sourcePath &&
+      candidate.source.line !== stop.source.line
+    )
+  }
+
+  /**
+   * Tells {@link bindBoundPlace} whether a stop's verified binding is the given place.
+   * @param candidate - A declared stop; one that is not bound yet is at no place.
+   * @param place - The verified binding to compare with.
+   * @returns `true` when the stop is bound at that line and column.
+   * @example
+   * ```ts
+   * this.isBoundAt(stop, { line: 23, column: 5 }) // false before the stop is armed
+   * ```
+   */
+  private isBoundAt(
+    candidate: PreparedStop,
+    place: { line: number; column: number },
+  ): boolean {
+    return (
+      candidate.bound?.line === place.line &&
+      candidate.bound.column === place.column
+    )
   }
 
   /** Words a binding the stop's rule refuses, naming the condition that refused it, for {@link armStop} and {@link inspect}. @example this.refusedBindingText(stop, { line: 3, column: 1 }) // 'Declared stop src/theme.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a mapped position' */
@@ -1058,11 +1121,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       .slice(0, this.stops.indexOf(stop))
       .find(
         (candidate) =>
-          candidate.participant === stop.participant &&
-          candidate.bundle.sourcePath === stop.bundle.sourcePath &&
-          candidate.source.line !== stop.source.line &&
-          candidate.bound?.line === place.line &&
-          candidate.bound.column === place.column,
+          this.isDeclaredElsewhereInFile(candidate, stop) &&
+          this.isBoundAt(candidate, place),
       )
     if (earlier)
       throw this.bindingFailure(
@@ -1433,16 +1493,43 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const session = this.participants[stop.participant].selected
     if (!session || !stop.breakpoint) return { status: 'unknown' }
     try {
-      const receipt = stop.breakpoint.registration(session)
-      return receipt ? { status: receipt.status } : { status: 'unknown' }
+      return this.receiptStatus(stop.breakpoint.registration(session))
     } catch (error) {
-      return {
-        status: 'refused',
-        reason: thrownMessage(error),
-        ...(error instanceof OwnedBreakpointMovedError
-          ? { movedTo: error.place }
-          : {}),
-      }
+      return this.refusedStatus(error)
+    }
+  }
+
+  /**
+   * Turns the receipt a registration read returned into what {@link registrationStatus} reports.
+   * @param receipt - The adapter's current receipt; `undefined` while a newer registration request is unanswered.
+   * @returns The receipt's `pending` or `bound`, or `unknown` without a receipt.
+   * @example
+   * ```ts
+   * this.receiptStatus(undefined) // { status: 'unknown' }
+   * ```
+   */
+  private receiptStatus(
+    receipt: { status: 'pending' | 'bound' } | undefined,
+  ): RegistrationStatus {
+    return receipt ? { status: receipt.status } : { status: 'unknown' }
+  }
+
+  /**
+   * Turns what a registration read threw into the refusal {@link registrationStatus} reports.
+   * @param error - What the read threw: the adapter refused or revoked the registration, the breakpoint is gone, or the adapter moved it to a place the stop's rule refuses.
+   * @returns `refused` with the thrown reason, and with `movedTo` for an {@link OwnedBreakpointMovedError}.
+   * @example
+   * ```ts
+   * this.refusedStatus(new Error('Owned breakpoint was removed before registration')) // { status: 'refused', reason: 'Owned breakpoint was removed before registration' }
+   * ```
+   */
+  private refusedStatus(error: unknown): RegistrationStatus {
+    return {
+      status: 'refused',
+      reason: thrownMessage(error),
+      ...(error instanceof OwnedBreakpointMovedError
+        ? { movedTo: error.place }
+        : {}),
     }
   }
 
@@ -1639,6 +1726,58 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
   }
 
+  /**
+   * Tells {@link bindParsedScript} whether a script the runtime announced is the sealed module of a declared stop.
+   * @param stop - A declared stop.
+   * @param name - The participant whose runtime announced the script.
+   * @param url - The script's URL; empty for a script without one.
+   * @returns `true` for a stop of that participant whose sealed module has this URL.
+   * @example
+   * ```ts
+   * this.isModuleOfStop(stop, 'server', '') // false: a script without a URL is no stop's module
+   * ```
+   */
+  private isModuleOfStop(
+    stop: PreparedStop,
+    name: Participant,
+    url: string,
+  ): boolean {
+    if (stop.participant !== name || !url) return false
+    return sameScriptUrl(stop.bundle.scriptUrl, url)
+  }
+
+  /**
+   * Gives every declared stop of a participant the script its sealed module was parsed as, for the `Debugger.scriptParsed` handler of {@link observeParticipant}.
+   * A module that is parsed again under another script id after it was sealed fails the run, and no later stop is given the script.
+   * @param name - The participant whose runtime announced the script.
+   * @param event - The announced script.
+   * @example
+   * ```ts
+   * this.bindParsedScript('server', event)
+   * ```
+   */
+  private bindParsedScript(
+    name: Participant,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): void {
+    for (const stop of this.stops) {
+      if (!this.isModuleOfStop(stop, name, event.url)) continue
+      if (this.isSealedAsAnotherScript(stop, event)) {
+        this.fail('Selected module changed after sealing')
+        return
+      }
+      stop.script = event
+    }
+  }
+
+  /** Tells {@link bindParsedScript} whether a stop's module was already announced under another script id than the one announced now. @example this.isSealedAsAnotherScript(stop, event) // false for the module's first announcement */
+  private isSealedAsAnotherScript(
+    stop: PreparedStop,
+    event: Protocol.Debugger.ScriptParsedEvent,
+  ): boolean {
+    return stop.script !== undefined && stop.script.scriptId !== event.scriptId
+  }
+
   /** Observes each native proxy without borrowing another participant's script or suspension. @example await this.observeParticipant('server') */
   private async observeParticipant(name: Participant): Promise<void> {
     const participant = this.participants[name],
@@ -1657,19 +1796,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           scriptId: event.scriptId,
           url: event.url,
         })
-      for (const stop of this.stops) {
-        if (
-          stop.participant !== name ||
-          !event.url ||
-          !sameScriptUrl(stop.bundle.scriptUrl, event.url)
-        )
-          continue
-        if (stop.script && stop.script.scriptId !== event.scriptId) {
-          this.fail('Selected module changed after sealing')
-          return
-        }
-        stop.script = event
-      }
+      this.bindParsedScript(name, event)
     })
     cdp.on('Debugger.paused', (event) => this.onCdpPaused(name, event))
     cdp.on('Debugger.resumed', () => this.onCdpResumed(name))
@@ -1829,9 +1956,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private nextStopToPause(): PreparedStop | undefined {
     if (this.continuation) return this.stops[this.stopIndex + 1]
     // The first stop's turn begins when the input is sent, not when the action is accepted: its line can run while the input is still being checked.
-    if (this.stopIndex === 0 && !this.operation?.inputDispatched)
-      return undefined
+    if (this.isBeforeFirstInput()) return undefined
     return this.snapshotReady ? undefined : this.stops[this.stopIndex]
+  }
+
+  /** Tells {@link nextStopToPause} whether the first stop's turn has not begun: no stop was committed yet and the input was not sent. @example this.isBeforeFirstInput() // true while the action is accepted and its input is still being checked */
+  private isBeforeFirstInput(): boolean {
+    return this.stopIndex === 0 && !this.operation?.inputDispatched
   }
 
   /** Gives {@link admitPause} the stop a participant's pause may belong to; a participant whose turn it is not has none. @example this.expectedStop('browser') // undefined while a server stop is next */
@@ -1927,8 +2058,22 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private adapterPausesRetired(): boolean {
     return (
       !this.transientBrowserPause &&
+      this.holdsNoUnannouncedPause() &&
+      this.holdsNoInstrumentationPause()
+    )
+  }
+
+  /** Tells {@link adapterPausesRetired} that neither participant is paused with no announced stop. @example this.holdsNoUnannouncedPause() // false while the adapter's own pause on the server is open */
+  private holdsNoUnannouncedPause(): boolean {
+    return (
       !this.participants.server.unannouncedPause &&
-      !this.participants.browser.unannouncedPause &&
+      !this.participants.browser.unannouncedPause
+    )
+  }
+
+  /** Tells {@link adapterPausesRetired} that neither participant's runtime is paused for its own instrumentation. @example this.holdsNoInstrumentationPause() // false while the server reads a source map */
+  private holdsNoInstrumentationPause(): boolean {
+    return (
       !this.participants.server.instrumentationPaused &&
       !this.participants.browser.instrumentationPaused
     )
@@ -1964,22 +2109,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!launched) throw new Error('Owned server debugger did not start')
     await waitUntil(
       async () => {
-        const matches: {
-          session: vscode.DebugSession
-          cdp: Cdp
-          identity: Awaited<
-            ReturnType<
-              ReturnType<typeof launchDevelopmentServer>['verifyInspector']
-            >
-          >
-        }[] = []
+        const matches: ServerMatch[] = []
         try {
           for (const session of this.sessions.values()) {
-            if (
-              !this.activeSessions.has(session.id) ||
-              !this.serverSession(session)
-            )
-              continue
+            if (!this.isActiveServerSession(session)) continue
             let candidate: Cdp | undefined
             try {
               const proxy: { host: string; port: number; path: string } =
@@ -2000,54 +2133,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
                 this.abort.signal,
               )
               this.alive()
-              this.evidence.record('server.candidate-verified', {
-                sessionId: session.id,
-                parentId: session.parentSession?.id,
-                identity,
-              })
+              this.recordVerifiedServerCandidate(session, identity)
               matches.push({ session, cdp: candidate, identity })
             } catch (error) {
-              if (this.abort.signal.aborted || this.cleaning) throw error
+              this.rethrowWhenEnding(error)
             } finally {
-              if (
-                candidate &&
-                !matches.some((match) => match.cdp === candidate)
-              )
-                candidate.close()
+              this.closeUnmatchedProxy(candidate, matches)
             }
           }
-          if (!matches.length) return false
-          // A native adapter may expose one inspected worker through nested sessions; use only its deepest session.
-          const selected = matches.find((candidate) =>
-            matches.every((other) => {
-              if (candidate.session.id === other.session.id) return true
-              for (
-                let ancestor = candidate.session.parentSession;
-                ancestor;
-                ancestor = ancestor.parentSession
-              )
-                if (ancestor.id === other.session.id) return true
-              return false
-            }),
-          )
-          if (
-            !selected ||
-            matches.some(
-              (candidate) =>
-                candidate.identity.pid !== selected.identity.pid ||
-                candidate.identity.processGroup !==
-                  selected.identity.processGroup ||
-                candidate.identity.workspace !== selected.identity.workspace,
-            )
-          )
-            throw new Error('Ambiguous owned server')
-          this.alive()
-          this.participants.server.selected = selected.session
-          this.participants.server.cdp = selected.cdp
-          return true
+          return this.selectVerifiedServer(matches)
         } finally {
-          for (const match of matches)
-            if (match.cdp !== this.participants.server.cdp) match.cdp.close()
+          this.closeUnselectedProxies('server', matches)
         }
       },
       'unique owned server',
@@ -2055,6 +2151,127 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.abort.signal,
     )
     await this.observeParticipant('server')
+  }
+
+  /**
+   * Tells the discovery of {@link selectServer} whether a debug session is one of this run's live server sessions, read anew for each session after the proxy of the one before it was verified.
+   * @param session - A debug session the run knows.
+   * @returns `true` for a session that has not terminated and is the run's server root or one of its descendants.
+   * @example
+   * ```ts
+   * this.isActiveServerSession(session) // false for the browser's sessions
+   * ```
+   */
+  private isActiveServerSession(session: vscode.DebugSession): boolean {
+    return this.activeSessions.has(session.id) && this.serverSession(session)
+  }
+
+  /**
+   * Journals that a server session's native proxy leads to the launched worker, for {@link selectServer} once the inspector's identity was verified.
+   * @param session - The session whose proxy was verified.
+   * @param identity - The verified identity of the inspected process.
+   * @example
+   * ```ts
+   * this.recordVerifiedServerCandidate(session, identity)
+   * ```
+   */
+  private recordVerifiedServerCandidate(
+    session: vscode.DebugSession,
+    identity: ServerMatch['identity'],
+  ): void {
+    this.evidence.record('server.candidate-verified', {
+      sessionId: session.id,
+      parentId: session.parentSession?.id,
+      identity,
+    })
+  }
+
+  /**
+   * Passes on the failure of one candidate proxy only while the run ends, for the discoveries of {@link selectServer} and {@link selectPage}: a session that is not the wanted target fails its checks and is skipped, but an aborted or cleaning run must not go on to the next one.
+   * @param error - What the candidate's proxy or its identity check threw.
+   * @throws That error, when the run was aborted or is cleaning up.
+   * @example
+   * ```ts
+   * this.rethrowWhenEnding(error) // returns for a session that offers no proxy
+   * ```
+   */
+  private rethrowWhenEnding(error: unknown): void {
+    if (this.abort.signal.aborted || this.cleaning) throw error
+  }
+
+  /**
+   * Closes a candidate proxy that was connected and not taken as a match, for the discoveries of {@link selectServer} and {@link selectPage} when one session's check has ended.
+   * @param candidate - The proxy connected for the session; `undefined` when none was.
+   * @param matches - The matches found so far, whose proxies stay open until one is selected.
+   * @example
+   * ```ts
+   * this.closeUnmatchedProxy(candidate, matches)
+   * ```
+   */
+  private closeUnmatchedProxy(
+    candidate: Cdp | undefined,
+    matches: { cdp: Cdp }[],
+  ): void {
+    if (candidate && !matches.some((match) => match.cdp === candidate))
+      candidate.close()
+  }
+
+  /**
+   * Closes every provisional proxy of one discovery pass except the one the participant selected, for {@link selectServer} and {@link selectPage} when the pass ends, also by a failure.
+   * @param name - The participant the discovery selects for.
+   * @param matches - The matches of this pass.
+   * @example
+   * ```ts
+   * this.closeUnselectedProxies('browser', matches)
+   * ```
+   */
+  private closeUnselectedProxies(
+    name: Participant,
+    matches: { cdp: Cdp }[],
+  ): void {
+    for (const match of matches)
+      if (match.cdp !== this.participants[name].cdp) match.cdp.close()
+  }
+
+  /**
+   * Selects the one launched worker among the verified server sessions, as the last step of a discovery pass of {@link selectServer}.
+   * @param matches - The server sessions whose proxies were verified in this pass.
+   * @returns `false` when no session was verified yet, so the wait goes on; `true` once the server participant has its session and proxy.
+   * @throws `Ambiguous owned server` when no session is the deepest of all, or the sessions inspect different processes.
+   * @example
+   * ```ts
+   * this.selectVerifiedServer([]) // false
+   * ```
+   */
+  private selectVerifiedServer(matches: ServerMatch[]): boolean {
+    if (!matches.length) return false
+    // A native adapter may expose one inspected worker through nested sessions; use only its deepest session.
+    const selected = matches.find((candidate) =>
+      matches.every((other) => {
+        if (candidate.session.id === other.session.id) return true
+        for (
+          let ancestor = candidate.session.parentSession;
+          ancestor;
+          ancestor = ancestor.parentSession
+        )
+          if (ancestor.id === other.session.id) return true
+        return false
+      }),
+    )
+    if (
+      !selected ||
+      matches.some(
+        (candidate) =>
+          candidate.identity.pid !== selected.identity.pid ||
+          candidate.identity.processGroup !== selected.identity.processGroup ||
+          candidate.identity.workspace !== selected.identity.workspace,
+      )
+    )
+      throw new Error('Ambiguous owned server')
+    this.alive()
+    this.participants.server.selected = selected.session
+    this.participants.server.cdp = selected.cdp
+    return true
   }
 
   /** Classifies only this run's server root/descendants during native proxy discovery. @example this.serverSession(session) */
@@ -2076,12 +2293,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         const matches: { session: vscode.DebugSession; cdp: Cdp }[] = []
         try {
           for (const session of this.sessions.values()) {
-            if (
-              !session.parentSession ||
-              !this.activeSessions.has(session.id) ||
-              this.serverSession(session)
-            )
-              continue
+            if (!this.isActivePageSession(session)) continue
             let candidate: Cdp | undefined
             try {
               const proxy: { host: string; port: number; path: string } =
@@ -2106,33 +2318,83 @@ export class ConfiguredBrowserRun implements StudyRuntime {
                 this.abort.signal,
               )
               this.alive()
-              if (result.result.value === 'about:blank')
-                matches.push({ session, cdp: candidate })
-            } catch (error) {
-              if (this.abort.signal.aborted || this.cleaning) throw error
-            } finally {
-              if (
-                candidate &&
-                !matches.some((match) => match.cdp === candidate)
+              this.keepBlankPage(
+                matches,
+                session,
+                candidate,
+                result.result.value,
               )
-                candidate.close()
+            } catch (error) {
+              this.rethrowWhenEnding(error)
+            } finally {
+              this.closeUnmatchedProxy(candidate, matches)
             }
           }
-          if (matches.length > 1) throw new Error('Ambiguous owned page')
-          if (!matches[0]) return false
-          this.alive()
-          this.participants.browser.selected = matches[0].session
-          this.participants.browser.cdp = matches[0].cdp
-          return true
+          return this.selectBlankPage(matches)
         } finally {
-          for (const match of matches)
-            if (match.cdp !== this.participants.browser.cdp) match.cdp.close()
+          this.closeUnselectedProxies('browser', matches)
         }
       },
       'unique owned page',
       ACTIVE_TIMEOUT_MS,
       this.abort.signal,
     )
+  }
+
+  /**
+   * Tells the discovery of {@link selectPage} whether a debug session may be the run's page, read anew for each session after the proxy of the one before it was checked.
+   * @param session - A debug session the run knows.
+   * @returns `true` for a child session that has not terminated and is not one of the run's server sessions.
+   * @example
+   * ```ts
+   * this.isActivePageSession(session) // false for the browser's root session
+   * ```
+   */
+  private isActivePageSession(session: vscode.DebugSession): boolean {
+    if (!session.parentSession || !this.activeSessions.has(session.id))
+      return false
+    return !this.serverSession(session)
+  }
+
+  /**
+   * Takes a checked session as a match when its page is still the blank one the run opened, for the discovery of {@link selectPage} once the page answered where it is.
+   * @param matches - The matches of this pass, which gain the session.
+   * @param session - The session whose page was asked.
+   * @param cdp - The proxy connected for that session.
+   * @param href - What the page answered for `location.href`.
+   * @example
+   * ```ts
+   * this.keepBlankPage(matches, session, candidate, 'about:blank') // matches now holds the session
+   * ```
+   */
+  private keepBlankPage(
+    matches: { session: vscode.DebugSession; cdp: Cdp }[],
+    session: vscode.DebugSession,
+    cdp: Cdp,
+    href: unknown,
+  ): void {
+    if (href === 'about:blank') matches.push({ session, cdp })
+  }
+
+  /**
+   * Selects the one blank page among the checked sessions, as the last step of a discovery pass of {@link selectPage}.
+   * @param matches - The sessions whose page answered `about:blank` in this pass.
+   * @returns `false` when no page was found yet, so the wait goes on; `true` once the browser participant has its session and proxy.
+   * @throws `Ambiguous owned page` when more than one session shows a blank page.
+   * @example
+   * ```ts
+   * this.selectBlankPage([]) // false
+   * ```
+   */
+  private selectBlankPage(
+    matches: { session: vscode.DebugSession; cdp: Cdp }[],
+  ): boolean {
+    if (matches.length > 1) throw new Error('Ambiguous owned page')
+    if (!matches[0]) return false
+    this.alive()
+    this.participants.browser.selected = matches[0].session
+    this.participants.browser.cdp = matches[0].cdp
+    return true
   }
 
   /** Reserves one declared input synchronously; its protocol ACK never blocks state or continuation. @example run.action('click-once', 'repository-click') */
@@ -2503,11 +2765,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Tells {@link onEvent} and {@link adapterPauseLimitMs} whether this participant's accepted stop has no pause of its own yet: {@link inspect} is still waiting for it, or took a pause held elsewhere in the stop's module and is about to judge its binding. @example this.awaitsOwnPause('server') // true during the wait of pauseOfAcceptedStop */
   private awaitsOwnPause(name: Participant): boolean {
     const stopped = this.participants[name].stopped
+    return this.isAcceptedStopOf(name) && (!stopped || stopped.adopted === true)
+  }
+
+  /** Tells {@link awaitsOwnPause} whether the stop whose `stopped` was accepted, and whose snapshot is not ready yet, is this participant's. @example this.isAcceptedStopOf('browser') // false while a server stop is being inspected */
+  private isAcceptedStopOf(name: Participant): boolean {
     return (
       this.acceptedStop &&
       !this.snapshotReady &&
-      this.stops[this.stopIndex]?.participant === name &&
-      (!stopped || stopped.adopted === true)
+      this.stops[this.stopIndex]?.participant === name
     )
   }
 
@@ -2711,21 +2977,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return await waitUntil(
         async () => {
           // A pause held since before the stop's turn that outlasted the adapter's bound is not about to be resumed; the wait ends with its text.
-          const early = this.pauseHeldBeforeTurn(stop)
-          if (
-            early &&
-            performance.now() - early.heldAtMs >
-              REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS
-          )
-            throw this.earlyPauseFailure(stop, early)
-          const candidate = participant.stopped
-          if (
-            candidate &&
-            candidate.generation === undefined &&
-            candidate.event.callFrames[0]?.location.scriptId ===
-              stop.script?.scriptId
-          )
-            return candidate
+          this.assertNoOverdueEarlyPause(stop)
+          const candidate = this.unboundPauseInModule(participant, stop)
+          if (candidate) return candidate
           const held = this.pauseHeldForStop(stop)
           if (!held || held.event === comparedPause) return undefined
           comparedPause = held.event
@@ -2739,12 +2993,74 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // An announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
       const held = this.adoptPauseHeldInModule(stop)
       if (held) return held
-      // A pause that came before the stop's turn is never adopted; the failure says that the line ran early instead of naming the wait.
-      const early = this.abort.signal.aborted
-        ? undefined
-        : this.pauseHeldBeforeTurn(stop)
-      throw early ? this.earlyPauseFailure(stop, early) : error
+      throw this.unreachedPauseFailure(stop, error)
     }
+  }
+
+  /**
+   * Ends the wait of {@link pauseOfAcceptedStop} when a pause held since before the stop's turn outlasted the adapter's bound; each look of that wait asks it first.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @throws The text of {@link earlyPauseFailure} when such a pause is held for longer than {@link REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS}.
+   * @example
+   * ```ts
+   * this.assertNoOverdueEarlyPause(stop) // returns while no pause from before the stop's turn is held
+   * ```
+   */
+  private assertNoOverdueEarlyPause(stop: PreparedStop): void {
+    const early = this.pauseHeldBeforeTurn(stop)
+    if (
+      early &&
+      performance.now() - early.heldAtMs >
+        REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS
+    )
+      throw this.earlyPauseFailure(stop, early)
+  }
+
+  /**
+   * Reads the pause {@link admitPause} stored for a participant when it is the one an accepted stop waits for, for each look of {@link pauseOfAcceptedStop}.
+   * @param participant - The stop's participant.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @returns The stored pause while it is bound to no generation yet and its top frame is in the stop's script; `undefined` otherwise.
+   * @example
+   * ```ts
+   * this.unboundPauseInModule(this.participants.server, stop) // undefined until the runtime pause of the stop arrived
+   * ```
+   */
+  private unboundPauseInModule(
+    participant: DebugParticipant,
+    stop: PreparedStop,
+  ): DebugParticipant['stopped'] {
+    const candidate = participant.stopped
+    if (!candidate || candidate.generation !== undefined) return undefined
+    return this.hasTopFrameInScriptOf(candidate.event, stop)
+      ? candidate
+      : undefined
+  }
+
+  /** Tells {@link unboundPauseInModule} whether a pause's top frame names the script id of a stop's module, as far as either is known. @example this.hasTopFrameInScriptOf(event, stop) // false for a pause in another script */
+  private hasTopFrameInScriptOf(
+    event: Protocol.Debugger.PausedEvent,
+    stop: PreparedStop,
+  ): boolean {
+    return event.callFrames[0]?.location.scriptId === stop.script?.scriptId
+  }
+
+  /**
+   * Chooses what {@link pauseOfAcceptedStop} fails with when its wait ended and no held pause could be adopted.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @param error - What ended the wait.
+   * @returns The text of {@link earlyPauseFailure} when the run was not aborted and a pause from before the stop's turn is held; otherwise `error` itself.
+   * @example
+   * ```ts
+   * throw this.unreachedPauseFailure(stop, error)
+   * ```
+   */
+  private unreachedPauseFailure(stop: PreparedStop, error: unknown): unknown {
+    // A pause that came before the stop's turn is never adopted; the failure says that the line ran early instead of naming the wait.
+    const early = this.abort.signal.aborted
+      ? undefined
+      : this.pauseHeldBeforeTurn(stop)
+    return early ? this.earlyPauseFailure(stop, early) : error
   }
 
   /**
@@ -2929,15 +3245,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private pauseHeldForStop(
     stop: PreparedStop,
   ): DebugParticipant['unannouncedPause'] {
-    const held = this.participants[stop.participant].unannouncedPause,
-      location = held?.event.callFrames[0]?.location
-    // A bundle can hold several originals in one script; a pause the sealed map places in another original cannot be this stop's binding.
+    const held = this.participants[stop.participant].unannouncedPause
     return held?.expectedStop === stop &&
-      isPauseInScript(held.event, stop.script) &&
-      location &&
-      !stop.verifier.isInAnotherOriginal(location)
+      this.isPauseInOriginalOf(held.event, stop)
       ? held
       : undefined
+  }
+
+  /**
+   * Tells {@link pauseHeldForStop} whether a held pause lies in a stop's module and in its original file.
+   * @param event - The held pause.
+   * @param stop - The declared stop the pause was held for.
+   * @returns `true` when the pause's top frame is in the stop's script and the sealed map does not place it in another original; `false` for a pause without a frame.
+   * @example
+   * ```ts
+   * this.isPauseInOriginalOf(held.event, stop) // false for a pause in another original of the same bundle
+   * ```
+   */
+  private isPauseInOriginalOf(
+    event: Protocol.Debugger.PausedEvent,
+    stop: PreparedStop,
+  ): boolean {
+    const location = event.callFrames[0]?.location
+    // A bundle can hold several originals in one script; a pause the sealed map places in another original cannot be this stop's binding.
+    if (!isPauseInScript(event, stop.script) || !location) return false
+    return !stop.verifier.isInAnotherOriginal(location)
   }
 
   /**
@@ -3534,6 +3866,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     return `${failure ? `${observed}: ${this.failedConditionText('after', failure)}` : `${observed}.`} The page changed during the capture, so the result is not demonstrated. Declare in configuration.action.after a condition that still holds once the action has finished, then start a new run.`
   }
   /**
+   * Ends the wait of {@link waitForDom} at once when the page could not use a declared selector; each read of the conditions is checked with it.
+   * @param phase - Whether the conditions guard the input or prove the result.
+   * @param failure - What the page named at this read; `undefined` when it named nothing.
+   * @throws The invalid-selector text, naming the click target or the condition by its number, when the page's reason is `invalid-selector`.
+   * @example
+   * ```ts
+   * this.assertSelectorsValid('after', { conditionIndex: 0, reason: 'invalid-selector' }) // throws 'Invalid CSS selector in configured after condition 1; use browser-native CSS, not Playwright-specific pseudo selectors.'
+   * ```
+   */
+  private assertSelectorsValid(
+    phase: 'before' | 'after',
+    failure: ConfiguredDomFailure | undefined,
+  ): void {
+    if (failure?.reason !== 'invalid-selector') return
+    const location =
+      failure.conditionIndex === undefined
+        ? 'click target'
+        : `condition ${failure.conditionIndex + 1}`
+    throw new Error(
+      `Invalid CSS selector in configured ${phase} ${location}; use browser-native CSS, not Playwright-specific pseudo selectors.`,
+    )
+  }
+
+  /**
    * Polls the declared DOM conditions without repeating application input; setup ({@link prepareOwned}) and after verification ({@link observeAfter}) call it.
    * @param phase - Whether the conditions guard the input or prove the result.
    * @throws The text of {@link conditionTimeoutText} when the wait timed out ({@link WaitTimeoutError}, however the wait worded it) and the page named a condition; the invalid-selector text at once; any other failure of the wait unchanged.
@@ -3552,15 +3908,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             this.lastAfterFailure = lastResult.ready
               ? undefined
               : lastResult.failure
-          if (lastResult.failure?.reason === 'invalid-selector') {
-            const location =
-              lastResult.failure.conditionIndex === undefined
-                ? 'click target'
-                : `condition ${lastResult.failure.conditionIndex + 1}`
-            throw new Error(
-              `Invalid CSS selector in configured ${phase} ${location}; use browser-native CSS, not Playwright-specific pseudo selectors.`,
-            )
-          }
+          this.assertSelectorsValid(phase, lastResult.failure)
           return lastResult.ready
         },
         this.conditionsWaitDescription(phase),
