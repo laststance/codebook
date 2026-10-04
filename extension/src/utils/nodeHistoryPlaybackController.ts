@@ -201,6 +201,15 @@ export class NodeHistoryPlaybackController {
     this.selectedIndex = -1
   }
 
+  /**
+   * Asks the native presentation for one event and commits it as the selected one; called by {@link seek} and {@link tick}, which hold the shared debugger free before they ask.
+   * @param index - Position of the event in the opened list; a position the list does not have presents nothing.
+   * @param generation - The controller's generation when the caller decided to present; a newer one means the request was abandoned or superseded, and the event is not committed.
+   * @returns Resolves once the native presentation settled and loading was reported as ended.
+   * @throws What the native presentation rejected with; loading is reported as ended before.
+   * @example
+   * await this.present(2, this.generation)
+   */
   private async present(index: number, generation: number): Promise<void> {
     const event = this.events[index]
     if (!event) return
@@ -212,12 +221,22 @@ export class NodeHistoryPlaybackController {
         this.selectedIndex = index
       }
     } finally {
-      if (this.pending === operation) {
-        this.pending = undefined
-        // Publish settled controls only after the native event is no longer loading, even for an abandoned or superseded event: nothing else reports that loading ended. A disposed controller publishes nothing.
-        if (this.disposedGeneration <= generation) this.dependencies.changed()
-      }
+      this.endLoading(operation, generation)
     }
+  }
+
+  /**
+   * Clears a settled presentation as the pending one and tells the reader that loading ended; called by {@link present} when its native presentation resolved or rejected.
+   * @param operation - The presentation that settled; a later one that replaced it as pending is left alone.
+   * @param generation - The generation the presentation was started in; a controller disposed since then publishes nothing.
+   * @example
+   * this.endLoading(operation, generation)
+   */
+  private endLoading(operation: Promise<void>, generation: number): void {
+    if (this.pending !== operation) return
+    this.pending = undefined
+    // Publish settled controls only after the native event is no longer loading, even for an abandoned or superseded event: nothing else reports that loading ended. A disposed controller publishes nothing.
+    if (this.disposedGeneration <= generation) this.dependencies.changed()
   }
 
   private stopTimer(): void {
