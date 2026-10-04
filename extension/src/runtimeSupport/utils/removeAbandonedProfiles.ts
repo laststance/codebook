@@ -35,6 +35,27 @@ async function removeUnusedProfile(profile: string): Promise<boolean> {
 }
 
 /**
+ * Reads one profile folder's owner marker and says whether its owner is gone from this machine; called by {@link removeAbandonedProfiles} for each candidate folder before anything is removed.
+ * @param profile - The profile folder.
+ * @param judgedBy - The identity of this process without its boot time ({@link withoutBootTime}), by which the marker's owner is judged.
+ * @returns
+ * - `true` when the marker is readable and its process is gone
+ * - `false` when there is no readable marker, or when its owner may still run: the folder is not known to be abandoned
+ * @example
+ * await isProfileOwnerGone('/tmp/codebook-browser-a1b2c3', withoutBootTime(identity)) // => true after the editor that made it was killed
+ */
+async function isProfileOwnerGone(
+  profile: string,
+  judgedBy: StorageOwnerIdentity,
+): Promise<boolean> {
+  const owner = await readRecordedOwner(
+    join(profile, MANAGED_PROFILE_OWNER_FILE),
+  )
+  if (!owner) return false
+  return isRecordedOwnerGone(owner, judgedBy)
+}
+
+/**
  * Removes the browser profile folders that a killed editor left behind, so that they do not pile up in the profile root; called by {@link HostBrowser.launch} before a managed run creates its own folder.
  *
  * A folder is removed only on proof that Codebook made it and nothing uses it: it is a real directory, it carries the owner marker
@@ -64,11 +85,8 @@ export async function removeAbandonedProfiles(
   const removed: string[] = []
   for (const candidate of candidates) {
     const profile = join(root, candidate.name)
-    const owner = await readRecordedOwner(
-      join(profile, MANAGED_PROFILE_OWNER_FILE),
-    )
     // No marker, or an owner that may still run: the folder is not known to be abandoned.
-    if (!owner || !isRecordedOwnerGone(owner, judgedBy)) continue
+    if (!(await isProfileOwnerGone(profile, judgedBy))) continue
     if (await removeUnusedProfile(profile)) removed.push(profile)
   }
   return removed
