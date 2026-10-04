@@ -11,6 +11,8 @@ import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
+import { runFlowKeepingCases } from './utils/runFlowKeepingCases.mjs'
+
 const [
   mode = 'verify',
   outputPath = 'artifacts/cycle-0018/bootstrap-renderer',
@@ -54,13 +56,21 @@ const message = {
   studies: [],
 }
 
-/** Records each owned CLI operation for delayed-snapshot renderer verification. @example await command(['open', 'about:blank'], 'open') */
+/** How long one call of the browser CLI may take. */
+const COMMAND_TIMEOUT_MS = 30_000
+/** How long the call that runs the whole flow may take: every case of the check, with its viewport changes and screenshots, runs inside this one call, and the job that runs it ends after ten minutes. */
+const FLOW_TIMEOUT_MS = 300_000
+
+/** Records each owned CLI operation for delayed-snapshot renderer verification; the call labelled `flow` gets the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise((resolve) =>
     execFile(
       'playwright-cli',
       [`-s=${session}`, ...arguments_],
-      { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+      {
+        timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
@@ -75,8 +85,8 @@ async function command(arguments_, label) {
   return result.stdout
 }
 
-/** Exercises initial paint and replacement without host state, then releases an actual typed product model. @example await check(page, options) */
-async function check(page, options) {
+/** Exercises initial paint and replacement without host state, then releases an actual typed product model. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. @example await check(page, options, { cases: [], errors: [] }) */
+async function check(page, options, collected) {
   /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
   const revisionAt = (step) => options.message.revision + step
   /** Waits until the pane reports that it rendered the Study message of this revision. The number enters the page as an argument, because a callback evaluated in the page cannot call {@link revisionAt}. @example await waitUntilRendered(revisionAt(2)) */
@@ -89,10 +99,10 @@ async function check(page, options) {
         ),
       revision,
     )
-  const errors = []
+  const { errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
-  const cases = [],
+  const { cases } = collected,
     publish = (message) =>
       page.evaluate(
         (message) =>
@@ -3205,7 +3215,6 @@ async function check(page, options) {
       Number.isInteger(firstRequestOfSecondDocument) &&
       firstRequestOfSecondDocument > lastRequestOfFirstDocument,
   })
-  return { cases, errors }
 }
 
 const report = {
@@ -3223,18 +3232,20 @@ const server = createServer((request, response) => {
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`.
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. The check runs inside {@link runFlowKeepingCases}, whose text is written into the same file: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
 const flowPath = `${output}/flow.js`
 let recording = false
 try {
   await writeFile(
     flowPath,
-    `async (page) => (${check.toString()})(page, ${JSON.stringify({
-      html: { context: studyHtml('context'), moments: studyHtml('moments') },
-      message,
-      output,
-      url: `http://127.0.0.1:${server.address().port}/`,
-    })})\n`,
+    `async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(
+      {
+        html: { context: studyHtml('context'), moments: studyHtml('moments') },
+        message,
+        output,
+        url: `http://127.0.0.1:${server.address().port}/`,
+      },
+    )})\n`,
   )
   await command(['open', 'about:blank'], 'open')
   await command(
