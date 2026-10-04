@@ -3436,6 +3436,43 @@ test('the runtime’s own instrumentation pause and resume in the browser while 
   )
 })
 
+// Cycle 0045 (X7-C2.3): red while the end of any owned debug session ended a held stop's paused interval in the replay, also of a child session the stop is not paused in.
+test('a worker session of the browser that ends while a server stop is held leaves that stop’s replay interval ending at its continuation', async (context) => {
+  // Arrange: the server stop is committed and held for the learner.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  const worker = {
+    ...harness.sessions.browser,
+    id: 'browser-worker',
+    parentSession: harness.sessions.browser,
+  }
+  // Act: the debugger attaches a worker of the page and that session ends; then the declared stop is continued.
+  harness.run.addSession(worker)
+  harness.run.terminated(worker)
+  await harness.run.continue('server', server.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after the stop',
+  )
+  await harness.run.stop()
+  // Assert
+  const events = harness.run.view().events
+  const workerEnd = events.find(
+    (event) =>
+      event.type === 'session.terminated' &&
+      event.elapsedMs >= server.elapsedMs,
+  )
+  const intervalEnd = pausedIntervalBoundary(server, events)
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(
+    JSON.stringify(workerEnd?.detail),
+    '{"sessionId":"browser-worker"}',
+  )
+  assert.equal(intervalEnd?.type, 'continue.accepted')
+})
+
 // Cycle 0044 (0042-SR27): run-level test on the server harness's clock; red when the deadline's place sentence is not added for a server pause (only the browser shape was tested).
 test('a continuation that reaches no next stop while the server stays paused at a pause the debugger made for itself ends the run naming where the server is paused', async (context) => {
   // Arrange: the first server stop is continued, and the adapter's entry breakpoint holds the server on source line 2.
