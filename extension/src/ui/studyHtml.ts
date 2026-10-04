@@ -88,6 +88,8 @@ export interface StudyViewMessage {
   studyRemoval?: StudyRemovalView
   /** Set in a window without a Trash (a WSL remote window): a delete request moves nothing there and is answered with the study's files for removal by hand. */
   removalWithoutTrash?: true
+  /** The files and folders the host listed for removal by hand in a window without a Trash, by study: every list a pane asked for, so each pane shows the one of the entry it has chosen. */
+  studyFiles?: Record<string, string[]>
   /** Why the current run never started; shown first in the error region and no reason to offer Retry storage. */
   runRefusal?: string
   /** The saved study of this window's run that has not stopped, which cannot be deleted. */
@@ -1093,7 +1095,7 @@ function studyClient(
   }
   /**
    * In a window without a Trash, asks the host for the files of the chosen entry, which the host names only in its answer to a delete request; called by {@link renderStudyRemoval}.
-   * Nothing is asked while the entry cannot be removed anyway, once the host answered for it, or twice under one Study message.
+   * Nothing is asked while the entry cannot be removed anyway, once the host listed its files or refused the request, or twice under one Study message.
    * @param message - The current Study message.
    * @param chosen - The entry chosen in the list, if any.
    * @param reason - Why the entry cannot be removed now; empty when it can.
@@ -1105,7 +1107,9 @@ function studyClient(
     reason: string,
   ): void => {
     if (!message.removalWithoutTrash || !chosen || reason) return
-    // The host's answer for this entry is already shown: its files, or its own refusal.
+    // The host listed this entry's files already, for this pane or for another one.
+    if (message.studyFiles?.[chosen.id]) return
+    // The host's own refusal for this entry is shown.
     if (message.studyRemoval?.studyId === chosen.id) return
     // A render that is no new Study message (a choice in the list, the host's reply to an open request) asks nothing again.
     if (
@@ -1120,17 +1124,13 @@ function studyClient(
       removalRequest: ++removalRequestCount,
     })
   }
-  /** Lists the files the host named for the removal by hand of the chosen entry, with Copy path and Retry storage / refresh beside them; hidden in a window with a Trash and until the host answered for that entry. @example showStudyFiles(message, visibleRemoval(message.studyRemoval), entry.id) */
+  /** Lists the files the host named for the removal by hand of the chosen entry, with Copy path and Retry storage / refresh beside them; hidden in a window with a Trash and until the host listed that entry's files. The list is read by study, not from the removal state, which answers one pane's request at a time. @example showStudyFiles(message, entry.id) */
   const showStudyFiles = (
     message: StudyViewMessage,
-    shown: StudyRemoval,
     chosenId: string,
   ): void => {
     const files =
-      (message.removalWithoutTrash &&
-        shown?.studyId === chosenId &&
-        shown.files) ||
-      []
+      (message.removalWithoutTrash && message.studyFiles?.[chosenId]) || []
     element('study-files').hidden = !files.length
     replace('study-files-list', files, () =>
       files.map((path) => {
@@ -1188,7 +1188,7 @@ function studyClient(
     showStudyNote(chosen)
     showRemovalControl(message, reason, inProgress)
     showRemovalStatus(shownRemoval)
-    showStudyFiles(message, shownRemoval, chosenId)
+    showStudyFiles(message, chosenId)
     askForStudyFiles(message, chosen, reason)
     answerRemovalRequest(message.studyRemoval, inProgress)
   }

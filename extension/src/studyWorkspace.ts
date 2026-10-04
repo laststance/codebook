@@ -475,6 +475,8 @@ export class StudyWorkspace {
   private readonly archiveWrites = new Map<string, Promise<void>>()
   /** The learner's last removal of a saved study, from its confirmation dialog to its outcome; while it is `moving`, its study is neither written nor opened. */
   private studyRemoval?: StudyRemovalView
+  /** The files this reader listed for the removal by hand of saved studies in a window without a Trash, by study. {@link studyRemoval} holds one answer at a time, and each pane asks for the entry it has chosen: the lists are kept apart from it, so one pane's request does not take another pane's list away. */
+  private readonly listedStudyFiles = new Map<string, string[]>()
   /** Settles, without a rejection, once the files of the study a confirmed removal is taking to the Trash have moved or stayed (the removal left `moving`); a {@link checkpoint} of that study waits for it, not for the study shown afterwards. */
   private studyMove?: Promise<void>
   /** Settles {@link studyMove}; called when the removal's outcome is settled and again when the removal ends. */
@@ -5933,6 +5935,7 @@ export class StudyWorkspace {
       this.sourceRevision = undefined
       this.lastSelectionKey = undefined
       this.documents.clear()
+      this.listedStudyFiles.clear()
       this.readPresentationPreference()
     })())
     try {
@@ -7678,7 +7681,10 @@ export class StudyWorkspace {
       studies: studyCatalog,
       studyRemoval: this.studyRemoval,
       ...(this.studyRemovalAvailability() === 'no-trash'
-        ? { removalWithoutTrash: true as const }
+        ? {
+            removalWithoutTrash: true as const,
+            studyFiles: Object.fromEntries(this.listedStudyFiles),
+          }
         : {}),
       // While a recording is open the pane reads that recording; the line of a run that did not start comes back with Overview or Live.
       runRefusal:
@@ -12303,7 +12309,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Answers a delete request in a window without a Trash: no dialog opens and nothing is moved or deleted; the status line says so and carries the study's files, from the removal's own path list, for removal by hand. Called by {@link studyRemovalConfirmed} after the refusals that hold in every window.
+   * Answers a delete request in a window without a Trash: no dialog opens and nothing is moved or deleted; the status line says so and carries the study's files, from the removal's own path list, for removal by hand, and {@link listedStudyFiles} keeps that list for the panes that chose the study. Called by {@link studyRemovalConfirmed} after the refusals that hold in every window.
    * @param studyId - The entry the learner chose, already known to be a listed study of a stopped run.
    * @returns Whether the request was answered this way.
    * @example if (await this.refuseRemovalWithoutTrash(studyId)) return false
@@ -12311,11 +12317,14 @@ export class StudyWorkspace {
   private async refuseRemovalWithoutTrash(studyId: string): Promise<boolean> {
     if (this.studyRemovalAvailability() !== 'no-trash') return false
     const evidence = await this.studyEvidenceToMove(studyId)
+    const files = await this.library!.studyFiles(studyId, evidence.directory)
+    // Kept by study: the answer below is replaced by the next pane's request for another study.
+    this.listedStudyFiles.set(studyId, files)
     this.settleStudyRemoval({
       status: 'refused',
       studyId,
       text: STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
-      files: await this.library!.studyFiles(studyId, evidence.directory),
+      files,
     })
     return true
   }
@@ -12334,13 +12343,11 @@ export class StudyWorkspace {
   /**
    * Gives the files the reader listed for the removal by hand of one study; read by {@link copyStudyFiles} before it writes the clipboard.
    * @param studyId - The study the pane shows the list of.
-   * @returns The reader's list when its removal state is of that study; `undefined` when that state is of another study, or there is no state or no list.
+   * @returns The list the reader made for that study, also when a later request listed another study; `undefined` when it listed none.
    * @example const files = this.removalFilesOf(studyId)
    */
   private removalFilesOf(studyId: string): StudyRemovalView['files'] {
-    return this.studyRemoval?.studyId === studyId
-      ? this.studyRemoval.files
-      : undefined
+    return this.listedStudyFiles.get(studyId)
   }
 
   /**
@@ -12358,6 +12365,7 @@ export class StudyWorkspace {
       ),
     )
     for (const studyId of gone) {
+      this.listedStudyFiles.delete(studyId)
       // A run of this window whose saved study is gone would otherwise be checkpointed into the library again.
       if (this.recordOfStudy(studyId)) await this.forgetRemovedStudy(studyId)
       this.activeArchive = withoutStudy(this.activeArchive, studyId)

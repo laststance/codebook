@@ -4380,6 +4380,57 @@ test('in a window without a Trash, copying the listed files of a study puts the 
   }
 })
 
+// Value: protects=two panes of a window without a Trash each listing the files of the entry it has chosen: the list one pane asked for stays when another pane asks for another study, and Copy path copies the list of the study it names; fails_when=the reader keeps one answer for all panes, so the second pane's request takes the first study's list away, the first pane asks again at the next Study message, and Copy path of the first study copies nothing; why_new=Cycle 0045 local review study-1 #4 (the lists travelled in the one removal state); seam=two delete requests as the Study pane and the bottom-panel view send them, the reader's Study message and the editor's clipboard, recorded by the harness
+test('in a window without a Trash, the files listed for one study stay listed and can be copied after another pane asked for another study', async () => {
+  // Arrange: a WSL remote window with two saved studies; the Study pane asked for the files of the first.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const first = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      second = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    await harness.reader.open()
+    const directory = harness.reader.inspect().libraryDirectory!
+    await requestRemoval(harness, first.id, 1)
+
+    // Act: the bottom-panel view asks for the files of the second study, and the Study pane copies the first study's list.
+    await readerSeams(harness).receive(
+      {
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+        removalRequest: 2,
+      },
+      'moments',
+    )
+    await readerSeams(harness).receive(
+      {
+        type: 'copy-study-files',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: first.id,
+      },
+      'context',
+    )
+
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyFiles), {
+      [first.id]: [
+        join(directory, `${first.id}.study.meta.v3.json`),
+        join(directory, `${first.id}.study.v3.json`),
+      ],
+      [second.id]: [
+        join(directory, `${second.id}.study.meta.v3.json`),
+        join(directory, `${second.id}.study.v3.json`),
+      ],
+    })
+    assert.equal(view.studyRemoval?.studyId, second.id)
+    assert.deepEqual(harness.clipboardTexts, [
+      `${join(directory, `${first.id}.study.meta.v3.json`)}\n${join(directory, `${first.id}.study.v3.json`)}`,
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the reader's own study library and recording store word a full-library refusal with the remedy that works in this editor; fails_when=the reader builds them without the session's removal availability, so their refusals keep naming a deletion after the Trash refused one (B-M3, C-L3); why_new=only the run refusal was tested after a refused removal; seam=the editor's Trash, stubbed at the vscode boundary, which refuses every move
 test('after the Trash refused a removal, a save and a recording refused by the reader’s full library name only the limit setting', async () => {
   // Arrange: a library full at one study whose removal the Trash refuses, and a recording library full at one recording.

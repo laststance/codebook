@@ -3074,7 +3074,9 @@ async function check(page, options) {
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/recordings/window_run-shown01',
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.json',
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.meta.json',
-    ]
+    ],
+    otherStudyFile =
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-other02.study.v4.json'
   await library([otherStudy], undefined, withoutTrash)
   const withoutTrashNothingChosen = await removalControl()
   // Act: the host shows a study; the pane asks once for its files, and the host answers.
@@ -3089,13 +3091,31 @@ async function check(page, options) {
   await library([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
+    studyFiles: { [shownStudy.id]: studyFiles },
   })
   await library([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
+    studyFiles: { [shownStudy.id]: studyFiles },
     busy: true,
   })
   const filesListed = await removalControl()
+  // Another pane asked for the other study's files: the removal state answers that request, and the host keeps both lists by study.
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    studyRemoval: {
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: withoutTrashSentence,
+      files: [otherStudyFile],
+      request: 1,
+    },
+    studyFiles: {
+      [shownStudy.id]: studyFiles,
+      [otherStudy.id]: [otherStudyFile],
+    },
+  })
+  const besideAnotherPanesAnswer = await removalControl()
   await page
     .locator('#saved-studies')
     .screenshot({ path: `${options.output}/saved-studies-without-trash.png` })
@@ -3115,6 +3135,7 @@ async function check(page, options) {
       withoutTrashNothingChosen,
       askedForFiles,
       filesListed,
+      besideAnotherPanesAnswer,
       afterCopyAndRetry,
       retryBesideFiles,
     },
@@ -3136,6 +3157,11 @@ async function check(page, options) {
       JSON.stringify(filesListed.files) === JSON.stringify(studyFiles) &&
       // A later Study message with the answer asks nothing again.
       filesListed.deletes.length === askedForFiles.deletes.length &&
+      // The answer to another pane's request leaves this pane's list as it is, and this pane asks nothing again.
+      JSON.stringify(besideAnotherPanesAnswer.files) ===
+        JSON.stringify(studyFiles) &&
+      besideAnotherPanesAnswer.deletes.length ===
+        askedForFiles.deletes.length &&
       JSON.stringify(afterCopyAndRetry.copies) ===
         JSON.stringify([shownStudy.id]) &&
       afterCopyAndRetry.retries === filesListed.retries + 1 &&
