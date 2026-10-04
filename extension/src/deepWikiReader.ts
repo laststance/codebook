@@ -224,7 +224,7 @@ export async function startDeepWikiReader(
     return manifest
   }
   /**
-   * Says whether a changed file is one the freshness check weighs, against what the manifest last read covers; asked by `noteSourceChange` of the returned reader for every reported change, before it arms the burst timer.
+   * Says whether a changed file is one the freshness check weighs, against what the manifest last read covers; asked by {@link DeepWikiReader.noteSourceChange} for every reported change, before it arms the burst timer.
    * @param projectPath - The changed file relative to the project, with forward slashes; it begins with `../` for a file outside the project.
    * @returns `true` for an indexed source, and for a file of the project the freshness check would count as added; `false` for a file outside the project, in the Wiki folder or excluded.
    * @example
