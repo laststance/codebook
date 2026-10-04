@@ -542,6 +542,32 @@ test('a state from a newer extension is shown as unknown instead of as nothing o
   })
 })
 
+// Value: protects=the status line of a page that is older than its extension; fails_when=a state this version does not know, which need not carry an output or a time, is worded as "Output: undefined" or has its missing time formatted; why_new=Cycle 0045 local review wiki-1 #11; seam=none
+test('a state from a newer extension that names no output and no time is shown as unknown with an empty output line, and no time is formatted', () => {
+  // Arrange
+  const fromNewerExtension = JSON.parse('{"state":"paused"}')
+  const formattedTimes: unknown[] = []
+
+  // Act
+  const described = describeWikiUpdate(fromNewerExtension, {
+    ...wording,
+    formatTime: (isoTimestamp: string): string => {
+      formattedTimes.push(isoTimestamp)
+      return '21:10'
+    },
+  })
+
+  // Assert
+  assert.deepEqual(described, {
+    lead: 'Update status unknown',
+    rest: '.',
+    detail: [],
+    output: '',
+    offerReload: false,
+  })
+  assert.deepEqual(formattedTimes, [])
+})
+
 test('the bound a running update names is counted in the minute length its caller gives', () => {
   // Arrange
   const running: WikiUpdateStatus = {
