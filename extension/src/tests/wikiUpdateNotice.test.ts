@@ -56,6 +56,31 @@ test('a Wiki that already matched is an information notice', () => {
   })
 })
 
+// Value: protects=the recovery step in the editor's notice, which takes the request from the constant the failure reasons use; fails_when=the notice hands no request to the sentence writer, so the learner is asked to paste "undefined"; why_new=Cycle 0045 local review wiki-1 #12; seam=none
+test('a start refused for an unfinished publish is an error notice that names the recovery request', () => {
+  // Act
+  const notice = wikiUpdateNotice(
+    {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt: '2026-10-03T12:10:00.000Z',
+      paths: ['wiki.publish-journal.json'],
+      cause: 'unfinished-publish',
+      site: 'kept',
+      ...OUTPUT,
+    },
+    at2110,
+  )
+
+  // Assert
+  assert.deepEqual(notice, {
+    severity: 'error',
+    actions: ['Open LLM Wiki'],
+    message:
+      'Update not started (21:10): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  })
+})
+
 test('a cancelled Cursor update is an information notice, not an error', () => {
   // Act
   const notice = wikiUpdateNotice(

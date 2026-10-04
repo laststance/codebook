@@ -14,6 +14,8 @@ const wording = {
   pathLimit: 3,
   reasonLimitChars: 200,
   msPerMinute: 60_000,
+  recoveryRequest:
+    '/codebook Recover the unfinished LLM Wiki publish for this project',
   freshnessLabelPlace: 'above',
 }
 
@@ -520,6 +522,32 @@ test('an unfinished earlier publish is named as the reason no update started, wi
   assert.equal(
     sentenceOf(described),
     'Update not started (21:10): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  )
+})
+
+// Value: protects=one recovery request in the page's sentences, the editor's notice and the failure reasons, which all take it from one constant; fails_when=the embedded sentence writer keeps its own copy of the request, so a change of the constant makes page and failure reason name different requests; why_new=Cycle 0045 local review wiki-1 #12; seam=none
+test('the recovery request a refused start names is the one its caller hands over', () => {
+  // Arrange
+  const status: WikiUpdateStatus = {
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt,
+    paths: ['wiki.publish-journal.json'],
+    cause: 'unfinished-publish',
+    site: 'kept',
+    ...place,
+  }
+
+  // Act
+  const described = describeWikiUpdate(status, {
+    ...wording,
+    recoveryRequest: '/codebook Finish the stopped LLM Wiki publish',
+  })
+
+  // Assert
+  assert.equal(
+    sentenceOf(described),
+    'Update not started (21:10): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Finish the stopped LLM Wiki publish", then press Update LLM Wiki again.',
   )
 })
 

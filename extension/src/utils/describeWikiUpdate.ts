@@ -24,6 +24,8 @@ export type WikiUpdateWording = {
   reasonLimitChars: number
   /** Milliseconds in one minute, for naming a bound in minutes; the function is embedded into the page and cannot import the constant. */
   msPerMinute: number
+  /** The chat request that makes the editor agent run the publisher's recovery, as the learner pastes it ({@link WIKI_UPDATE_RECOVERY_REQUEST}); the function is embedded into the page and cannot import the constant. */
+  recoveryRequest: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
   /** Whether the reading page was served from another publication than the one on disk now; omitted by the editor, which never offers a reload. */
@@ -43,7 +45,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param wording - Time format, the bounds of the sentence, the minute length, where the freshness label is and whether the reading page is older than the site.
+ * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, where the freshness label is and whether the reading page is older than the site.
  * @returns
  * - Idle: undefined (nothing to show)
  * - A state this version does not know: "Update status unknown.", with the output line only when that state names an output; none of its other fields is read
@@ -53,7 +55,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, freshnessLabelPlace: 'above' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -87,9 +89,11 @@ export function describeWikiUpdate(
     const count = Math.round(durationMs / wording.msPerMinute)
     return count + (count === 1 ? ' minute' : ' minutes')
   }
-  // The chat request of the publisher's recovery, as the learner pastes it, after the first letter of "Ask" or "ask"; the function is embedded into the page and cannot import it.
+  // The step that names the publisher's recovery request, after the first letter of "Ask" or "ask"; the request is the caller's, so page, notice and failure reasons name one request.
   const recoveryStep =
-    'sk the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.'
+    'sk the editor chat "' +
+    wording.recoveryRequest +
+    '", then press Update LLM Wiki again.'
   const freshnessStep =
     'check the freshness label ' + wording.freshnessLabelPlace + '.'
   /**

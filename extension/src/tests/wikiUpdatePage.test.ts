@@ -1068,6 +1068,32 @@ test('the refusal that names another window’s update is shown whole, with its 
   assert.equal(page.find('[data-codebook-update-detail]'), undefined)
 })
 
+// Value: protects=the recovery step on the served Wiki page, whose sentence writer gets the request from the reader instead of holding its own copy; fails_when=the reader's page script does not hand the request over, so the page asks the learner to paste "undefined"; why_new=Cycle 0045 local review wiki-1 #12; seam=none
+test('a start refused for an unfinished publish names the recovery request on the page, as the reader handed it to the page script', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'published-before-the-group', {
+    updateStatus: {
+      state: 'conflict',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      paths: ['wiki.publish-journal.json'],
+      cause: 'unfinished-publish',
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    'Update not started (11:58): an earlier publish did not finish (wiki.publish-journal.json). Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  )
+})
+
 test('each kind of update state has its own colour on the state words, with fallbacks for sites that lack the tokens', async () => {
   // Arrange
   const script = await readServedWikiScript()

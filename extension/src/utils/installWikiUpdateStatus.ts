@@ -40,6 +40,8 @@ export type WikiUpdatePageSettings = {
   reasonLimitChars: number
   /** Milliseconds in one minute, handed to the embedded sentence writer, which cannot import the constant. */
   msPerMinute: number
+  /** The chat request of the publisher's recovery, handed to the embedded sentence writer like the minute length. */
+  recoveryRequest: string
 }
 
 /**
@@ -67,6 +69,7 @@ export type WikiUpdatePageSettings = {
  *   pathLimit: 3,
  *   reasonLimitChars: 160,
  *   msPerMinute: 60_000,
+ *   recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project',
  * })
  * ```
  */
@@ -465,6 +468,7 @@ export function installWikiUpdateStatus(
       pathLimit: settings.pathLimit,
       reasonLimitChars: settings.reasonLimitChars,
       msPerMinute: settings.msPerMinute,
+      recoveryRequest: settings.recoveryRequest,
       // The page shows the freshness label above the update line.
       freshnessLabelPlace: 'above',
       // The host names both publications, so the browser's clock decides nothing.
