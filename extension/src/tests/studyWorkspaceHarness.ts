@@ -42,6 +42,8 @@ import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 const NATIVE_VARIABLES_REFRESH_MS = 400
 /** How long the fake host's Variables view, opened for the first time in the editor session, needs before its tree holds the rows that list commands act on; VS Code 1.140 took about 60 ms. */
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
+/** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
+const DISPOSED_TAB_CLOSE_DELAY_MS = 20
 /**
  * How the fake host's Variables view missed the presented stop, as observed in VS Code 1.140:
  * - `'never-opened'`: Run and Debug was not opened in this editor session; the view asks for the stop's scopes as soon as it is shown, fills its tree a moment later and expands nothing by itself
@@ -82,11 +84,6 @@ export async function workspaceHarness(
   ]
   /** Commands this host does not register; see `removeHostCommands`. */
   const absentHostCommands = new Set<string>()
-  /** The commands the reader runs to give an editor group the keyboard focus; each activates its group, which brings a hidden editor area back. */
-  const focusGroupCommands = [
-    'workbench.action.focusFirstEditorGroup',
-    'workbench.action.focusActiveEditorGroup',
-  ]
   /** The editor's commands that give its second to eighth group the keyboard focus, in that order. */
   const focusGroupAtColumnCommands = [
     'workbench.action.focusSecondEditorGroup',
@@ -524,6 +521,11 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
+  let revealsPanelsLater = false,
+    applyingLaterReveal = false
+  // Cursor 3.23.12 closes a disposed panel's tab, and a moment later the group it left empty, while a layout read is pending.
+  let closeDisposedPanelTabsDuringLayoutRead = false
   /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
   let replacesGroupObjectsOnTabChanges = false
   /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
@@ -559,6 +561,8 @@ export async function workspaceHarness(
   let deferredPanelFocus: { kind: string; remaining: number } | undefined
   let deferPrimaryFocusEcho = false,
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
+  // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
+  let leavesPaneFocusUnreportedBesideChat = false
   let deferMovedFocusEcho = false,
     pendingMovedFocusEcho: typeof activeTabGroup | undefined
   let deferKeptFocusEcho = false,
@@ -823,7 +827,7 @@ export async function workspaceHarness(
   /**
    * Brings the hidden editor area back, as VS Code 1.140 does while the bottom panel is maximized whenever a group shows another editor or is activated: the panel leaves its maximized state.
    * The area was laid out without height, so every stacked group comes back at its minimum height and the last group of each stack takes the height that is left, whichever group the trigger acted on: of two stacked groups the first is a 70 px strip.
-   * Called by {@link revealIntoHiddenEditorArea} (a reveal, a shown text document), a panel's registration, the focus-group commands, the tab closes and `vscode.setEditorLayout`, whose own layout then replaces these sizes.
+   * Called by {@link revealIntoHiddenEditorArea} (a reveal, a shown text document), a panel's registration, the commands that focus another group, the tab closes and `vscode.setEditorLayout`, whose own layout then replaces these sizes. The command that focuses the group that is already active is not among them: it brings the area back with the sizes the groups had.
    * @example returnHiddenEditorArea() // groupHeightPx(1) => 70 and groupHeightPx(2) => 770 for two stacked groups
    */
   function returnHiddenEditorArea(): void {
@@ -1222,6 +1226,32 @@ export async function workspaceHarness(
         )
       },
       reveal(column?: number, preserveFocus?: boolean): void {
+        // The pane comes to the front of its group, with the tab events of that, one turn after this call returned.
+        if (
+          revealsPanelsLater &&
+          !applyingLaterReveal &&
+          column === undefined &&
+          !groups.some((group) => group.activeTab === nativeTab)
+        ) {
+          const applyReveal = (): void => {
+            if (!panels.has(value)) return
+            applyingLaterReveal = true
+            try {
+              value.reveal(column, preserveFocus)
+            } finally {
+              applyingLaterReveal = false
+            }
+          }
+          pendingDisposedTabCloses.push(applyReveal)
+          // Without a layout read the reveal is reported by itself a moment later.
+          setTimeout(() => {
+            const index = pendingDisposedTabCloses.indexOf(applyReveal)
+            if (index < 0) return
+            pendingDisposedTabCloses.splice(index, 1)
+            applyReveal()
+          }, DISPOSED_TAB_CLOSE_DELAY_MS)
+          return
+        }
         panelReveals.push({ kind, column, preserveFocus })
         const previousColumn = value.viewColumn,
           previousFocusedGroup = activeTabGroup
@@ -1413,13 +1443,41 @@ export async function workspaceHarness(
             if (group.activeTab === nativeTab) group.activeTab = undefined
           }
           // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
-          if (closeDisposedPanelTabsLater && emptied.length)
+          if (closeDisposedPanelTabsDuringLayoutRead) {
+            const emptiedColumns = emptied.map((group) => group.viewColumn)
+            // The tab's close gives every group a new object; the emptied group's close, which follows it while a layout read is pending, does so again.
+            replaceGroupObjects()
+            pendingDisposedTabCloses.push(() => {
+              for (const group of groups.filter(
+                (candidate) =>
+                  candidate !== separateEditorPart?.group &&
+                  emptiedColumns.includes(candidate.viewColumn) &&
+                  !candidate.tabs.length,
+              ))
+                removeEmptiedGroup(group)
+            })
+          } else if (closeDisposedPanelTabsLater && emptied.length)
             for (const group of emptied) removeEmptiedGroup(group)
           else replaceGroupObjects()
         }
         // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
-        if (closeDisposedPanelTabsLater) pendingDisposedTabCloses.push(closeTab)
+        if (
+          closeDisposedPanelTabsLater ||
+          closeDisposedPanelTabsDuringLayoutRead
+        )
+          pendingDisposedTabCloses.push(closeTab)
         else closeTab()
+        // Without a layout read the worker closes the tab by itself a moment later.
+        if (
+          closeDisposedPanelTabsLater ||
+          closeDisposedPanelTabsDuringLayoutRead
+        )
+          setTimeout(() => {
+            const index = pendingDisposedTabCloses.indexOf(closeTab)
+            if (index < 0) return
+            pendingDisposedTabCloses.splice(index, 1)
+            closeTab()
+          }, DISPOSED_TAB_CLOSE_DELAY_MS)
         for (const listener of disposed) listener()
       },
     }
@@ -1928,14 +1986,25 @@ export async function workspaceHarness(
             maximizedEditorGroup = !maximizedEditorGroup
           if (name === 'workbench.action.maximizeEditorHideSidebar')
             maximizedEditorGroup = true
-          // The activated group is in view before the command answers.
-          if (focusGroupCommands.includes(name)) returnHiddenEditorArea()
+          // The activated group is in view before the command answers: another group that takes the focus comes back at the minimum heights.
+          if (name === 'workbench.action.focusFirstEditorGroup')
+            returnHiddenEditorArea()
+          // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
+          if (name === 'workbench.action.focusActiveEditorGroup')
+            panelMaximized = false
           const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
           if (focusedColumn > 1) {
             const focusedGroup = groups.find(
               (group) => group.viewColumn === focusedColumn,
             )
+            // The group the editor already names gets the keyboard back from a pane that took it without a report.
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              focusedGroup === activeTabGroup &&
+              focusedGroup === separateEditorPart?.group
+            )
+              separateEditorPart.focused = true
             if (focusedGroup && focusedGroup !== activeTabGroup) {
               const previousGroup = activeTabGroup
               returnHiddenEditorArea()
@@ -1959,6 +2028,15 @@ export async function workspaceHarness(
             const primaryEditor = visibleSourceEditors.find(
               (editor) => editor.group === primaryGroup,
             )
+            // The first group's pane has the keyboard and layout reads are answered for the main editor, yet no event arrives and the chat's group stays the named one.
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              activeTabGroup === separateEditorPart?.group &&
+              !(primaryGroup.activeTab?.input instanceof TabInputText)
+            ) {
+              separateEditorPart.focused = false
+              return undefined
+            }
             // Native text and tab-group notifications have no cross-event ordering guarantee.
             if (primaryNotificationOrder === 'editor first') {
               partialFocusEditor = { value: primaryEditor }
@@ -1991,7 +2069,17 @@ export async function workspaceHarness(
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
             // The disposed panels' tabs close one task after this read is answered.
             const dueTabCloses = pendingDisposedTabCloses.splice(0)
-            if (dueTabCloses.length)
+            if (
+              dueTabCloses.length &&
+              (closeDisposedPanelTabsDuringLayoutRead || revealsPanelsLater)
+            ) {
+              // Cursor's closes arrive while the read is pending: the reader's listeners see them before the answer.
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              for (const close of dueTabCloses) close()
+              // A tab that closed in this read is followed by its emptied group in the same read.
+              for (const close of pendingDisposedTabCloses.splice(0)) close()
+              await new Promise<void>((resolve) => setImmediate(resolve))
+            } else if (dueTabCloses.length)
               setImmediate(() => {
                 for (const close of dueTabCloses) close()
               })
@@ -2977,12 +3065,21 @@ export async function workspaceHarness(
     /** The height of one editor group in a fake editor area of 840 px, by view column. @example harness.groupHeightPx(1) // 420 */
     groupHeightPx,
     /**
-     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
+     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
      * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
      * @example harness.closeDisposedPanelTabsLater()
      */
     closeDisposedPanelTabsLater(): void {
       closeDisposedPanelTabsLater = true
+    },
+    /**
+     * Makes the fake editor close a disposed panel's tab a moment after the disposal ({@link DISPOSED_TAB_CLOSE_DELAY_MS}), and the group that tab left empty while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). A layout read that arrives before the tab closed is interrupted by both closes. The reader's listeners see a close before the read it interrupts is answered. That the group's close falls into a layout read is the model's choice of moment: the trace gives the order of the two closes and their distance of 11 ms, not what the reader awaited.
+     * @example
+     * harness.replaceGroupObjectsOnTabChanges()
+     * harness.closeDisposedPanelTabsDuringLayoutRead()
+     */
+    closeDisposedPanelTabsDuringLayoutRead(): void {
+      closeDisposedPanelTabsDuringLayoutRead = true
     },
     automaticallyClosedColumns: () => [...automaticallyClosedColumns],
     useCursorGroupWrappers(twoEventContraction = false): void {
@@ -2996,6 +3093,23 @@ export async function workspaceHarness(
      */
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
+    },
+    /**
+     * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
+     * @example harness.revealPanelsLater()
+     */
+    revealPanelsLater(): void {
+      revealsPanelsLater = true
+    },
+    /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group and the first group shows a tab that is no text editor (the Application pane, twice in the second native round of Cycle 0045): that tab takes the keyboard, layout reads are answered for the main editor from then on, and the editor reports nothing: no group event, and the chat's group stays the active tab group. The numbered focus command for the chat's group then gives the keyboard back. A first group that shows a text editor is reported as before (natively seen for a click into it and a double-click on its tab; for the command it is the model's assumption).
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.leavePaneFocusUnreportedBesideChat()
+     * chat.focusTab()
+     */
+    leavePaneFocusUnreportedBesideChat(): void {
+      leavesPaneFocusUnreportedBesideChat = true
     },
     useNativeLayout(layout: unknown): void {
       nativeLayout = true

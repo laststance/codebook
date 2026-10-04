@@ -241,3 +241,152 @@ test('a presentation selection refused for a learner preview names that tab, its
     await harness.close()
   }
 })
+
+// Value: protects=Open replay opening the recording at the first click while the learner's file is the tab in front of the live Application pane; fails_when=the entry reveals the Application pane and starts its arrangement before the editor has reported that reveal, so its own reveal reads as a change the learner made and the click ends with "Native pane, group or focus changed while presentation waited; the learner arrangement was preserved."; why_new=Cycle 0045 NF-20 (Cursor: the first click failed whenever a preview or kept tab was in front of the pane, the second opened it); seam=the recorded reader harness, focusMutableDraft, and the fake editor reporting a pane's reveal one turn later
+test("Open replay with the learner's file in front of the live Application pane opens the recording at the first click", async () => {
+  // Arrange: the reader is open, and the file the learner (or the debugger) opened in the Application's group is in front of the pane with the keyboard focus.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const learnerFile = harness.focusMutableDraft('login-form.tsx', 1)
+    harness.revealPanelsLater()
+
+    // Act: one click on Open replay.
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(harness.controller.state().reason, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 1)
+        ?.tabs.includes(learnerFile.tab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const column of [1, 2, 3] as const)
+  // Value: protects=a selection and a Restore made while a kept tab that is no text editor (an image) has the focus arranging the three panes, instead of leaving the Study pane filling the window; fails_when=the selection is not arranged for that tab and falls back to the enlarged explanation, and every Restore ends there again; why_new=Cycle 0045 NF-22 with PC-1.10 (the state no longer arises since the first part of package S1 admits such a tab; this pins it for each Study column and for the Restore after it); seam=addOpaqueTab, focusOpaqueTab
+  test(`a selection and a Restore made beside a focused kept image tab in editor group ${column} arrange the Study panes without enlarging the Study pane`, async () => {
+    // Arrange: the learner keeps an image open and it has the focus; it is no preview and no text editor.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+    try {
+      const image = harness.addOpaqueTab('logo.png', column)
+      harness.focusOpaqueTab(image)
+      const closed = harness.reader.presentationState()
+
+      // Act
+      const selected = await harness.reader.changePresentation({
+        presentationId: closed.presentationId,
+        expectedRevision: closed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      const restored = await harness.reader.changePresentation({
+        presentationId: selected.presentationId,
+        expectedRevision: selected.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+
+      // Assert
+      assert.equal(selected.layoutConfirmed, true)
+      assert.equal(selected.reason, undefined)
+      assert.equal(restored.layoutConfirmed, true)
+      assert.equal(restored.reason, undefined)
+      assert.equal(restored.panes.appColumn, 1)
+      assert.equal(restored.panes.sourceColumn, 2)
+      assert.equal(restored.panes.contextColumn, 3)
+      assert.equal(
+        harness.commands.includes('workbench.action.maximizeEditorHideSidebar'),
+        false,
+      )
+      assert.equal(harness.maximizedEditorGroup(), false)
+      assert.equal(
+        harness.groups.some((group) => group.tabs.includes(image)),
+        true,
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=Close Study Workspace ending the maximized editor group a Read of a pane left; fails_when=the workspace closes its panes and the editor stays with one maximized group; why_new=Cycle 0045 NF-22 (close undid neither the maximized group nor the hidden side bars); seam=the fake editor's maximized group
+test('Close Study Workspace ends the maximized editor group that a Read of a pane left', async () => {
+  // Arrange: the learner read the explanation enlarged; the editor shows that group maximized.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    const maximizedByRead = harness.maximizedEditorGroup()
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.equal(maximizedByRead, true)
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Restore leaving the enlarged Study pane while a tab the learner keeps covers the captured source, and saying which tab and what clears it; fails_when=the Restore finds the source not shown and enlarges the Study pane again, so the pane fills the window after every Restore and no tab is named; why_new=Cycle 0045 NF-22 with PC-1.10 (a kept tab that is no text editor is its own case, and the step the refusal names makes the next Restore possible); seam=addOpaqueTab, focusOpaqueTab, the fake editor's maximized group
+test('Restore beside a kept image tab leaves the enlarged Study pane and names the tab that keeps the panes from being arranged', async () => {
+  // Arrange: the learner keeps an image open in front of the captured source and read the explanation enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const image = harness.addOpaqueTab('logo.png', 2)
+    harness.focusOpaqueTab(image)
+    await harness.reader.action('read-context')
+    const enlargedByRead = harness.maximizedEditorGroup()
+    const maximizeCommands = (): number =>
+      harness.commands.filter(
+        (command) => command === 'workbench.action.maximizeEditorHideSidebar',
+      ).length
+
+    // Act: the pane's Restore; then the step the refusal names, and Restore again.
+    await harness.reader.action('arrange')
+    const refused = {
+      lines: harness.reader.inspect().view!.errors.join(' | '),
+      maximized: harness.maximizedEditorGroup(),
+      maximizeCommands: maximizeCommands(),
+    }
+    const sourceGroup = harness.groups.find((group) =>
+      group.tabs.includes(image),
+    )!
+    sourceGroup.activeTab = sourceGroup.tabs.find((tab) => tab !== image)
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(enlargedByRead, true)
+    assert.deepEqual(refused, {
+      lines:
+        'Error: The tab "logo.png" is in front of the captured source in editor group 2. Close that tab or select the captured source\'s tab, then restore the layout again.',
+      maximized: false,
+      maximizeCommands: 1,
+    })
+    // After the named step (the learner selected the captured source's tab; the image stays open behind it) the next Restore arranges and confirms the three panes.
+    assert.equal(sourceGroup.tabs.includes(image), true)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.equal(maximizeCommands(), 1)
+    assert.equal(
+      (await harness.reader.readPresentationState()).layoutConfirmed,
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})

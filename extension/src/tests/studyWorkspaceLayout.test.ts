@@ -3768,6 +3768,108 @@ test('after a saved study was chosen with the bottom panel maximized, restoring 
   }
 })
 
+// Value: protects=the editor being asked for its layout once at a time while a saved study waits for the hidden editor area; fails_when=every 250 ms refresh sends another layout request while the one before it is still unanswered; why_new=Cycle 0045 SP-6 (read from code: `showStudyAwaitingEditorArea` asked on every tick, with no guard against a request in flight); seam=the workspace harness holding one editor command, the reader's refresh
+test('while a saved study waits for the hidden editor area, a refresh that finds a layout request unanswered sends no second one', async (context) => {
+  // Arrange: a saved study was chosen with the bottom panel maximized; the editor does not answer the next layout request.
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const layoutRequestsBefore = harness.commands.filter(
+      (command) => command === 'vscode.getEditorLayout',
+    ).length
+    const unanswered = harness.holdNextCommand('vscode.getEditorLayout')
+
+    // Act: the reader's timer runs again two seconds later, and the editor still has not answered the first request.
+    const startedAtMs = performance.now()
+    let waitedMs = 0
+    context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
+    const firstTick = readerSeams(harness).refresh()
+    await unanswered.started
+    waitedMs = 2_000
+    await readerSeams(harness).refresh()
+    const layoutRequestsWhileUnanswered =
+      harness.commands.filter((command) => command === 'vscode.getEditorLayout')
+        .length - layoutRequestsBefore
+    unanswered.release()
+    await firstTick
+
+    // Assert
+    assert.equal(layoutRequestsWhileUnanswered, 1)
+    assert.equal(harness.isPanelMaximized(), true)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen with the bottom panel maximized being shown whenever the learner brings the editor area back, however late, while the editor is asked for its layout at most once a second meanwhile; fails_when=the wait gets an end bound and the learner has to choose the study again, or every 250 ms refresh asks the editor; why_new=Cycle 0045 SP-6 as DR-10 (the wait has no end bound, only the polling is bounded); seam=the workspace harness, the reader's refresh, and performance.now() moved by the test
+test('a saved study chosen with the bottom panel maximized is shown when the panel is restored ten minutes later', async (context) => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const startedAtMs = performance.now()
+    let waitedMs = 0
+    context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
+    /** Runs the reader's timer once at a moment of the wait and counts the layout requests it sent. */
+    const layoutRequestsOfTickAt = async (atMs: number): Promise<number> => {
+      waitedMs = atMs
+      const before = harness.commands.filter(
+        (command) => command === 'vscode.getEditorLayout',
+      ).length
+      await readerSeams(harness).refresh()
+      return (
+        harness.commands.filter(
+          (command) => command === 'vscode.getEditorLayout',
+        ).length - before
+      )
+    }
+
+    // Act: four ticks of the first second, one a second later, and one ten minutes after the choice, when the learner has restored the panel.
+    const requestsInTheFirstSecond = [
+      await layoutRequestsOfTickAt(0),
+      await layoutRequestsOfTickAt(250),
+      await layoutRequestsOfTickAt(500),
+      await layoutRequestsOfTickAt(750),
+    ]
+    const requestsAfterOneSecond = await layoutRequestsOfTickAt(1_000)
+    const shownWhileMaximized = harness.reader
+      .inspect()
+      .sourceUri?.includes(second.id)
+    harness.restorePanel()
+    waitedMs = 600_000
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.deepEqual(requestsInTheFirstSecond, [1, 0, 0, 0])
+    assert.equal(requestsAfterOneSecond, 1)
+    assert.equal(shownWhileMaximized, false)
+    assert.equal(harness.reader.inspect().sourceUri!.includes(second.id), true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized (0039-N8-b / 0040-N9-img, second occurrence); fails_when=the seek reveals its source into the hidden editor area, the editor expands the source group and brings the area back, and nothing gives the Application group its height back: it stays a 70 px strip with the layout unconfirmed until Restore; why_new=native run of 2026-10-04 (u18-max-seek.png, repaired only by Restore, u25-restored.png); seam=workspace harness with a maximized bottom panel
 test('a recorded seek made while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
   // Arrange
@@ -3883,7 +3985,7 @@ test('the fake editor brings the editor area back for every trigger VS Code brin
   }
 })
 
-// Value: protects=reader tests with a maximized bottom panel meeting the same editor for the other focus-group command the reader runs; fails_when=the fake editor brings the area back for the focus-first-group command only, so the reader's focus on the active group behind a maximized panel is not seen; why_new=Cycle 0045 D-M2 (both focus-group commands of the reader go through one place of the fake editor); seam=the workspace harness's fake editor
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader focuses the group that is already the active one; fails_when=the fake editor keeps the area hidden for that command, or brings it back with the first group as a 70 px strip as it does for a command that activates another group, so a focus hand-off that leaves the rows as they were looks like a collapse; why_new=Cycle 0045 D-M2, open again after the second native round (VS Code 1.140.0 on 2026-10-04, owed check 5: the area returned with the rows at 344 and 343 px, the sizes they had before the panel was maximized); seam=the workspace harness's fake editor
 test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the command that focuses the active editor group', async () => {
   // Arrange
   const harness = await twoStackedGroupsEditor()
@@ -3895,10 +3997,10 @@ test('the fake editor brings the editor area back for every trigger VS Code brin
       'workbench.action.focusActiveEditorGroup',
     )
 
-    // Assert
+    // Assert: the rows have the heights they had before the panel was maximized.
     assert.equal(harness.isPanelMaximized(), false)
-    assert.equal(harness.groupHeightPx(1), 70)
-    assert.equal(harness.groupHeightPx(2), 770)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(harness.groupHeightPx(2), 420)
   } finally {
     await harness.close()
   }
@@ -4302,6 +4404,69 @@ for (const [change, changedPart] of [
     }
   })
 
+for (const keyboard of ['in the chat input', "on the chat's tab"] as const) {
+  // Value: protects=an agent that reads the presentation state after its own select, from the chat, being told the layout it just got confirmed still stands; fails_when=the read answers layoutConfirmed false with "Main editor layout could not be checked without changing focus. …" although no tab or group changed since the arrangement, so the agent reports the layout as unconfirmed or restores it again; why_new=Cycle 0045 finding S1a-F1 (first part of package S1); seam=workspace harness with a separate editor part that has the keyboard
+  test(`a status read made while the chat has the focus answers the confirmation of the last arrangement when nothing changed since (keyboard ${keyboard})`, async () => {
+    // Arrange: the Study layout is confirmed; then the keyboard is in Cursor's chat part, where a layout read is answered for that part.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const arranged = await harness.reader.readPresentationState()
+      if (keyboard === 'in the chat input') chat.focus()
+      else chat.focusTab()
+      const commandsBefore = harness.commands.length
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(arranged.layoutConfirmed, true)
+      assert.equal(arranged.layoutMeasured, undefined)
+      assert.equal(state.layoutConfirmed, true)
+      assert.equal(state.layoutMeasured, false)
+      assert.equal(state.reason, undefined)
+      // The read took no focus: it sent the one layout request, and the chat still has the keyboard.
+      assert.deepEqual(harness.commands.slice(commandsBefore), [
+        'vscode.getEditorLayout',
+      ])
+      assert.equal(chat.focused(), true)
+    } finally {
+      await harness.close()
+    }
+  })
+
+  // Value: protects=the same read not certifying a layout that changed while it could not be measured; fails_when=a group that opened since the arrangement is answered with the old confirmation; why_new=Cycle 0045 finding S1a-F1, the counterpart of the case above; seam=workspace harness with a separate editor part that has the keyboard, replaceEditorGroup
+  test(`a status read made while the chat has the focus answers that the layout is not confirmed after a group changed since the last arrangement (keyboard ${keyboard})`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const arranged = await harness.reader.readPresentationState()
+      if (keyboard === 'in the chat input') chat.focus()
+      else chat.focusTab()
+      harness.replaceEditorGroup('opened', 1)
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(arranged.layoutConfirmed, true)
+      assert.equal(state.layoutConfirmed, false)
+      assert.equal(state.layoutMeasured, undefined)
+      assert.equal(
+        state.reason,
+        'Main editor layout could not be checked without changing focus. Focus a Codebook pane or main text editor and read again.',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
 // Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized while the layout was no longer confirmed; fails_when=only a confirmed layout is given its grid back, so the returned editor area leaves the Application group a 70 px strip above the source until Restore; why_new=Cycle 0045 NF-5 with PC-1.1 (the second maximized seek of the observation: the first had left the layout unconfirmed); seam=workspace harness with a maximized bottom panel
 test('a recorded seek made while the bottom panel is maximized gives a collapsed Application group its height back also when the layout was no longer confirmed', async () => {
   // Arrange: a status read found the grid resized, so the recording's layout is unconfirmed; then the learner maximizes the bottom panel.
@@ -4334,6 +4499,80 @@ test('a recorded seek made while the bottom panel is maximized gives a collapsed
     assert.equal(harness.isPanelMaximized(), false)
     // The last confirmed grid is applied again: the Application group is no strip of 70 px.
     assert.equal(harness.groupHeightPx(1), 420)
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const command of [
+  'Arrange Study Workspace',
+  'Open Study Workspace',
+] as const)
+  for (const layout of ['a recording', 'the Study layout'] as const)
+    // Value: protects=the two commands a learner reaches for when the Application pane is a strip giving that pane its height back; fails_when=Arrange restores without applying a grid, or Open returns because a layout receipt of the same mode exists, so the Application group stays at the 70 px of its tab row above a tall source; why_new=Cycle 0045 NF-10 with PC-1.1 (Cursor: neither command repaired the collapse a maximized seek left; the collapse is that of the Application group alone, the source group is tall); seam=workspace harness with a native layout whose rows the test sets in pixels
+    test(`${command} gives a collapsed Application group its normal height, in ${layout}`, async () => {
+      // Arrange: the editor area is visible; the Application group sits at the height of its tab row above a tall source group, as a maximized bottom panel leaves it when it is restored.
+      const harness = await recordedReaderHarness(true)
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      try {
+        if (layout === 'a recording') {
+          await harness.reader.openRecording(harness.studyId)
+          await harness.controller.settle()
+        } else await harness.reader.open()
+        const arranged = await harness.reader.readPresentationState(),
+          applicationHeightArranged = harness.groupHeightPx(1)
+        harness.maximizePanel()
+        await harness.editor.commands.executeCommand(
+          'workbench.action.focusFirstEditorGroup',
+        )
+        const collapsed = {
+          application: harness.groupHeightPx(1),
+          source: harness.groupHeightPx(2),
+        }
+
+        // Act
+        if (command === 'Arrange Study Workspace')
+          await harness.reader.action('arrange')
+        else await harness.reader.open()
+
+        // Assert
+        const state = await harness.reader.readPresentationState()
+        assert.equal(arranged.layoutConfirmed, true)
+        assert.equal(applicationHeightArranged, 420)
+        assert.deepEqual(collapsed, { application: 70, source: 770 })
+        assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+        assert.equal(harness.groupHeightPx(1), 420)
+        assert.equal(harness.groupHeightPx(2), 420)
+        assert.equal(state.layoutConfirmed, true)
+        assert.equal(state.reason, undefined)
+      } finally {
+        await harness.close()
+      }
+    })
+
+// Value: protects=the line a learner reads when the editor did not keep the Study layout naming the command that applies it again, and that command clearing the line; fails_when=the pane reads "The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.", which names no step that repairs it; why_new=Cycle 0045 finding OBS-2 (native observation round: the line stood in red in the Study pane after Restore Panel Size in Cursor); seam=workspace harness whose editor refuses one layout command
+test('a Study layout the editor did not keep is reported with the command that applies it again, and that command clears the report', async () => {
+  // Arrange: the editor refuses the layout of the first arrangement once.
+  const harness = await workspaceHarness(false)
+  harness.showTransientNativeSizes()
+  harness.failNextCommand('vscode.setEditorLayout')
+  try {
+    await harness.reader.open()
+    const reported = harness.reader.inspect().view!.errors.join(' | ')
+
+    // Act: the learner runs the command the line names.
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(
+      reported,
+      'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
+    )
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      (await harness.reader.readPresentationState()).layoutConfirmed,
+      true,
+    )
   } finally {
     await harness.close()
   }

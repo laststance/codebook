@@ -103,6 +103,7 @@ import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { namesLineNumber } from './utils/namesLineNumber'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { thrownMessage } from './utils/thrownMessage'
@@ -216,6 +217,7 @@ export class StudyService {
   playbackController?: PlaybackController
   presentationController?: Pick<
     StudyWorkspace,
+    | 'presentationState'
     | 'readPresentationState'
     | 'changePresentation'
     | 'returnToCurrent'
@@ -406,7 +408,7 @@ export class StudyService {
         ? {
             ...(await this.presentationState(this.instanceId)),
             instructions:
-              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. Study workspace is the only layout that can be selected; the retired Living book and Guided walkthrough layouts stay only where a saved preference still names one. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
+              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. A read made while the chat has the keyboard focus cannot measure the main editor grid without taking that focus: it answers the confirmation of the last arrangement with layoutMeasured false while no tab or group changed since, and layoutConfirmed false once one did. Study workspace is the only layout that can be selected; the retired Living book and Guided walkthrough layouts stay only where a saved preference still names one. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. A run started while an open reader has followingCurrentRun false is not started: it ends before any application input and names this step; start again with a new key after it. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
           }
         : undefined,
       repository: {
@@ -553,11 +555,15 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
       )
+    const state = await this.presentationController.readPresentationState()
     return {
       instanceId: this.instanceId,
-      ...(await this.presentationController.readPresentationState()),
+      ...state,
       uri: `codebook://${this.instanceId}/presentation`,
-      modes: PRESENTATION_MODE_IDS.map((mode) => ({
+      // Only layouts {@link selectPresentation} accepts are offered: Study workspace, and a retired layout while the reader is still in it.
+      modes: PRESENTATION_MODE_IDS.filter(
+        (mode) => mode === SELECTABLE_PRESENTATION_MODE || mode === state.mode,
+      ).map((mode) => ({
         mode,
         title: STUDY_PRESENTATIONS[mode].title,
         description: STUDY_PRESENTATIONS[mode].description,
@@ -2014,6 +2020,19 @@ export class StudyService {
             'PREREQUISITE_MISSING',
             'Repository source/book storage is unavailable in this editor.',
           )
+        // An open reader that shows saved history displays none of this run's captures, so the run would fail at its first one, after the application was started: it ends here, before any input.
+        const presentation = this.presentationController?.presentationState()
+        if (
+          presentation?.state === 'open' &&
+          !presentation.reader.followingCurrentRun
+        ) {
+          // The run had no effect: no study is saved for it, as for a run the library refused.
+          record.historyExcluded = 'refused-at-admission'
+          throw new StudyError(
+            'PRESENTATION_UNAVAILABLE',
+            readerNotFollowingRunRefusal(presentation.reader.contentRevision),
+          )
+        }
         // The admission precedes every awaited read, so no reader checkpoint captures a run the library will refuse.
         await this.admitStudy(record)
         if (this.stopping || record.stopping) return

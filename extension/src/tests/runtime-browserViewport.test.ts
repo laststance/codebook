@@ -149,8 +149,11 @@ async function viewportHarness(
   observer?: ViewportModule.ViewportRecordingObserver,
   mode: 'live' | 'recording' = 'live',
   renderer = viewportPanel(),
-  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. */
-  pausedFile?: { focusEditorOnBreak: boolean },
+  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. `learnerInChat` says how Cursor reports a learner who went back to the Agent chat afterwards: `'named group'` (the chat's group is the active tab group) or `'keyboard only'` (the paused file's tab is still named, and no text editor is active). */
+  pausedFile?: {
+    focusEditorOnBreak: boolean
+    learnerInChat?: 'named group' | 'keyboard only'
+  },
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -170,12 +173,17 @@ async function viewportHarness(
                 createWebviewPanel: () => panel,
                 state: { focused: true },
                 tabGroups: {
-                  activeTabGroup: {
-                    viewColumn: 1,
-                    activeTab: { input: new PausedFileTab() },
-                  },
+                  activeTabGroup:
+                    pausedFile?.learnerInChat === 'named group'
+                      ? { viewColumn: 3, activeTab: { input: undefined } }
+                      : {
+                          viewColumn: 1,
+                          activeTab: { input: new PausedFileTab() },
+                        },
                 },
-                activeTextEditor: { viewColumn: 1 },
+                activeTextEditor: pausedFile?.learnerInChat
+                  ? undefined
+                  : { viewColumn: 1 },
               },
               ViewColumn: { One: 1 },
               TabInputText: PausedFileTab,
@@ -663,7 +671,10 @@ for (const mode of ['live', 'recording'] as const)
       // Act / Assert: the paint budget passes on a faked clock.
       const refused = assert.rejects(
         harness.viewport.present('cGl4ZWxz', 'before'),
-        /acknowledgement timed out/,
+        // A replay keeps the delivery's own reason, which its same-frame retry reads; a live run ends with the sentence for its reader.
+        mode === 'live'
+          ? /painted no frame within 3 s/
+          : /acknowledgement timed out/,
       )
       await advanceClockUntilSettled(
         context,
@@ -680,6 +691,41 @@ for (const mode of ['live', 'recording'] as const)
       harness.viewport.close()
     }
   })
+
+// Value: protects=the reason a live run ends with when its Application pane paints nothing saying what Codebook observed and the step that makes a new run possible; fails_when=the run ends with "Viewport frame acknowledgement timed out", which names nothing the learner or the agent can do; why_new=Cycle 0045 finding R2-F2 (second native round: an overlay covered the editor window and an admitted run ended in preparation with that text); seam=the viewport harness with a renderer that never acknowledges a frame and the fake clock for the three seconds of the paint bound
+test('a live capture whose Application pane paints no frame within the bound ends with what was observed and the step that makes a new run possible', async (context) => {
+  // Arrange: the renderer is ready and receives the frame, but paints nothing, as while a window covers the editor.
+  const harness = await viewportHarness('normal', true),
+    epoch = '11111111-1111-1111-1111-111111111111'
+  harness.ready(epoch)
+  enableFakeClock(context)
+  try {
+    // Act: the three seconds of the paint bound pass on a faked clock.
+    const shown = harness.viewport.present('cGl4ZWxz', 'ready').then(
+      () => 'confirmed',
+      (error: unknown) => String(error),
+    )
+    const elapsedMs = await advanceClockUntilSettled(
+      context,
+      shown,
+      CAPTURE_TIMEOUT_MS + 1_000,
+    )
+    // Assert
+    assert.equal(
+      await shown,
+      'Error: The capture was not shown: the Application pane painted no frame within 3 s. Make the editor window and the Application pane visible, then start a new run.',
+    )
+    // The faked clock moves in steps of 50 ms, and the rejection is seen one step after the bound at the latest.
+    assert.equal(elapsedMs >= 3_000 && elapsedMs <= 3_050, true)
+    assert.equal(
+      harness.events.some((event) => event.type === 'viewport.acknowledged'),
+      false,
+    )
+  } finally {
+    resetFakeClock(context)
+    harness.viewport.close()
+  }
+})
 
 test('a visible unresponsive recorded gap still fails within its paint budget', async (context) => {
   // Arrange
@@ -1824,6 +1870,15 @@ for (const [situation, pausedFile] of [
   [
     'the learner turned off debug.focusEditorOnBreak',
     { focusEditorOnBreak: false },
+  ],
+  // Cycle 0045 X7-A.4: the debugger opened the paused file in the Application's group, and the learner went back to Cursor's chat before a delayed reveal.
+  [
+    "the learner went back to Cursor's chat after a pause and the editor names the chat's group",
+    { focusEditorOnBreak: true, learnerInChat: 'named group' },
+  ],
+  [
+    "the learner went back to Cursor's chat after a pause and the editor still names the paused file's tab, with no active text editor",
+    { focusEditorOnBreak: true, learnerInChat: 'keyboard only' },
   ],
 ] as const)
   // Value: protects=the keyboard focus of a learner who types in the chat or another pane while the Application pane is brought back; fails_when=the Application pane takes the focus although the editor it covers was not focused by a pause; why_new=control for the 0037-F6 fix; seam=fake editor

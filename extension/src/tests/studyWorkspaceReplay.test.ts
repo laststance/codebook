@@ -697,7 +697,7 @@ for (const initial of [
           .inspect()
           .view!.errors.some((error) =>
             error.includes(
-              'The editor did not retain the requested Codebook layout',
+              'the editor did not keep the layout Codebook applied',
             ),
           ),
         true,
@@ -708,7 +708,7 @@ for (const initial of [
           .inspect()
           .view!.errors.some((error) =>
             error.includes(
-              'arrange the Codebook panes manually. Cause: Error: Timed out waiting for settled reader grid',
+              'to apply it again. Cause: Error: Timed out waiting for settled reader grid',
             ),
           ),
         true,

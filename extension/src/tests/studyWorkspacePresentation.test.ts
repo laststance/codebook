@@ -21,6 +21,11 @@ import {
   readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntil,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
   test(`a learner draft focus while ${kind} activity is delayed stops the transfer and preserves the prior preference`, async () => {
     // Arrange
@@ -1502,15 +1507,16 @@ test('editor AI can return a saved recording to its current run without repeatin
   let endpoint: Awaited<ReturnType<typeof startServer>> | undefined
   let client: Client | undefined
   try {
-    await harness.reader.openRecording(harness.studyId)
-    await harness.controller.settle()
+    // The run is started while the reader follows it; a start made while the reader shows the recording is refused (OBS-1).
     next = service.start({
       instanceId: service.instanceId,
       profile: PROFILE_ID,
       configuration: harness.configuration,
-      key: 'after-saved-recording',
+      key: 'before-saved-recording',
     })
     await service.record(next).preparation
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
     endpoint = await startServer(service)
     const transport = new StreamableHTTPClientTransport(
       new URL(endpoint.descriptor.url),
@@ -2681,12 +2687,19 @@ test('a selection still succeeds when the editor reports the next text editor a 
     assert.equal(selected.layoutConfirmed, true)
     assert.equal(tabs.includes(leftover), false)
     assert.equal(tabs.includes(draft.tab), true)
-    // The draft the editor activated in the leftover tab's place has focus again once the panes are placed.
-    assert.equal(harness.focusedPanel(), undefined)
+    // The draft the editor activated in the leftover tab's place shares the Application pane's group: the pane is in front and has the keyboard focus that draft had, and the draft is still open behind it (Cycle 0045 NF-1 as DR-5; the draft was fronted and focused again before).
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
     assert.equal(
-      harness.groups.some((group) => group.activeTab === draft.tab),
-      true,
+      harness.groups.find((group) => group.tabs.includes(draft.tab))
+        ?.activeTab === draft.tab,
+      false,
     )
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(draft.tab))
+        ?.viewColumn,
+      1,
+    )
+    assert.equal(selected.panes.appColumn, 1)
   } finally {
     await harness.close()
   }
@@ -4064,3 +4077,468 @@ for (const reader of ['closed', 'open'] as const)
       await harness.close()
     }
   })
+
+for (const action of ['select', 'restore'] as const)
+  for (const replacesGroupObjects of [false, true])
+    // Value: protects=an agent's presentation select or restore being admitted in the state a real Cursor chat submission is in (the chat input holds the keyboard, and the editor names a learner's file of the main editor as the active tab without an active text editor), and the chat having the keyboard again afterwards; fails_when=every text tab without an active text editor is refused as if it were a captured source the editor kept, which only a click into an editor clears, and an agent cannot click, or the keyboard stays on the captured source after the measurement borrowed it; why_new=Cycle 0045 cause 12 (a) (second native round, N14-b2 and owed check 1, take A2: both calls refused with "has no text editor", the run showed no stopped source); seam=workspace harness with a separate editor part that holds the keyboard while the main group stays the active tab group
+    test(`a ${action === 'select' ? 'selection' : 'restore'} made while the chat input has the focus and the editor names a text tab without an active text editor arranges the Study panes and closes or moves no tab, ${replacesGroupObjects ? 'also when the editor replaces every tab group object with each tab change as Cursor does' : 'in an editor that keeps its tab group objects'}`, async () => {
+      // Arrange: as the editor API reported it in Cursor: group 1 is the active tab group and shows the learner's file beside a settings page, group 2 below it is empty, and the Agent chat's own editor part holds the keyboard, so no text editor is active while that file's editor is visible.
+      const harness = await workspaceHarness(false)
+      harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+      harness.groups.at(-1)!.tabs = []
+      harness.groups.at(-1)!.activeTab = undefined
+      const chat = harness.addSeparateEditorPart()
+      if (replacesGroupObjects) harness.replaceGroupObjectsOnTabChanges()
+      try {
+        const settings = harness.addOpaqueTab('Cursor Settings', 1),
+          learnerFile = harness.focusMutableDraft('actions.ts', 1)
+        chat.focus()
+        const state = harness.reader.presentationState(),
+          activeBefore = harness.editor.window.tabGroups.activeTabGroup,
+          tabsOfFirstGroupBefore = [...activeBefore.tabs]
+        const stateBefore = {
+          chatHasKeyboard: chat.focused(),
+          chatColumn: harness.groups.find((group) =>
+            group.tabs.includes(chat.tab),
+          )?.viewColumn,
+          activeColumn: activeBefore.viewColumn,
+          activeTabIsLearnerFile: activeBefore.activeTab === learnerFile.tab,
+          hasActiveTextEditor:
+            harness.editor.window.activeTextEditor !== undefined,
+          visibleEditors: harness.editor.window.visibleTextEditors.length,
+        }
+        // Act
+        const arranged = await harness.reader.changePresentation({
+          presentationId: state.presentationId,
+          expectedRevision: state.presentationControlRevision,
+          mode: 'study-workspace',
+          action,
+        })
+        // Assert
+        const firstGroup = harness.groups.find(
+          (group) => group.viewColumn === 1,
+        )!
+        assert.deepEqual(stateBefore, {
+          chatHasKeyboard: true,
+          chatColumn: 3,
+          activeColumn: 1,
+          activeTabIsLearnerFile: true,
+          hasActiveTextEditor: false,
+          visibleEditors: 1,
+        })
+        assert.equal(arranged.state, 'open')
+        assert.equal(arranged.layoutConfirmed, true)
+        assert.equal(arranged.reason, undefined)
+        assert.equal(arranged.panes.appColumn, 1)
+        assert.equal(arranged.panes.sourceColumn, 2)
+        assert.equal(arranged.panes.contextColumn, 3)
+        // No tab was closed or moved: the first group still holds its tabs in their order, before the Application pane, and the chat tab is alone in its group behind the Study groups.
+        assert.deepEqual(harness.tabCloseRequests(), [])
+        assert.deepEqual(
+          firstGroup.tabs.slice(0, tabsOfFirstGroupBefore.length),
+          tabsOfFirstGroupBefore,
+        )
+        assert.equal(firstGroup.tabs.includes(settings), true)
+        assert.equal(learnerFile.tab.isDirty, true)
+        assert.equal(
+          learnerFile.document.getText(),
+          'Original learner draft.\n',
+        )
+        assert.equal(
+          harness.groups.find((group) => group.tabs.includes(chat.tab))
+            ?.viewColumn,
+          4,
+        )
+        // The measurement borrowed the keyboard for the main editor; the chat has it again, through the editor's command for its group.
+        assert.equal(chat.focused(), true)
+        assert.equal(
+          harness.editor.window.tabGroups.activeTabGroup.tabs.includes(
+            chat.tab,
+          ),
+          true,
+        )
+        assert.equal(harness.editor.window.activeTextEditor, undefined)
+        assert.equal(
+          harness.commands
+            .filter((command) =>
+              /^workbench\.action\.focus\w+EditorGroup$/.test(command),
+            )
+            .at(-1),
+          'workbench.action.focusFourthEditorGroup',
+        )
+      } finally {
+        await harness.close()
+      }
+    })
+
+for (const reader of ['closed', 'open'] as const)
+  // Value: protects=an agent's presentation select during its own paused run in the state of a real Cursor chat submission (the chat input holds the keyboard, the editor names the file the debugger opened in the Application's group, no text editor is active) ending with the live panes confirmed and the keyboard back in the chat; fails_when=the selection is refused for the text tab without an active text editor, or the keyboard stays on that file after the measurement focused the first editor group; why_new=Cycle 0045 cause 12 (a) (N14-b2: the debugger's source shared group 1 with the Application pane and every presentation call was refused); seam=workspace harness with the controlled runtime, a separate editor part that holds the keyboard and the fake editor's group object replacement
+  test(`a presentation select during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
+    // Arrange: the debugger's file is a tab of the first group; the chat's own editor part holds the keyboard, so the editor names that file's tab and no active text editor.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+    const chat = harness.addSeparateEditorPart()
+    harness.replaceGroupObjectsOnTabChanges()
+    try {
+      await pauseLiveRun(harness)
+      if (reader === 'open') await harness.reader.open()
+      const debuggerFile = harness.focusMutableDraft('login-form.tsx', 1)
+      chat.focus()
+      const state = harness.reader.presentationState()
+      const stateBefore = {
+        chatHasKeyboard: chat.focused(),
+        activeTabIsDebuggerFile:
+          harness.editor.window.tabGroups.activeTabGroup.activeTab ===
+          debuggerFile.tab,
+        hasActiveTextEditor:
+          harness.editor.window.activeTextEditor !== undefined,
+      }
+      // Act
+      const selected = await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      // Assert
+      const chatGroup = harness.groups.find((group) =>
+        group.tabs.includes(chat.tab),
+      )
+      assert.deepEqual(stateBefore, {
+        chatHasKeyboard: true,
+        activeTabIsDebuggerFile: true,
+        hasActiveTextEditor: false,
+      })
+      assert.equal(state.state, reader)
+      assert.equal(selected.state, 'open')
+      assert.equal(selected.layoutConfirmed, true)
+      assert.equal(selected.reason, undefined)
+      assert.equal(selected.panes.appColumn, 1)
+      assert.equal(selected.panes.sourceColumn, 2)
+      assert.equal(readerSeams(harness).isLiveArrangement(), true)
+      assert.equal(
+        harness.groups
+          .find((group) => group.viewColumn === 1)
+          ?.tabs.includes(debuggerFile.tab),
+        true,
+      )
+      assert.deepEqual(harness.tabCloseRequests(), [])
+      assert.equal(chatGroup?.viewColumn, 3)
+      assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+      assert.equal(chat.focused(), true)
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=a refused presentation selection leaving the window as it found it: no Codebook pane is opened, no tab changes, and the chat input keeps the keyboard; fails_when=the refusal is answered only after the Application pane was opened in the first group and the keyboard had moved from the chat to it, and both stay; why_new=Cycle 0045 cause 12 (b) (owed check 1, take A1: refused after 5.2 s, the Application pane open in group 1 with the keyboard); seam=workspace harness with a separate editor part whose group the editor names as active, the fake editor's group object replacement and its unreported pane focus beside the chat
+test('a selection refused for a preview tab opens no pane and leaves the keyboard focus where it was', async () => {
+  // Arrange: Cursor names the chat's group as the active one and its input has the keyboard; the first group shows the learner's file and holds an image the learner opened by a single click, a preview tab that Codebook cannot keep open for the learner.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    await harness.reader.attach(harness.service)
+    const image = harness.addOpaqueTab('logo.png', 1)
+    image.isPreview = true
+    harness.focusMutableDraft('login-form.tsx', 1)
+    chat.focusTab()
+    const state = harness.reader.presentationState(),
+      commands = [...harness.commands],
+      tabsBefore = harness.groups.map((group) => [...group.tabs])
+    // Act
+    const refused = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    await assert.rejects(refused, {
+      code: 'PRESENTATION_UNAVAILABLE',
+      message:
+        'A destination group contains a foreign preview: "logo.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+    })
+    assert.equal(harness.counts().panels, 0)
+    assert.deepEqual(
+      harness.groups.map((group) => [...group.tabs]),
+      tabsBefore,
+    )
+    assert.equal(image.isPreview, true)
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    // Nothing was focused, measured or revealed: the chat's group is the active one and its input has the keyboard.
+    assert.deepEqual(harness.commands, commands)
+    assert.deepEqual(harness.panelReveals(), [])
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
+      true,
+    )
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the first presentation selection of a chat request in Cursor being arranged beside the preview tab the debugger of an earlier run left in the first group, with that tab kept open; fails_when=the main editor is measured only after the Application pane was placed in front of the first group's text editor, where Cursor reports no focus while it names the chat's group, so the wait for that report ends after five seconds and the refusal names the preview tab; why_new=Cycle 0045 cause 12 (b) (owed check 1, take A1, and item 2's first try: "A destination group contains a foreign preview: "actions.ts" in editor group 1. …" twice, the preview was not replaced either time); seam=workspace harness with a separate editor part whose group the editor names as active, addTextPreview, the fake editor's group object replacement and its unreported pane focus beside the chat
+test("a selection made from the chat beside the debugger's leftover preview tab arranges the Study panes and keeps that tab open", async () => {
+  // Arrange: as the editor API reported it in Cursor: the first group shows the learner's file and holds the debugger's unedited preview and a settings page, the group below is empty, and the editor names the chat's group, whose input has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const debuggerFile = join(harness.directory, 'actions.ts')
+    await writeFile(debuggerFile, 'export const authenticate = 1\n')
+    const settings = harness.addOpaqueTab('Cursor Settings', 1),
+      learnerFile = harness.focusMutableDraft('login-form.tsx', 1),
+      debuggerPreview = harness.addTextPreview(debuggerFile, 1)
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    const firstGroup = harness.groups.find((group) => group.viewColumn === 1)!,
+      chatGroup = harness.groups.find((group) => group.tabs.includes(chat.tab))
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, 3)
+    // The debugger's tab is still a tab of the first group, kept open as a double-click on its tab keeps it; nothing was closed.
+    assert.equal(firstGroup.tabs.includes(debuggerPreview), true)
+    assert.equal(debuggerPreview.isPreview, false)
+    assert.equal(firstGroup.tabs.includes(settings), true)
+    assert.equal(firstGroup.tabs.includes(learnerFile.tab), true)
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    assert.equal(chatGroup?.viewColumn, 4)
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a selection that is refused because the main editor never reports the keyboard focus the measurement gave it leaving the window as it found it, with a text that says what the reader does next; fails_when=the Application pane the selection created stays open with the keyboard, the chat does not get the keyboard back because the editor still names its group, or the refusal reads "Timed out waiting for identifiable primary editor focus"; why_new=Cycle 0045 cause 12 (b) (owed check 1, take A1: Cursor kept naming the chat's group while the Application pane had the keyboard, and the pane stayed); seam=workspace harness with a separate editor part whose group the editor names as active, the fake editor's unreported pane focus beside the chat, and the fake clock for the five seconds of the wait
+test('a selection refused because the main editor reports no keyboard focus closes the Application pane it opened and gives the chat the keyboard back', async (context) => {
+  // Arrange: Cursor names the chat's group as the active one and its input has the keyboard; the first group shows a settings page, so the measurement can only focus the Application pane the selection places there, and Cursor reports no focus of that pane.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    await harness.reader.attach(harness.service)
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    chat.focusTab()
+    const state = harness.reader.presentationState(),
+      tabsBefore = harness.groups.map((group) => [...group.tabs])
+    // Act: the five seconds of the wait for the focus report pass on a faked clock.
+    let answer: unknown
+    void harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      })
+      .then(
+        (arranged) => {
+          answer = arranged
+        },
+        (error: unknown) => {
+          answer = error
+        },
+      )
+    enableFakeClock(context)
+    const refusedAfterMs = await advanceClockUntil(
+      context,
+      () => answer !== undefined,
+      6_000,
+    )
+    resetFakeClock(context)
+    // Assert
+    // The faked clock moves in steps of 50 ms, and the refusal is seen one step after the bound at the latest.
+    assert.equal(
+      refusedAfterMs !== undefined &&
+        refusedAfterMs >= 5_000 &&
+        refusedAfterMs <= 5_050,
+      true,
+    )
+    assert.equal(
+      answer instanceof Error && answer.message,
+      'The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s after Codebook focused its first editor group. Click into a file in the main editor, then try again.',
+    )
+    assert.equal(harness.counts().panels, 0)
+    assert.deepEqual(
+      harness.groups.map((group) => [...group.tabs]),
+      tabsBefore,
+    )
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
+      true,
+    )
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+for (const reader of ['study-workspace', 'living-book'] as const)
+  // Value: protects=the presentation resource offering an agent only layouts its next select is accepted for; fails_when=the resource lists Living book and Guided walkthrough beside Study workspace, and a select of either is refused as retired; why_new=Cycle 0045 SM-10 (`presentationState` listed all three modes while `selectPresentation` refused two of them); seam=none
+  test(`the presentation resource offers only layouts a select accepts: Study workspace, and a retired layout only while the reader is in it (reader in ${reader})`, async () => {
+    // Arrange: an earlier version may have saved a layout that is retired now; the reader still opens in it.
+    const harness = await workspaceHarness()
+    try {
+      if (reader === 'living-book') {
+        harness.presentationPreferences.set('codebook.presentation.v1', {
+          version: 1,
+          mode: 'living-book',
+        })
+        await harness.reader.close()
+        harness.useNativeLayout({ orientation: 0, groups: [{}] })
+        await harness.reader.open()
+      }
+      // Act
+      const resource = await harness.service.presentationState(
+        harness.service.instanceId,
+      )
+      // Assert
+      assert.equal(resource.mode, reader)
+      assert.deepEqual(
+        resource.modes.map((offered) => offered.mode),
+        reader === 'living-book'
+          ? ['study-workspace', 'living-book']
+          : ['study-workspace'],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=a run started while the open reader shows a saved study ending before the application gets any input, with the step that makes the next start possible; fails_when=the run is admitted, starts the application and fails about 25 s later at its first capture with "Learner is viewing history; current capture was not displayed.", which names no step; why_new=Cycle 0045 finding OBS-1 (native observation round, and again in owed check 2: run 303345e4 ended after 25.6 s); seam=the recorded reader harness with the real service and reader
+test('a run started while the reader shows a saved study is refused before any input and names the return to the current run', async () => {
+  // Arrange: the open reader shows a saved study's recording, so it does not follow the current run.
+  const harness = await recordedReaderHarness()
+  const service = harness.service
+  let refused: ReturnType<typeof service.start> | undefined,
+    repeated: ReturnType<typeof service.start> | undefined
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const shown = harness.reader.presentationState(),
+      runtimesBefore = harness.runtimes.length,
+      library = await harness.reader.learningStorage(),
+      savedStudiesBefore = await library.savedStudyCount()
+    // Act
+    refused = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'while-the-reader-shows-a-saved-study',
+    })
+    const refusedRecord = service.record(refused)
+    await refusedRecord.preparation
+    await waitUntil(() => refusedRecord.stopped, 'the refused run ended', 1_000)
+    // Assert
+    assert.equal(shown.state, 'open')
+    assert.equal(shown.reader.followingCurrentRun, false)
+    assert.equal(shown.reader.contentRevision, 3)
+    assert.equal(refusedRecord.error?.code, 'PRESENTATION_UNAVAILABLE')
+    assert.equal(
+      refusedRecord.error?.message,
+      "The run was not started: the reader shows saved history and does not follow the current run (reader.followingCurrentRun is false), so none of this run's captures would be displayed. Call codebook_return_current with expectedRevision 3 (reader.contentRevision), then start again with a new key.",
+    )
+    // No runtime was created: the application was not started and got no input.
+    assert.equal(refusedRecord.runtime, undefined)
+    assert.equal(harness.runtimes.length, runtimesBefore)
+    // The refused run left nothing behind: no study was saved for it.
+    assert.equal(refusedRecord.historyExcluded, 'refused-at-admission')
+    assert.equal(await library.savedStudyCount(), savedStudiesBefore)
+    assert.equal(savedStudiesBefore, 1)
+    // The step the text names makes the next start possible.
+    const returned = await harness.reader.returnToCurrent({
+      presentationId: shown.presentationId,
+      expectedRevision: shown.reader.contentRevision,
+    })
+    repeated = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'after-the-return-to-the-current-run',
+    })
+    await service.record(repeated).preparation
+    assert.equal(returned.reader.followingCurrentRun, true)
+    assert.equal(service.record(repeated).error, undefined)
+    assert.equal(service.record(repeated).prepared, true)
+    // The status help, which names followingCurrentRun, says the same.
+    assert.equal(
+      (await service.status()).presentation?.instructions.includes(
+        'Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. A run started while an open reader has followingCurrentRun false is not started: it ends before any application input and names this step; start again with a new key after it.',
+      ),
+      true,
+    )
+  } finally {
+    try {
+      if (repeated) await service.stop(repeated)
+    } finally {
+      await harness.close()
+    }
+  }
+})
+
+// Value: protects=the Application pane being in front after a cold selection made from a learner's file that shares its group, with the keyboard focus that file had, and the file still open; fails_when=the selection fronts and focuses the learner's file again, so the Application pane the layout was confirmed for stays hidden behind it; why_new=Cycle 0045 NF-1 as DR-5 (presenting never leaves the Application pane behind a learner's tab; the pane takes the focus only from an editor Codebook knows held it); seam=focusMutableDraft
+test("after a cold selection the Application pane is in front of the learner's own file that shares its group, holds the keyboard focus, and that file is still open", async () => {
+  // Arrange: the learner types in a file of the first group, where the selection places the Application pane.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const draft = harness.focusMutableDraft('notes.txt', 1)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    const applicationGroup = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    assert.equal(state.state, 'closed')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(
+      applicationGroup.activeTab?.input instanceof
+        harness.editor.TabInputWebview,
+      true,
+    )
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
+    assert.equal(harness.editor.window.activeTextEditor, undefined)
+    assert.equal(applicationGroup.tabs.includes(draft.tab), true)
+    assert.equal(draft.tab.isDirty, true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.deepEqual(harness.tabCloseRequests(), [])
+  } finally {
+    await harness.close()
+  }
+})

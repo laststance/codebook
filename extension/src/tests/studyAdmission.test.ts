@@ -636,6 +636,7 @@ test('a repeat of a refused start that is rejected while a presentation change i
     )
   }
   started.service.presentationController = {
+    presentationState: pending,
     readPresentationState: pending,
     changePresentation: pending,
     returnToCurrent: pending,
