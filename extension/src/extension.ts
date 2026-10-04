@@ -43,6 +43,7 @@ import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace } from './studyWorkspace'
 import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
+import { aiChatReconnectNotice } from './utils/aiChatReconnectNotice'
 import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
@@ -1318,10 +1319,7 @@ export function activate(
       await start()
       notifyMcpDefinitions()
     })().catch((error) => {
-      void showNotice(
-        'warning',
-        `Codebook AI chat did not reconnect: ${String(error)}. Run Codebook: Set Up AI Chat.`,
-      )
+      void showNotice('warning', aiChatReconnectNotice(error))
     })
   }
   return {

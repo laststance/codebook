@@ -36,7 +36,7 @@ const WIKI_PUBLISHER_RELATIVE_PATH = join(
 const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
 /** What a reconnect answers for a skill it will not touch; {@link verifyManagedCursorSkill} decides it under the storage lock. */
 const CHANGED_SKILL_REFUSAL =
-  'Cursor skill is missing, changed or outdated. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
+  'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
 
 type SkillReceipt = {
   schemaVersion: 1

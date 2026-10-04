@@ -219,7 +219,7 @@ test('a same-byte manual replacement does not inherit the old file ownership rec
       paths.storageRoot,
       paths.homeRoot,
     ),
-    /missing, changed or outdated/,
+    /missing or was changed/,
   )
   await assert.rejects(
     removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
@@ -742,7 +742,7 @@ test('reconnecting after an update leaves a Cursor skill that was edited since s
     paths.homeRoot,
   )
   // Assert
-  await assert.rejects(reconnecting, /missing, changed or outdated/)
+  await assert.rejects(reconnecting, /missing or was changed/)
   assert.equal(
     await readFile(paths.targetPath, 'utf8'),
     'An edit made by the learner.\n',
@@ -1003,4 +1003,47 @@ test('another window’s update between a reconnect’s read of the receipt and 
     await readFile(paths.targetPath, 'utf8'),
     publisherSkillOf(runningExtension),
   )
+})
+
+// Value: protects=the reconnect's refusal saying what happened and the next step; fails_when=the sentence still calls the skill "outdated", which a reconnect no longer refuses but updates; why_new=Cycle 0045 (SM-14); seam=none, the real files
+test('a replaced or edited Cursor skill is refused at reconnect as missing or changed, and is never called outdated', async (context) => {
+  // Arrange: one learner edited the deployed skill, another replaced the file with the same text.
+  const edited = await fixture(context),
+    replaced = await fixture(context)
+  await deployCursorSkill(
+    edited.extensionPath,
+    edited.storageRoot,
+    edited.homeRoot,
+  )
+  await writeFile(edited.targetPath, 'An edit made by the learner.\n')
+  await deployCursorSkill(
+    replaced.extensionPath,
+    replaced.storageRoot,
+    replaced.homeRoot,
+  )
+  const replacement = join(replaced.homeRoot, 'replacement.md')
+  await writeFile(replacement, INITIAL_SKILL)
+  await rename(replacement, replaced.targetPath)
+
+  // Act
+  const editedReconnect = verifyManagedCursorSkill(
+    edited.extensionPath,
+    edited.storageRoot,
+    edited.homeRoot,
+  )
+  const replacedReconnect = verifyManagedCursorSkill(
+    replaced.extensionPath,
+    replaced.storageRoot,
+    replaced.homeRoot,
+  )
+
+  // Assert
+  await assert.rejects(editedReconnect, {
+    message:
+      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+  })
+  await assert.rejects(replacedReconnect, {
+    message:
+      'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+  })
 })

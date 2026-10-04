@@ -15,6 +15,7 @@ import { test } from 'node:test'
 
 import { connectionSchema } from '../client'
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
+import * as cursorSkillDeployment from '../cursorSkillDeployment'
 import type * as ExtensionModule from '../extension'
 import { startServer } from '../server'
 import type { StudyService } from '../service'
@@ -2415,5 +2416,173 @@ test('a workspace folder change whose cleanup error quotes a command link shows 
     assert.equal(errors[0]!.includes(']('), false)
   } finally {
     await boundary.deactivate()
+  }
+})
+
+// Value: protects=the one sentence a Cursor learner reads when the chat does not reconnect; fails_when=the notice prints "Error:", names the setup step twice or ends with two full stops; why_new=Cycle 0045 (SM-14 as DX-16); seam=the real skill check against a temporary home folder
+test('a reconnect that finds the Cursor skill edited says once what happened and once to run Set Up AI Chat', async () => {
+  // Arrange: Cursor chat was set up for this workspace, and the deployed skill was edited afterwards.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reconnect-notice-')),
+  )
+  const extensionPath = join(directory, 'extension'),
+    storageRoot = join(directory, 'storage'),
+    homeRoot = join(directory, 'home')
+  await mkdir(join(extensionPath, 'skills', 'codebook'), { recursive: true })
+  await mkdir(storageRoot)
+  await mkdir(homeRoot)
+  await writeFile(
+    join(extensionPath, 'skills', 'codebook', 'SKILL.md'),
+    '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n',
+  )
+  await cursorSkillDeployment.deployCursorSkill(
+    extensionPath,
+    storageRoot,
+    homeRoot,
+  )
+  await writeFile(
+    join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md'),
+    'An edit made by the learner.\n',
+  )
+  const warnings: string[] = []
+  let reportWarning!: () => void
+  const warned = new Promise<void>((resolveWarned) => {
+    reportWarning = resolveWarned
+  })
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showWarningMessage(message: string) {
+            warnings.push(message)
+            reportWarning()
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': { requireWorkspace: () => directory },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        ...cursorSkillDeployment,
+        // The real check, pointed at the temporary home instead of the user's.
+        verifyManagedCursorSkill: (
+          checkedExtensionPath: string,
+          checkedStorageRoot: string,
+        ) =>
+          cursorSkillDeployment.verifyManagedCursorSkill(
+            checkedExtensionPath,
+            checkedStorageRoot,
+            homeRoot,
+          ),
+      },
+    },
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath,
+      globalStorageUri: { fsPath: storageRoot },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await warned
+
+    // Assert
+    assert.deepEqual(warnings, [
+      'Codebook AI chat did not reconnect: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+    ])
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0045 (ST-9): the tenth notification that quotes outside text.
+test('a reconnect that fails with an error quoting a command link warns without a clickable link', async () => {
+  // Arrange: Cursor chat was set up for this workspace, and the skill check names a redirected home folder.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reconnect-link-')),
+  )
+  const warnings: string[] = []
+  let reportWarning!: () => void
+  const warned = new Promise<void>((resolveWarned) => {
+    reportWarning = resolveWarned
+  })
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: { registerCommand: () => ({ dispose(): void {} }) },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+        },
+        window: {
+          showWarningMessage(message: string) {
+            warnings.push(message)
+            reportWarning()
+            return Promise.resolve(undefined)
+          },
+        },
+      },
+      './environment': { requireWorkspace: () => directory },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        verifyManagedCursorSkill: async () => {
+          throw new Error(
+            'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor',
+          )
+        },
+      },
+    },
+  )
+  try {
+    // Act
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await warned
+
+    // Assert
+    assert.deepEqual(warnings, [
+      'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat.',
+    ])
+    assert.equal(warnings[0]!.includes(']('), false)
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
   }
 })
