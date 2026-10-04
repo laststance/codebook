@@ -1341,22 +1341,64 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const paused = this.unannouncedStopPlace(stop)
     if (paused)
       return `${opening}: declared stop ${this.declaredAt(stop)} is paused at ${paused}, but the debugger did not announce that stop within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action`
+    return this.notHitFirstStopReason(stop, opening)
+  }
+
+  /**
+   * Words the failure of an action whose first declared stop was not hit after the input was sent; the second half of {@link unreachedFirstStopReason}, reached when no pause of that stop is held.
+   * @param stop - The first declared stop.
+   * @param opening - The text every form of the failure begins with.
+   * @returns The text that names the stop and, in this order, the place a moved breakpoint is bound at, a server stop's registration ({@link notHitServerFirstStopReason}), or that its line must execute.
+   * @example
+   * ```ts
+   * this.notHitFirstStopReason(stop, 'Repository input reached no verified pause') // '…: declared stop app/ui/login-form.tsx:74 was not hit within 20 s of the accepted action; its line must execute after the input'
+   * ```
+   */
+  private notHitFirstStopReason(stop: PreparedStop, opening: string): string {
     const moved = this.movedPlace(stop),
       notHit = `was not hit within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the accepted action`
     if (moved)
       return `${opening}: declared stop ${this.declaredAt(stop)} ${this.boundAt(moved)} ${notHit}; the bound line, not the declared one, must execute after the input`
-    if (stop.participant === 'server') {
-      const requested = this.requestedElsewhere(stop),
-        registration = this.registrationStatus(stop)
-      // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop, so its line is not the reason.
-      if (
-        registration.status === 'refused' ||
-        registration.status === 'unknown'
-      )
-        return `${opening}: declared server stop ${this.declaredAt(stop)}${requested ? ` (${requested})` : ''} ${notHit}; ${this.unacknowledgedText(stop, registration)}`
-      return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${registration.status}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
-    }
+    if (stop.participant === 'server')
+      return this.notHitServerFirstStopReason(stop, opening, notHit)
     return `${opening}: declared stop ${this.declaredAt(stop)} ${notHit}; its line must execute after the input`
+  }
+
+  /**
+   * Words the failure of an action whose first declared stop is a server stop that was not hit and whose breakpoint did not move; called by {@link notHitFirstStopReason}.
+   * @param stop - The first declared stop, a server stop.
+   * @param opening - The text every form of the failure begins with.
+   * @param notHit - The part that says the stop was not hit within the bound.
+   * @returns For a registration the adapter does not hold acknowledged, what {@link unacknowledgedText} says; otherwise the registration's status and that the action's request may still be running. Both name the place the stop was requested at when that is not the declared one.
+   * @example
+   * ```ts
+   * this.notHitServerFirstStopReason(stop, opening, notHit) // '…: declared server stop app/lib/actions.ts:12 (registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running …'
+   * ```
+   */
+  private notHitServerFirstStopReason(
+    stop: PreparedStop,
+    opening: string,
+    notHit: string,
+  ): string {
+    const requested = this.requestedElsewhere(stop),
+      registration = this.registrationStatus(stop)
+    // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop, so its line is not the reason.
+    if (this.isUnacknowledged(registration.status))
+      return `${opening}: declared server stop ${this.declaredAt(stop)}${requested ? ` (${requested})` : ''} ${notHit}; ${this.unacknowledgedText(stop, registration)}`
+    return `${opening}: declared server stop ${this.declaredAt(stop)} (${requested ? `${requested}, ` : ''}registration ${registration.status}) ${notHit}; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.`
+  }
+
+  /**
+   * Says whether a registration read means that the adapter holds no acknowledged breakpoint for a server stop, for the two deadline texts ({@link notHitServerFirstStopReason}, {@link unboundServerNextStopReason}) before they append {@link unacknowledgedText}.
+   * @param status - The status {@link registrationStatus} read.
+   * @returns `true` for `refused` (refused, revoked or moved to a refused place) and for `unknown` (no current receipt); `false` for `pending` and `bound`.
+   * @example
+   * ```ts
+   * this.isUnacknowledged('pending') // false
+   * ```
+   */
+  private isUnacknowledged(status: RegistrationStatus['status']): boolean {
+    return status === 'refused' || status === 'unknown'
   }
 
   /** Names the place a stop's breakpoint was requested at when that is not the declared position (the first mapped position after an unmapped declared line, or a second request on its line), for the deadline texts of a server stop, whose breakpoint waits there. @example this.requestedElsewhere(stop) // 'requested at 39:9', or undefined for a stop requested where it was declared */
@@ -1421,15 +1463,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     registration: RegistrationStatus,
   ): string {
     // The adapter moved the acknowledged breakpoint to a refused line: the declaration, not the run, is what to change.
-    if (registration.status === 'refused' && registration.movedTo) {
-      const { line, column } = registration.movedTo
-      return `the debugger moved its breakpoint to ${line}:${column}, refused: ${stop.bindingRefusal(line) ?? 'the binding rule refused that line'}, so the stop could not be captured there. Declare the bound place instead (${this.declaredField(stop)}), in a citation that covers it.`
-    }
+    if (registration.status === 'refused' && registration.movedTo)
+      return this.movedToRefusedLineText(stop, registration.movedTo)
     const read =
       registration.status === 'refused'
         ? registration.reason
         : 'no current registration receipt could be read'
     return `the debugger no longer acknowledged its breakpoint (${read}), so the stop could not pause. Stop this run and start a new one.`
+  }
+
+  /**
+   * Words the first form of {@link unacknowledgedText}: the adapter moved a server stop's acknowledged breakpoint to a line the stop's rule refuses.
+   * @param stop - The declared server stop that was not reached.
+   * @param movedTo - The place the adapter moved the breakpoint to.
+   * @returns The place, the rule's reason for refusing its line, and that the bound place is what to declare.
+   * @example
+   * ```ts
+   * this.movedToRefusedLineText(stop, { line: 40, column: 3 }) // 'the debugger moved its breakpoint to 40:3, refused: …, so the stop could not be captured there. Declare the bound place instead (configuration.source), in a citation that covers it.'
+   * ```
+   */
+  private movedToRefusedLineText(
+    stop: PreparedStop,
+    movedTo: { line: number; column: number },
+  ): string {
+    const { line, column } = movedTo
+    return `the debugger moved its breakpoint to ${line}:${column}, refused: ${stop.bindingRefusal(line) ?? 'the binding rule refused that line'}, so the stop could not be captured there. Declare the bound place instead (${this.declaredField(stop)}), in a citation that covers it.`
   }
 
   /**
@@ -1451,23 +1509,74 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return `${opening} is paused at ${paused}, but the debugger did not announce that stop within ${ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND} s of the preceding continuation`
     if (moved)
       return `${opening} ${this.boundAt(moved)} ${within}; the bound line, not the declared one, must execute after the preceding continuation`
-    // A server stop is bound only at its pause; until then the order rule would claim more than its registration says.
-    const registration =
-        stop.participant === 'server' && !stop.bound
-          ? this.registrationStatus(stop)
-          : undefined,
-      requested = this.requestedElsewhere(stop),
-      // A server stop that was requested at another place than declared says so, because that place is where its breakpoint waits.
-      serverOpening = requested ? `${opening} (${requested})` : opening
-    if (registration?.status === 'pending')
+    return (
+      this.unboundServerNextStopReason(stop, opening, within) ??
+      `${opening} ${within}; its line must execute after the preceding continuation`
+    )
+  }
+
+  /**
+   * Words the failure of a continuation whose next declared stop is a server stop that is not bound yet and whose registration explains more than the order rule; called by {@link unreachedNextStopReason} when no pause is held and the breakpoint did not move.
+   * @param stop - The declared stop that was armed inside the continuation.
+   * @param opening - The text that names the stop.
+   * @param within - The part that says the stop was not hit within the bound.
+   * @returns
+   * - For a pending registration: that its breakpoint was still pending
+   * - For a registration the adapter does not hold acknowledged: what {@link unacknowledgedText} says
+   * - `undefined` for a browser stop, a bound server stop and a bound registration: the order rule is what to say
+   * @example
+   * ```ts
+   * this.unboundServerNextStopReason(stop, opening, within) // undefined for a browser stop
+   * ```
+   */
+  private unboundServerNextStopReason(
+    stop: PreparedStop,
+    opening: string,
+    within: string,
+  ): string | undefined {
+    const registration = this.unboundServerRegistration(stop),
+      serverOpening = this.withRequestedPlace(stop, opening)
+    if (!registration) return undefined
+    if (registration.status === 'pending')
       return `${serverOpening} ${within}; its breakpoint was still pending (the debugger had not verified it in a loaded module), so the line may not be bound or may not have run after the preceding continuation. Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop.`
     // Refused, revoked or without a current receipt: the adapter holds no acknowledged breakpoint for the stop.
-    if (
-      registration?.status === 'refused' ||
-      registration?.status === 'unknown'
-    )
+    if (this.isUnacknowledged(registration.status))
       return `${serverOpening} ${within}; ${this.unacknowledgedText(stop, registration)}`
-    return `${opening} ${within}; its line must execute after the preceding continuation`
+    return undefined
+  }
+
+  /**
+   * Reads the registration of a server stop that is not bound yet, for {@link unboundServerNextStopReason}.
+   * @param stop - The declared stop that was not reached.
+   * @returns What {@link registrationStatus} reads, or `undefined` for a browser stop and for a server stop that was bound at an earlier pause.
+   * @example
+   * ```ts
+   * this.unboundServerRegistration(stop) // { status: 'pending' }
+   * ```
+   */
+  private unboundServerRegistration(
+    stop: PreparedStop,
+  ): RegistrationStatus | undefined {
+    // A server stop is bound only at its pause; until then the order rule would claim more than its registration says.
+    return stop.participant === 'server' && !stop.bound
+      ? this.registrationStatus(stop)
+      : undefined
+  }
+
+  /**
+   * Adds the place a stop's breakpoint was requested at to a deadline text's opening, for {@link unboundServerNextStopReason}.
+   * @param stop - The declared stop that was not reached.
+   * @param opening - The text that names the stop.
+   * @returns The opening followed by `(requested at L:C)` for a stop requested at another place than declared, otherwise the opening as it is.
+   * @example
+   * ```ts
+   * this.withRequestedPlace(stop, opening) // '… declared stop app/lib/actions.ts:38 (requested at 39:9)'
+   * ```
+   */
+  private withRequestedPlace(stop: PreparedStop, opening: string): string {
+    const requested = this.requestedElsewhere(stop)
+    // A server stop that was requested at another place than declared says so, because that place is where its breakpoint waits.
+    return requested ? `${opening} (${requested})` : opening
   }
 
   /**
@@ -2064,8 +2173,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     }
     const target = await this.readDom('before')
     this.alive()
-    if (!target.ready || target.x === undefined || target.y === undefined)
-      throw new Error('Click target or before conditions changed before input')
+    const point = this.clickPoint(target)
     // A result predicate already true before the click cannot prove this operation caused the result.
     const priorResult = await this.readDom('after')
     this.alive()
@@ -2074,6 +2182,69 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         'Configured after conditions were already true before application input',
       )
     // DOM checks yield to native events; recheck pending authority synchronously before dispatching the first input.
+    this.assertServerRegistrationsHeld()
+    this.operation!.inputDispatched = true
+    this.evidence.record('input.dispatched', {
+      key: this.operation!.key,
+      x: point.x,
+      y: point.y,
+    })
+    const cdp = this.requireCdp()
+    await cdp.request(
+      'Input.dispatchMouseEvent',
+      {
+        type: 'mousePressed',
+        button: 'left',
+        clickCount: 1,
+        x: point.x,
+        y: point.y,
+      },
+      REPOSITORY_RUN_TIMEOUT_MS,
+    )
+    this.alive()
+    await cdp.request(
+      'Input.dispatchMouseEvent',
+      {
+        type: 'mouseReleased',
+        button: 'left',
+        clickCount: 1,
+        x: point.x,
+        y: point.y,
+      },
+      REPOSITORY_RUN_TIMEOUT_MS,
+    )
+    this.alive()
+    this.operation!.inputAcknowledged = true
+    this.evidence.record('input.acknowledged')
+  }
+
+  /**
+   * Takes the point of the one mouse sequence from what the page answered for the before conditions, for {@link dispatchInput} right after that read.
+   * @param target - The answer of the page for the `before` phase.
+   * @returns The center of the unique enabled click target, in viewport coordinates.
+   * @throws When the before conditions no longer hold or the page named no point.
+   * @example
+   * ```ts
+   * this.clickPoint({ ready: true, x: 120, y: 48 }) // { x: 120, y: 48 }
+   * ```
+   */
+  private clickPoint(
+    target: Awaited<ReturnType<ConfiguredBrowserRun['readDom']>>,
+  ): { x: number; y: number } {
+    if (!target.ready || target.x === undefined || target.y === undefined)
+      throw new Error('Click target or before conditions changed before input')
+    return { x: target.x, y: target.y }
+  }
+
+  /**
+   * Reads every armed server stop's registration once more, synchronously, as the last check of {@link dispatchInput} before the input is marked dispatched: the DOM reads before it yielded to native events that can revoke a registration.
+   * @throws The registration failure ({@link registrationFailure}) when the adapter refused or revoked a registration, and a plain error when a stop has no current receipt.
+   * @example
+   * ```ts
+   * this.assertServerRegistrationsHeld() // throws 'Server breakpoint registration changed before input' while a newer request is unanswered
+   * ```
+   */
+  private assertServerRegistrationsHeld(): void {
     for (const stop of this.stops.filter(
       (candidate) => candidate.participant === 'server' && candidate.breakpoint,
     )) {
@@ -2088,39 +2259,6 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (!receipt)
         throw new Error('Server breakpoint registration changed before input')
     }
-    this.operation!.inputDispatched = true
-    this.evidence.record('input.dispatched', {
-      key: this.operation!.key,
-      x: target.x,
-      y: target.y,
-    })
-    const cdp = this.requireCdp()
-    await cdp.request(
-      'Input.dispatchMouseEvent',
-      {
-        type: 'mousePressed',
-        button: 'left',
-        clickCount: 1,
-        x: target.x,
-        y: target.y,
-      },
-      REPOSITORY_RUN_TIMEOUT_MS,
-    )
-    this.alive()
-    await cdp.request(
-      'Input.dispatchMouseEvent',
-      {
-        type: 'mouseReleased',
-        button: 'left',
-        clickCount: 1,
-        x: target.x,
-        y: target.y,
-      },
-      REPOSITORY_RUN_TIMEOUT_MS,
-    )
-    this.alive()
-    this.operation!.inputAcknowledged = true
-    this.evidence.record('input.acknowledged')
   }
 
   /** Resolves native event ownership independently of the currently expected stop. @example this.participantName(session) */
@@ -2627,15 +2765,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     held: NonNullable<DebugParticipant['unannouncedPause']>,
   ): Promise<DebugParticipant['stopped']> {
     const participant = this.participants[stop.participant],
-      location = held.event.callFrames[0]?.location
-    // Only a browser stop has a binding from arming that can move along its line; a pause on another line waits for the bound.
-    if (
-      stop.participant !== 'browser' ||
-      !stop.bound ||
-      !location ||
-      !isPauseAtStop(held.event, this.pauseTarget(stop))
-    )
-      return undefined
+      location = this.heldLocationOnBoundLine(stop, held)
+    if (!location) return undefined
     // A binding that cannot be read now decides nothing: the pause stays held and the end of the wait judges it.
     const binding = verifiedPlaceSchema.safeParse(
       await awaitResponse(
@@ -2649,12 +2780,72 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     // The pause may have been resumed while the binding was read.
     if (
       participant.unannouncedPause !== held ||
-      !binding.success ||
-      binding.data.line !== stop.bound.line ||
-      binding.data.column !== stop.verifier.originalColumn(location)
+      !this.isBoundAtHeldColumn(stop, binding, location)
     )
       return undefined
     return this.adoptPauseHeldInModule(stop)
+  }
+
+  /**
+   * Gives the place of a held pause only when the binding of its stop can have moved to it, as the first check of {@link pauseAtMovedColumn} before the binding is read again.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @param held - The pause held for that stop in its module.
+   * @returns The generated location of the pause's top frame for a bound browser stop paused on its bound line; `undefined` for a server stop, a stop without a binding, and a pause without a frame or on another line.
+   * @example
+   * ```ts
+   * this.heldLocationOnBoundLine(stop, held) // { scriptId: '12', lineNumber: 21, columnNumber: 11 }
+   * ```
+   */
+  private heldLocationOnBoundLine(
+    stop: PreparedStop,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): Protocol.Debugger.Location | undefined {
+    // Only a browser stop has a binding from arming that can move along its line; a pause on another line waits for the bound.
+    if (stop.participant !== 'browser' || !stop.bound) return undefined
+    return this.locationOfPauseAtStop(stop, held)
+  }
+
+  /**
+   * Gives the place of a held pause when it is on its stop's line, for {@link heldLocationOnBoundLine} once the stop is known to be a bound browser stop.
+   * @param stop - The declared stop whose `stopped` was accepted.
+   * @param held - The pause held for that stop in its module.
+   * @returns The generated location of the pause's top frame, or `undefined` for a pause without a frame or on another line.
+   * @example
+   * ```ts
+   * this.locationOfPauseAtStop(stop, held) // undefined for a pause one line below the bound line
+   * ```
+   */
+  private locationOfPauseAtStop(
+    stop: PreparedStop,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): Protocol.Debugger.Location | undefined {
+    const location = held.event.callFrames[0]?.location
+    return location && isPauseAtStop(held.event, this.pauseTarget(stop))
+      ? location
+      : undefined
+  }
+
+  /**
+   * Says whether a binding read again names the column of a held pause on the stop's bound line, as the last check of {@link pauseAtMovedColumn} once that read has answered.
+   * @param stop - A bound browser stop ({@link heldLocationOnBoundLine} gave the location); its bound line is read now, after the wait for the binding.
+   * @param binding - The parsed answer of the adapter; unsuccessful when the binding could not be read or is not verified at a whole position.
+   * @param location - The generated location of the held pause's top frame.
+   * @returns `true` when the binding is on the bound line at the pause's column; `false` when it could not be read, is on another line, or did not move to that column.
+   * @example
+   * ```ts
+   * this.isBoundAtHeldColumn(stop, verifiedPlaceSchema.safeParse(undefined), location) // false
+   * ```
+   */
+  private isBoundAtHeldColumn(
+    stop: PreparedStop,
+    binding: ReturnType<typeof verifiedPlaceSchema.safeParse>,
+    location: Protocol.Debugger.Location,
+  ): boolean {
+    return (
+      binding.success &&
+      binding.data.line === stop.bound!.line &&
+      binding.data.column === stop.verifier.originalColumn(location)
+    )
   }
 
   /**
@@ -3301,15 +3492,30 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     failure: ConfiguredDomFailure,
   ): string {
     const { conditionIndex, reason } = failure
-    const failedCondition =
-      conditionIndex === undefined
-        ? undefined
-        : this.definition.configuration.action[phase][conditionIndex]
+    const failedCondition = this.declaredCondition(phase, conditionIndex)
     const condition =
       conditionIndex === undefined
         ? 'click target'
         : `condition ${conditionIndex + 1} (${failedCondition?.kind ?? 'unknown'})`
     return `${condition} ${reason}.${configuredConditionHint(phase, failedCondition, failure)}`
+  }
+  /**
+   * Looks up the declared DOM condition a page answer points at, for {@link failedConditionText}.
+   * @param phase - Whether the condition guards the input or proves the result.
+   * @param conditionIndex - The index the page answered; `undefined` when it named the click target instead.
+   * @returns The declared condition, or `undefined` for the click target and for an index the declaration does not have.
+   * @example
+   * ```ts
+   * this.declaredCondition('after', 0)?.kind // 'visible'
+   * ```
+   */
+  private declaredCondition(
+    phase: 'before' | 'after',
+    conditionIndex: number | undefined,
+  ) {
+    return conditionIndex === undefined
+      ? undefined
+      : this.definition.configuration.action[phase][conditionIndex]
   }
   /**
    * Words the failure of a run whose after conditions held before the after image was captured and no longer held when {@link observeAfter} read them again after it, so such a run is never certified as demonstrated.
