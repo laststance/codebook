@@ -1,7 +1,26 @@
+import type { Stats } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { WIKI_MANIFEST_FILE } from '../constants'
+
+/**
+ * Says whether a Wiki folder's move into place was the last thing that happened to it; called by {@link readWikiPublishedAt} for a folder that is there.
+ * @param folderStat - The status of the Wiki folder.
+ * @param manifestStat - The status of its manifest.
+ * @returns Whether the folder's status changed after its content last did and after the manifest was written: a rename changes the folder's status time and not its modification time, creating a file in it changes both.
+ * @example
+ * wasFolderMovedIntoPlaceLast(folderStat, manifestStat) // => true right after a publish
+ */
+function wasFolderMovedIntoPlaceLast(
+  folderStat: Stats,
+  manifestStat: Stats,
+): boolean {
+  return (
+    folderStat.ctimeMs > folderStat.mtimeMs &&
+    folderStat.ctimeMs > manifestStat.mtimeMs
+  )
+}
 
 /**
  * Reads when the Wiki on disk was published: the moment the publisher moved the new folder into place when the folder still shows it, else the time its manifest was written.
@@ -30,9 +49,7 @@ export async function readWikiPublishedAt(
   if (!manifestStat) return undefined
   const folderStat = await stat(outputDirectory).catch(() => undefined)
   // A rename changes the folder's status time and not its modification time; creating a file in it changes both.
-  return folderStat &&
-    folderStat.ctimeMs > folderStat.mtimeMs &&
-    folderStat.ctimeMs > manifestStat.mtimeMs
+  return folderStat && wasFolderMovedIntoPlaceLast(folderStat, manifestStat)
     ? folderStat.ctime.toISOString()
     : manifestStat.mtime.toISOString()
 }
