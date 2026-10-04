@@ -750,15 +750,17 @@ export class StudyWorkspace {
       this.changedLayoutPart = changedPart && { receipt, part: changedPart }
       this.publish()
     }
+    const current = this.presentationState()
+    if (layout !== undefined) return current
+    // Another editor part (an agent chat) has the keyboard focus and the read must not take it: while no tab or group changed since the last arrangement, its confirmation is answered again, marked as not measured.
+    if (current.layoutConfirmed) return { ...current, layoutMeasured: false }
     // An unmeasurable active part qualifies this response only; it cannot invalidate or certify the retained main grid.
-    return layout === undefined
-      ? {
-          ...this.presentationState(),
-          layoutConfirmed: false,
-          reason:
-            'Main editor layout could not be checked without changing focus. Focus a Codebook pane or main text editor and read again.',
-        }
-      : this.presentationState()
+    return {
+      ...current,
+      layoutConfirmed: false,
+      reason:
+        'Main editor layout could not be checked without changing focus. Focus a Codebook pane or main text editor and read again.',
+    }
   }
 
   /** Returns an explicitly named historical reader to the current run after checking its visible content revision; MCP calls it before new input. @example await workspace.returnToCurrent({presentationId,expectedRevision:4}) */

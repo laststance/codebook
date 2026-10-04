@@ -4308,6 +4308,69 @@ for (const [change, changedPart] of [
     }
   })
 
+for (const keyboard of ['in the chat input', "on the chat's tab"] as const) {
+  // Value: protects=an agent that reads the presentation state after its own select, from the chat, being told the layout it just got confirmed still stands; fails_when=the read answers layoutConfirmed false with "Main editor layout could not be checked without changing focus. …" although no tab or group changed since the arrangement, so the agent reports the layout as unconfirmed or restores it again; why_new=Cycle 0045 finding S1a-F1 (first part of package S1); seam=workspace harness with a separate editor part that has the keyboard
+  test(`a status read made while the chat has the focus answers the confirmation of the last arrangement when nothing changed since (keyboard ${keyboard})`, async () => {
+    // Arrange: the Study layout is confirmed; then the keyboard is in Cursor's chat part, where a layout read is answered for that part.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const arranged = await harness.reader.readPresentationState()
+      if (keyboard === 'in the chat input') chat.focus()
+      else chat.focusTab()
+      const commandsBefore = harness.commands.length
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(arranged.layoutConfirmed, true)
+      assert.equal(arranged.layoutMeasured, undefined)
+      assert.equal(state.layoutConfirmed, true)
+      assert.equal(state.layoutMeasured, false)
+      assert.equal(state.reason, undefined)
+      // The read took no focus: it sent the one layout request, and the chat still has the keyboard.
+      assert.deepEqual(harness.commands.slice(commandsBefore), [
+        'vscode.getEditorLayout',
+      ])
+      assert.equal(chat.focused(), true)
+    } finally {
+      await harness.close()
+    }
+  })
+
+  // Value: protects=the same read not certifying a layout that changed while it could not be measured; fails_when=a group that opened since the arrangement is answered with the old confirmation; why_new=Cycle 0045 finding S1a-F1, the counterpart of the case above; seam=workspace harness with a separate editor part that has the keyboard, replaceEditorGroup
+  test(`a status read made while the chat has the focus answers that the layout is not confirmed after a group changed since the last arrangement (keyboard ${keyboard})`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const arranged = await harness.reader.readPresentationState()
+      if (keyboard === 'in the chat input') chat.focus()
+      else chat.focusTab()
+      harness.replaceEditorGroup('opened', 1)
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(arranged.layoutConfirmed, true)
+      assert.equal(state.layoutConfirmed, false)
+      assert.equal(state.layoutMeasured, undefined)
+      assert.equal(
+        state.reason,
+        'Main editor layout could not be checked without changing focus. Focus a Codebook pane or main text editor and read again.',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
 // Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized while the layout was no longer confirmed; fails_when=only a confirmed layout is given its grid back, so the returned editor area leaves the Application group a 70 px strip above the source until Restore; why_new=Cycle 0045 NF-5 with PC-1.1 (the second maximized seek of the observation: the first had left the layout unconfirmed); seam=workspace harness with a maximized bottom panel
 test('a recorded seek made while the bottom panel is maximized gives a collapsed Application group its height back also when the layout was no longer confirmed', async () => {
   // Arrange: a status read found the grid resized, so the recording's layout is unconfirmed; then the learner maximizes the bottom panel.

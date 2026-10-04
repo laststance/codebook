@@ -907,8 +907,10 @@ for (const operation of ['read', 'reselect'] as const)
       // Act
       if (operation === 'read') {
         const result = await harness.reader.readPresentationState()
-        assert.equal(result.layoutConfirmed, false)
-        assert.match(result.reason!, /without changing focus/)
+        // The main grid cannot be measured from the chat's part: the read repeats the last arrangement's confirmation and marks it as not measured (Cycle 0045 S1a-F1; it answered false with "… without changing focus" before).
+        assert.equal(result.layoutConfirmed, true)
+        assert.equal(result.layoutMeasured, false)
+        assert.equal(result.reason, undefined)
         assert.equal(result.presentationControlRevision, 0)
         assert.equal(result.presentationId, state.presentationId)
       } else
@@ -969,8 +971,9 @@ test('a presentation read preserves changed learner focus and does not certify t
     chat.focus()
     release()
     const result = await reading
-    // Assert
-    assert.equal(result.layoutConfirmed, false)
+    // Assert: the layout the editor returned for another part certifies nothing; the answer is the last arrangement's confirmation, marked as not measured (Cycle 0045 S1a-F1; it answered false before).
+    assert.equal(result.layoutConfirmed, true)
+    assert.equal(result.layoutMeasured, false)
     assert.equal(chat.focused(), true)
     assert.deepEqual(harness.reader.presentationState(), state)
     assert.equal(harness.runtimes.length, 0)
