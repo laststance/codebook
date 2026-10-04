@@ -283,12 +283,16 @@ for (const scenario of [
         projection.debugger?.variables[0]?.value,
         scenario.participants[index] === 'browser' ? 'dark' : 'display',
       )
-      assert.equal(projection.observation.interpretations.length, 0)
-      assert.equal(projection.laterInterpretations.length, 1)
-      assert.equal(
-        projection.laterInterpretations[0]?.text,
-        `The ${observation.participant} value was captured at declared stop ${index + 1}.`,
+      // Cycle 0045 (cause 10): the explanation saved while this pause was held is the stop's explanation at its own recorded time.
+      assert.deepEqual(
+        projection.observation.interpretations.map(
+          (interpretation) => interpretation.text,
+        ),
+        [
+          `The ${observation.participant} value was captured at declared stop ${index + 1}.`,
+        ],
       )
+      assert.equal(projection.laterInterpretations.length, 0)
     }
     assert.equal(
       projectRecording(recording, saved.context, recording.endMs!).debugger,

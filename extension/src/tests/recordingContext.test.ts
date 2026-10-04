@@ -188,12 +188,22 @@ test('replay withholds future values and saved interpretations even when their c
     // Act
     const before = projectRecording(index, saved.context, 99),
       stop = projectRecording(index, saved.context, 100),
+      afterStop = projectRecording(index, saved.context, 140),
       later = projectRecording(index, saved.context, 180)
     // Assert
     assert.equal(before.observation, undefined)
     assert.equal(stop.observation?.values['value:nextTheme'], 'dark')
-    assert.equal(stop.observation?.interpretations.length, 0)
-    assert.equal(stop.laterInterpretations.length, 1)
+    // Cycle 0045 (cause 10): at the stop's own recorded time its first explanation is shown although it was saved 80 ms later.
+    assert.deepEqual(
+      stop.observation?.interpretations.map(
+        (interpretation) => interpretation.text,
+      ),
+      ['Observed price: 24.'],
+    )
+    assert.equal(stop.laterInterpretations.length, 0)
+    // Past that time and before the explanation was saved, it is withheld as before.
+    assert.equal(afterStop.observation?.interpretations.length, 0)
+    assert.equal(afterStop.laterInterpretations.length, 1)
     assert.equal(
       later.observation?.interpretations[0]?.text,
       'Observed price: 24.',
@@ -1060,4 +1070,39 @@ test('a checkpoint still fails when a confirmed phase image no longer matches it
   } finally {
     await harness.close()
   }
+})
+
+// Value: protects=an agent that reads how a saved recording is replayed learning what the Study pane shows as a stop's explanation; fails_when=the help still says that only facts available at the selected time appear, although a stop now shows its own explanation with a note about when it was saved; why_new=Cycle 0045 cause 10 (no test pinned this sentence); seam=none
+test('the saved-study help says that recorded facts appear from their own time, that a stop shows its own explanation with a note when it was saved later, and that other later explanations stay under Later annotations', async () => {
+  // Arrange
+  const harness = await createHarness()
+  try {
+    // Act
+    const help = await readResource(harness.service, 'codebook://help/studies')
+
+    // Assert
+    assert.ok('text' in help)
+    const parsed: { recording: { timing: string } } = JSON.parse(help.text)
+    assert.equal(
+      parsed.recording.timing,
+      "Recorded facts (the application frame, the source, the debugger values and stack, the phases and their confirmations) appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after the run continued, or after the recording ended); every other explanation saved later stays under \"Later annotations\". Playback does not mark understanding.",
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the README's replay step saying the same as the help about a stop's explanation; fails_when=the step still tells the reader to inspect "later annotations at their recorded times"; why_new=Cycle 0045 cause 10; seam=none
+test('the extension README says in its replay step what the Study pane shows as a stop’s explanation, as the help does', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+
+  // Act
+  const statesRule = readme.includes(
+    "Inspect the pause-associated source/values at their recorded times: recorded facts appear only from their own recorded time. While the selected time lies in a stop's own recorded pause, the Study pane shows that stop's explanation: every explanation saved before that pause ended and the stop's first saved explanation, each with a note when it was saved later than the selected time (while this pause was held, after the run continued, or after the recording ended); every other explanation saved later stays under **Later annotations**.",
+  )
+
+  // Assert
+  assert.equal(statesRule, true)
+  assert.doesNotMatch(readme, /later annotations at their recorded times/)
 })

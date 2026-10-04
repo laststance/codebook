@@ -10,6 +10,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { bookObservationHash } from '../utils/bookObservationHash'
 import { citationContext } from '../utils/citationContext'
+import type { ShownInterpretation } from '../utils/projectRecording'
 
 import {
   workspaceHarness,
@@ -1832,6 +1833,82 @@ test('configured recording seeks actual facts through the shared reader after ru
     assert.equal(harness.configuredRuntimes[0]!.dispatches, 1)
     assert.equal(harness.displayedImage(), png.toString('base64'))
     assert.equal((await harness.library.readProgress()).decisions.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Learning summary of a reopened recording showing, at a recorded stop, that stop's explanation with when it was saved, and keeping only the later revision apart; fails_when=the message the Study pane renders loses the note on its way from the projection, lists the stop's own explanation under Later annotations as well, or shows no explanation at the stop (what both hosts showed in the second native round); why_new=Cycle 0045 cause 10; seam=none
+test('at a recorded stop the Study pane receives that stop’s explanation with when it was saved, and Later annotations hold only the revision saved after it', async () => {
+  // Arrange: one stop committed at 100 ms and continued at 900 ms in a film that ended at 1,000 ms; the agent explained it at 1,500 ms and revised that at 1,600 ms.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    const { service, record, controller, studyId } = harness,
+      stop = harness.runtimes[0]!.snapshots[0]!,
+      explanation = {
+        instanceId: service.instanceId,
+        runId: record.id,
+        snapshotUri: service.state(record).observations[0]!.snapshotUri,
+        sourceHash: stop.source.hash,
+        valuePaths: ['value:nextTheme'],
+      }
+    harness.clock(1_500)
+    await service.explain({
+      ...explanation,
+      key: 'explanation',
+      interpretation: 'This stop holds the dark theme before it is applied.',
+    })
+    harness.clock(1_600)
+    await service.explain({
+      ...explanation,
+      key: 'revision',
+      interpretation: 'The complete path ended with the dark theme applied.',
+    })
+    // The reader's refresh, which its timer runs, saves both explanations with the recording context.
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        service.state(record).historyOutcome.status === 'saved' &&
+        service.state(record).recording.contextStatus === 'saved',
+      'both explanations saved with the recording context',
+      2_000,
+    )
+
+    // Act: the learner opens the recording and steps onto the stop.
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    const atStop = harness.postedMessages().slice(-1)[0]!
+
+    // Assert
+    const shown: ShownInterpretation[] =
+      atStop.model.observation?.interpretations ?? []
+    assert.equal(atStop.recording?.presentedMs, 100)
+    assert.deepEqual(
+      shown.map((interpretation) => [
+        interpretation.text,
+        interpretation.savedLater,
+      ]),
+      [
+        [
+          'This stop holds the dark theme before it is applied.',
+          'after-recording-ended',
+        ],
+      ],
+    )
+    assert.deepEqual(
+      atStop.recording?.laterInterpretations.map((interpretation) => [
+        interpretation.text,
+        interpretation.availableMs,
+      ]),
+      [['The complete path ended with the dark theme applied.', 1_600]],
+    )
   } finally {
     await harness.close()
   }

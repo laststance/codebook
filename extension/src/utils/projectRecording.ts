@@ -4,16 +4,47 @@ import type {
   RecordingIndex,
 } from '../recordingSchemas'
 
-/** Selects only evidence available at the requested receipt time, preserving missing ranges and separately opted-in later annotations. @example projectRecording(index, context, 500).observation?.values */
+/**
+ * When an explanation that the replay shows before its own saved time was saved, measured against the selected stop's recorded pause.
+ * {@link projectRecording} sets it and the Study pane turns it into a sentence with {@link savedLaterNote}.
+ */
+export type ExplanationSavedLater =
+  'while-pause-held' | 'after-run-continued' | 'after-recording-ended'
+
+/** One saved explanation as the replay shows it at the selected time; `savedLater` is present only when it is shown before the time it was saved. */
+export type ShownInterpretation =
+  RecordingContext['study']['observations'][number]['interpretations'][number] & {
+    savedLater?: ExplanationSavedLater
+  }
+
+/**
+ * Selects what the replay shows at one recorded time, for {@link PlaybackController}, the Study workspace and the article links of {@link RepositoryBookStore}.
+ *
+ * Recorded facts (frame, source, debugger state, phases, confirmations) appear only from their own time. An explanation appears from the time it was saved, with one exception: while the playhead stands in a stop's own recorded pause (its commit time, or inside its sealed paused interval), that stop shows every explanation saved before the pause ended and its first saved explanation (the first of its saved list, which is kept in the order of saving) whenever that was saved. Such an explanation carries `savedLater`. Every other explanation later than the playhead stays in `laterInterpretations`.
+ *
+ * @param index - The verified recording journal.
+ * @param context - The saved study with its receipt times; `undefined` projects the film alone.
+ * @param positionMs - The selected recorded time, in milliseconds of the recording's clock.
+ * @returns
+ * - `observation`: the stop selected at that time with the explanations shown there, or `undefined` when no stop is selected
+ * - `laterInterpretations`: the last committed stop's explanations that are later than the playhead and not shown, each with `availableMs` (`null` when it was saved after the recording ended)
+ * - `frame`, `missing`, `debugger`, `pauseConfirmed`, `rendererConfirmed`, `contextStatus`: the recorded facts at that time
+ * @throws When the position is outside the verified range, or the context belongs to another recording.
+ * @example
+ * // A stop committed at 500 ms and held until 900 ms, explained at 700 ms:
+ * projectRecording(index, context, 500).observation?.interpretations[0]?.savedLater // => 'while-pause-held'
+ * projectRecording(index, context, 700).observation?.interpretations[0]?.savedLater // => undefined
+ */
 export function projectRecording(
   index: RecordingIndex,
   context: RecordingContext | undefined,
   positionMs: number,
 ) {
+  const recordingEndMs = index.endMs ?? index.lastVerifiedMs
   if (
     !Number.isFinite(positionMs) ||
     positionMs < index.header.startedMs ||
-    positionMs > (index.endMs ?? index.lastVerifiedMs)
+    positionMs > recordingEndMs
   )
     throw new Error(
       'Playback position is outside the verified recording range.',
@@ -62,17 +93,46 @@ export function projectRecording(
     const elapsed = available(value.id)
     return elapsed !== undefined && elapsed !== null && elapsed <= positionMs
   }
+  const savedLater = (id: string): ExplanationSavedLater | undefined => {
+    const elapsed = available(id)
+    // No receipt in the journal, or one past the film's end: the explanation was saved after the recording ended.
+    if (elapsed === undefined || elapsed === null || elapsed > recordingEndMs)
+      return 'after-recording-ended'
+    // Without a sealed interval the recording does not say whether the pause was still held at that time.
+    if (!interval) return undefined
+    return elapsed <= interval.endMs
+      ? 'while-pause-held'
+      : 'after-run-continued'
+  }
+  const shownBeforeSaved = (value: { id: string }, order: number) => {
+    // Only a stop's own recorded pause shows an explanation ahead of its saved time.
+    if (!hasHistoricalState) return false
+    const elapsed = available(value.id)
+    return (
+      order === 0 ||
+      Boolean(
+        interval && typeof elapsed === 'number' && elapsed <= interval.endMs,
+      )
+    )
+  }
   // Keep interpretation availability bound to the selected recorded source.
   const observation = currentObservation && {
     ...currentObservation,
-    interpretations: currentObservation.interpretations.filter(atPosition),
+    interpretations: currentObservation.interpretations.flatMap(
+      (value, order): ShownInterpretation[] => {
+        if (atPosition(value)) return [value]
+        if (!shownBeforeSaved(value, order)) return []
+        const saved = savedLater(value.id)
+        return [saved ? { ...value, savedLater: saved } : value]
+      },
+    ),
   }
+  const shownIds = new Set(
+    observation?.interpretations.map((value) => value.id),
+  )
   const laterInterpretations =
     observed?.interpretations
-      .filter((value) => {
-        const elapsed = available(value.id)
-        return elapsed === null || elapsed === undefined || elapsed > positionMs
-      })
+      .filter((value) => !atPosition(value) && !shownIds.has(value.id))
       .map((value) => ({
         ...value,
         availableMs: available(value.id) ?? null,
