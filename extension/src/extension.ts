@@ -1441,7 +1441,22 @@ export function activate(
           isCursorHost ? 'cursor' : 'vscode',
           () => wikiUpdateRun.status(),
         )
-        deepWikiReader = openedReader
+        // A source also changes without a save in this editor (an agent's CLI and Git write files directly), so the project's files are watched for as long as the reader serves.
+        const sourceWatcher = vscode.workspace.createFileSystemWatcher(
+          new vscode.RelativePattern(projectRoot, '**'),
+        )
+        const noteSourceChange = (file: vscode.Uri): void =>
+          openedReader.noteSourceChange(file.fsPath)
+        sourceWatcher.onDidChange(noteSourceChange)
+        sourceWatcher.onDidCreate(noteSourceChange)
+        sourceWatcher.onDidDelete(noteSourceChange)
+        deepWikiReader = {
+          ...openedReader,
+          close: async (): Promise<void> => {
+            sourceWatcher.dispose()
+            await openedReader.close()
+          },
+        }
         if (
           !(await vscode.env.openExternal(vscode.Uri.parse(openedReader.url)))
         )

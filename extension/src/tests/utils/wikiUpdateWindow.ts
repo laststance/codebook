@@ -10,6 +10,7 @@ import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
+import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
 
 /** The Cancel button of one progress notification the window showed. */
@@ -171,6 +172,7 @@ export async function openWikiUpdateWindow(options: {
     {
       vscode: {
         ProgressLocation: { Notification: 15 },
+        RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
@@ -194,6 +196,9 @@ export async function openWikiUpdateWindow(options: {
         workspace: {
           getConfiguration: () => ({ get: () => outputSetting }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          // The opened Wiki watches the project's files; these tests report no file event.
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
           ...(options.cursor ? { appName: 'Cursor' } : {}),
@@ -277,6 +282,7 @@ export async function openWikiUpdateWindow(options: {
           readUpdateStatus = statusProvider
           return {
             url: 'http://127.0.0.1:9/index.html',
+            noteSourceChange(): void {},
             close: async (): Promise<void> => {},
           }
         },

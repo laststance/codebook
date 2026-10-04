@@ -4,6 +4,7 @@ import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import type * as DeepWikiReaderModule from '../deepWikiReader'
 import type { WikiIncludedSource } from '../utils/answerDeepWikiQuestion'
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
@@ -40,6 +41,7 @@ test('the Wiki reader answers the current update state at api/update-status', as
       outputDirectory: wiki.outputDirectory,
       outputLabel: '.codebook/wiki',
       sitePublishedAt: '2026-10-03T11:50:00.000Z',
+      sourceChangeStamp: 0,
     })
   } finally {
     await wiki.close()
@@ -59,6 +61,7 @@ test('the Wiki reader reports idle when no editor update state is connected', as
     assert.deepEqual(await response.json(), {
       state: 'idle',
       sitePublishedAt: '2026-10-03T11:50:00.000Z',
+      sourceChangeStamp: 0,
     })
   } finally {
     await wiki.close()
@@ -75,7 +78,10 @@ test('the update state names no publish time while the publisher has taken the m
 
     // Assert
     assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), { state: 'idle' })
+    assert.deepEqual(await response.json(), {
+      state: 'idle',
+      sourceChangeStamp: 0,
+    })
   } finally {
     await wiki.close()
   }
@@ -229,6 +235,7 @@ test('a reader of one Wiki folder answers idle while the window’s update run i
     assert.deepEqual(await response.json(), {
       state: 'idle',
       sitePublishedAt: '2026-10-03T11:50:00.000Z',
+      sourceChangeStamp: 0,
     })
   } finally {
     await wiki.close()
@@ -401,6 +408,61 @@ test('a freshness request made after a publish does not join the inspection of t
     )
   } finally {
     wiki.finishInspections()
+    await wiki.close()
+  }
+})
+
+/** Waits for a real duration; the reader's stamp rises on a real timer. */
+const sleep = (milliseconds: number): Promise<void> =>
+  new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
+
+test('a source changed outside the editor raises the stamp of the update state once its burst has ended, and a file of the Wiki folder or an excluded path does not', async () => {
+  // Arrange: a reader whose bursts last 50 ms, on a Wiki that indexes src/a.ts and excludes examples.
+  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
+    resolve(__dirname, '../deepWikiReader.js'),
+    { './constants': { ...constants, WIKI_SOURCE_CHANGE_DEBOUNCE_MS: 50 } },
+    { URL },
+  )
+  const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
+  const projectRoot = resolve(wiki.outputDirectory, '../..')
+  const manifest = JSON.parse(await readFile(wiki.manifestPath, 'utf8'))
+  await writeFile(
+    wiki.manifestPath,
+    JSON.stringify({
+      ...manifest,
+      includedSources: [{ path: 'src/a.ts', sha256: 'a'.repeat(64) }],
+      excludedPaths: ['examples'],
+    }),
+  )
+  const readStamp = async (): Promise<number> =>
+    (await (await fetch(new URL('api/update-status', wiki.reader.url))).json())
+      .sourceChangeStamp
+  try {
+    // The reader takes in the manifest's index with its next request.
+    await fetch(wiki.reader.url)
+
+    // Act
+    for (const path of [
+      join(wiki.outputDirectory, 'index.html'),
+      `${wiki.outputDirectory}.stage-3f6c2a1e/index.html`,
+      join(projectRoot, 'examples/demo.ts'),
+      join(projectRoot, 'node_modules/left-pad/index.js'),
+      resolve(projectRoot, '../elsewhere/src/a.ts'),
+    ])
+      wiki.reader.noteSourceChange(path)
+    await sleep(120)
+    const stampAfterFilesThatAreNoSource = await readStamp()
+    // An agent's CLI rewrites the indexed file and adds a new one in one burst.
+    wiki.reader.noteSourceChange(join(projectRoot, 'src/a.ts'))
+    wiki.reader.noteSourceChange(join(projectRoot, 'src/new.ts'))
+    const stampInsideTheBurst = await readStamp()
+    await sleep(120)
+
+    // Assert
+    assert.equal(stampAfterFilesThatAreNoSource, 0)
+    assert.equal(stampInsideTheBurst, 0)
+    assert.equal(await readStamp(), 1)
+  } finally {
     await wiki.close()
   }
 })

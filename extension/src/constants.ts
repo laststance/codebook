@@ -437,6 +437,8 @@ export const WIKI_UPDATE_REASON_LIMIT_CHARS = 400
 export const WIKI_UPDATE_START_WAIT_MS = 120_000
 /** How often the reader page asks for the update state while no run is active and its tab is visible. */
 export const WIKI_UPDATE_IDLE_POLL_MS = 15_000
+/** How long the Wiki reader gathers reported file changes before its source-change stamp rises once: a checkout or an agent writes many files in one burst. */
+export const WIKI_SOURCE_CHANGE_DEBOUNCE_MS = 1_000
 /** How long after a freshness check the reader page does not ask for another one when the learner only comes back to it; a finished run, a publish or a changed source still asks at once. A check hashes every indexed source and runs Git. */
 export const WIKI_FRESHNESS_MIN_INTERVAL_MS = 5_000
 /** How many failed status reads in a row the reader page lets a running update survive before it says it lost contact with the editor. */

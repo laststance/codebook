@@ -217,6 +217,8 @@ export type FakeWikiReader = {
   sitePublishedAt: string | undefined
   /** Which publication is on disk; undefined answers like a folder without a publisher's receipt. */
   publication: string | undefined
+  /** The reader's source-change stamp; a test raises it when a file of the project changed. */
+  sourceChangeStamp: number
   freshness: WikiFreshness['status']
   /** What the freshness answer carries beside its status: the reason of an undecided check, or that added files were not checked. */
   freshnessDetail: Partial<
@@ -340,6 +342,7 @@ export async function openFakeWikiPage(
     updateStatus: { state: 'idle' },
     sitePublishedAt: SITE_PUBLISHED_AT,
     publication: PUBLICATION_AT_LOAD,
+    sourceChangeStamp: 0,
     freshness: 'current',
     freshnessDetail: {},
     isFreshnessFailing: false,
@@ -420,6 +423,7 @@ export async function openFakeWikiPage(
         ...structuredClone(pageReader.updateStatus),
         sitePublishedAt: pageReader.sitePublishedAt,
         publication: pageReader.publication,
+        sourceChangeStamp: pageReader.sourceChangeStamp,
       }
       return { ok: true, json: async () => answer }
     }

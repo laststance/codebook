@@ -21,6 +21,10 @@ import { startServer } from '../server'
 import type { StudyService } from '../service'
 
 import { createHarness } from './helpers'
+import {
+  createFakeFileWatching,
+  FakeRelativePattern,
+} from './utils/fakeFileWatching'
 import { loadModule } from './utils/loadModule'
 
 test('browser Wiki opening rejects a manifest from another checkout and opens a matching generated site', async () => {
@@ -40,6 +44,7 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
+        RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
@@ -49,6 +54,8 @@ test('browser Wiki opening rejects a manifest from another checkout and opens a 
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
           openExternal: async (uri: { value: string }) => {
@@ -146,6 +153,7 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
+        RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
@@ -155,6 +163,8 @@ test('shutting down releases the Study workspace before the DeepWiki reader even
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
         },
         env: { openExternal: async () => true },
         Uri: {
@@ -318,6 +328,7 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
+        RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
@@ -330,6 +341,8 @@ test('a Wiki question opens a source-cited editor chat draft when VS Code expose
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
           openExternal: async (uri: { value: string }) => {
@@ -438,6 +451,7 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
     resolve(__dirname, '../extension.js'),
     {
       vscode: {
+        RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
@@ -447,6 +461,8 @@ test('a Cursor Wiki question returns a source-cited browser answer when the edit
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
           appName: 'Cursor',

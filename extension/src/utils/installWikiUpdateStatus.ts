@@ -1,10 +1,12 @@
 import type { describeWikiUpdate } from './describeWikiUpdate'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
-/** What the reader answers at `api/update-status`: the run state, when the site on disk was published (absent while no manifest is readable) and which publication it is (absent while the folder holds no publisher's receipt for its manifest). */
+/** What the reader answers at `api/update-status`: the run state, when the site on disk was published (absent while no manifest is readable), which publication it is (absent while the folder holds no publisher's receipt for its manifest) and the reader's source-change stamp. */
 export type WikiUpdateStatusAnswer = WikiUpdateStatus & {
   sitePublishedAt?: string
   publication?: string
+  /** Rises when a project file that can change freshness was changed; the page reads freshness again when it differs from the one its last check was made for. */
+  sourceChangeStamp?: number
 }
 
 /** What the served page script hands to {@link installWikiUpdateStatus}: where its reader answers, the shared wording and the page's bounds. */
@@ -470,7 +472,8 @@ export function installWikiUpdateStatus(
       if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))
         throw new Error('The update answer has no state.')
-      const { sitePublishedAt, publication, ...status } = answer
+      const { sitePublishedAt, publication, sourceChangeStamp, ...status } =
+        answer
       sitePublication =
         typeof publication === 'string' ? publication : undefined
       const answeredPublishMs =
@@ -478,8 +481,8 @@ export function installWikiUpdateStatus(
           ? Date.parse(sitePublishedAt)
           : undefined
       sitePublishedAtMs = answeredPublishMs
-      answeredGeneration = String(answeredPublishMs)
-      // A finished run changes freshness, and so does a publish: the chat may publish after its run was given up. The generation of the last answered check is compared, so a check that failed stays owed. Hashing the sources at every idle look would cost more than it tells.
+      answeredGeneration = answeredPublishMs + '|' + sourceChangeStamp
+      // A finished run changes freshness, and so do a publish (the chat may publish after its run was given up) and a changed source file, which the reader's stamp tells without hashing anything. The generation of the last answered check is compared, so a check that failed stays owed.
       if (noteAnswer(status) || answeredGeneration !== freshnessGeneration)
         isFreshnessDue = true
     } catch {

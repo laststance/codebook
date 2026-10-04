@@ -16,6 +16,7 @@ import {
   WIKI_MANIFEST_FILE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
+  WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
   WIKI_UPDATE_IDLE_POLL_MS,
   WIKI_UPDATE_REASON_LIMIT_CHARS,
   WIKI_UPDATE_SHOWN_PATH_LIMIT,
@@ -38,12 +39,19 @@ import {
   installWikiUpdateStatus,
   type WikiUpdateStatusAnswer,
 } from './utils/installWikiUpdateStatus'
+import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
-export type DeepWikiReader = { url: string; close(): Promise<void> }
+/** A started Wiki reader: where the browser opens it, how it is told that a project file changed, and how it is closed. */
+export type DeepWikiReader = {
+  url: string
+  /** Tells the reader that a file of the project was changed, created or deleted, whoever wrote it; the reader raises its source-change stamp when the file can change the Wiki's freshness. @param path - Absolute path of the file. */
+  noteSourceChange(path: string): void
+  close(): Promise<void>
+}
 type WikiQuestionResult = WikiAnswer | { handoff: string }
 type AnswerQuestion = (
   question: string,
@@ -190,7 +198,7 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - The window's Wiki update run state; served at `api/update-status` when the run is for this reader's folder, else the reader answers idle. @returns The loopback URL, the entry for reported file changes and the owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
@@ -198,8 +206,25 @@ export async function startDeepWikiReader(
   editorScheme: 'vscode' | 'cursor' = 'vscode',
   readUpdateStatus: () => WikiUpdateStatus = () => ({ state: 'idle' }),
 ): Promise<DeepWikiReader> {
-  await readDeepWikiManifest(outputDirectory, projectRoot)
+  /** What the manifest last read says the Wiki covers: its indexed paths and its exclusions. A reported file change is weighed against them. */
+  let coveredSource: { indexedPaths: Set<string>; excludedPaths: string[] } = {
+    indexedPaths: new Set(),
+    excludedPaths: [],
+  }
+  /** Reads the manifest for a request and keeps what it says the Wiki covers. @throws When the manifest is missing or does not identify this project's Wiki. */
+  const readManifest = async (): ReturnType<typeof readDeepWikiManifest> => {
+    const manifest = await readDeepWikiManifest(outputDirectory, projectRoot)
+    coveredSource = {
+      indexedPaths: new Set(manifest.sources.map((source) => source.path)),
+      excludedPaths: manifest.excludedPaths,
+    }
+    return manifest
+  }
+  await readManifest()
   const canonicalOutput = await realpath(outputDirectory)
+  /** Rises once per burst of file changes that can change the Wiki's freshness; the page reads freshness again when its update state answers a higher one. */
+  let sourceChangeStamp = 0
+  let sourceChangeTimer: NodeJS.Timeout | undefined
   const token = randomBytes(24).toString('hex')
   const prefix = `/w/${token}/`
   const server = createServer(async (request, response) => {
@@ -218,14 +243,11 @@ export async function startDeepWikiReader(
   /** Inspects the Wiki's freshness once for every request that overlaps, because one inspection hashes each indexed source and runs Git; called by the freshness route. A request made after a publish names another generation and starts its own inspection, so it is never answered from the older manifest. @returns The freshness of the site on disk against the source. @throws When the manifest cannot be read (a publish is replacing the site). @example sendJson(response, 200, await inspectFreshnessShared()) */
   async function inspectFreshnessShared(): Promise<WikiFreshness> {
     // Named before the manifest is read, so an inspection a request joins has read a manifest at least as new as the one that request saw.
-    const generation = String(await readWikiPublishedAt(outputDirectory))
+    const generation = `${await readWikiPublishedAt(outputDirectory)}|${sourceChangeStamp}`
     if (freshnessInspection?.generation === generation)
       return freshnessInspection.result
     const result = (async (): Promise<WikiFreshness> => {
-      const { sources, revision, excludedPaths } = await readDeepWikiManifest(
-        outputDirectory,
-        projectRoot,
-      )
+      const { sources, revision, excludedPaths } = await readManifest()
       return inspectDeepWikiFreshness(
         projectRoot,
         sources,
@@ -276,6 +298,8 @@ export async function startDeepWikiReader(
         sitePublishedAt: await readWikiPublishedAt(outputDirectory),
         // The page compares it with the publication it was served from: a difference means newer pages are on disk.
         publication: await readWikiPublicationIdentity(outputDirectory),
+        // Cheap to answer at every look: the page asks for the costly freshness check only when it rose.
+        sourceChangeStamp,
       } satisfies WikiUpdateStatusAnswer)
       return
     }
@@ -288,10 +312,7 @@ export async function startDeepWikiReader(
       return
     }
     // An agent may publish a new owned directory while this reader stays open.
-    const { files, sources } = await readDeepWikiManifest(
-      outputDirectory,
-      projectRoot,
-    )
+    const { files, sources } = await readManifest()
     if (relativePath === WIKI_QUESTION_ROUTE) {
       if (
         request.method !== 'POST' ||
@@ -411,10 +432,31 @@ export async function startDeepWikiReader(
     origin = `http://127.0.0.1:${address.port}`
     return {
       url: `${origin}${prefix}${WIKI_ENTRY_FILE}`,
-      close: (): Promise<void> =>
-        new Promise<void>((resolve, reject) =>
+      noteSourceChange(path: string): void {
+        const projectPath = relative(projectRoot, path).split(sep).join('/')
+        // Only a file the freshness check weighs can change the label: an indexed source, or a file of the project it would count as added.
+        if (
+          !coveredSource.indexedPaths.has(projectPath) &&
+          (projectPath.startsWith('../') ||
+            !isWikiSourceCandidate(
+              projectPath,
+              relative(projectRoot, outputDirectory).split(sep).join('/'),
+              coveredSource.excludedPaths,
+            ))
+        )
+          return
+        // The first change of a burst arms the timer and the rest of the burst is gathered into its one rise, so steady writing cannot hold the stamp back.
+        sourceChangeTimer ??= setTimeout(() => {
+          sourceChangeTimer = undefined
+          sourceChangeStamp += 1
+        }, WIKI_SOURCE_CHANGE_DEBOUNCE_MS).unref()
+      },
+      close: (): Promise<void> => {
+        clearTimeout(sourceChangeTimer)
+        return new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
-        ),
+        )
+      },
     }
   } catch (error) {
     if (server.listening) server.close()

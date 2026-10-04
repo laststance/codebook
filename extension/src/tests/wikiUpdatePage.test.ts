@@ -1372,3 +1372,45 @@ test('a freshness check of the site before a publish neither answers for the sit
     2,
   )
 })
+
+test('a source saved while the page stays visible without focus changes the label to Source changed at the next idle look', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+  )
+  const label = page.find('[data-codebook-freshness]')
+  const labelBeforeTheSave = label?.textContent
+
+  // Act: the reader's stamp rises with the save; nobody focuses the page or shows it again.
+  page.reader.sourceChangeStamp = 1
+  page.reader.freshness = 'changed'
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(labelBeforeTheSave, 'Wiki source current')
+  assert.equal(label?.textContent, 'Source changed · Update available')
+  assert.equal(label?.getAttribute('data-status'), 'changed')
+})
+
+test('a freshness check that failed after a source change is made again at the next idle look although nothing changed since', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+  )
+  const label = page.find('[data-codebook-freshness]')
+
+  // Act: the source changes and the check for it fails; the reader then answers again and no further change comes.
+  page.reader.sourceChangeStamp = 1
+  page.reader.freshness = 'changed'
+  page.reader.isFreshnessFailing = true
+  await page.advance(15_000)
+  const labelAfterTheFailedCheck = label?.textContent
+  page.reader.isFreshnessFailing = false
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(labelAfterTheFailedCheck, 'Wiki freshness unknown')
+  assert.equal(label?.textContent, 'Source changed · Update available')
+})
