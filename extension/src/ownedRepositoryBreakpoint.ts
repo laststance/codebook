@@ -48,9 +48,21 @@ export const verifiedPlaceSchema = z.object({
   line: z.number().int(),
   column: z.number().int(),
 })
-/** Refusal of a registration whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the requested line. */
-export const OWNED_BREAKPOINT_REMOVED =
-  'Owned breakpoint was removed before registration'
+/**
+ * The failure of a registration read whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the requested line.
+ * {@link OwnedRepositoryBreakpoint.registration} throws it, so a caller tells it from an adapter's refusal by its type and not by its text: {@link ConfiguredBrowserRun} leaves the next step and the mapping hints out for it, because another line would not help.
+ * @example
+ * try {
+ *   owned.registration(session)
+ * } catch (error) {
+ *   if (error instanceof OwnedBreakpointRemovedError) return 'removed' // String(error) === 'Error: Owned breakpoint was removed before registration'
+ * }
+ */
+export class OwnedBreakpointRemovedError extends Error {
+  constructor() {
+    super('Owned breakpoint was removed before registration')
+  }
+}
 /** Where an adapter verified a breakpoint: one-based line and column. */
 type VerifiedPlace = { line: number; column: number }
 /** The breakpoint of a DAP `breakpoint` event: the adapter's later news about a breakpoint it acknowledged, for example a pending one verified when its module loads. */
@@ -365,7 +377,14 @@ export class OwnedRepositoryBreakpoint {
     retirement.confirmed = true
   }
 
-  /** Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup. @example owned.registration(session)?.status // 'pending' */
+  /**
+   * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
+   * @param session - The debug session whose adapter acknowledges the breakpoint.
+   * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.
+   * @throws An {@link OwnedBreakpointRemovedError} when the owned breakpoint is retired or gone from the editor, and a plain error with the adapter's refusal when the registration failed.
+   * @example
+   * owned.registration(session)?.status // 'pending'
+   */
   registration(session: vscode.DebugSession): RegistrationReceipt | undefined {
     if (
       this.retirement ||
@@ -374,7 +393,7 @@ export class OwnedRepositoryBreakpoint {
         (breakpoint) => breakpoint.id === this.breakpoint.id,
       )
     )
-      throw new Error(OWNED_BREAKPOINT_REMOVED)
+      throw new OwnedBreakpointRemovedError()
     const registration = this.registrations.get(session.id)
     if (registration?.failure) throw new Error(registration.failure)
     return registration?.receipt && { ...registration.receipt }

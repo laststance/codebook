@@ -114,6 +114,7 @@ async function breakpointHarness(
     response,
     signal: new AbortController().signal,
     editorBreakpoints: breakpoints,
+    OwnedBreakpointRemovedError: module.OwnedBreakpointRemovedError,
   }
 }
 
@@ -330,6 +331,44 @@ test('removed or ambiguous requested positions revoke earlier pending registrati
   breakpoint.onResponse(session, response(3))
   breakpoint.remove()
   await assert.rejects(breakpoint.registered(session, signal), /removed/)
+})
+
+// Cycle 0045 (SM-4): red while the removal was a plain error that the run told from an adapter's refusal by comparing its text.
+test('a registration read after the owned breakpoint was removed fails with the removed-breakpoint error, which the run tells from an adapter refusal by its type', async () => {
+  // Arrange: one owner whose acknowledged breakpoint is removed from the editor, and one whose registration the adapter verified on another line.
+  const removed = await breakpointHarness()
+  removed.breakpoint.onRequest(removed.session, removed.request())
+  removed.breakpoint.onResponse(removed.session, removed.response())
+  removed.breakpoint.remove()
+  const refused = await breakpointHarness()
+  refused.breakpoint.onRequest(refused.session, refused.request())
+  refused.breakpoint.onResponse(
+    refused.session,
+    refused.response(1, { id: 8, verified: true, line: 21, column: 5 }),
+  )
+  // Act
+  let removal: unknown, refusal: unknown
+  try {
+    removed.breakpoint.registration(removed.session)
+  } catch (error) {
+    removal = error
+  }
+  try {
+    refused.breakpoint.registration(refused.session)
+  } catch (error) {
+    refusal = error
+  }
+  // Assert
+  assert.equal(removal instanceof removed.OwnedBreakpointRemovedError, true)
+  assert.equal(
+    String(removal),
+    'Error: Owned breakpoint was removed before registration',
+  )
+  assert.match(
+    String(refusal),
+    /^Error: Selected adapter did not acknowledge the breakpoint registration \(requested 20:5, answered 21:5 verified\): /,
+  )
+  assert.equal(refusal instanceof refused.OwnedBreakpointRemovedError, false)
 })
 
 test('conditional logpoint and modified-source requests cannot qualify the frozen unconditional stop', async () => {

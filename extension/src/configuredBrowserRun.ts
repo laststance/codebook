@@ -36,7 +36,7 @@ import {
 } from './constants'
 import { StudyError } from './errors'
 import {
-  OWNED_BREAKPOINT_REMOVED,
+  OwnedBreakpointRemovedError,
   OwnedRepositoryBreakpoint,
   verifiedPlaceSchema,
 } from './ownedRepositoryBreakpoint'
@@ -839,7 +839,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private registrationFailure(stop: PreparedStop, error: unknown): Error {
     const reason = thrownMessage(error),
       message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
-    return reason === OWNED_BREAKPOINT_REMOVED
+    // A removed breakpoint is told by its type, not by its text.
+    return error instanceof OwnedBreakpointRemovedError
       ? new Error(message)
       : this.bindingFailure(
           stop,
