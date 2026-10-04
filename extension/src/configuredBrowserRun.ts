@@ -168,8 +168,8 @@ type DebugParticipant = {
     /** Whether its observation was journaled; past the journal's cap of such pauses only their count is kept. */
     journaled: boolean
   }
-  /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
-  instrumentationPaused?: boolean
+  /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. `journaled` tells whether its observation was journaled, so its resume is journaled or counted with it. */
+  instrumentationPause?: { journaled: boolean }
   /** A stack refresh announced while the accepted stop's own pause was still awaited or had been adopted: {@link ConfiguredBrowserRun.inspect} judges that stop, so the refresh's re-announced stop is consumed without a check of its own. */
   deferredRefresh?: PauseIdentity
   /** Every script this participant announced, by script id, so the journal can name the place of a pause in any of them. */
@@ -261,9 +261,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
+  /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
+  private instrumentationPauseCount = 0
   /** How many idle `continued` events were read; journaled under the same cap. */
   private idleContinuedCount = 0
-  /** How many pauses and idle `continued` events past the cap were left out of the journal; cleanup journals the count. */
+  /** How many pauses, resumes of instrumentation pauses and idle `continued` events past their caps were left out of the journal; cleanup journals the count. */
   private unjournaledAdapterEvents = 0
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
@@ -1425,7 +1427,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
   }
 
-  /** Journals every pause the runtime reports and, during an action, hands it to {@link admitPause}; only a browser pause in a run that declares no browser stop keeps its own short bound. @example this.onCdpPaused('server', event) */
+  /** Journals the pauses the runtime reports (a declared stop's always; the runtime's instrumentation pauses and every other pause each up to {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT}, the rest counted) and, during an action, hands a pause to {@link admitPause}; only a browser pause in a run that declares no browser stop keeps its own short bound. @example this.onCdpPaused('server', event) */
   private onCdpPaused(
     name: Participant,
     event: Protocol.Debugger.PausedEvent,
@@ -1433,10 +1435,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (this.cleaning) return
     const participant = this.participants[name]
     participant.pauseObservedAtMs = this.evidence.elapsedMs()
-    // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap.
-    const journaled =
-      this.isPauseOfStop(event, this.expectedStop(name)) ||
-      this.offStopPauseCount++ < REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
+    const isInstrumentation = event.reason === 'instrumentation'
+    // A hook that pauses in a loop must not use up the journal: a declared stop's pause is always journaled, any other only up to a cap. The runtime's instrumentation pauses are counted before that cap, under one of their own, so they cannot use up the room of the pauses the debugger makes for itself.
+    const journaled = isInstrumentation
+      ? this.instrumentationPauseCount++ <
+        REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
+      : this.isPauseOfStop(event, this.expectedStop(name)) ||
+        this.offStopPauseCount++ < REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT
     if (journaled)
       this.evidence.record('cdp.pause-observed', {
         participant: name,
@@ -1451,8 +1456,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       })
     else this.unjournaledAdapterEvents++
     // The runtime's own instrumentation pause is nobody's stop, but it is open until its resume and completion waits for that.
-    if (event.reason === 'instrumentation') {
-      participant.instrumentationPaused = true
+    if (isInstrumentation) {
+      participant.instrumentationPause = { journaled }
       return
     }
     if (!this.operation) return
@@ -1669,8 +1674,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       !this.transientBrowserPause &&
       !this.participants.server.unannouncedPause &&
       !this.participants.browser.unannouncedPause &&
-      !this.participants.server.instrumentationPaused &&
-      !this.participants.browser.instrumentationPaused
+      !this.participants.server.instrumentationPause &&
+      !this.participants.browser.instrumentationPause
     )
   }
 
@@ -2310,7 +2315,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       column: frame.column,
     })
   }
-  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. @example this.onCdpResumed('server') */
+  /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of an instrumentation pause is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
     const participant = this.participants[name],
@@ -2319,10 +2324,13 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.evidence.elapsedMs(),
       )
     participant.pauseObservedAtMs = undefined
-    // The runtime's own instrumentation pause ended; it never was a stop of this run.
-    if (participant.instrumentationPaused) {
-      participant.instrumentationPaused = false
-      this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
+    const instrumentation = participant.instrumentationPause
+    // The runtime's own instrumentation pause ended; it never was a stop of this run. Its resume is journaled only when its pause was, so both stay under the cap.
+    if (instrumentation) {
+      participant.instrumentationPause = undefined
+      if (instrumentation.journaled)
+        this.evidence.record('cdp.resumed', { participant: name, pausedForMs })
+      else this.unjournaledAdapterEvents++
       return
     }
     const transient = this.transientBrowserPause

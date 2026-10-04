@@ -3632,6 +3632,71 @@ test('a debugger hook that pauses and resumes 130 times journals 100 of those pa
   )
 })
 
+// Cycle 0045 (B-M2): red while instrumentation pauses were counted against the cap of the pauses the debugger makes for itself (the later pause was not journaled) and their resumes were journaled without a cap (130 instead of 100).
+test('130 instrumentation pauses of the runtime leave the journal room for a later pause the debugger makes for itself, and their resumes past the cap are counted, not journaled', async (context) => {
+  // Arrange: the only declared stop is captured and continued, and the after conditions are still open.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    TWO_LINE_SERVER_MODULE,
+  )
+  await harness.run.prepare()
+  harness.holdInput()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  harness.announceScript(
+    'server',
+    'chunk',
+    'webpack-internal:///(action-browser)/./app/lib/chunk.ts',
+  )
+  // Act: the runtime pauses 130 times for a source map and is resumed each time; then the debugger pauses once for its entry breakpoint and resumes it.
+  for (let turn = 0; turn < 130; turn++) {
+    harness.emitUnannouncedPause('server', {
+      scriptId: 'chunk',
+      lineNumber: 0,
+      columnNumber: 0,
+      functionName: '',
+      hitBreakpoints: [],
+      reason: 'instrumentation',
+    })
+    harness.emitResume('server')
+  }
+  emitEntryBreakpointPause(harness)
+  harness.emitResume('server')
+  harness.releaseInput()
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after the pauses',
+  )
+  await harness.run.stop()
+  // Assert
+  const observedReasons = journalDetails(harness, 'cdp.pause-observed').map(
+    (detail) =>
+      detail && typeof detail === 'object' && 'reason' in detail
+        ? detail.reason
+        : undefined,
+  )
+  assert.equal(harness.run.view().failures.join('; '), '')
+  assert.equal(
+    observedReasons.filter((reason) => reason === 'instrumentation').length,
+    100,
+  )
+  // The declared stop's own pause and the debugger's later pause, both journaled beside the 100.
+  assert.equal(
+    observedReasons.filter((reason) => reason !== 'instrumentation').length,
+    2,
+  )
+  assert.equal(retiredPauses(harness).length, 1)
+  // 100 resumes of instrumentation pauses and the resume of the declared stop at its continuation.
+  assert.equal(journalDetails(harness, 'cdp.resumed').length, 101)
+  // 30 instrumentation pauses and their 30 resumes are counted instead of journaled.
+  assert.deepEqual(
+    journalDetails(harness, 'cdp.adapter-pauses-not-journaled'),
+    [{ count: 60, journalLimit: 100 }],
+  )
+})
+
 // Cycle 0044 (0042-SR15): red while a stack refresh during the wait for the stop's own pause ended the run with "Unowned continuation invalidated live pause" instead of the binding that explains it.
 test('a stack refresh while a server stop bound on another line is still waited for does not hide the binding failure', async (context) => {
   // Arrange: the breakpoint binds on line 2 and the runtime pauses there; the wait for a pause on the declared line is held open.
