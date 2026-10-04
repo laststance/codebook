@@ -79,6 +79,16 @@ async function command(arguments_, label) {
 async function check(page, options) {
   /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
   const revisionAt = (step) => options.message.revision + step
+  /** Waits until the pane reports that it rendered the Study message of this revision. The number enters the page as an argument, because a callback evaluated in the page cannot call {@link revisionAt}. @example await waitUntilRendered(revisionAt(2)) */
+  const waitUntilRendered = (revision) =>
+    page.waitForFunction(
+      (awaitedRevision) =>
+        window.sent.some(
+          (message) =>
+            message.type === 'rendered' && message.revision === awaitedRevision,
+        ),
+      revision,
+    )
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
@@ -181,7 +191,9 @@ async function check(page, options) {
         cases.push({
           name: `${phase} enables an explicit source action with the loaded revision`,
           actual: action,
-          passed: action?.action === 'current-file' && action.revision === 1,
+          passed:
+            action?.action === 'current-file' &&
+            action.revision === revisionAt(0),
         })
         if (phase === 'initial') {
           // Arrange: reproduce a narrow Study column when a followed runtime pause arrives.
@@ -211,19 +223,9 @@ async function check(page, options) {
           }
           // Act: a host loading update precedes the complete pause, as it does during a native run.
           await publish({ ...observed, loading: true })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 2,
-            ),
-          )
+          await waitUntilRendered(revisionAt(1))
           await publish({ ...observed, revision: revisionAt(2) })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 3,
-            ),
-          )
+          await waitUntilRendered(revisionAt(2))
           const revealed = await page.evaluate(() => ({
             scrollY: window.scrollY,
             interpretationTop: document
@@ -256,12 +258,7 @@ async function check(page, options) {
           })
           await page.evaluate(() => window.scrollTo(0, 0))
           await publish({ ...observed, revision: revisionAt(3) })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 4,
-            ),
-          )
+          await waitUntilRendered(revisionAt(3))
           cases.push({
             name: 'refresh of the same pause preserves the learner reading position',
             passed: await page.evaluate(() => window.scrollY === 0),
@@ -286,12 +283,7 @@ async function check(page, options) {
           }
           // A new long explanation must remain keyboard-readable while preserving native debugger ownership of values.
           await publish(longExplanation)
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 5,
-            ),
-          )
+          await waitUntilRendered(revisionAt(4))
           const longReading = await page.evaluate(() => ({
             interpretationTop: document
               .querySelector('#live-content h2')
@@ -633,8 +625,8 @@ async function check(page, options) {
           steps.every(
             (value) =>
               value.action === 'seek' &&
-              value.expectedRevision === 7 &&
-              value.revision === 6,
+              value.expectedRevision === revisionAt(6) &&
+              value.revision === revisionAt(5),
           ),
       })
       await page.locator('#understood').focus()
@@ -1286,8 +1278,8 @@ async function check(page, options) {
         passed:
           inspection.action === 'seek' &&
           inspection.positionMs === 2000 &&
-          inspection.expectedRevision === 7 &&
-          inspection.revision === 8,
+          inspection.expectedRevision === revisionAt(6) &&
+          inspection.revision === revisionAt(7),
       })
       await page.locator('[data-summary-step="derive"]').focus()
       await publish({
@@ -1389,8 +1381,8 @@ async function check(page, options) {
         name: 'bottom panel uses the current recording revision for playback',
         passed:
           play.action === 'play' &&
-          play.revision === 6 &&
-          play.expectedRevision === 7,
+          play.revision === revisionAt(5) &&
+          play.expectedRevision === revisionAt(6),
       })
       await publish({
         ...options.message,
