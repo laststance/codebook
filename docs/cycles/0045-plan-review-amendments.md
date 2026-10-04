@@ -335,7 +335,7 @@ Decision: the product's own "Delete saved study…" is the way. It moves the stu
 - ER-8's fields (the same inspection block as ER-5);
 - NF-19 with NF-21 (Part 1 names NF-19 as known before any run; NF-19's test is written with NF-21's fix in place).
 
-So the fix-round candidate (N14-a2, and N14-b2 if Cursor needs one) holds H1, the harness parts of B1, P1 and B1. Everything else follows before the final candidate.
+So the fix-round candidate (N14-a2, and N14-b2 if Cursor needs one) holds H1, the harness parts of B1, P1 and B1. Everything else follows before the final candidate. (Corrected on 2026-10-05 after the local CodeRabbit review named this sentence: the Codex challenge of the plan moved the Study workspace's entry rows of package S1, with cause 7, in front of that candidate, and the cycle record's sections "Fix round: packages merged" and "Candidate 14" state what it held: H1, EX, H2, H4, all of P1 and the first parts of S1 and B1.)
 
 **Deciding observations first.** The rows that start with an observation on 0.2.28 are observed on candidate 13 directly after N14-b, before any new candidate is installed: NF-5, NF-6, NF-7 (one grid and event dump in Cursor), NF-8, NF-11, NF-15, NF-27, W-6's video, D-M2's triggers, RT-4's click (ER-30).
 
