@@ -71,6 +71,32 @@ test('PROJECT_STATE cites no number of the retired decision log and links no cop
   assert.deepEqual(citations, [])
 })
 
+// Cycle 0045 (CR-2): red while the paragraph "One next action" also held the earlier next actions and the state each had replaced (16,251 characters, with "The rest of this paragraph is the state before…" twice).
+test("PROJECT_STATE's one next action is one action, without the earlier next actions and the state each replaced", async () => {
+  // Arrange
+  const projectState = await readDocument('PROJECT_STATE.md')
+
+  // Act
+  const nextAction =
+    projectState
+      .split('\n')
+      .find((line) => line.startsWith('**One next action:**')) ?? ''
+  const historyMarkers = [
+    'The sentence this replaces',
+    'The sentences that follow describe the state',
+    'The rest of this paragraph is the state',
+  ].filter((marker) => nextAction.includes(marker))
+
+  // Assert: the paragraph exists, carries no marker of an earlier state and stays short enough to be one action.
+  assert.equal(nextAction.startsWith('**One next action:**'), true)
+  assert.deepEqual(historyMarkers, [])
+  assert.equal(
+    nextAction.length <= 1_500,
+    true,
+    `the paragraph has ${nextAction.length} characters`,
+  )
+})
+
 // Cycle 0045 (CR-1): red while the status paragraph retold every cycle from 0028 to 0043 (sixteen linked records) instead of leaving that history to the records and the change history.
 test("README's implementation status states the delivered and the open cycle and leaves the history of earlier cycles to their records and the change history", async () => {
   // Arrange
