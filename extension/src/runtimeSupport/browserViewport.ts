@@ -5,11 +5,14 @@ import { clearTimeout, setTimeout } from 'node:timers'
 
 import * as vscode from 'vscode'
 
+import { MILLISECONDS_PER_SECOND } from '../constants'
+
 import type { Cdp } from './cdp'
 import {
   ACTIVE_TIMEOUT_MS,
   CAPTURE_TIMEOUT_MS,
   STREAM_TELEMETRY_INTERVAL_MS,
+  VIEWPORT_ACK_TIMEOUT_REASON,
   VIEWPORT_HEIGHT_PX,
   VIEWPORT_WIDTH_PX,
   type Scenario,
@@ -17,6 +20,7 @@ import {
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import { awaitResponse } from './utils/awaitResponse'
 import { sha256 } from './utils/sha256'
+import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
 import { viewportHtml } from './utils/viewportHtml'
 import { waitUntil } from './utils/waitUntil'
 
@@ -500,7 +504,17 @@ export class BrowserViewport {
         })
     }
     if (frame.delayAck) this.record('fault.viewport-ack-delayed', { phase })
-    return this.delivery.offer(frame)
+    // A replay keeps the delivery's own reason, which its same-frame retry reads.
+    if (this.mode === 'recording') return this.delivery.offer(frame)
+    // A live run ends with this capture, so its reason says what was observed and what the reader does next.
+    return this.delivery.offer(frame).catch((error: unknown) => {
+      if (String(error) !== `Error: ${VIEWPORT_ACK_TIMEOUT_REASON}`) throw error
+      throw new Error(
+        unpaintedApplicationReason(
+          CAPTURE_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+        ),
+      )
+    })
   }
 
   /** Retires pause presentation before DAP continuation and invalidates delayed renderer work. @example viewport.resume() */

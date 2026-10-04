@@ -663,7 +663,10 @@ for (const mode of ['live', 'recording'] as const)
       // Act / Assert: the paint budget passes on a faked clock.
       const refused = assert.rejects(
         harness.viewport.present('cGl4ZWxz', 'before'),
-        /acknowledgement timed out/,
+        // A replay keeps the delivery's own reason, which its same-frame retry reads; a live run ends with the sentence for its reader.
+        mode === 'live'
+          ? /painted no frame within 3 s/
+          : /acknowledgement timed out/,
       )
       await advanceClockUntilSettled(
         context,
@@ -680,6 +683,40 @@ for (const mode of ['live', 'recording'] as const)
       harness.viewport.close()
     }
   })
+
+// Value: protects=the reason a live run ends with when its Application pane paints nothing saying what Codebook observed and the step that makes a new run possible; fails_when=the run ends with "Viewport frame acknowledgement timed out", which names nothing the learner or the agent can do; why_new=Cycle 0045 finding R2-F2 (second native round: an overlay covered the editor window and an admitted run ended in preparation with that text); seam=the viewport harness with a renderer that never acknowledges a frame and the fake clock for the three seconds of the paint bound
+test('a live capture whose Application pane paints no frame within the bound ends with what was observed and the step that makes a new run possible', async (context) => {
+  // Arrange: the renderer is ready and receives the frame, but paints nothing, as while a window covers the editor.
+  const harness = await viewportHarness('normal', true),
+    epoch = '11111111-1111-1111-1111-111111111111'
+  harness.ready(epoch)
+  enableFakeClock(context)
+  try {
+    // Act: the three seconds of the paint bound pass on a faked clock.
+    const shown = harness.viewport.present('cGl4ZWxz', 'ready').then(
+      () => 'confirmed',
+      (error: unknown) => String(error),
+    )
+    const elapsedMs = await advanceClockUntilSettled(
+      context,
+      shown,
+      CAPTURE_TIMEOUT_MS + 1_000,
+    )
+    // Assert
+    assert.equal(
+      await shown,
+      'Error: The capture was not shown: the Application pane painted no frame within 3 s. Make the editor window and the Application pane visible, then start a new run.',
+    )
+    assert.equal(elapsedMs, 3_000)
+    assert.equal(
+      harness.events.some((event) => event.type === 'viewport.acknowledged'),
+      false,
+    )
+  } finally {
+    resetFakeClock(context)
+    harness.viewport.close()
+  }
+})
 
 test('a visible unresponsive recorded gap still fails within its paint budget', async (context) => {
   // Arrange
