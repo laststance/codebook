@@ -519,6 +519,10 @@ Third probe session, 2026-10-04 to 2026-10-05, on candidate 17 (development-nati
 
 So every result of the first two sessions that did not hold holds on candidate 17 in the editor. These probes are repeated with the checks owed on the final candidate; the final round's chat submissions are still to come.
 
+### Order of the last steps, changed on 2026-10-05
+
+This record's plan named the final round before the local reviews. The order is turned around (the recommended option): each host has one submission left, and every finding this cycle can fix is fixed in it, so a fix made after N14-c and N14-d would leave the delivered tree without a native run and without a submission to repeat. On the merged tree (`dedb65e`, every package merged, full suite 2,975 of 2,975) the Study pane's DOM check, the local CodeRabbit CLI (`coderabbit review --agent --committed --base-commit 6a7a0b8`, without credits) and the delegated review (`open-code-review-delegate`: 195 reviewable files of 315 in `6a7a0b8..HEAD`, read in six groups by reviewer agents, each file accounted for) run first. What they find is fixed and merged, the suite and the gates run again, and only then the final candidate is built. On that candidate, per host: the install (in Cursor also "Codebook: Set Up AI Chat"), the part 8 reference hashes, one prepared run through the public MCP (the first run of row T-1's 154 split functions in an editor), then the submission with its save, reopen, video and restart, and after both submissions every other native check the rows owe. The delivery's own review steps in `/ship` still run; a critical finding there is fixed with a note of its impact on the final candidate.
+
 ## Result and decision
 
 - Result: pending
