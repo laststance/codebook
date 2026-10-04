@@ -1409,3 +1409,104 @@ test('Read Application does not maximize after the work window leaves during its
     await harness.close()
   }
 })
+
+// Value: protects=reader tests meeting Cursor as it answers the command that focuses the first editor group while it names the chat's group; fails_when=the fake names the first group as the active tab group, which Cursor does not, so a measurement that waits for that name passes in the tests and is refused in the editor; why_new=Cycle 0045 cause 12 (d) (obs15 P2: only `onDidChangeActiveTextEditor` arrived, the active tab group stayed the chat's); seam=the fake editor with a separate editor part and leavePaneFocusUnreportedBesideChat
+test("the fake Cursor reports the first group's text editor as the active text editor and keeps naming the chat's group after the command that focuses the first editor group", async () => {
+  // Arrange: the editor names the chat's group, whose input has the keyboard; the first group shows a file.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    let groupEvents = 0
+    const activeEditors: (string | undefined)[] = []
+    harness.editor.window.tabGroups.onDidChangeTabGroups(() => {
+      groupEvents++
+    })
+    harness.editor.window.onDidChangeActiveTextEditor((editor) => {
+      activeEditors.push(editor?.document.uri.toString())
+    })
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+    const afterCommand = {
+      namesChatGroup:
+        harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
+      activeTextEditor:
+        harness.editor.window.activeTextEditor?.document.uri.toString(),
+      groupEvents,
+      chatHasKeyboard: chat.focused(),
+      layoutRead: await harness.editor.commands.executeCommand(
+        'vscode.getEditorLayout',
+      ),
+    }
+    // The next change of a tab group rebuilds the tab model, which corrects the name.
+    chat.resync('wrapper')
+
+    // Assert
+    assert.deepEqual(afterCommand, {
+      namesChatGroup: true,
+      activeTextEditor: learnerFile.document.uri.toString(),
+      groupEvents: 0,
+      chatHasKeyboard: false,
+      // The main editor's two rows, not the chat part's one group of 743.
+      layoutRead: { orientation: 1, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    assert.deepEqual(activeEditors, [learnerFile.document.uri.toString()])
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests meeting the editor as it answers a numbered focus command for the column after the main editor's last group, where Cursor's chat group sits; fails_when=the fake focuses the chat's group for that command, which neither editor does: the command opens a new empty group in the main editor, so a reader that returns the focus that way passes in the tests and leaves an empty group in the editor; why_new=Cycle 0045 cause 12 (d) (obs15 P1 and P2: a new empty group at the chat's column, the chat's group one column on, the caret on the empty group); seam=the fake editor's group focus commands and its "Focus Agent" command
+test("the fake editor opens a new empty group for the focus command of the column after the main editor's last group, and Cursor's Focus Agent command gives the chat the keyboard without changing a group", async () => {
+  // Arrange: two groups of the main editor, and the chat's group at column 3 with the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusThirdEditorGroup',
+    )
+    const afterGroupCommand = {
+      groups: harness.groups.length,
+      emptyGroupColumn: harness.groups.find((group) => !group.tabs.length)
+        ?.viewColumn,
+      activeColumn: harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      chatColumn: harness.groups.find((group) => group.tabs.includes(chat.tab))
+        ?.viewColumn,
+      chatHasKeyboard: chat.focused(),
+    }
+    await harness.editor.commands.executeCommand('composer.focusComposer')
+
+    // Assert
+    assert.deepEqual(afterGroupCommand, {
+      groups: 4,
+      emptyGroupColumn: 3,
+      activeColumn: 3,
+      chatColumn: 4,
+      chatHasKeyboard: false,
+    })
+    assert.equal(chat.focused(), true)
+    assert.equal(harness.groups.length, 4)
+    assert.equal(
+      (await harness.editor.commands.getCommands()).includes(
+        'composer.focusComposer',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})

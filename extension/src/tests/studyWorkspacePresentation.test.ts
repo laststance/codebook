@@ -3830,6 +3830,16 @@ test('the extension README gives the refusal for a dead pane that stays open and
   assert.deepEqual(documented, [true, true, true])
 })
 
+/** Lists the commands a reader ran that move the keyboard between editor groups or to Cursor's chat, in order: the editor's group focus commands and Cursor's "Focus Agent". @example keyboardCommands(harness) // => ['workbench.action.focusFirstEditorGroup', 'composer.focusComposer'] */
+const keyboardCommands = (
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+): string[] =>
+  harness.commands.filter((command) =>
+    /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+      command,
+    ),
+  )
+
 /** Starts a run of the harness's configured study and follows it to its first pause, as an agent's start and input do; the reader is left as it was. @example const record = await pauseLiveRun(harness) */
 const pauseLiveRun = async (
   harness: Awaited<ReturnType<typeof workspaceHarness>>,
@@ -3950,8 +3960,12 @@ for (const replacesGroupObjects of [false, true])
       assert.equal(chatGroup?.viewColumn, 4)
       assert.equal(chatGroup?.tabs.length, 1)
       assert.equal(chatGroup?.activeTab, chat.tab)
-      // The keyboard focus is back in the chat's group and part.
-      assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+      // The chat has the keyboard again through Cursor's own command; the focus command of the chat's column, which would open a new empty group in the main editor, was not run.
+      assert.deepEqual(keyboardCommands(harness), [
+        'workbench.action.focusFirstEditorGroup',
+        'composer.focusComposer',
+      ])
+      assert.equal(harness.groups.length, 4)
       assert.equal(chat.focused(), true)
       assert.equal(harness.editor.window.activeTextEditor, undefined)
     } finally {
@@ -4040,7 +4054,7 @@ test('a live selection refused because a tab covers the captured source names th
 
 for (const reader of ['closed', 'open'] as const)
   // Value: protects=an agent's presentation select during its own paused run in Cursor ending with the live panes confirmed and the agent's chat focused, whether the Study workspace was closed or already followed the run; fails_when=the selection is refused for the focused chat tab, the live panes lose their groups to the group objects Cursor replaces, or the focus stays in the main editor after the layout was measured; why_new=Cycle 0045 cause 7 with NF-19 (the baseline round's Cursor run: the select was refused and the run showed no stopped source); seam=workspace harness with the controlled runtime, a separate editor part and the fake editor's group object replacement
-  test(`a presentation select during a paused live run, made while the agent chat's tab has the focus in Cursor, confirms the live panes and gives the chat the focus back, with the reader ${reader}`, async () => {
+  test(`a presentation ${reader === 'open' ? 'restore' : 'select'} during a paused live run, made while the agent chat's tab has the focus in Cursor, confirms the live panes and gives the chat the focus back, with the reader ${reader}`, async () => {
     // Arrange: Cursor replaces every tab group object with each tab change; the agent's chat is a tab of its own editor part and has the keyboard focus while its run is paused.
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
@@ -4056,7 +4070,8 @@ for (const reader of ['closed', 'open'] as const)
         presentationId: state.presentationId,
         expectedRevision: state.presentationControlRevision,
         mode: 'study-workspace',
-        action: 'select',
+        // A select of the live layout that is confirmed already is answered without arranging (Cycle 0045 cause 12 (e)); on the open reader the arrangement is asked for with a restore.
+        action: reader === 'open' ? 'restore' : 'select',
       })
       // Assert
       const chatGroup = harness.groups.find((group) =>
@@ -4071,7 +4086,9 @@ for (const reader of ['closed', 'open'] as const)
       assert.equal(readerSeams(harness).isLiveArrangement(), true)
       assert.equal(chatGroup?.viewColumn, 3)
       assert.equal(chatGroup?.activeTab, chat.tab)
-      assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+      // The chat has the keyboard again through Cursor's own command; the focus command of the chat's column, which would open a new empty group in the main editor, was not run.
+      assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
+      assert.equal(harness.groups.length, 3)
       assert.equal(chat.focused(), true)
     } finally {
       await harness.close()
@@ -4149,23 +4166,14 @@ for (const action of ['select', 'restore'] as const)
             ?.viewColumn,
           4,
         )
-        // The measurement borrowed the keyboard for the main editor; the chat has it again, through the editor's command for its group.
+        // The measurement borrowed the keyboard for the main editor; the chat has it again through Cursor's own command. The focus command of the chat's column, which would open a new empty group in the main editor, was not run.
         assert.equal(chat.focused(), true)
-        assert.equal(
-          harness.editor.window.tabGroups.activeTabGroup.tabs.includes(
-            chat.tab,
-          ),
-          true,
-        )
         assert.equal(harness.editor.window.activeTextEditor, undefined)
-        assert.equal(
-          harness.commands
-            .filter((command) =>
-              /^workbench\.action\.focus\w+EditorGroup$/.test(command),
-            )
-            .at(-1),
-          'workbench.action.focusFourthEditorGroup',
-        )
+        assert.deepEqual(keyboardCommands(harness), [
+          'workbench.action.focusFirstEditorGroup',
+          'composer.focusComposer',
+        ])
+        assert.equal(harness.groups.length, 4)
       } finally {
         await harness.close()
       }
@@ -4173,7 +4181,7 @@ for (const action of ['select', 'restore'] as const)
 
 for (const reader of ['closed', 'open'] as const)
   // Value: protects=an agent's presentation select during its own paused run in the state of a real Cursor chat submission (the chat input holds the keyboard, the editor names the file the debugger opened in the Application's group, no text editor is active) ending with the live panes confirmed and the keyboard back in the chat; fails_when=the selection is refused for the text tab without an active text editor, or the keyboard stays on that file after the measurement focused the first editor group; why_new=Cycle 0045 cause 12 (a) (N14-b2: the debugger's source shared group 1 with the Application pane and every presentation call was refused); seam=workspace harness with the controlled runtime, a separate editor part that holds the keyboard and the fake editor's group object replacement
-  test(`a presentation select during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
+  test(`a presentation ${reader === 'open' ? 'restore' : 'select'} during a paused live run, made while the chat input has the focus and the editor names a text tab without an active text editor, confirms the live panes and gives the chat the keyboard back, with the reader ${reader}`, async () => {
     // Arrange: the debugger's file is a tab of the first group; the chat's own editor part holds the keyboard, so the editor names that file's tab and no active text editor.
     const harness = await workspaceHarness()
     harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
@@ -4198,7 +4206,8 @@ for (const reader of ['closed', 'open'] as const)
         presentationId: state.presentationId,
         expectedRevision: state.presentationControlRevision,
         mode: 'study-workspace',
-        action: 'select',
+        // A select of the live layout that is confirmed already is answered without arranging (Cycle 0045 cause 12 (e)); on the open reader the arrangement is asked for with a restore.
+        action: reader === 'open' ? 'restore' : 'select',
       })
       // Assert
       const chatGroup = harness.groups.find((group) =>
@@ -4224,7 +4233,9 @@ for (const reader of ['closed', 'open'] as const)
       )
       assert.deepEqual(harness.tabCloseRequests(), [])
       assert.equal(chatGroup?.viewColumn, 3)
-      assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+      // The chat has the keyboard again through Cursor's own command; the focus command of the chat's column, which would open a new empty group in the main editor, was not run.
+      assert.equal(keyboardCommands(harness).at(-1), 'composer.focusComposer')
+      assert.equal(harness.groups.length, 3)
       assert.equal(chat.focused(), true)
     } finally {
       await harness.close()
@@ -4325,7 +4336,12 @@ test("a selection made from the chat beside the debugger's leftover preview tab 
     assert.equal(firstGroup.tabs.includes(learnerFile.tab), true)
     assert.deepEqual(harness.tabCloseRequests(), [])
     assert.equal(chatGroup?.viewColumn, 4)
-    assert.equal(harness.editor.window.tabGroups.activeTabGroup, chatGroup)
+    // The chat has the keyboard again through Cursor's own command; the focus command of the chat's column, which would open a new empty group in the main editor, was not run.
+    assert.deepEqual(keyboardCommands(harness), [
+      'workbench.action.focusFirstEditorGroup',
+      'composer.focusComposer',
+    ])
+    assert.equal(harness.groups.length, 4)
     assert.equal(chat.focused(), true)
   } finally {
     await harness.close()
@@ -4347,7 +4363,8 @@ test('a selection refused because the main editor reports no keyboard focus clos
     harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
     chat.focusTab()
     const state = harness.reader.presentationState(),
-      tabsBefore = harness.groups.map((group) => [...group.tabs])
+      tabsBefore = harness.groups.map((group) => [...group.tabs]),
+      layoutBefore = structuredClone(harness.editorLayout())
     // Act: the five seconds of the wait for the focus report pass on a faked clock.
     let answer: unknown
     void harness.reader
@@ -4389,12 +4406,15 @@ test('a selection refused because the main editor reports no keyboard focus clos
       harness.groups.map((group) => [...group.tabs]),
       tabsBefore,
     )
-    assert.equal(
-      harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
-      true,
-    )
     assert.equal(chat.focused(), true)
     assert.equal(harness.reader.presentationState().state, 'closed')
+    // The grid is as the call found it: no editor group was opened for the focus return (Cycle 0045 cause 12 (d)).
+    assert.equal(harness.groups.length, 3)
+    assert.deepEqual(harness.editorLayout(), layoutBefore)
+    assert.deepEqual(keyboardCommands(harness), [
+      'workbench.action.focusFirstEditorGroup',
+      'composer.focusComposer',
+    ])
   } finally {
     resetFakeClock(context)
     await harness.close()
@@ -4538,6 +4558,235 @@ test("after a cold selection the Application pane is in front of the learner's o
     assert.equal(draft.tab.isDirty, true)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
     assert.deepEqual(harness.tabCloseRequests(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a selection made from Cursor's chat being arranged when the editor answers the focus command with the first group's text editor as the active text editor and still names the chat's group, and the keyboard going back to the chat without a new editor group; fails_when=the measurement waits for the first group to be named as the active tab group, which Cursor does not do, and refuses after five seconds, or the focus is given back with the focus command of the chat's column, which opens a new empty group in the main editor; why_new=Cycle 0045 cause 12 (d) (obs15 P2: refused after 5.28 s, a new empty group at column 3, the caret not in the chat); seam=workspace harness with a separate editor part whose group the editor names, the fake Cursor's stale group name, its group focus commands and its "Focus Agent" command
+test("a selection made from Cursor's chat is arranged when the editor reports the first group's text editor without naming its group, and the chat gets the keyboard back without a new editor group", async () => {
+  // Arrange: as the editor API reported it in Cursor: group 1 holds two files (the second one shown, its text editor visible) and a settings page, group 2 is empty, and the editor names the chat's group, whose input has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const settings = harness.addOpaqueTab('Cursor Settings', 1),
+      learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    const firstGroup = harness.groups.find((group) => group.viewColumn === 1)!
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, 3)
+    assert.equal(firstGroup.tabs.includes(learnerFile.tab), true)
+    assert.equal(firstGroup.tabs.includes(settings), true)
+    assert.deepEqual(harness.tabCloseRequests(), [])
+    // Three groups of the main editor and the chat's: no group was opened for the focus return, and none is empty.
+    assert.equal(harness.groups.length, 4)
+    assert.equal(
+      harness.groups.some((group) => group.tabs.length === 0),
+      false,
+    )
+    assert.deepEqual(keyboardCommands(harness), [
+      'workbench.action.focusFirstEditorGroup',
+      'composer.focusComposer',
+    ])
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the answer an agent gets for its own select from the chat reading confirmed; fails_when=the answer is read after the focus return changed the editor groups, or the read that follows the select cannot measure the grid from the chat and answers layoutConfirmed false with "Main editor layout could not be checked without changing focus. …", which the agent relays to the learner; why_new=Cycle 0045 cause 12 (d) (obs15 P1: the select arranged the three panes and answered layoutConfirmed false with that reason and no layoutMeasured member); seam=the service's selectPresentation on the workspace harness with a separate editor part that has the keyboard
+test("the answer to a selection made from Cursor's chat input reads the layout as confirmed and says that the grid was not measured again", async () => {
+  // Arrange: the chat input has the keyboard while the editor names the learner's file of group 1 without an active text editor.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focus()
+    const state = harness.reader.presentationState()
+    // Act
+    const answer = await harness.service.selectPresentation({
+      instanceId: harness.service.instanceId,
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(answer.state, 'open')
+    assert.equal(answer.layoutConfirmed, true)
+    assert.equal(answer.layoutMeasured, false)
+    assert.equal(answer.reason, undefined)
+    assert.equal(answer.panes.appColumn, 1)
+    assert.equal(answer.panes.sourceColumn, 2)
+    assert.equal(answer.panes.contextColumn, 3)
+    assert.equal(harness.groups.length, 4)
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the main editor's grid when the chat cannot be given the keyboard back: in an editor without Cursor's "Focus Agent" command the focus stays where the arrangement ended and no group is opened; fails_when=the focus command of the other editor part's column is run, which opens a new empty group in the main editor; why_new=Cycle 0045 cause 12 (d) (the numbered focus commands count the main editor's groups only); seam=workspace harness with a separate editor part, removeHostCommands
+test('a selection made while another editor part holds the keyboard, in an editor without a command that focuses that part, leaves the focus where the arrangement ended and opens no editor group', async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.removeHostCommands('composer.focusComposer')
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    chat.focus()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(harness.groups.length, 4)
+    assert.deepEqual(keyboardCommands(harness), [
+      'workbench.action.focusFirstEditorGroup',
+    ])
+    // The keyboard is on the captured source the arrangement placed last.
+    assert.equal(chat.focused(), false)
+    assert.equal(harness.editor.window.activeTextEditor?.viewColumn, 2)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's selection after the learner watched a replay and closed the Study workspace: the reader still holds that recording, and the selection arranges its panes and answers confirmed once the recorded source is shown; fails_when=the selection is answered while the recorded source is still opening, with "The live Study layout could not be confirmed after Restore." and the panes it opened left behind, again at every repeat; why_new=Cycle 0045 cause 12 (e) (obs15 P4: two selects refused after 473 ms and 446 ms with the cause "The recorded source is opening in its native pane."); seam=the recorded reader harness, focusMutableDraft
+test("a selection made on a closed reader that holds a recording arranges the recording's panes and answers confirmed once the recorded source is shown", async () => {
+  // Arrange: a recording was opened and the Study workspace closed; the learner types in a file.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.close()
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const closed = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: closed.presentationId,
+      expectedRevision: closed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(closed.state, 'closed')
+    assert.equal(closed.reader.contentTab, 'recording')
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.reader.contentTab, 'recording')
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(
+      harness.groups
+        .find((group) => group.viewColumn === 1)
+        ?.tabs.includes(learnerFile.tab),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a repeated selection on a reader whose recording layout is confirmed answering confirmed without arranging, measuring by focus or focusing anything; fails_when=the selection runs the whole arrangement again (the expand command, the grid, a focus hand-over), which in Cursor ended with "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved." although nobody touched the window; why_new=Cycle 0045 cause 12 (e) (obs15 P4, third select); seam=the recorded reader harness and its command log
+test('a repeated selection on the confirmed layout of a recording answers confirmed and runs no layout or focus command', async () => {
+  // Arrange: the reader shows a recording in its two confirmed panes; the keyboard is in the captured source.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const confirmed = await harness.reader.readPresentationState(),
+      commandsBefore = harness.commands.length
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: confirmed.presentationId,
+      expectedRevision: confirmed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(confirmed.layoutConfirmed, true)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(
+      selected.presentationControlRevision,
+      confirmed.presentationControlRevision,
+    )
+    // One layout read, as a status read makes it; nothing was expanded, applied or focused.
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'vscode.getEditorLayout',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the reason of a refused presentation change leaving the state once the layout is confirmed; fails_when=a status read answers layoutConfirmed true beside the sentence of an earlier refusal, which an agent relays as the current state; why_new=Cycle 0045 cause 12 (e) (obs15 P4: state open, layoutConfirmed true and reason "Error: The live Study layout could not be confirmed after Restore." two seconds after a refused select); seam=workspace harness, addOpaqueTab
+test('the reason of a refused selection is gone from the presentation state once the layout is confirmed', async () => {
+  // Arrange: a selection was refused for an image the learner opened by a single click (a preview Codebook cannot keep); the learner then keeps that tab open and opens the Study workspace.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.attach(harness.service)
+    const image = harness.addOpaqueTab('logo.png', 1)
+    image.isPreview = true
+    const closed = harness.reader.presentationState()
+    await assert.rejects(
+      harness.reader.changePresentation({
+        presentationId: closed.presentationId,
+        expectedRevision: closed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'select',
+      }),
+    )
+    const refused = harness.reader.presentationState()
+    image.isPreview = false
+    // Act
+    await harness.reader.open()
+    // Assert
+    const opened = await harness.reader.readPresentationState()
+    assert.equal(
+      refused.reason,
+      'Error: A destination group contains a foreign preview: "logo.png" in editor group 1. Close that tab, or keep it open (double-click its tab), then try again.',
+    )
+    assert.equal(opened.layoutConfirmed, true)
+    assert.equal(opened.reason, undefined)
   } finally {
     await harness.close()
   }

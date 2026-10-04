@@ -1838,3 +1838,74 @@ test('while a run records the status bar offers Save learning replay and no seco
     await harness.close()
   }
 })
+
+for (const holder of ['the captured source', 'the Study pane'] as const)
+  // Value: protects=the keyboard after Close Study Workspace when a Codebook pane or the captured source had it: the editor group that remains gets it; fails_when=the tabs are closed without moving the focus and nothing is focused afterwards, so the keyboard is on the page body until the learner clicks; why_new=Cycle 0045 cause 12 (f) (obs15 P4: `document.activeElement` was the page body after Close, twice); seam=the workspace harness's keyboardOnBody, focusMutableDraft
+  test(`Close Study Workspace made with the keyboard in ${holder} leaves the keyboard in the editor group that remains`, async () => {
+    // Arrange: the learner's file is a tab of the first group; the reader is open and the keyboard is in one of its panes.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      if (holder === 'the captured source')
+        await harness.editor.window.showTextDocument(
+          harness.editor.window.visibleTextEditors.find(
+            (editor) => editor.viewColumn === 2,
+          )!.document,
+          { viewColumn: 2, preserveFocus: false },
+        )
+      const before = {
+        keyboardInSource:
+          harness.editor.window.activeTextEditor?.viewColumn === 2,
+        keyboardInStudyPane: harness.focusedPanel() === 'codebook.studyContext',
+      }
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.deepEqual(before, {
+        keyboardInSource: holder === 'the captured source',
+        keyboardInStudyPane: holder === 'the Study pane',
+      })
+      assert.equal(harness.reader.presentationState().state, 'closed')
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(
+        harness.commands.at(-1),
+        'workbench.action.focusActiveEditorGroup',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner who types in their own file while the Study workspace is closed: Close focuses nothing; fails_when=Close runs a focus command although no pane of Codebook had the keyboard, which can move the keyboard away from where the learner is; why_new=Cycle 0045 cause 12 (f), the counterpart of the cases above; seam=the workspace harness's command log, focusMutableDraft
+test("Close Study Workspace made with the keyboard in the learner's own file runs no focus command", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .some((command) => /^workbench\.action\.focus/.test(command)),
+      false,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      learnerFile.document,
+    )
+  } finally {
+    await harness.close()
+  }
+})

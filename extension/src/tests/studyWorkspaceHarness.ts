@@ -7,7 +7,7 @@ import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import type { ReaderErrorKind } from '../constants'
+import { CURSOR_FOCUS_AGENT_COMMAND, type ReaderErrorKind } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -344,6 +344,7 @@ export async function workspaceHarness(
     closed: typeof groups
     changed: typeof groups
   }): void => {
+    staleNamedGroup = undefined
     for (const listener of groupChangeListeners) listener(event)
   }
   let sourceProvider = async (_uri: Uri) => ''
@@ -521,6 +522,10 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard; the next tab or group change rebuilds the tab model and corrects the name.
+  let staleNamedGroup: (typeof groups)[number] | undefined
+  // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
+  let keyboardOnBody = false
   // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
   let revealsPanelsLater = false,
     applyingLaterReveal = false
@@ -1217,6 +1222,7 @@ export async function workspaceHarness(
           !registered ||
           (pendingPanelActivity !== kind &&
             !separateEditorPart?.focused &&
+            !staleNamedGroup &&
             activeTabGroup.activeTab === nativeTab)
         )
       },
@@ -1434,6 +1440,12 @@ export async function workspaceHarness(
       },
       dispose(): void {
         if (!panels.delete(value)) return
+        // A disposed pane that had the keyboard leaves it to no editor.
+        if (
+          !separateEditorPart?.focused &&
+          activeTabGroup.activeTab === nativeTab
+        )
+          keyboardOnBody = true
         const closeTab = (): void => {
           const emptied = groups.filter(
             (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
@@ -1485,7 +1497,13 @@ export async function workspaceHarness(
     const register = (): void => {
       registered = true
       const group = nativeGroup(value.viewColumn ?? 1)
-      if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab)
+      if (!group.tabs.includes(nativeTab)) {
+        group.tabs.push(nativeTab)
+        // Cursor reports the opened tab before it reports it as the tab its group shows (obs15 P1: "opened", then "changed").
+        if (replacesGroupObjectsOnTabChanges)
+          for (const listener of tabChangeListeners)
+            listener({ opened: [nativeTab], closed: [], changed: [] })
+      }
       group.activeTab = nativeTab
       // The new pane is the editor its group shows now, with or without the keyboard focus.
       returnHiddenEditorArea()
@@ -1867,9 +1885,11 @@ export async function workspaceHarness(
       },
       commands: {
         async getCommands(): Promise<string[]> {
-          return nativeHostCommands.filter(
-            (name) => !absentHostCommands.has(name),
-          )
+          return [
+            ...nativeHostCommands,
+            // Cursor, whose Agent chat is the separate editor part, registers "Focus Agent".
+            ...(separateEditorPart ? [CURSOR_FOCUS_AGENT_COMMAND] : []),
+          ].filter((name) => !absentHostCommands.has(name))
         },
         async executeCommand(
           name: string,
@@ -1992,27 +2012,44 @@ export async function workspaceHarness(
           // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
           if (name === 'workbench.action.focusActiveEditorGroup')
             panelMaximized = false
+          // Every command that gives an editor group or the chat the keyboard takes it from the page body.
+          if (
+            name === 'workbench.action.focusActiveEditorGroup' ||
+            name === 'workbench.action.focusFirstEditorGroup' ||
+            focusGroupAtColumnCommands.includes(name) ||
+            name === CURSOR_FOCUS_AGENT_COMMAND
+          )
+            keyboardOnBody = false
           const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
           if (focusedColumn > 1) {
-            const focusedGroup = groups.find(
+            const mainGroups = groups.filter(
+              (group) => group !== separateEditorPart?.group,
+            )
+            // The command counts the main editor's groups only. For the column after the last of them it opens a new empty group there and focuses it (VS Code keeps this from before the grid); the chat's group, which sat at that column, moves one column on (Cursor 3.23.12, Cycle 0045 obs15 P1 and P2).
+            if (nativeLayout && focusedColumn === mainGroups.length + 1) {
+              const opened = nativeGroup(focusedColumn)
+              activeTabGroup =
+                groups.find((group) => group.viewColumn === focusedColumn) ??
+                opened
+              innerFocusedPanel = undefined
+              if (separateEditorPart) separateEditorPart.focused = false
+              changedGroups({
+                opened: [],
+                closed: [],
+                changed: [activeTabGroup],
+              })
+              activeTextEditorChanged(undefined)
+            }
+            const focusedGroup = mainGroups.find(
               (group) => group.viewColumn === focusedColumn,
             )
-            // The group the editor already names gets the keyboard back from a pane that took it without a report.
-            if (
-              leavesPaneFocusUnreportedBesideChat &&
-              focusedGroup === activeTabGroup &&
-              focusedGroup === separateEditorPart?.group
-            )
-              separateEditorPart.focused = true
             if (focusedGroup && focusedGroup !== activeTabGroup) {
               const previousGroup = activeTabGroup
               returnHiddenEditorArea()
               activeTabGroup = focusedGroup
               innerFocusedPanel = undefined
-              if (separateEditorPart)
-                separateEditorPart.focused =
-                  focusedGroup === separateEditorPart.group
+              if (separateEditorPart) separateEditorPart.focused = false
               changedGroups({
                 opened: [],
                 closed: [],
@@ -2021,6 +2058,12 @@ export async function workspaceHarness(
               activeTextEditorChanged(focusedSourceEditor())
             }
           }
+          // Cursor's "Focus Agent": the selected chat's input gets the keyboard; no tab or group changes, and the editor keeps naming the tab group it named.
+          if (name === CURSOR_FOCUS_AGENT_COMMAND && separateEditorPart) {
+            separateEditorPart.focused = true
+            innerFocusedPanel = undefined
+            activeTextEditorChanged(undefined)
+          }
           if (name === 'workbench.action.focusFirstEditorGroup') {
             const previousEditor = focusedSourceEditor(),
               previousGroup = activeTabGroup,
@@ -2028,13 +2071,17 @@ export async function workspaceHarness(
             const primaryEditor = visibleSourceEditors.find(
               (editor) => editor.group === primaryGroup,
             )
-            // The first group's pane has the keyboard and layout reads are answered for the main editor, yet no event arrives and the chat's group stays the named one.
+            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the chat's group stays the named one; a text editor the first group shows is reported as the active text editor, a pane is not reported at all.
             if (
               leavesPaneFocusUnreportedBesideChat &&
-              activeTabGroup === separateEditorPart?.group &&
-              !(primaryGroup.activeTab?.input instanceof TabInputText)
+              separateEditorPart &&
+              (staleNamedGroup ?? activeTabGroup) === separateEditorPart.group
             ) {
+              staleNamedGroup = separateEditorPart.group
+              activeTabGroup = primaryGroup
               separateEditorPart.focused = false
+              if (primaryGroup.activeTab?.input instanceof TabInputText)
+                activeTextEditorChanged(focusedSourceEditor())
               return undefined
             }
             // Native text and tab-group notifications have no cross-event ordering guarantee.
@@ -2426,12 +2473,15 @@ export async function workspaceHarness(
         tabGroups: {
           all: groups,
           get activeTabGroup() {
-            return activeTabGroup
+            return staleNamedGroup ?? activeTabGroup
           },
           onDidChangeTabs: (callback: (event: TabChanges) => void) => {
             const notify = (
               event: TabChanges = { opened: [], closed: [], changed: [] },
-            ): void => callback(event)
+            ): void => {
+              staleNamedGroup = undefined
+              callback(event)
+            }
             tabChangeListeners.add(notify)
             return {
               dispose(): void {
@@ -2447,13 +2497,21 @@ export async function workspaceHarness(
               },
             }
           },
-          close: async (tabs: Tab[]) => {
+          close: async (tabs: Tab[], preserveFocus?: boolean) => {
             tabCloseRequests.push([...tabs])
             if (rejectNextTabClose) {
               rejectNextTabClose = false
               throw new Error('Canceled')
             }
-            return closeTabs(tabs)
+            // Closing the tab that has the keyboard while preserving the focus focuses nothing in its place.
+            const closesFocusedTab =
+              Boolean(preserveFocus) &&
+              !separateEditorPart?.focused &&
+              activeTabGroup.activeTab !== undefined &&
+              tabs.includes(activeTabGroup.activeTab)
+            const closed = closeTabs(tabs)
+            if (closesFocusedTab && closed) keyboardOnBody = true
+            return closed
           },
         },
       },
@@ -3094,6 +3152,8 @@ export async function workspaceHarness(
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
     },
+    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
+    keyboardOnBody: () => keyboardOnBody,
     /**
      * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
      * @example harness.revealPanelsLater()
@@ -3102,7 +3162,7 @@ export async function workspaceHarness(
       revealsPanelsLater = true
     },
     /**
-     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group and the first group shows a tab that is no text editor (the Application pane, twice in the second native round of Cycle 0045): that tab takes the keyboard, layout reads are answered for the main editor from then on, and the editor reports nothing: no group event, and the chat's group stays the active tab group. The numbered focus command for the chat's group then gives the keyboard back. A first group that shows a text editor is reported as before (natively seen for a click into it and a double-click on its tab; for the command it is the model's assumption).
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the chat's group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
      * @example
      * const chat = harness.addSeparateEditorPart()
      * harness.leavePaneFocusUnreportedBesideChat()
@@ -3110,6 +3170,8 @@ export async function workspaceHarness(
      */
     leavePaneFocusUnreportedBesideChat(): void {
       leavesPaneFocusUnreportedBesideChat = true
+      // This is Cursor, which also replaces every tab group object with each tab change; that rebuild is what corrects the stale name.
+      replacesGroupObjectsOnTabChanges = true
     },
     useNativeLayout(layout: unknown): void {
       nativeLayout = true
