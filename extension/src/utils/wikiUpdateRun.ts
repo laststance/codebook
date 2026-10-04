@@ -110,6 +110,44 @@ export type WikiUpdateEnd =
     >
 
 /**
+ * Builds the state a run ends in from its result and what the run itself knows; called by {@link WikiUpdateRun.end} for the active run.
+ * @param running - The state of the run that ends: its host, its output and its bound.
+ * @param finishedAt - When the run ended, as an ISO timestamp.
+ * @param result - How the run ended.
+ * @returns
+ * - A conflict that names no path: `failed` with a sentence Codebook wrote, since a conflict without a path could not tell the learner what to move
+ * - `timed-out`: the result with host, time, output and the bound
+ * - Any other result: the result with host, time and output
+ * @example
+ * endedStatus(running, '2026-10-03T12:10:00.000Z', { state: 'cancelled', site: 'kept' })
+ * // => { host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki', state: 'cancelled', site: 'kept' }
+ */
+function endedStatus(
+  running: Extract<WikiUpdateStatus, { state: 'running' }>,
+  finishedAt: string,
+  result: WikiUpdateEnd,
+): WikiUpdateStatus {
+  const ended = {
+    host: running.host,
+    finishedAt,
+    outputDirectory: running.outputDirectory,
+    outputLabel: running.outputLabel,
+  }
+  // A conflict without a path could not tell the learner what to move.
+  if (result.state === 'conflict' && result.paths.length === 0)
+    return {
+      ...ended,
+      state: 'failed',
+      reason: 'The update was blocked, but no blocking file was named.',
+      isCodebookSentence: true,
+      site: result.site,
+    }
+  return result.state === 'timed-out'
+    ? { ...ended, ...result, timeoutMs: running.timeoutMs }
+    : { ...ended, ...result }
+}
+
+/**
  * Holds the one Wiki update run of an editor window so the command, the `/update` link and the browser button share it.
  *
  * Why: a second start while a run is active must be refused in all three entries, and the reader needs a snapshot to show running and result states.
@@ -183,28 +221,7 @@ export class WikiUpdateRun {
    */
   end(result: WikiUpdateEnd): void {
     if (this.#status.state !== 'running') return
-    const running = this.#status
-    const ended = {
-      host: running.host,
-      finishedAt: this.#now().toISOString(),
-      outputDirectory: running.outputDirectory,
-      outputLabel: running.outputLabel,
-    }
-    // A conflict without a path could not tell the learner what to move.
-    if (result.state === 'conflict' && result.paths.length === 0) {
-      this.#status = {
-        ...ended,
-        state: 'failed',
-        reason: 'The update was blocked, but no blocking file was named.',
-        isCodebookSentence: true,
-        site: result.site,
-      }
-      return
-    }
-    this.#status =
-      result.state === 'timed-out'
-        ? { ...ended, ...result, timeoutMs: running.timeoutMs }
-        : { ...ended, ...result }
+    this.#status = endedStatus(this.#status, this.#now().toISOString(), result)
   }
 
   /** Records that nothing needed updating; no run starts. @param output - Resolved Wiki folder and its label. @param published - What the current site is called, when known. @example run.alreadyCurrent({ outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c' }) */
