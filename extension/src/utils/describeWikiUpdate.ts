@@ -151,8 +151,12 @@ export function describeWikiUpdate(
     // A sentence Codebook wrote ends with its next step, so it is shown whole; only an agent's, the CLI's or a thrown error's text is cut.
     const isShortened =
       !status.isCodebookSentence && trimmed.length > wording.reasonLimitChars
+    // The cut falls on the last space before the limit, so no word is broken; a reason without one is cut at the limit.
+    const lastSpace = trimmed.lastIndexOf(' ', wording.reasonLimitChars)
     const shown = isShortened
-      ? trimmed.slice(0, wording.reasonLimitChars).trimEnd() + '…'
+      ? trimmed
+          .slice(0, lastSpace > 0 ? lastSpace : wording.reasonLimitChars)
+          .trimEnd() + '…'
       : trimmed
     // A reason from a thrown error often has no full stop; it must not run into the next sentence.
     const sentence = /[.!?…]$/.test(shown) ? shown : shown + '.'

@@ -1005,10 +1005,10 @@ test('a conflict over twelve files names three in the sentence and lists all twe
   )
 })
 
-test('a long failure message is shortened in the sentence and kept whole behind a disclosure', async () => {
-  // Arrange
+test('a failure reason of 400 characters is cut to 160 in the rail and kept whole behind the disclosure', async () => {
+  // Arrange: a reason an agent reported, 400 characters long.
   const script = await readServedWikiScript()
-  const longReason = `The editor agent reported ${'a very long explanation '.repeat(20)}and stopped`
+  const longReason = `The editor agent reported ${'a very long explanation '.repeat(15)}and stopped it`
 
   // Act
   const page = await openFakeWikiPage(script, 'published-before-the-group', {
@@ -1023,11 +1023,12 @@ test('a long failure message is shortened in the sentence and kept whole behind 
     freshness: 'changed',
   })
 
-  // Assert
+  // Assert: the cut is made at the last space before the 160th character.
   const detail = page.find('[data-codebook-update-detail]')
+  assert.equal(longReason.length, 400)
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    `Update failed at 11:58: The editor agent reported ${'a very long explanation '.repeat(15)}a very long ex… The last usable site is kept.`,
+    'Update failed at 11:58: The editor agent reported a very long explanation a very long explanation a very long explanation a very long explanation a very long explanation a very long… The last usable site is kept.',
   )
   assert.equal(
     detail?.querySelector('summary')?.textContent,
@@ -1440,4 +1441,154 @@ test('a freshness check that failed after a source change is made again at the n
   // Assert
   assert.equal(labelAfterTheFailedCheck, 'Wiki freshness unknown')
   assert.equal(label?.textContent, 'Source changed · Update available')
+})
+
+test('a freshness reason from an earlier look is gone once the Wiki reads current', async () => {
+  // Arrange: the first check could not decide and says why.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+    {
+      freshness: 'unknown',
+      freshnessDetail: {
+        reason: 'An indexed source could not be checked: src/a.ts',
+      },
+    },
+  )
+  const label = page.find('[data-codebook-freshness]')
+  const tooltipWhileUnknown = label?.getAttribute('title')
+
+  // Act: the source can be checked again and matches.
+  page.reader.freshness = 'current'
+  page.reader.freshnessDetail = {}
+  page.reader.sourceChangeStamp = 1
+  await page.advance(15_000)
+
+  // Assert
+  assert.equal(
+    tooltipWhileUnknown,
+    'An indexed source could not be checked: src/a.ts',
+  )
+  assert.equal(label?.textContent, 'Wiki source current')
+  assert.equal(label?.getAttribute('title'), null)
+})
+
+test('the reason a source could not be checked is readable in the freshness label without a pointer', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'current-shell', {
+    freshness: 'unknown',
+    freshnessDetail: {
+      reason: 'An indexed source could not be checked: src/a.ts',
+    },
+  })
+
+  // Assert
+  const label = page.find('[data-codebook-freshness]')
+  assert.equal(
+    label?.textContent,
+    'Wiki freshness unknown: An indexed source could not be checked: src/a.ts',
+  )
+  assert.equal(label?.getAttribute('data-status'), 'unknown')
+  assert.ok(
+    page
+      .injectedStyles()
+      .includes(
+        '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem;overflow-wrap:anywhere}',
+      ),
+  )
+})
+
+test('a freshness reason longer than the rail’s limit is cut at a space in the label and stays whole in its tooltip', async () => {
+  // Arrange: a reason of 200 characters.
+  const script = await readServedWikiScript()
+  const longReason = `An indexed source could not be checked: ${'packages/dashboard/'.repeat(8)}a.ts`
+
+  // Act
+  const page = await openFakeWikiPage(script, 'current-shell', {
+    freshness: 'unknown',
+    freshnessDetail: {
+      reason: `${longReason} and others`,
+    },
+  })
+
+  // Assert: no space lies between the 40th and the 160th character, so the cut is at the path's start.
+  const label = page.find('[data-codebook-freshness]')
+  assert.equal(
+    label?.textContent,
+    'Wiki freshness unknown: An indexed source could not be checked:…',
+  )
+  assert.equal(label?.getAttribute('title'), `${longReason} and others`)
+})
+
+test('the freshness label of a project without a Git repository says that added files are not checked', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(script, 'current-shell', {
+    freshness: 'current',
+    freshnessDetail: { addedFilesUnchecked: true },
+  })
+
+  // Assert
+  const label = page.find('[data-codebook-freshness]')
+  assert.equal(
+    label?.textContent,
+    'Wiki source current (no Git revision recorded, so added files are not checked)',
+  )
+  assert.equal(label?.getAttribute('data-status'), 'current')
+})
+
+test('a result from an earlier day names its date beside the time', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: the page is opened on 3 October; the update ended the evening before.
+  const page = await openFakeWikiPage(script, 'current-shell', {
+    updateStatus: {
+      state: 'succeeded',
+      host: 'vscode',
+      finishedAt: '2026-10-02T21:10:00.000Z',
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+      ...output,
+    },
+    freshness: 'current',
+  })
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    'Updated at 2 Oct, 21:10 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
+  )
+})
+
+test('a failed result from an earlier day is still shown', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: the page is opened three days after the failure.
+  const page = await openFakeWikiPage(script, 'current-shell', {
+    updateStatus: {
+      state: 'failed',
+      host: 'cursor',
+      finishedAt: '2026-09-30T11:58:00.000Z',
+      reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+
+  // Assert
+  const status = page.find('[data-codebook-update-status]')
+  assert.equal(
+    status?.textContent,
+    'Update failed at 30 Sep, 11:58: Cursor Agent stopped with exit code 1 before finishing. The last usable site is kept.',
+  )
+  assert.equal(status?.getAttribute('data-state'), 'failed')
 })

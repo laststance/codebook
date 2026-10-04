@@ -1,4 +1,7 @@
-import type { describeWikiUpdate } from './describeWikiUpdate'
+import type {
+  describeWikiUpdate,
+  WikiUpdateDescription,
+} from './describeWikiUpdate'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
 /** What the reader answers at `api/update-status`: the run state, when the site on disk was published (absent while no manifest is readable), which publication it is (absent while the folder holds no publisher's receipt for its manifest) and the reader's source-change stamp. */
@@ -33,7 +36,7 @@ export type WikiUpdatePageSettings = {
   statusRetryLimit: number
   /** How many conflict paths the sentence names before "and N more". */
   pathLimit: number
-  /** How many characters of a failure reason the sentence shows. */
+  /** How many characters of a reported failure reason the sentence shows, and of a freshness reason the label. */
   reasonLimitChars: number
   /** Milliseconds in one minute, handed to the embedded sentence writer, which cannot import the constant. */
   msPerMinute: number
@@ -62,7 +65,7 @@ export type WikiUpdatePageSettings = {
  *   startWaitMs: 120_000,
  *   statusRetryLimit: 3,
  *   pathLimit: 3,
- *   reasonLimitChars: 400,
+ *   reasonLimitChars: 160,
  *   msPerMinute: 60_000,
  * })
  * ```
@@ -71,14 +74,7 @@ export function installWikiUpdateStatus(
   settings: WikiUpdatePageSettings,
 ): void {
   /** What the status line says now; `lead + rest` is the sentence. */
-  type Shown = {
-    state: string
-    lead: string
-    rest: string
-    detail: string[]
-    output: string
-    offerReload: boolean
-  }
+  type Shown = { state: string } & WikiUpdateDescription
 
   // Sites published earlier carry their own older stylesheet, so every rule of the update group comes from here.
   const styles = document.createElement('style')
@@ -86,7 +82,7 @@ export function installWikiUpdateStatus(
     // The label, the button and the status read as one callout, with the button as its filled primary control.
     '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
     '[data-codebook-update-group=bare]{background:none;border:0;padding:0}',
-    '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem}',
+    '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem;overflow-wrap:anywhere}',
     '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}',
     // In the narrow layout the rail is a short scrolling row; the group keeps a bounded column of it and its own height, so the panel encloses its text.
     '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
@@ -203,11 +199,19 @@ export function installWikiUpdateStatus(
     answer !== null &&
     'state' in answer &&
     typeof answer.state === 'string'
-  const formatTime = (isoTimestamp: string): string =>
-    new Date(isoTimestamp).toLocaleTimeString([], {
+  /** Words a timestamp as the learner's local hour and minute, with day and month in front when it is not of today, so a result of an earlier day does not read as today's. @example formatTime('2026-10-03T12:10:00.000Z') // => '21:10' today, '3 Oct, 21:10' on a later day */
+  const formatTime = (isoTimestamp: string): string => {
+    const moment = new Date(isoTimestamp)
+    const time = moment.toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     })
+    return moment.toDateString() === new Date(Date.now()).toDateString()
+      ? time
+      : moment.toLocaleDateString([], { day: 'numeric', month: 'short' }) +
+          ', ' +
+          time
+  }
 
   const isEndedWithoutSuccess = (state: string): boolean =>
     state === 'failed' ||
@@ -215,18 +219,39 @@ export function installWikiUpdateStatus(
     state === 'timed-out' ||
     state === 'conflict'
 
-  /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. */
-  const noteFreshness = (status: string | undefined, reason: string): void => {
+  /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. @param reason - Why a check could not decide; empty when the answer gave none. @param isAdditionUnchecked - Whether the project has no Git repository, so added files were not looked for. */
+  const noteFreshness = (
+    status: string | undefined,
+    reason: string,
+    isAdditionUnchecked: boolean,
+  ): void => {
     freshness = status
     if (!freshnessLabel) return
+    // The label sits above the outline in a narrow rail: a long reason is cut at the last space before the rail's limit and stays whole in the tooltip.
+    const lastSpace = reason.lastIndexOf(' ', settings.reasonLimitChars)
+    const shownReason =
+      reason.length > settings.reasonLimitChars
+        ? reason
+            .slice(0, lastSpace > 0 ? lastSpace : settings.reasonLimitChars)
+            .trimEnd() + '…'
+        : reason
+    const currentLabel = isAdditionUnchecked
+      ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
+      : 'Wiki source current'
+    // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus.
+    const unknownLabel = reason
+      ? 'Wiki freshness unknown: ' + shownReason
+      : 'Wiki freshness unknown'
     freshnessLabel.textContent =
       status === 'current'
-        ? 'Wiki source current'
+        ? currentLabel
         : status === 'changed'
           ? 'Source changed · Update available'
-          : 'Wiki freshness unknown'
+          : unknownLabel
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
-    if (reason) freshnessLabel.title = reason
+    // The reason of an earlier look must not outlive it.
+    if (reason) freshnessLabel.setAttribute('title', reason)
+    else freshnessLabel.removeAttribute('title')
   }
   /** Asks the reader how the Wiki stands against the source and writes the answer into the label. @param generation - The generation of site and source the check is for; a check already in flight for it is joined instead of asked twice. @returns A promise that settles when the answer was taken in, or dropped because a newer check was started meanwhile. */
   const readFreshness = (generation: string): Promise<void> => {
@@ -234,7 +259,9 @@ export function installWikiUpdateStatus(
     freshnessReadCount += 1
     const readNumber = freshnessReadCount
     const done = (async (): Promise<void> => {
-      let answered: { status: string; reason: string } | undefined
+      let answered:
+        | { status: string; reason: string; isAdditionUnchecked: boolean }
+        | undefined
       try {
         const answer = await readFromReader(settings.freshnessRoute)
         if (
@@ -250,6 +277,9 @@ export function installWikiUpdateStatus(
             'reason' in answer && typeof answer.reason === 'string'
               ? answer.reason
               : '',
+          isAdditionUnchecked:
+            'addedFilesUnchecked' in answer &&
+            answer.addedFilesUnchecked === true,
         }
       } catch {
         answered = undefined
@@ -258,12 +288,16 @@ export function installWikiUpdateStatus(
       if (readNumber !== freshnessReadCount) return
       freshnessRead = undefined
       if (!answered) {
-        noteFreshness(undefined, '')
+        noteFreshness(undefined, '', false)
         return
       }
       freshnessGeneration = generation
       freshnessAnsweredAtMs = Date.now()
-      noteFreshness(answered.status, answered.reason)
+      noteFreshness(
+        answered.status,
+        answered.reason,
+        answered.isAdditionUnchecked,
+      )
     })()
     freshnessRead = { generation, done }
     return done

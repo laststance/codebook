@@ -257,13 +257,14 @@ test('a long failure reason is cut in the sentence and kept whole for the disclo
   // Act
   const described = describeWikiUpdate(status, {
     ...wording,
-    reasonLimitChars: 34,
+    // The limit falls inside "explanation"; the cut is made at the space before that word.
+    reasonLimitChars: 30,
   })
 
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update failed at 21:10: The agent wrote a long explanation… The last usable site is kept.',
+    'Update failed at 21:10: The agent wrote a long… The last usable site is kept.',
   )
   assert.deepEqual(described?.detail, [reason])
 })

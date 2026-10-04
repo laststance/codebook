@@ -13,6 +13,21 @@ type PageNode = PageElement | string
 const CLOCK_STEP_MS = 1_000
 /** The two attribute forms {@link PageElement.matches} understands, `[attribute]` and `[attribute=value]` (the value with or without quotes); a bracket group of any other form, such as one with an operator, is refused. */
 const SUPPORTED_ATTRIBUTE_SELECTOR = /\[([\w-]+)(?:="?([^"\]]*)"?)?\]/g
+/** The month names the fake page prints, so a printed date does not depend on the locale data of the Node that runs the test. */
+const SHORT_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+]
 /** When a fake page is loaded unless the test says otherwise. */
 const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
 /** When the site a fake reader serves was published unless the test says otherwise. */
@@ -315,7 +330,7 @@ function buildRail(layout: FakeWikiPageLayout): PageElement[] {
  * Why: the page script is served text, so its behaviour (polling, the held-back link, the status line) is only proven by running what the browser gets.
  * Trigger: page tests call it with the script from {@link readServedWikiScript}.
  *
- * Times the page prints are the UTC hour and minute, so expected sentences can be hard-coded.
+ * Times the page prints are the UTC hour and minute, and dates the UTC day and short month ("2 Oct"), so expected sentences can be hard-coded.
  *
  * @param script - The served `codebook-qa.js`.
  * @param layout - Which right rail the page starts with.
@@ -479,6 +494,13 @@ export async function openFakeWikiPage(
       }
       override toLocaleTimeString(): string {
         return this.toISOString().slice(11, 16)
+      }
+      // Day and month, and the whole date for comparing two days, follow UTC like the time.
+      override toLocaleDateString(): string {
+        return `${this.getUTCDate()} ${SHORT_MONTHS[this.getUTCMonth()]}`
+      }
+      override toDateString(): string {
+        return this.toISOString().slice(0, 10)
       }
     },
     MutationObserver: class {

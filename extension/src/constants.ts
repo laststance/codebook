@@ -431,8 +431,8 @@ export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
 /** How many conflict paths an update sentence names before "and N more". */
 export const WIKI_UPDATE_SHOWN_PATH_LIMIT = 3
-/** How many characters of a failure reason an update sentence shows before the full text moves to its disclosure; the longest sentences Codebook writes itself (another window is updating, a publish it cannot check) end with their next step and stay whole. */
-export const WIKI_UPDATE_REASON_LIMIT_CHARS = 400
+/** How many characters of a reason an agent, the CLI or a thrown error supplied an update sentence shows before the full text moves to its disclosure, and how many of a freshness reason the label shows; the Wiki's rail is 170 to 210 px wide and "On this page" sits below. A sentence Codebook writes itself ends with its next step and stays whole. */
+export const WIKI_UPDATE_REASON_LIMIT_CHARS = 160
 /** How long after a press of Update LLM Wiki the reader page keeps asking quickly for the run the learner still has to confirm in the editor. */
 export const WIKI_UPDATE_START_WAIT_MS = 120_000
 /** How often the reader page asks for the update state while no run is active and its tab is visible. */
