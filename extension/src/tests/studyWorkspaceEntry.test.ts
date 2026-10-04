@@ -2033,7 +2033,7 @@ test('a live entry in Cursor stays confirmed when the editor rebuilds the source
 
 // Value: protects=the layout confirmation of a live run that starts from the three-pane Study layout an agent's selection arranged in Cursor; fails_when=the entry closes the context pane and its group, the editor replaces every group object with each of those tab changes, and the run reaches ready with "The native editor layout receipt no longer matches the Study panes." and no layout receipt; why_new=Cycle 0045 NF-6, open again after the second native round (owed check 2, take o2b: confirmed before the start, no receipt at ready; the first part's test entered from a reader the test opened itself, with the Application pane in front); seam=workspace harness with a separate editor part, the fake editor's group object replacement and the reader's refresh
 test("a live entry from the three-pane Study layout stays confirmed when the context pane's group closes and the editor replaces every group object", async () => {
-  // Arrange: as the editor API reported it in Cursor before the start: a selection made with the learner's file focused arranged the three panes, the file stayed in front of the Application pane in the first group, the captured source is in the second, the Study pane in the third and the Agent chat's group is the fourth.
+  // Arrange: as the editor API reported it in Cursor before the start: a selection made with the learner's file focused arranged the three panes, the Application pane shares the first group with that file, the captured source is in the second, the Study pane in the third and the Agent chat's group is the fourth.
   const harness = await workspaceHarness()
   harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
   harness.groups.at(-1)!.tabs = []
@@ -2101,7 +2101,7 @@ test("a live entry from the three-pane Study layout stays confirmed when the con
     )
     assert.equal(selected.layoutConfirmed, true)
     assert.equal(selected.panes.contextColumn, 3)
-    assert.equal(firstGroupBefore?.activeTab, learnerFile.tab)
+    assert.equal(firstGroupBefore?.tabs.includes(learnerFile.tab), true)
     assert.equal(readerSeams(harness).isLiveArrangement(), true)
     assert.deepEqual(readerSeams(harness).errorLines(), [])
     assert.equal(ready.layoutConfirmed, true)

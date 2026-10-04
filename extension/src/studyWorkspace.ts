@@ -1862,6 +1862,16 @@ export class StudyWorkspace {
           )
         )
           return
+        // It also stays open behind the Application pane that was placed in its group: the pane is never left behind a learner's tab, and it takes the keyboard focus that document had.
+        if (
+          placedSourceStays &&
+          this.app &&
+          currentGroup.viewColumn === this.app.viewColumn &&
+          document.uri.toString() !== String(this.sourceUri)
+        ) {
+          await this.focusPresentationPanel(this.app, signal)
+          return
+        }
         const restored = await vscode.window.showTextDocument(document, {
           viewColumn: currentGroup.viewColumn,
           preserveFocus: false,

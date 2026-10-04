@@ -2646,12 +2646,19 @@ test('a selection still succeeds when the editor reports the next text editor a 
     assert.equal(selected.layoutConfirmed, true)
     assert.equal(tabs.includes(leftover), false)
     assert.equal(tabs.includes(draft.tab), true)
-    // The draft the editor activated in the leftover tab's place has focus again once the panes are placed.
-    assert.equal(harness.focusedPanel(), undefined)
+    // The draft the editor activated in the leftover tab's place shares the Application pane's group: the pane is in front and has the keyboard focus that draft had, and the draft is still open behind it (Cycle 0045 NF-1 as DR-5; the draft was fronted and focused again before).
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
     assert.equal(
-      harness.groups.some((group) => group.activeTab === draft.tab),
-      true,
+      harness.groups.find((group) => group.tabs.includes(draft.tab))
+        ?.activeTab === draft.tab,
+      false,
     )
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(draft.tab))
+        ?.viewColumn,
+      1,
+    )
+    assert.equal(selected.panes.appColumn, 1)
   } finally {
     await harness.close()
   }
@@ -4447,5 +4454,44 @@ test('a run started while the reader shows a saved study is refused before any i
     } finally {
       await harness.close()
     }
+  }
+})
+
+// Value: protects=the Application pane being in front after a cold selection made from a learner's file that shares its group, with the keyboard focus that file had, and the file still open; fails_when=the selection fronts and focuses the learner's file again, so the Application pane the layout was confirmed for stays hidden behind it; why_new=Cycle 0045 NF-1 as DR-5 (presenting never leaves the Application pane behind a learner's tab; the pane takes the focus only from an editor Codebook knows held it); seam=focusMutableDraft
+test("after a cold selection the Application pane is in front of the learner's own file that shares its group, holds the keyboard focus, and that file is still open", async () => {
+  // Arrange: the learner types in a file of the first group, where the selection places the Application pane.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const draft = harness.focusMutableDraft('notes.txt', 1)
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    const applicationGroup = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!
+    assert.equal(state.state, 'closed')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(
+      applicationGroup.activeTab?.input instanceof
+        harness.editor.TabInputWebview,
+      true,
+    )
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
+    assert.equal(harness.editor.window.activeTextEditor, undefined)
+    assert.equal(applicationGroup.tabs.includes(draft.tab), true)
+    assert.equal(draft.tab.isDirty, true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    assert.deepEqual(harness.tabCloseRequests(), [])
+  } finally {
+    await harness.close()
   }
 })
