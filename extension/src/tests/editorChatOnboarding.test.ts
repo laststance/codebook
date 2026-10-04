@@ -191,7 +191,9 @@ async function boundary(
         },
         verifyManagedCursorSkill: async () => {
           if (!skillPresent)
-            throw new Error('Cursor skill is missing, changed or outdated.')
+            throw new Error(
+              'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+            )
           return { status: 'current' }
         },
       },
