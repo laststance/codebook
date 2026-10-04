@@ -2935,7 +2935,7 @@ test('a server stop the debugger binds and pauses two lines below fails when the
   // Assert
   assert.equal(
     harness.run.view().failures[0],
-    `Error: Declared stop src/mode.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line and line 3 may hold code. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
+    `Error: Declared stop src/mode.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line 1 and line 3 may hold code; declare the stop on line 3, where the debugger bound it. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPING_HINTS}`,
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })

@@ -99,8 +99,26 @@ test('a binding on a later line is refused when the scan of the lines between st
   // Assert
   assert.deepEqual(answers, [
     false,
-    'the sealed map was too large to scan completely, so lines 23 to 23 between the declared line and line 24 may hold code',
+    'the sealed map was too large to scan completely, so lines 23 to 23 between the declared line 22 and line 24 may hold code; declare the stop on line 24, where the debugger bound it',
   ])
+})
+
+// Cycle 0045 (SM-21): red while the refusal counted its lines from the requested line and called that line "the declared line" ("lines 75 to 75 between the declared line and line 76").
+test('a stop requested after its declared line whose later binding a partial scan cannot prove is refused naming the requested line its lines are counted from', () => {
+  // Arrange: the stop is declared on line 73 and requested on line 74; the scan found line 74 and stopped at its size limit.
+  const rule = createBindingLineRule(
+    73,
+    { endLine: 95 },
+    scanOf([74], false),
+    74,
+  )
+  // Act
+  const refusal = rule.refusal(76)
+  // Assert
+  assert.equal(
+    refusal,
+    'the sealed map was too large to scan completely, so lines 75 to 75 between line 74, where the stop declared on line 73 was requested, and line 76 may hold code; declare the stop on line 76, where the debugger bound it',
+  )
 })
 
 // Value: protects=a line that is not a whole number (an unvalidated stack frame of a refresh) never being taken as the stop's place; fails_when=22.5, NaN or Infinity pass because the scan between them is empty; why_new=Cycle 0044 R2; seam=none

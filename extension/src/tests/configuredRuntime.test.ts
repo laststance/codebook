@@ -1992,7 +1992,7 @@ test('a browser stop the debugger binds two lines below is refused when the seal
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line and line 3 may hold code. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the sealed map was too large to scan completely, so lines 2 to 2 between the declared line 1 and line 3 may hold code; declare the stop on line 3, where the debugger bound it. Frozen source map positions in the selected citation (partial map scan): none. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
