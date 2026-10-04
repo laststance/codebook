@@ -1379,6 +1379,213 @@ async function check(page, options) {
           summaryDensity.sequenceTop < summaryDensity.transportTop &&
           !summaryDensity.pageOverflow,
       })
+      /** Measures a title: its rendered lines, whether its text is cut, and whether the keyboard reaches it. */
+      const titleReading = (id) =>
+        page.evaluate((titleId) => {
+          const title = document.getElementById(titleId),
+            range = document.createRange()
+          range.selectNodeContents(title)
+          return {
+            lines: new Set(
+              [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+            ).size,
+            // How many line heights the heading's box is tall: two while the clamp holds.
+            shownLines: Math.round(
+              title.getBoundingClientRect().height /
+                Number.parseFloat(getComputedStyle(title).lineHeight),
+            ),
+            cut: title.scrollHeight > title.clientHeight,
+            tabIndex: title.getAttribute('tabindex'),
+            tooltip: title.getAttribute('title'),
+            focused: document.activeElement === title,
+          }
+        }, id)
+      // Act: the long title in the narrow side bar, reached from the control before it with Tab (SD-4, DR-11).
+      const clampedSummaryTitle = await titleReading('learning-title')
+      await page.locator('#reader-options > summary').focus()
+      await page.keyboard.press('Tab')
+      const focusedSummaryTitle = await titleReading('learning-title')
+      await page.locator('#reader-options > summary').focus()
+      // A title that fits in two lines, in the same side bar.
+      await publish(learning)
+      const fittingSummaryTitle = await titleReading('learning-title')
+      // Assert
+      cases.push({
+        name: 'in a 300 px side bar a Learning summary title longer than two lines is reached with Tab and shown whole while focused, and a title that fits is not a tab stop',
+        actual: {
+          clampedSummaryTitle,
+          focusedSummaryTitle,
+          fittingSummaryTitle,
+        },
+        passed:
+          clampedSummaryTitle.lines > 2 &&
+          clampedSummaryTitle.shownLines === 2 &&
+          clampedSummaryTitle.cut &&
+          clampedSummaryTitle.tabIndex === '0' &&
+          focusedSummaryTitle.focused &&
+          focusedSummaryTitle.shownLines === focusedSummaryTitle.lines &&
+          !focusedSummaryTitle.cut &&
+          fittingSummaryTitle.tabIndex === null &&
+          !fittingSummaryTitle.cut,
+      })
+
+      // Arrange: a replay whose article title is longer than two lines of its heading (SD-4, the replay heading).
+      const longArticleTitle =
+          'How submitting the invoice form reaches the server action and updates the saved invoice',
+        longHeading = {
+          ...learning,
+          model: {
+            ...learning.model,
+            progressByItem: learning.model.progressByItem.map((item) => ({
+              ...item,
+              title: longArticleTitle,
+            })),
+          },
+        }
+      // Act
+      await publish(longHeading)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const clampedHeading = await titleReading('title')
+      await page.locator('#title').focus()
+      const focusedHeading = await titleReading('title')
+      await page.locator('#reader-options > summary').focus()
+      // Assert
+      cases.push({
+        name: 'the clamped replay heading carries its whole title as a tooltip and opens the same way',
+        actual: { clampedHeading, focusedHeading },
+        passed:
+          clampedHeading.tooltip === longArticleTitle &&
+          clampedHeading.shownLines === 2 &&
+          clampedHeading.cut &&
+          clampedHeading.tabIndex === '0' &&
+          focusedHeading.focused &&
+          focusedHeading.shownLines === focusedHeading.lines &&
+          !focusedHeading.cut,
+      })
+
+      // Act: the same long Learning summary title in a wider side bar.
+      await page.setViewportSize({ width: 480, height: 720 })
+      const longerLearning = JSON.parse(JSON.stringify(learning))
+      longerLearning.recording.learningSummary.content.title =
+        'How submitting the invoice form reaches the server action, validates the amount, writes the invoice to the database and updates the saved invoice list'
+      await publish(longerLearning)
+      const wideSummaryTitle = await titleReading('learning-title')
+      // Assert
+      cases.push({
+        name: 'in a side bar 480 px wide a long Learning summary title is shown whole',
+        actual: wideSummaryTitle,
+        passed:
+          wideSummaryTitle.lines > 2 &&
+          wideSummaryTitle.shownLines === wideSummaryTitle.lines &&
+          !wideSummaryTitle.cut &&
+          wideSummaryTitle.tabIndex === null &&
+          wideSummaryTitle.tooltip ===
+            'How submitting the invoice form reaches the server action, validates the amount, writes the invoice to the database and updates the saved invoice list',
+      })
+
+      // Arrange: another tab is in front of the recorded application; the moment is recorded and only hidden (NF-31, DR-19).
+      await page.setViewportSize({ width: 600, height: 800 })
+      const coveredLearning = {
+        ...learning,
+        recording: {
+          ...learning.recording,
+          cleared: true,
+          applicationCovered: true,
+        },
+      }
+      // Act
+      await publish(coveredLearning)
+      const whileCovered = await page.evaluate(() => {
+        const shownText = (id) =>
+          document.getElementById(id).getClientRects().length
+            ? document.getElementById(id).textContent
+            : null
+        return {
+          line: shownText('loading'),
+          selectedShown:
+            document.getElementById('selected').getClientRects().length > 0,
+          transportStatus: shownText('recording-status'),
+        }
+      })
+      await publish(learning)
+      const afterReturnToFront = await page.evaluate(() => ({
+        lineShown:
+          document.getElementById('loading').getClientRects().length > 0,
+        transportStatus:
+          document.getElementById('recording-status').textContent,
+      }))
+      // Assert
+      cases.push({
+        name: 'while another tab covers the recorded application the Learning summary says so and names the remedy, not that the observation is loading',
+        actual: { whileCovered, afterReturnToFront },
+        passed:
+          whileCovered.line ===
+            'Recorded application is covered by another tab. Bring the Recorded application tab to the front to show this moment again.' &&
+          whileCovered.selectedShown &&
+          whileCovered.transportStatus ===
+            'Paused · finalized · Not recorded at this moment · Recorded application is covered by another tab' &&
+          !afterReturnToFront.lineShown &&
+          afterReturnToFront.transportStatus ===
+            'Paused · finalized · Not recorded at this moment',
+      })
+
+      // Arrange: a recorded stop whose explanations are shown ahead of their saved times, beside a later annotation (Cycle 0045 cause 10).
+      const explainedAhead = {
+        ...learning,
+        model: {
+          ...learning.model,
+          observation: {
+            ...learning.model.observation,
+            interpretations: [
+              { text: 'Saved while paused.', savedLater: 'while-pause-held' },
+              {
+                text: 'Saved after the pause.',
+                savedLater: 'after-pause-ended',
+              },
+              {
+                text: 'Saved after the film.',
+                savedLater: 'after-recording-ended',
+              },
+              { text: 'Saved before this time.' },
+            ],
+          },
+        },
+        recording: {
+          ...learning.recording,
+          laterInterpretations: [
+            { text: 'A revision saved later.', availableMs: 7000 },
+          ],
+        },
+      }
+      // Act
+      await publish(explainedAhead)
+      const explanationNotes = await page.evaluate(() => ({
+        shown: [...document.getElementById('interpretations').children].map(
+          (paragraph) => `${paragraph.className}: ${paragraph.textContent}`,
+        ),
+        later: [
+          ...document.getElementById('later-interpretations').children,
+        ].map((paragraph) => paragraph.textContent),
+      }))
+      await publish(learning)
+      // Assert
+      cases.push({
+        name: 'an explanation shown before its saved time is followed by the note that says when it was saved, and Later annotations holds only the other explanations',
+        actual: explanationNotes,
+        passed:
+          JSON.stringify(explanationNotes.shown) ===
+            JSON.stringify([
+              'interpretation: Saved while paused.',
+              'muted: This explanation was saved while this pause was held.',
+              'interpretation: Saved after the pause.',
+              'muted: This explanation was saved after this pause ended.',
+              'interpretation: Saved after the film.',
+              'muted: This explanation was saved after the recording ended.',
+              'interpretation: Saved before this time.',
+            ]) &&
+          JSON.stringify(explanationNotes.later) ===
+            JSON.stringify(['Added at 7.00 s · A revision saved later.']),
+      })
       await page.setViewportSize({ width: 600, height: 800 })
       await publish(learning)
 

@@ -1,6 +1,7 @@
 import {
   PLAYBACK_PAGE_STEP_MS,
   MILLISECONDS_PER_SECOND,
+  REPLAY_COVERED_LABEL,
   REPLAY_DEBUG_SESSION_NAME,
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
@@ -116,6 +117,11 @@ export const STUDY_UI_OPTIONS = {
   playbackFailureRecovery:
     'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.',
   nativeValuesHint: `Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.`,
+  // While another tab is in front of the recorded application: Run and Debug's own label in the transport's status, and the summary's sentence with what brings the moment back.
+  applicationCovered: {
+    label: REPLAY_COVERED_LABEL,
+    remedy: `${REPLAY_COVERED_LABEL}. Bring the Recorded application tab to the front to show this moment again.`,
+  },
   // Where the keyboard focus goes when a Show Variables button leaves while it holds the focus: Play, else the first of these that is shown and enabled.
   replayTransportFocus: [
     '#playback-toggle',
@@ -157,7 +163,7 @@ body.moments-only[data-replay=true] #recording-transport{order:-1;position:stick
 #learning-summary,.sequence-steps p{white-space:pre-wrap}.sequence-diagram{overflow:auto;max-height:420px;border:1px solid var(--vscode-panel-border,#444);padding:8px}.sequence-diagram svg{display:block;max-width:none;font-size:12px}.sequence-diagram text{fill:var(--vscode-foreground,#ddd)}.sequence-lifeline{stroke:var(--vscode-descriptionForeground,#aaa);stroke-dasharray:4 4}.sequence-arrow{fill:none;stroke:var(--vscode-textLink-foreground,#4daafc);stroke-width:2}.sequence-arrow.source-derived{stroke-dasharray:6 4}.sequence-arrow.unknown{stroke-dasharray:2 5;stroke:var(--vscode-descriptionForeground,#aaa)}.sequence-steps{padding-left:24px}.sequence-steps li{padding:10px 0}.sequence-steps p{margin:6px 0}.sequence-steps [aria-current=true]{font-weight:bold}
 /* Long recorded test output wraps inside the reader, and scrolls there if a line still cannot, instead of widening the page (Cycle 0044, 0031-W1 and 0038-W); each event card's own text does the same. */
 #node-history-output,.node-history-event pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}
-/* A Learning summary in a narrow side bar keeps a long title to two lines and its sequence in view; the full title stays in its tooltip (Cycle 0044, 0031-U3). */
-#learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-@media(max-width:420px){body[data-replay=true]{padding-top:8px;padding-left:12px;padding-right:12px}body[data-replay=true] .learning-header{margin-bottom:4px}body[data-replay=true] #reader-kind{display:none}body[data-replay=true] .learning-header h1{font-size:16px;margin:0 0 4px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}body[data-replay=true] #reader-options{margin-bottom:4px}body[data-replay=true] #reader-options>summary{font-size:13px}body[data-replay=true] #learning-material h2{margin:0 0 4px}body[data-replay=true] #learning-material p{margin:4px 0 8px}body[data-replay=true] #learning-material p.muted{font-size:12px;line-height:1.35}}
+/* A Learning summary in a narrow side bar keeps a long title to two lines and its sequence in view; the full title stays in its tooltip, and a title the clamp cuts is a tab stop that is shown whole while it has the keyboard focus. A wider summary shows the title whole. */
+#title:focus-visible,#learning-title:focus-visible{outline:2px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
+@media(max-width:420px){#learning-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}#learning-title:focus,body[data-replay=true] .learning-header h1:focus{display:block;overflow:visible}body[data-replay=true]{padding-top:8px;padding-left:12px;padding-right:12px}body[data-replay=true] .learning-header{margin-bottom:4px}body[data-replay=true] #reader-kind{display:none}body[data-replay=true] .learning-header h1{font-size:16px;margin:0 0 4px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}body[data-replay=true] #reader-options{margin-bottom:4px}body[data-replay=true] #reader-options>summary{font-size:13px}body[data-replay=true] #learning-material h2{margin:0 0 4px}body[data-replay=true] #learning-material p{margin:4px 0 8px}body[data-replay=true] #learning-material p.muted{font-size:12px;line-height:1.35}}
 `

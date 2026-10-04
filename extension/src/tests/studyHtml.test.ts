@@ -35,8 +35,8 @@ for (const kind of ['context', 'moments'] as const)
     )
   })
 
-// Value: protects=the Study pane saying beside an explanation it shows ahead of its saved time when that explanation was saved; fails_when=the pane's document no longer carries the three sentences, or no longer writes one under such an explanation; why_new=Cycle 0045 cause 10 (rule 3; the reader's DOM cases belong to the Reader DOM check); seam=none
-test('the Study pane carries the three sentences that say when an explanation shown before its saved time was saved, and writes one under such an explanation', () => {
+// Value: protects=the Study pane saying beside an explanation it shows ahead of its saved time when that explanation was saved; fails_when=the pane's document no longer carries one of the three sentences; why_new=Cycle 0045 cause 10 (rule 3; that a sentence is written under such an explanation is the Reader DOM check's case "an explanation shown before its saved time is followed by the note that says when it was saved, and Later annotations holds only the other explanations"); seam=none
+test('the Study pane carries the three sentences that say when an explanation shown before its saved time was saved', () => {
   // Act
   const readerHtml = studyHtml('context')
 
@@ -55,10 +55,6 @@ test('the Study pane carries the three sentences that say when an explanation sh
     readerHtml.includes(
       'This explanation was saved after the recording ended.',
     ),
-    true,
-  )
-  assert.equal(
-    readerHtml.includes('note.textContent = savedNote(value.savedLater)'),
     true,
   )
 })

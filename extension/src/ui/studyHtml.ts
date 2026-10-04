@@ -1227,6 +1227,19 @@ function studyClient(
     usableTransportControl(owed)?.focus({ preventScroll: true })
   }
   window.addEventListener('focus', payTransportFocus)
+  /**
+   * Makes each title that its two-line clamp cuts a tab stop, so the keyboard can open it (a focused title is shown whole), and takes the tab stop from a title that fits; called after every Study message and when the pane is resized.
+   * A focused title is not measured: it is shown whole and would read as fitting.
+   * @example offerClampedTitles()
+   */
+  const offerClampedTitles = (): void => {
+    for (const heading of [element('title'), element('learning-title')]) {
+      if (document.activeElement === heading) continue
+      if (heading.scrollHeight > heading.clientHeight) heading.tabIndex = 0
+      else heading.removeAttribute('tabindex')
+    }
+  }
+  window.addEventListener('resize', offerClampedTitles)
   window.addEventListener('message', (event) => {
     const message:
       | StudyViewMessage
@@ -1366,7 +1379,7 @@ function studyClient(
           ? 'Playback stopped — presentation unavailable'
           : pending
             ? 'Loading matching image, source and values…'
-            : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}`,
+            : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}${recording.applicationCovered ? ` · ${options.applicationCovered.label}` : ''}`,
       )
       text(
         'playback-position',
@@ -1510,6 +1523,8 @@ function studyClient(
       (value) => value.id === model.selection.itemId,
     )
     text('title', item?.title ?? 'Codebook study')
+    // The heading is clamped to two lines in a narrow replay; its tooltip keeps the whole title for the pointer.
+    element('title').title = item?.title ?? 'Codebook study'
     const selectedProfile = message.profiles.find(
         (profile) => profile.id === model.selection.profile,
       ),
@@ -1618,12 +1633,17 @@ function studyClient(
     button('stop')!.textContent = liveProfile
       ? `Stop ${message.liveTitle ?? liveProfile.title}`
       : 'Stop'
-    element('loading').hidden = !message.loading
+    // A recorded moment another tab covers is recorded and only hidden: the line says that and what brings it back, and the selected observation stays readable.
+    const isApplicationCovered =
+      Boolean(recording?.applicationCovered) && !message.loading
+    element('loading').hidden = !message.loading && !isApplicationCovered
     text(
       'loading',
       recording?.readiness === 'failed'
         ? 'Recorded context unavailable. Reload after resolving the reported problem.'
-        : 'Loading the selected observation…',
+        : isApplicationCovered
+          ? options.applicationCovered.remedy
+          : 'Loading the selected observation…',
     )
     element('selected').hidden = message.loading
     for (const tab of Array.from(
@@ -2322,6 +2342,7 @@ function studyClient(
     element('bootstrap-status').hidden = true
     // Every control is in its state for this message now; a pane without the focus (the learner is in Run and Debug) waits for its next focus event.
     if (document.hasFocus()) payTransportFocus()
+    offerClampedTitles()
     // A newly followed pause should reveal its interpretation and facts without requiring a learner scroll past run controls.
     if (shouldRevealFollowedPause && !message.loading) {
       element('live-content').scrollIntoView({
