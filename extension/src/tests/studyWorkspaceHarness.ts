@@ -3512,6 +3512,8 @@ export async function recordedReaderHarness(
   const studyId = record.recording.header.studyId,
     directory = harness.reader.inspect().libraryDirectory!
   const store = new RecordingStore(directory, directory.split('/').at(-1)!)
+  /** Whether a hold of {@link holdPositionSaves} is active on the reader's store. */
+  let positionSavesHeld = false
   return {
     ...harness,
     studyId,
@@ -3520,26 +3522,37 @@ export async function recordedReaderHarness(
     png,
     controller: service.playbackController!,
     /**
-     * Holds every playback position save that starts from now on behind a storage lock, as a slow disk does, until `release()`.
-     * @returns `release` lets the held saves write and restores normal saving.
+     * Holds every playback position save this harness's reader starts from now on behind a storage lock, as a slow disk does, until `release()`.
+     * The hold is put on the recording store the reader owns, so the reader of another harness goes on saving.
+     * @returns `release` lets the held saves write and restores normal saving; calling it again does nothing.
+     * @throws When an earlier hold of this harness is not released yet: two holds on one store could not be released in either order.
      * @example const held = harness.holdPositionSaves(); held.release()
      */
     holdPositionSaves() {
-      const savePreference = RecordingStore.prototype.savePreference
-      let releaseStorage = (): void => {}
+      if (positionSavesHeld)
+        throw new Error(
+          'Position saves of this workspace harness are already held. Release that hold before holding them again.',
+        )
+      const readerStore = harness.reader['recordings']
+      assert.ok(readerStore, 'The reader has no recording store yet.')
+      const savePreference = readerStore.savePreference
+      let releaseStorage = (): void => {},
+        released = false
       const storageHeld = new Promise<void>((resolve) => {
         releaseStorage = resolve
       })
-      RecordingStore.prototype.savePreference = async function (
-        this: RecordingStore,
-        preference,
-      ): Promise<void> {
+      positionSavesHeld = true
+      readerStore.savePreference = async (preference): Promise<void> => {
         await storageHeld
-        return savePreference.call(this, preference)
+        return savePreference.call(readerStore, preference)
       }
       return {
         release(): void {
-          RecordingStore.prototype.savePreference = savePreference
+          if (released) return
+          released = true
+          positionSavesHeld = false
+          // The store's own method comes back when the override on this one store is removed.
+          Reflect.deleteProperty(readerStore, 'savePreference')
           releaseStorage()
         },
       }
