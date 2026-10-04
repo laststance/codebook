@@ -502,6 +502,19 @@ What the probes add to the causes, each fixed in this cycle before the final can
 
 Operator's actions and slips: every Codebook call through the public MCP; `codebook.showLearningSummary`, `codebook.study.read-context`, `codebook.closeStudyWorkspace` and the editor's two side bar toggles were run as commands through the extension host's debugging port (the same commands a key or the Command Palette runs); desktop clicks: into the chat input once, into a text editor five times, on the close button of the two empty groups the selects had created, on Show Variables once, on the status bar item twice per host, on the title bar before each quit. Slips: the first `codebook_return_current` was sent with the control revision instead of the reader's content revision (refused, repeated correctly); the explanations without a value path named above; a first take of P4 in the Recording's two-pane layout, where a Read maximizes nothing. Left behind: Cursor's library 25 of 64 and VS Code's 37 of 64 (one study each from P6); in Cursor's window the tab `auth.ts` in group 1 (the debugger opened it during P6) and no empty second group; in both hosts the reader's content is live and the Study workspace closed, both side bars visible.
 
+Third probe session, 2026-10-04 to 2026-10-05, on candidate 17 (development-native, no chat submission; not final evidence). Candidate 17: built by this agent from the clean checkout at `89da8ce` (every package but the documents one): `codebook-0045-c17.vsix`, SHA-256 `e04ff564bc47fa64ffcc5ebe6d872f81cc68678e971cac6b67fc6a4f2eef525e`, 29 entries, revision `89da8ce9cd268ead0da6701fe1930a0ff47175af`, not dirty; the package check passes; full suite 2,967 of 2,967, package and script tests 201 of 201. Installed in both QA profiles with the editors closed. Evidence: `obs15/T/` (`log.txt` of the folder `87ac8895…`, `SHA256SUMS.txt` with 295 files). The six protected hashes are unchanged; nothing was left running.
+
+| Probe | Host | Result |
+| --- | --- | --- |
+| Cause 12 (d): select with the caret in the chat input | Cursor | Holds: ok after 2.69 s, `layoutConfirmed` true, panes app 1 / source 2 / context 3, no empty group, the caret in the chat input afterwards |
+| Cause 12 (g): restore from the chat right after that select | Cursor | Holds: ok after 176 ms, `layoutConfirmed` true with `layoutMeasured` false, nothing changed |
+| Cause 12 (e): `codebook_playback` open with the caret in the chat; then Close; then select from a text editor, twice | Cursor | Holds: the open ended confirmed; the first select answered ok after 1.33 s with the recording's two panes confirmed, the second after 172 ms |
+| Cause 12 (f): Close with the caret in the captured source | Cursor | Holds: the keyboard is in the text editor of the group that remains |
+| NF-17: the Learning summary focused, then its side bar closed | Cursor | Holds: the focus moves to a visible Codebook pane of the editor area (on candidate 15 it stayed in the hidden summary) |
+| NF-22: three panes, "Codebook: Read Study Pane", "Codebook: Close Study Workspace" | both | Holds: the side bars are 214 / 461 px (Cursor) and 170 / 249 px (VS Code) before, 0 / 0 after the Read, and as before again after Close; the keyboard is in a text editor and the closed presentation carries no reason |
+
+So every result of the first two sessions that did not hold holds on candidate 17 in the editor. These probes are repeated with the checks owed on the final candidate; the final round's chat submissions are still to come.
+
 ## Result and decision
 
 - Result: pending
