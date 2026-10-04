@@ -27,6 +27,55 @@ export interface BoundPlace {
 }
 
 /**
+ * Keeps the places and the acknowledgement a caller knows and leaves the others out, so that an unknown one is an absent key instead of an `undefined` value; called by {@link describeBoundPlace}.
+ * @param known.armed - Where the breakpoint was requested, only when that differs from the declared place.
+ * @param known.acknowledged - When the binding became known, where the caller can tell.
+ * @param known.pausable - Where the requested line can pause, when the binding first known at the pause lies past it.
+ * @returns The given values under their own keys, in the order `armed`, `acknowledged`, `pausable`; an empty object when none is known.
+ * @example
+ * knownPlaces({ armed: { line: 23 }, acknowledged: undefined, pausable: undefined }) // => { armed: { line: 23 } }
+ */
+function knownPlaces(
+  known: Pick<BoundPlace, 'armed' | 'acknowledged' | 'pausable'>,
+): Pick<BoundPlace, 'armed' | 'acknowledged' | 'pausable'> {
+  const { armed, acknowledged, pausable } = known
+  return {
+    ...(armed && { armed }),
+    ...(acknowledged && { acknowledged }),
+    ...(pausable && { pausable }),
+  }
+}
+
+/**
+ * Words the sentence that tells an agent which line a moved stop paused on and which line to name; called by {@link describeBoundPlace} only for a stop the debugger bound on another line than the declared one.
+ * @param declared - The snapshot's declared stop.
+ * @param bound - The position the snapshot was committed at.
+ * @param pausable - Where the requested line can pause; the sentence then ends with which column (and, for another line than the declared one, which line) to declare to stop there.
+ * @returns The sentence: the paused place, the declared line with its configuration path, the line to name, and the pausable column when there is one.
+ * @example
+ * describeMovedStop(declared, { line: 23, column: 5 }, undefined)
+ * // => 'src/mode.ts: this stop paused on line 23, column 5. You declared line 22 (configuration.additionalStops[1].source); the debugger bound the breakpoint on line 23. Name line 23 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.'
+ */
+function describeMovedStop(
+  declared: DeclaredStopOfSnapshot,
+  bound: { line: number; column: number },
+  pausable: BoundPlace['pausable'],
+): string {
+  const source = declared.stop.source
+  return [
+    `${source.path}: this stop paused on line ${bound.line}, column ${bound.column}.`,
+    `You declared line ${source.line} (${declared.configurationPath}); the debugger bound the breakpoint on line ${bound.line}.`,
+    `Name line ${bound.line} as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.`,
+    // A stop requested after its unmapped declared line is told which line to declare as well, because Codebook chose that line.
+    ...(pausable
+      ? [
+          `Line ${pausable.line} can pause at column ${pausable.column}; declare ${pausable.line === source.line ? 'that column' : `line ${pausable.line} at that column`} to stop there.`,
+        ]
+      : []),
+  ].join(' ')
+}
+
+/**
  * Puts a committed stop's declared, requested and bound places into one value, and words the sentence that tells an agent which line a moved stop paused on; called for a live snapshot by {@link StudyService.boundPlace} (inspection resource, run resource, `codebook_explain`), for a saved observation by {@link readRecordingResource}, and by the Study pane's label of a moved stop.
  * The numbers come from the run (the declared stop and the committed snapshot), never from an agent's text.
  * @param input.declared - The snapshot's declared stop ({@link declaredStopOfSnapshot}).
@@ -49,7 +98,7 @@ export function describeBoundPlace(input: {
   acknowledged?: BindingAcknowledgement
   pausable?: { line: number; column: number }
 }): BoundPlace {
-  const { declared, bound, armed, acknowledged, pausable } = input,
+  const { declared, bound, pausable } = input,
     source = declared.stop.source,
     isMoved = bound.line !== source.line
   return {
@@ -59,23 +108,9 @@ export function describeBoundPlace(input: {
     declaredColumn: source.column,
     boundLine: bound.line,
     boundColumn: bound.column,
-    ...(armed && { armed }),
-    ...(acknowledged && { acknowledged }),
-    ...(pausable && { pausable }),
+    ...knownPlaces(input),
     isMoved,
     // Only another line needs the sentence: a moved column stays on the line the agent declared.
-    ...(isMoved && {
-      place: [
-        `${source.path}: this stop paused on line ${bound.line}, column ${bound.column}.`,
-        `You declared line ${source.line} (${declared.configurationPath}); the debugger bound the breakpoint on line ${bound.line}.`,
-        `Name line ${bound.line} as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.`,
-        // A stop requested after its unmapped declared line is told which line to declare as well, because Codebook chose that line.
-        ...(pausable
-          ? [
-              `Line ${pausable.line} can pause at column ${pausable.column}; declare ${pausable.line === source.line ? 'that column' : `line ${pausable.line} at that column`} to stop there.`,
-            ]
-          : []),
-      ].join(' '),
-    }),
+    ...(isMoved && { place: describeMovedStop(declared, bound, pausable) }),
   }
 }
