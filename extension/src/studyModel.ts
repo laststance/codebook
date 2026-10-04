@@ -56,6 +56,8 @@ export type StudyProjection = {
   selectedItem: StudyDescriptor['items'][number]
   observation?: RetainedStudy['observations'][number]
   source: z.infer<typeof sourceSchema>
+  /** The line the agent declared for the shown observation's stop, present only when the debugger bound the stop on another line ({@link movedStopDeclaredLine}); the pane's source label then names both lines. */
+  sourceDeclaredLine?: number
   currentSourceAvailable: boolean
   currentParticipant?: StudyParticipant
   currentItemId?: string

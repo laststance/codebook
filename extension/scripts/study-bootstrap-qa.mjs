@@ -1529,6 +1529,39 @@ async function check(page, options) {
             'Paused · finalized · Not recorded at this moment',
       })
 
+      // Arrange: a recorded stop declared on line 73 that the debugger bound on line 75 (SD-16, DR-28).
+      const movedStop = {
+        ...learning,
+        model: {
+          ...learning.model,
+          source: {
+            ...learning.model.source,
+            hash: 'b'.repeat(64),
+            line: 75,
+          },
+          sourceDeclaredLine: 73,
+        },
+      }
+      // Act
+      await publish(movedStop)
+      const movedStopLabel = await page.locator('#source-version').textContent()
+      await publish({
+        ...movedStop,
+        model: { ...movedStop.model, sourceDeclaredLine: undefined },
+      })
+      const unmovedStopLabel = await page
+        .locator('#source-version')
+        .textContent()
+      // Assert
+      cases.push({
+        name: 'a stop the debugger moved names both its declared and its bound line',
+        actual: { movedStopLabel, unmovedStopLabel },
+        passed:
+          movedStopLabel ===
+            'Captured source · line 75 (declared on line 73) · bbbbbbbbbbbb' &&
+          unmovedStopLabel === 'Captured source · line 75 · bbbbbbbbbbbb',
+      })
+
       // Arrange: a recorded stop whose explanations are shown ahead of their saved times, beside a later annotation (Cycle 0045 cause 10).
       const explainedAhead = {
         ...learning,

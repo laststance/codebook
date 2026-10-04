@@ -1680,7 +1680,8 @@ function studyClient(
         ? 'No captured source at this time. The source pane shows an explicit placeholder.'
         : !model.observation && !model.currentSourceAvailable
           ? 'No current source version could be verified.'
-          : `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line} · ${model.source.hash.slice(0, 12)}`,
+          : // A stop the debugger moved names the line it paused on and the line it was declared on.
+            `${model.observation ? 'Captured source' : 'Source-derived document'} · line ${model.source.line}${model.sourceDeclaredLine === undefined ? '' : ` (declared on line ${model.sourceDeclaredLine})`} · ${model.source.hash.slice(0, 12)}`,
     )
     text(
       'understanding-label',

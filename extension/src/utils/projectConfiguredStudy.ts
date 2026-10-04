@@ -3,6 +3,7 @@ import type { StudyProjection, StudyProjectionInput } from '../studyModel'
 
 import { citationLearningState } from './citationLearningState'
 import { describeStudy } from './describeStudy'
+import { movedStopDeclaredLine } from './movedStopDeclaredLine'
 
 /** Projects one sealed browser item and its complete citation ledger for {@link projectStudy}, never granting control to another run. @example projectConfiguredStudy(input).progressByItem.length // 1 */
 export function projectConfiguredStudy(
@@ -110,6 +111,7 @@ export function projectConfiguredStudy(
     selectedItem,
     observation,
     source,
+    sourceDeclaredLine: movedStopDeclaredLine(study, observation),
     currentSourceAvailable,
     sourceChanged,
     selectedUnderstanding,

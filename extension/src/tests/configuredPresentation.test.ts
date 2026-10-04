@@ -323,6 +323,79 @@ test('configured replay shows an explicit pre-observation placeholder and never 
   assert.equal(paused.selection.follow, false)
 })
 
+// Value: protects=the learner seeing that a stop was moved: the pane's source label gets the declared line beside the line the stop paused on; fails_when=the projection carries no declared line for a moved stop, or carries one for a stop that paused where it was declared; why_new=Cycle 0045 SD-16 as DR-28 (the pane named only the bound line, so an explanation that named line 73 stood beside a highlight on 75); seam=none
+test('a stop the debugger moved carries its declared line beside the line it paused on, and a stop on its declared line carries none', () => {
+  // Arrange: one study whose stop paused on its declared line 1, and one whose stop, declared on line 1, paused on line 2.
+  const onDeclaredLine = configuredProjectionInput(),
+    moved = configuredProjectionInput()
+  moved.study.observations[0]!.source.line = 2
+
+  // Act
+  const unmovedModel = projectStudy(onDeclaredLine),
+    movedModel = projectStudy(moved)
+
+  // Assert
+  assert.equal(unmovedModel.source.line, 1)
+  assert.equal(unmovedModel.sourceDeclaredLine, undefined)
+  assert.equal(movedModel.source.line, 2)
+  assert.equal(movedModel.sourceDeclaredLine, 1)
+})
+
+// Value: protects=a replay naming the right declared line for a later stop that the debugger moved; fails_when=the replay looks the stop up among the one observation it shows, so every stop is read as the study's first declared stop; why_new=Cycle 0045 SD-16 (the replay projects a study that holds only the shown observation, while a stop is found by its position among all saved ones); seam=none
+test('a replay at a later stop the debugger moved names that stop’s own declared line', () => {
+  // Arrange: a saved context whose second stop, declared on line 3 of the same file, paused on line 4; the replay shows it at its recorded time.
+  const input = configuredProjectionInput(),
+    context = buildRecordingContext(input.study, [], 1),
+    first = context.study.observations[0]!,
+    second = {
+      ...first,
+      id: 'browser-session:2',
+      elapsedMs: 3_000,
+      source: { ...first.source, line: 4 },
+      interpretations: [],
+    }
+  context.study.configuration.additionalStops = [
+    {
+      line: 3,
+      column: 1,
+      inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+    },
+  ]
+  context.study.observations.push(second)
+  const bundle: PlaybackBundle = {
+    studyId: input.study.id,
+    context,
+    projection: {
+      positionMs: 3000,
+      observation: second,
+      debugger: undefined,
+      frame: undefined,
+      missing: 'No image.',
+      pauseConfirmed: false,
+      rendererConfirmed: false,
+      laterInterpretations: [],
+      contextStatus: 'available',
+    },
+  }
+
+  // Act
+  const atSecondStop = projectPlaybackStudy(input, bundle),
+    atFirstStop = projectPlaybackStudy(input, {
+      ...bundle,
+      projection: {
+        ...bundle.projection,
+        positionMs: 2000,
+        observation: first,
+      },
+    })
+
+  // Assert
+  assert.equal(atSecondStop.source.line, 4)
+  assert.equal(atSecondStop.sourceDeclaredLine, 3)
+  assert.equal(atFirstStop.source.line, 1)
+  assert.equal(atFirstStop.sourceDeclaredLine, undefined)
+})
+
 test('configured live capture seals the accepted article, actual facts and three explicit missing image states for shared history', async (context) => {
   // Arrange
   const harness = await configuredServiceHarness(context)
