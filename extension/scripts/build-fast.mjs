@@ -1,6 +1,6 @@
 // Writes the compiler's output without type checking, for jobs that only run the compiled tests.
 //
-//   node scripts/build-fast.mjs           replace dist with the unchecked emit
+//   node scripts/build-fast.mjs           replace dist with the unchecked emit and its build metadata (dist/build.json)
 //   node scripts/build-fast.mjs --check   compare the unchecked emit with an existing `tsc` build of dist
 //
 // Type errors are reported by `pnpm typecheck` and `pnpm build`, not here.
@@ -62,4 +62,6 @@ if (process.argv.includes('--check')) {
     await writeFile(join(dist, path), content)
   }
   console.log(`Wrote ${outputs.size} files to dist without type checking.`)
+  // The build metadata belongs to every dist: the extension reads it at start, and the dead-code gate resolves the path the metadata script names. Loaded only now, because it imports the constants this emit just wrote.
+  await import('./build-metadata.mjs')
 }

@@ -32,6 +32,8 @@ import {
   REPOSITORY_PAUSE_HOLD_TIMEOUT_MS,
   REPOSITORY_RUN_TIMEOUT_MS,
   REPOSITORY_SETUP_TIMEOUT_MS,
+  RETIRED_PRESENTATION_REFUSAL,
+  SELECTABLE_PRESENTATION_MODE,
   PRESENTATION_MODE_IDS,
   STUDY_PRESENTATIONS,
 } from './constants'
@@ -86,10 +88,13 @@ import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { fullLibraryMessage } from './utils/fullLibraryMessage'
 import { historyExclusionReason } from './utils/historyExclusionReason'
+import { historyExclusionState } from './utils/historyExclusionState'
+import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
+import { thrownMessage } from './utils/thrownMessage'
 
 export interface Explanation {
   id: string
@@ -152,8 +157,8 @@ interface StudyRecordState {
     reason?: string
   }
   historyExcluded?: HistoryExclusion
-  /** Set by {@link StudyService.withEvidenceHeld} while the reader moves this run's saved study, so no explanation is written into the evidence directory on its way to the Trash. */
-  evidenceHeld?: boolean
+  /** Counts the {@link StudyService.withEvidenceHeld} calls in progress while the reader moves this run's saved study, so no explanation is written into the evidence directory on its way to the Trash until the last one ends. */
+  evidenceHolds?: number
   recording?: RecordingWriter
   recordingEndMs?: number
   recordingSeal?: RecordingSeal
@@ -181,6 +186,8 @@ export class StudyService {
   readonly instanceId = randomUUID()
   readonly records = new Map<string, StudyRecord>()
   recordings?: RecordingStore
+  /** Cleared by {@link StudyWorkspace} once this editor's Trash refused to move a saved study in this session, so a full-library refusal stops naming a removal that cannot work here. */
+  isStudyRemovalAvailable = true
   playbackController?: PlaybackController
   presentationController?: Pick<
     StudyWorkspace,
@@ -189,6 +196,7 @@ export class StudyService {
     | 'returnToCurrent'
     | 'assertPresentationIdle'
     | 'nodeHistoryLearningMaterialSaved'
+    | 'replayControlAccepted'
   >
   repository?: RepositoryBookStore
   nodeHistoryStore?: NodeTestHistoryStore
@@ -356,7 +364,15 @@ export class StudyService {
             playbackUri: `codebook://${this.instanceId}/playback`,
             playbackAvailable: Boolean(this.playbackController),
             limits: this.recordings.limits,
-            capacity: this.recordings.capacityStatus(),
+            capacity: {
+              ...this.recordings.capacityStatus(),
+              // Absent when the library cannot be read; a start then names that error.
+              savedStudies: await this.recordings
+                .savedStudyCount()
+                .catch(() => undefined),
+              fields:
+                'limit is the current Saved Study Limit setting: a new study is admitted while savedStudies (the studies saved now) is below it. maximum, like limits.slots, is the highest value that setting accepts, not the current limit.',
+            },
             instructions:
               'Saved recordings survive server/runtime exit. Discover their study IDs using libraryUri; current-instance URIs and playback revisions must be copied, not guessed. Playback never starts, clicks or continues a run.',
           }
@@ -365,7 +381,7 @@ export class StudyService {
         ? {
             ...(await this.presentationState(this.instanceId)),
             instructions:
-              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. Select the same learner workspace in three modes. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
+              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. Study workspace is the only layout that can be selected; the retired Living book and Guided walkthrough layouts stay only where a saved preference still names one. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
           }
         : undefined,
       repository: {
@@ -481,17 +497,25 @@ export class StudyService {
         'The playback workspace is unavailable.',
       )
     try {
+      const state = this.playbackController.command(input)
+      // An accepted seek, play or pause answers a refusal the Learning replay panel still shows; an open is answered when its load is ready.
+      if (input.action !== 'open')
+        this.presentationController?.replayControlAccepted()
       return {
-        ...this.playbackController.command(input),
+        ...state,
         uri: `codebook://${this.instanceId}/playback`,
       }
     } catch (error) {
+      // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
+      const readerClosed = !this.playbackController.state().readerOpen
       throw new StudyError(
         String(error).includes('Stale playback revision')
           ? 'STALE_PLAYBACK'
           : 'PLAYBACK_UNAVAILABLE',
         String(error),
-        `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
+        readerClosed
+          ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
+          : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
       )
     }
   }
@@ -524,6 +548,17 @@ export class StudyService {
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
+      )
+    // Living book and Guided walkthrough are retired: a reader whose saved preference still names one keeps it, but nothing selects one anew.
+    if (
+      input.action === 'select' &&
+      input.mode !== SELECTABLE_PRESENTATION_MODE &&
+      (await this.presentationController.readPresentationState()).mode !==
+        input.mode
+    )
+      throw new StudyError(
+        'PRESENTATION_UNAVAILABLE',
+        RETIRED_PRESENTATION_REFUSAL,
       )
     await this.presentationController.changePresentation(input)
     return this.presentationState(input.instanceId)
@@ -643,9 +678,7 @@ export class StudyService {
   private evictOldestExcludedRecord(): boolean {
     // Map iteration follows insertion order, so the first excluded record is the oldest.
     const evicted = [...this.records.values()].find(
-      (record) =>
-        record.historyExcluded === 'refused-at-admission' ||
-        record.historyExcluded === 'removed-by-learner',
+      (record) => historyExclusionState(record.historyExcluded) === 'ended',
     )
     if (!evicted) return false
     this.forgetRecord(evicted)
@@ -792,6 +825,9 @@ export class StudyService {
       }
       return { accepted: true, runUri: this.uri(record.id) }
     }
+    // A reveal accepted for this pause finishes first: resuming under it would retire the pause its reader is still presenting.
+    if (record.sourceReveals.size)
+      await Promise.allSettled([...record.sourceReveals])
     if (
       !record.runtime ||
       record.stopping ||
@@ -864,7 +900,7 @@ export class StudyService {
         'BUSY',
         'Wait for owned cleanup before adding historical explanations.',
       )
-    if (record.evidenceHeld)
+    if (record.evidenceHolds)
       throw new StudyError(
         'BUSY',
         "The learner is deleting this run's saved study; wait for it to finish.",
@@ -1030,6 +1066,18 @@ export class StudyService {
         'BUSY',
         'Source reveal requires an active run. Read the captured source resource after cleanup.',
       )
+    const isCurrentPause = (): boolean =>
+      Object.values(record.runtime!.view().participants).some((participant) =>
+        isPausedAtSnapshot(participant, snapshot),
+      )
+    const noLongerCurrentPause = (cause?: unknown): StudyError =>
+      new StudyError(
+        'STALE_PAUSE',
+        'Reveal shows only the current pause, and this snapshot is no longer it: its continuation was accepted or the debugger moved on. Reveal a stop before continuing it; its captured source stays readable at sourceUri.',
+        cause === undefined ? undefined : String(cause),
+      )
+    // The reader presents only the live pause; a snapshot already continued would otherwise answer an evidence failure.
+    if (!isCurrentPause()) throw noLongerCurrentPause()
     // Reserve before editor I/O; stop must not finish while a source tab can still be acquired.
     const pending = Promise.resolve().then(() =>
       record.runtime!.reveal(snapshot),
@@ -1037,6 +1085,10 @@ export class StudyService {
     record.sourceReveals.add(pending)
     try {
       await pending
+    } catch (error) {
+      // A pause that ended while the reader was presenting it (a manual resume) is the cause, whatever the reader reported.
+      if (!isCurrentPause()) throw noLongerCurrentPause(error)
+      throw error
     } finally {
       record.sourceReveals.delete(pending)
     }
@@ -1103,40 +1155,54 @@ export class StudyService {
   /** Says whether a run is no checkpoint candidate: a Node test run keeps its own journal, and an excluded run was refused, removed or is still awaiting admission. @example this.holdsNoStudyHistory(record) // => true for a refused run */
   private holdsNoStudyHistory(record: StudyRecord): boolean {
     return (
-      record.profile === NODE_TEST_PROFILE || Boolean(record.historyExcluded)
+      record.profile === NODE_TEST_PROFILE ||
+      historyExclusionState(record.historyExcluded) !== 'kept'
     )
   }
 
   /**
    * Ends a retained run's history after the learner removed its saved study, so the reader stops checkpointing it and {@link StudyService.state} stops reporting saved history; called by {@link StudyWorkspace} once a removal has moved something to the system Trash.
    * A record this service no longer retains is left alone.
-   * @param record - The run whose study was removed.
-   * @param exclusion - The only exclusion a caller outside preparation may set.
+   * @param record - The run whose study was removed; it is marked `removed-by-learner`, the only exclusion set outside preparation.
    * @example
-   * service.excludeHistory(record, 'removed-by-learner')
+   * service.excludeHistory(record)
    * service.beginHistory(record, service.state(record).materialSignature) // => undefined
    */
-  excludeHistory(
-    record: StudyRecord,
-    exclusion: Extract<HistoryExclusion, 'removed-by-learner'>,
-  ): void {
+  excludeHistory(record: StudyRecord): void {
     if (this.records.get(record.id) !== record) return
-    record.historyExcluded = exclusion
+    record.historyExcluded = 'removed-by-learner'
   }
 
   /**
-   * Refuses to read or extend the raw evidence of a run whose saved study the learner removed, because the evidence directory went to the system Trash with it; called by {@link readResource} before every `/runs/<id>/<suffix>` resource and by {@link StudyService.explain}.
+   * Refuses to read or extend the raw evidence of a run whose saved study the learner removed, because the evidence directory went to the system Trash with it; called by {@link assertEvidenceReadable} and by {@link StudyService.explain}.
    * The bare run resource stays readable and names the same reason.
    * @param record - The retained run that is being read or explained.
    * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError} with the removal sentence for a `removed-by-learner` run.
    * @example
-   * service.assertEvidenceAvailable(record) // throws after service.excludeHistory(record, 'removed-by-learner')
+   * service.assertEvidenceAvailable(record) // throws after service.excludeHistory(record)
    */
   assertEvidenceAvailable(record: StudyRecord): void {
     if (record.historyExcluded === 'removed-by-learner')
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
         historyExclusionReason(record.historyExcluded),
+      )
+  }
+
+  /**
+   * Refuses to read the raw evidence of a run whose saved study was removed or is being removed; called by {@link readResource} before every `/runs/<id>/<suffix>` resource, so a read during the move never ends in a raw file error that names the storage path.
+   * @param record - The retained run whose evidence is read.
+   * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError}: the removal sentence after the removal, the in-progress sentence while {@link StudyService.withEvidenceHeld} runs.
+   * @example
+   * service.assertEvidenceReadable(record) // throws while the reader moves the run's study to the Trash
+   */
+  assertEvidenceReadable(record: StudyRecord): void {
+    this.assertEvidenceAvailable(record)
+    // While the evidence directory may be on its way to the Trash, a read would end in a raw file error with the storage path.
+    if (record.evidenceHolds)
+      throw new StudyError(
+        'EVIDENCE_UNAVAILABLE',
+        "The learner is deleting this run's saved study; its evidence is unavailable until that ends.",
       )
   }
 
@@ -1153,7 +1219,8 @@ export class StudyService {
     record: StudyRecord,
     operation: () => Promise<Value>,
   ): Promise<Value> {
-    record.evidenceHeld = true
+    // A count, so an overlapping hold does not release the first one's mark.
+    record.evidenceHolds = (record.evidenceHolds ?? 0) + 1
     try {
       // A failed explanation or evidence write is that write's own error; it does not stop the removal.
       await Promise.allSettled(
@@ -1162,7 +1229,7 @@ export class StudyService {
       await record.runtime?.evidence.flush().catch(() => undefined)
       return await operation()
     } finally {
-      record.evidenceHeld = false
+      record.evidenceHolds = (record.evidenceHolds ?? 1) - 1
     }
   }
 
@@ -1242,9 +1309,17 @@ export class StudyService {
   /** Projects bounded current state and actionable next steps without copying the full event log. @example service.state(record).nextActions */
   state(record: StudyRecord) {
     const runtime = record.runtime?.view()
-    const evidenceFailure = record.runtime?.evidence.failure
+    // A write that failed because a removed run's evidence directory went to the Trash is no failure of the run, and its message names the storage path.
+    const evidenceFailure =
+      record.historyExcluded === 'removed-by-learner'
+        ? undefined
+        : record.runtime?.evidence.failure
+    // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
+    const runtimeFailure = runtime?.failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
     const terminalReason =
-      record.error?.message ?? evidenceFailure ?? runtime?.failures[0]
+      record.error?.message.slice(0, MAX_UI_TEXT_CHARS) ??
+      evidenceFailure?.slice(0, MAX_UI_TEXT_CHARS) ??
+      runtimeFailure
     const canControl =
       !this.stopping &&
       !record.stopping &&
@@ -1303,12 +1378,7 @@ export class StudyService {
         ? this.uri(record.id, `snapshots/${encodeURIComponent(snapshot.id)}`)
         : undefined
       const resumable = Boolean(
-        canControl &&
-        snapshot &&
-        participant?.phase === 'paused' &&
-        participant.pause?.generation === snapshot.pause.generation &&
-        participant.pause.sessionId === snapshot.pause.sessionId &&
-        participant.pause.threadId === snapshot.pause.threadId,
+        canControl && snapshot && isPausedAtSnapshot(participant, snapshot),
       )
       return {
         snapshotUri,
@@ -1342,7 +1412,10 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      'read-history',
+      // A refused or removed run has no history to read.
+      historyExclusionState(record.historyExcluded) === 'ended'
+        ? undefined
+        : 'read-history',
     ].filter((value) => value !== undefined)
     const material = {
       instanceId: this.instanceId,
@@ -1467,7 +1540,16 @@ export class StudyService {
           ? 'not-demonstrated'
           : (runtime?.finalOutcome ?? 'pending-teardown')),
       terminalReason,
-      error: record.error?.describe(),
+      // A failure inside the runtime has no tool error of its own; its text becomes the cause an agent can quote.
+      error:
+        record.error?.describe() ??
+        (runtimeFailure
+          ? new StudyError(
+              'RUNTIME_FAILED',
+              'The run failed in its runtime.',
+              runtimeFailure,
+            ).describe()
+          : undefined),
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,
       resourcesReleased: runtime?.resourcesReleased ?? record.stopped,
@@ -1508,26 +1590,23 @@ export class StudyService {
     const receipt = record.historyReceipt,
       latest = receipt?.signature === materialSignature
     // A refused or removed run keeps its receipts in memory; none of them may read as saved history.
-    const historyExcluded = record.historyExcluded !== undefined,
+    const historyExcluded =
+        historyExclusionState(record.historyExcluded) !== 'kept',
       exclusionReason = historyExclusionReason(record.historyExcluded)
+    // A receipt for older material is still pending; only the latest one says saved or failed.
+    const receiptStatus =
+        receipt && latest ? receipt.status : ('pending' as const),
+      receiptReason = latest ? receipt?.reason : undefined
     const historyOutcome = {
       status:
-        historyExcluded || !receipt
-          ? ('unavailable' as const)
-          : latest
-            ? receipt.status
-            : ('pending' as const),
+        historyExcluded || !receipt ? ('unavailable' as const) : receiptStatus,
       materialSignature,
       checkpointRevision: receipt?.revision,
       savedSignature:
         !historyExcluded && latest && receipt?.status === 'saved'
           ? receipt.signature
           : undefined,
-      reason: historyExcluded
-        ? exclusionReason
-        : latest
-          ? receipt?.reason
-          : undefined,
+      reason: historyExcluded ? exclusionReason : receiptReason,
     }
     const terminal = record.stopped || material.resourcesReleased
     const studyOutcome =
@@ -2028,10 +2107,10 @@ export class StudyService {
         record.prepared = true
       }
     } catch (error) {
-      // A failure before the admission answered is an ordinary preparation failure and is saved as one.
+      // A failure before the admission answered is saved as an ordinary preparation failure only where the library has room for it.
       if (record.historyExcluded === 'awaiting-admission')
-        record.historyExcluded = undefined
-      record.error = domainError(error)
+        record.historyExcluded = await this.exclusionAfterEarlyFailure(record)
+      record.error = this.preparationError(record, error)
       record.runtime?.fail(record.error.message)
       if (record.nodePhase) record.nodePhase = 'failed'
     }
@@ -2045,25 +2124,66 @@ export class StudyService {
   }
 
   /**
+   * Names why a run's preparation failed, for {@link StudyService.prepare}'s catch.
+   * A runtime that ends itself during preparation (a pause it did not declare, such as a learner's breakpoint on a line the page load runs) closes its own transport, and the preparation then rejects with that closure ("CDP disconnected"). The reason the runtime recorded first is the one an agent can act on, so it becomes the message and the cause.
+   * @param record - The run whose preparation rejected.
+   * @param error - What the preparation rejected with.
+   * @returns The runtime's own first failure as a `RUNTIME_FAILED` {@link StudyError}, or {@link domainError} of `error` when the runtime recorded none or `error` already is a {@link StudyError}.
+   * @example
+   * this.preparationError(record, new Error('CDP disconnected')).message
+   * // => 'Unexpected or additional server stop invalidated the declared operation'
+   */
+  private preparationError(record: StudyRecord, error: unknown): StudyError {
+    const runtimeFailure = record.runtime
+      ?.view()
+      .failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
+    return runtimeFailure && !(error instanceof StudyError)
+      ? new StudyError('RUNTIME_FAILED', runtimeFailure, runtimeFailure)
+      : domainError(error)
+  }
+
+  /**
    * Asks the study library whether it can keep this run's study, before a runtime exists or any input can be sent; called first by {@link StudyService.prepare} for a configured run.
    * Passing clears the record's `awaiting-admission` exclusion; a refusal replaces it with `refused-at-admission`, so the run is never written later.
    * @param record - The configured run that was just reserved.
-   * @throws A `PREREQUISITE_MISSING` {@link StudyError} when the limit setting is invalid or the library is full; the read's own error when the library cannot be read.
+   * @throws A `PREREQUISITE_MISSING` {@link StudyError} when the limit setting is invalid, the library is full, or the library cannot be read (its message names the read's error, which is also the cause).
    * @example
    * await this.admitStudy(record) // on a full library: record.historyExcluded === 'refused-at-admission'
    */
   private async admitStudy(record: StudyRecord): Promise<void> {
     const recordings = this.recordings
     if (!recordings) return
+    // A failure of the read itself reaches prepare()'s catch, which decides the exclusion.
     const refusal = await this.studyRefusal(recordings, record).catch(
       (error: unknown) => {
-        // Another failure of the read is no refusal: the run ends as a failed preparation and stays a checkpoint candidate.
-        record.historyExcluded = undefined
-        throw error
+        // The agent reads the code and message, not the cause, so the unreadable library is named there.
+        throw new StudyError(
+          'PREREQUISITE_MISSING',
+          `The study library could not be read, so no run was started: ${thrownMessage(error)}. Repair or remove the entry it names in the learning library, then start again. Existing learning was kept.`,
+          String(error),
+        )
       },
     )
     record.historyExcluded = refusal ? 'refused-at-admission' : undefined
     if (refusal) throw new StudyError('PREREQUISITE_MISSING', refusal)
+  }
+
+  /**
+   * Decides the history exclusion of a configured run whose preparation failed before its admission answered (no workspace, no repository storage, an admission read that failed); called by {@link StudyService.prepare}'s catch.
+   * The library is asked the admission question once more without letting it throw, so a run on a full library is never written later by a reader checkpoint or Retry storage.
+   * @param record - The run that failed while `awaiting-admission`.
+   * @returns `refused-at-admission` when the library refuses the study, otherwise `undefined` (the run is saved as a failed preparation).
+   * @example await this.exclusionAfterEarlyFailure(record) // => 'refused-at-admission' on a full library
+   */
+  private async exclusionAfterEarlyFailure(
+    record: StudyRecord,
+  ): Promise<HistoryExclusion | undefined> {
+    const recordings = this.recordings
+    if (!recordings) return undefined
+    const refusal = await this.studyRefusal(recordings, record).catch(
+      () => undefined,
+    )
+    return refusal ? 'refused-at-admission' : undefined
   }
 
   /**
@@ -2087,7 +2207,7 @@ export class StudyService {
     if (limit === undefined) return INVALID_SAVED_STUDY_LIMIT_MESSAGE
     return (await recordings.admitsStudy(`${this.instanceId}_${record.id}`))
       ? undefined
-      : fullLibraryMessage('run', limit)
+      : fullLibraryMessage('run', limit, this.isStudyRemovalAvailable)
   }
 
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */

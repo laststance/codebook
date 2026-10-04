@@ -20,10 +20,6 @@ export function studyEvidenceDirectory(
   studyId: string,
 ): string | undefined {
   if (!studyIdSchema.safeParse(studyId).success) return undefined
-  const separator = studyId.indexOf('_')
-  return join(
-    agentRoot,
-    studyId.slice(0, separator),
-    studyId.slice(separator + 1),
-  )
+  // A study id is two identifiers joined by one underscore, and neither contains one.
+  return join(agentRoot, ...studyId.split('_'))
 }

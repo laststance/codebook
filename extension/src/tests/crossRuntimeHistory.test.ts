@@ -406,6 +406,25 @@ test('a saved stop the debugger bound at another column of its declared line reo
   assert.equal(decoded.finalOutcome, 'demonstrated')
 })
 
+// Value: protects=a saved moved position being a real place of the cited text; fails_when=the saved debugger frame alone confirms a column that lies past the end of its source line; why_new=Cycle 0036 C05a; seam=none
+test('a saved stop whose moved column lies past the end of its source line is rejected although its native top frame names that column', () => {
+  // Arrange: the cited line holds far fewer than 500 characters; the saved observation and its top frame both claim column 500.
+  const study = createCrossRuntimeStudy(),
+    server = study.observations[1]!
+  server.source = { ...server.source, column: 500 }
+  server.debugger!.frames[0]!.column = 500
+
+  // Act
+  const decoding = (): unknown =>
+    decodeConfiguredStudy(study, study.workspaceKey)
+
+  // Assert
+  assert.throws(decoding, {
+    message:
+      'Configured observation source differs from its sealed definition.',
+  })
+})
+
 test('a saved stop whose column moved is rejected when its native top frame names another column or it sits on another line', () => {
   // Arrange
   const besideFrame = createCrossRuntimeStudy()
@@ -481,6 +500,54 @@ test('a saved stop on a later line within its citation is rejected without its n
     () => decodeConfiguredStudy(besideFrame, besideFrame.workspaceKey),
     { message: 'Historical debugger differs from its verified source stop.' },
   )
+})
+
+/** {@link studyWithMovedServerLine} as this release saves it: every observation carries the run's receipt that its binding rule held. @example decodeConfiguredStudy(studyWithBindingReceipts(), workspaceKey) */
+const studyWithBindingReceipts = () => {
+  const study = studyWithMovedServerLine()
+  study.observations[0]!.source.binding = {
+    declaredLine: 1,
+    boundLine: 1,
+    mappedLinesBetween: 0,
+  }
+  study.observations[1]!.source.binding = {
+    declaredLine: 1,
+    boundLine: 2,
+    mappedLinesBetween: 0,
+  }
+  return study
+}
+
+// Value: protects=a study recording that its run applied the binding rule to a stop on a later line, and reopening with that record; fails_when=the saved receipt is dropped or refused as an unknown field; why_new=Cycle 0043 O3 (the study recorded no rule-L receipt, ER8); seam=none
+test('a saved stop on a later line reopens with the binding receipt that names its declared and its bound line', () => {
+  // Arrange
+  const study = studyWithBindingReceipts()
+  // Act
+  const decoded = decodeConfiguredStudy(study, study.workspaceKey)
+  // Assert
+  assert.deepEqual(decoded.observations[1]?.source.binding, {
+    declaredLine: 1,
+    boundLine: 2,
+    mappedLinesBetween: 0,
+  })
+  assert.equal(decoded.observations[1]?.source.line, 2)
+})
+
+// Value: protects=a saved observation on a later line never being accepted without the run's record that nothing mapped lay between; fails_when=a later-line observation whose receipt is missing in a study that carries receipts, or whose receipt names other lines, is accepted because its line is inside the citation; why_new=Cycle 0043 O3; seam=none
+test('a saved stop on a later line is rejected when its binding receipt is missing beside another observation’s receipt, or names other lines than declared and observed', () => {
+  // Arrange
+  const missingReceipt = studyWithBindingReceipts()
+  delete missingReceipt.observations[1]!.source.binding
+  const otherDeclaredLine = studyWithBindingReceipts()
+  otherDeclaredLine.observations[1]!.source.binding!.declaredLine = 2
+  const otherBoundLine = studyWithBindingReceipts()
+  otherBoundLine.observations[1]!.source.binding!.boundLine = 1
+  // Act / Assert
+  for (const study of [missingReceipt, otherDeclaredLine, otherBoundLine])
+    assert.throws(() => decodeConfiguredStudy(study, study.workspaceKey), {
+      message:
+        'Configured observation binding receipt is missing or differs from its declared and observed lines.',
+    })
 })
 
 // Value: protects=studies saved before a later line could be accepted decoding to exactly what was saved; fails_when=the new position check changes, drops or rejects an observation on its declared line; why_new=the saved-study position check was rewritten (Cycle 0043, criterion 8d); seam=none

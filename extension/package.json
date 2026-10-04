@@ -3,7 +3,7 @@
   "displayName": "codebook",
   "description": "Connect an external agent to source-grounded codebase studies.",
   "publisher": "laststance",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "private": true,
   "engines": {
     "vscode": "^1.120.0",
@@ -87,10 +87,6 @@
       {
         "command": "codebook.closeStudyWorkspace",
         "title": "Codebook: Close Study Workspace"
-      },
-      {
-        "command": "codebook.selectPresentation",
-        "title": "Codebook: Select Presentation"
       },
       {
         "command": "codebook.markUnderstanding",
@@ -203,9 +199,9 @@
         },
         "codebook.chromeExecutable": {
           "type": "string",
-          "default": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "default": "",
           "scope": "machine",
-          "description": "Chrome executable for the configured repository browser."
+          "description": "Chrome executable for the configured repository browser. When empty, Codebook uses /Applications/Google Chrome.app/Contents/MacOS/Google Chrome on macOS and the first google-chrome, google-chrome-stable, chromium or chromium-browser on PATH on Linux (including WSL)."
         },
         "codebook.savedStudyLimit": {
           "type": "integer",

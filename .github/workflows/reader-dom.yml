@@ -1,0 +1,67 @@
+name: Reader DOM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reader-dom-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reader-dom:
+    # Renders the compiled Study reader in real Chrome and fails on a DOM regression: labels, render keys, keyboard
+    # focus, page overflow and reader density. The unit suites never load the reader's document, so only this job sees them.
+    name: Reader DOM cases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      # The same cache the Test workflow restores; the steps below call node directly, so a restored job needs no pnpm.
+      - name: Restore installed dependencies
+        id: dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: extension/node_modules
+          key: extension-node-modules-${{ runner.os }}-${{ hashFiles('.node-version', 'extension/pnpm-lock.yaml', 'extension/pnpm-workspace.yaml', 'extension/patches/**') }}
+
+      - name: Install dependencies after a cache miss
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        uses: ./.github/actions/prepare
+
+      - name: Emit the compiled reader without type checking
+        working-directory: extension
+        run: node scripts/build-fast.mjs && node scripts/build-metadata.mjs
+
+      # The harness drives the runner's preinstalled Google Chrome through playwright-cli; the release is pinned.
+      # It records a video of the run, which needs the ffmpeg build of the Playwright that playwright-cli bundles; the
+      # runner carries none, so the job's first run ended at "Executable doesn't exist at …/ffmpeg-linux".
+      - name: Install playwright-cli and its video encoder
+        run: |
+          npm install --global @playwright/cli@0.1.22
+          playwright-cli install-browser ffmpeg
+
+      # Run from the repository root: the harness reads extension/dist and exits non-zero when any case fails.
+      - name: Run the reader DOM cases
+        run: node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom
+
+      - name: Keep the DOM report, screenshots and video after a failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reader-dom
+          path: artifacts/reader-dom
+          if-no-files-found: ignore

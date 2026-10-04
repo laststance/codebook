@@ -4,6 +4,7 @@ import { LearningLibrary } from '../learningLibrary'
 import type { ResourceContent } from '../resources'
 import type { StudyService } from '../service'
 
+import { configuredStops } from './configuredStops'
 import { readJsonPage } from './readJsonPage'
 
 /** Resolves only current-instance canonical library/recording resources, using bounded pages and pinned context hashes. @example await readRecordingResource(service, recordingUri) */
@@ -102,6 +103,7 @@ export async function readRecordingResource(
       const [, contextHash, selection, ...page] = suffix.split('/')
       const { context } = await store.readContext(studyId, contextHash)
       if (!selection) return json(context)
+      const declaredStops = configuredStops(context.study.configuration)
       return readJsonPage(
         `${base}/context/${contextHash}/learning`,
         {
@@ -115,20 +117,29 @@ export async function readRecordingResource(
             'learningSummary' in context.study
               ? context.study.learningSummary
               : undefined,
-          observations: context.study.observations.map((observation) => ({
-            id: observation.id,
-            elapsedMs: observation.elapsedMs,
-            source: {
-              hash: observation.source.hash,
-              line: observation.source.line,
-            },
-            values: observation.values,
-            unavailableValues:
-              'unavailableValues' in observation
-                ? observation.unavailableValues
-                : undefined,
-            interpretations: observation.interpretations,
-          })),
+          observations: context.study.observations.map(
+            (observation, index) => ({
+              id: observation.id,
+              elapsedMs: observation.elapsedMs,
+              // The position the debugger bound and paused at, as the live inspection resource reports it; cite this one.
+              source: {
+                hash: observation.source.hash,
+                line: observation.source.line,
+                column: observation.source.column,
+              },
+              // Saved observations follow the declared stop order, so an observation's index names the stop it answers.
+              requestedSource: declaredStops[index] && {
+                line: declaredStops[index].source.line,
+                column: declaredStops[index].source.column,
+              },
+              values: observation.values,
+              unavailableValues:
+                'unavailableValues' in observation
+                  ? observation.unavailableValues
+                  : undefined,
+              interpretations: observation.interpretations,
+            }),
+          ),
           interpretationAvailability: context.interpretationAvailability,
           pausedIntervals: context.pausedIntervals,
         },

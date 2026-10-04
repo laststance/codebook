@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
@@ -367,17 +368,51 @@ test('an Open Study cancelled while it waits for an abandoned first entry leaves
       .catch((error: unknown) => error)
     await new Promise<void>((resolve) => setImmediate(resolve))
 
-    // Act
-    const cancelledAtMs = performance.now()
+    // Act: the abandoned entry stays held, so only the waiter's own cancellation can settle it before the next macrotask.
     waitingEntry.abort(new Error('Second entry cancelled'))
-    const outcome = await second
-    const leftAfterMs = performance.now() - cancelledAtMs
+    const outcome = await Promise.race([
+      second,
+      new Promise<string>((resolve) =>
+        setImmediate(() => resolve('still waiting for the abandoned entry')),
+      ),
+    ])
 
     // Assert
-    assert.equal(String(outcome), 'Error: Second entry cancelled')
     // The waiter leaves on its own cancellation, not when the five-second wait for the abandoned entry runs out.
-    assert.equal(leftAfterMs < 250, true, `left after ${leftAfterMs} ms`)
+    assert.equal(String(outcome), 'Error: Second entry cancelled')
   } finally {
+    entry.release()
+    await Promise.allSettled([first, second])
+    await harness.close()
+  }
+})
+
+// Value: protects=Open Study refusing to run beside a presentation change that began while it waited for an abandoned first entry; fails_when=open() checks idleness only before that wait; why_new=Cycle 0044 (0034-C5); seam=returningCurrent set as a presentation change would set it
+test('an Open Study waiting for an abandoned first entry is refused when a presentation change starts during the wait', async () => {
+  // Arrange: the first entry was abandoned inside a native layout call that ignores cancellation, and a second entry waits for it.
+  const harness = await workspaceHarness(false)
+  const entry = harness.holdNextCommand('vscode.getEditorLayout'),
+    abandonedEntry = new AbortController()
+  const first = harness.reader
+    .open(abandonedEntry.signal)
+    .catch((error: unknown) => error)
+  let second: Promise<unknown> | undefined
+  try {
+    await entry.started
+    abandonedEntry.abort(new Error('First entry abandoned'))
+    second = harness.reader.open().catch((error: unknown) => error)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Act: a presentation change starts while the second entry waits, then the abandoned entry finishes.
+    harness.reader['returningCurrent'] = true
+    entry.release()
+    const outcome = await second
+
+    // Assert
+    assert.ok(outcome instanceof Error && 'code' in outcome)
+    assert.equal(outcome.code, 'PRESENTATION_UNAVAILABLE')
+  } finally {
+    harness.reader['returningCurrent'] = false
     entry.release()
     await Promise.allSettled([first, second])
     await harness.close()
@@ -1676,8 +1711,9 @@ test('opening a recording after an extension-host restart closes the old host’
   }
 })
 
+// Value: protects=a cold open asks the editor to close the dead panes and goes on when the editor keeps one; fails_when=the cold open no longer sends the close request, or stops over the refusal; why_new=Cycle 0044 0037-D8: the earlier assertions held without the close step and with a fake editor that closed all tabs or none; seam=leaveDeadCodebookPane refuseClose, tabCloseRequests
 test('a dead Codebook pane the editor refuses to close does not stop the Study workspace from opening', async () => {
-  // Arrange: the editor answers the close request with a refusal, as it may for a tab it cannot release.
+  // Arrange: the editor keeps the dead Application pane of column 1, as it may for a tab it cannot release, and lets the dead Study pane of column 3 close.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
   try {
@@ -1690,14 +1726,214 @@ test('a dead Codebook pane the editor refuses to close does not stop the Study w
     const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
     // Act
     await harness.reader.open()
-    // Assert: the entry behaves as it did before the close step existed: the reader opens beside the tabs that stayed.
+    // Assert: the reader opens beside the pane that stayed.
     const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.deepEqual(harness.tabCloseRequests()[0], [
+      deadApplication,
+      deadStudy,
+    ])
     assert.equal(harness.reader.presentationState().state, 'open')
     assert.equal(tabs.includes(deadApplication), true)
-    assert.equal(tabs.includes(deadStudy), true)
+    assert.equal(tabs.includes(deadStudy), false)
     assert.equal(tabs.includes(draft.tab), true)
     assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
     assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold open goes on when the editor rejects its close request; fails_when=the rejection of the close request ends the open; why_new=Cycle 0044 0037-D8: the fake editor could refuse a close but never reject the request; seam=rejectNextTabClose
+test('a close request the editor rejects does not stop the Study workspace from opening', async () => {
+  // Arrange: the editor rejects the close request, as it does when the request is cancelled.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 3)
+    harness.focusMutableDraft('mutable-notes.txt', 3)
+    harness.rejectNextTabClose()
+    // Act
+    await harness.reader.open()
+    // Assert
+    assert.deepEqual(harness.tabCloseRequests()[0], [deadStudy])
+    assert.equal(harness.reader.presentationState().state, 'open')
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(deadStudy),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold open that is not a selection closes the captured-source tabs an earlier session left, and keeps another workspace's; fails_when=only the dead panes are closed at a cold open; why_new=Cycle 0044 0037-I2: the leftover captured-source tab was closed by a selection only; seam=restoreLeftoverCapturedSource
+test('a Learning Outline click after an extension-host restart closes the leftover captured-source tab of an earlier session', async () => {
+  // Arrange: column 2 holds a leftover captured source of this workspace and one of another workspace, both inactive; the learner's draft has focus in column 3.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const leftover = harness.restoreLeftoverCapturedSource({
+        active: false,
+        column: 2,
+      }),
+      foreign = harness.restoreLeftoverCapturedSource({
+        active: false,
+        authority: 'f'.repeat(64),
+        column: 2,
+      })
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 3)
+    // Act
+    await harness.reader.select('repository/workspace/overview')
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(harness.reader.presentationState().state, 'open')
+    assert.equal(tabs.includes(leftover), false)
+    assert.equal(tabs.includes(foreign), true)
+    assert.equal(tabs.includes(draft.tab), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=keyboard focus is in the new Study pane after a cold open closed the dead pane that had focus; fails_when=the cold open ends with focus on no Codebook pane after the close; why_new=Cycle 0044 0037-F6, 0037-D8: no cold open started with the dead pane focused; seam=leaveDeadCodebookPane focused, focusedPanel
+test('a Learning Outline click with the old host’s dead Study pane focused ends with keyboard focus in the new Study pane', async () => {
+  // Arrange: the old host's Study pane has focus as the only tab of column 3.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    const deadStudy = harness.leaveDeadCodebookPane(
+      'codebook.studyContext',
+      3,
+      {
+        focused: true,
+      },
+    )
+    // Act
+    await harness.reader.select('repository/workspace/overview')
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'open')
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(deadStudy),
+      false,
+    )
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=keyboard focus is moved to the learning summary after a recording's cold open closed the dead pane that had focus; fails_when=the recording entry no longer focuses its summary view after the close, so focus stays where the closed pane was; why_new=Cycle 0044 0037-F6: no recording was opened with the dead pane focused; seam=leaveDeadCodebookPane focused, commands
+test('opening a recording with the old host’s dead Application pane focused ends with keyboard focus moved to the learning summary', async () => {
+  // Arrange: the old host's Application pane has focus in column 1.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  try {
+    const deadApplication = harness.leaveDeadCodebookPane(
+      'codebook.scopedBrowser',
+      1,
+      { focused: true },
+    )
+    // Act
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    // Assert: the summary view was focused after the dead pane's close request.
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(deadApplication),
+      false,
+    )
+    assert.deepEqual(harness.tabCloseRequests()[0], [deadApplication])
+    assert.equal(
+      harness.commands.includes('codebook.learningSummary.focus'),
+      true,
+    )
+    assert.equal(harness.summary.visible, true)
+    assert.equal(harness.reader.inspect().view!.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold open closes the old host's dead Repository Wiki pane; fails_when=only the Application and Study view types count as Codebook panes; why_new=Cycle 0044 0037-N6b: no test left a dead Wiki pane; seam=leaveDeadCodebookPane 'codebook.repositoryWiki'
+test('a Learning Outline click after an extension-host restart closes the old host’s dead Repository Wiki pane', async () => {
+  // Arrange: the old host's Repository Wiki pane has focus in the only group; this host's Wiki reader has no panel.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    const deadWiki = harness.leaveDeadCodebookPane(
+      'codebook.repositoryWiki',
+      1,
+      { focused: true },
+    )
+    // Act
+    await harness.reader.select('repository/workspace/overview')
+    // Assert
+    assert.equal(harness.reader.presentationState().state, 'open')
+    assert.equal(
+      harness.groups.flatMap((group) => group.tabs).includes(deadWiki),
+      false,
+    )
+    assert.deepEqual(harness.tabCloseRequests()[0], [deadWiki])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a cold open places its panes in columns 1 and 3 after the dead pane's close removed the first editor group and renumbered the others; fails_when=the cold open keeps column numbers it read before the close; why_new=Cycle 0044 0037-PR4: the cold-open tests kept every group; seam=leaveDeadCodebookPane, useOpaquePrimary
+test('a Learning Outline click places the panes after closing the dead Application pane removed the first editor group', async () => {
+  // Arrange: the old host's Application pane is the only tab of column 1; the learner's draft has focus in column 2 and column 3 is empty.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}] })
+  try {
+    harness.useOpaquePrimary('blank')
+    const deadApplication = harness.leaveDeadCodebookPane(
+      'codebook.scopedBrowser',
+      1,
+    )
+    const draft = harness.focusMutableDraft('mutable-notes.txt', 2)
+    // Act
+    await harness.reader.select('repository/workspace/overview')
+    // Assert
+    const tabs = harness.groups.flatMap((group) => group.tabs)
+    assert.equal(harness.reader.presentationState().state, 'open')
+    assert.equal(harness.reader.presentationState().layoutConfirmed, true)
+    assert.equal(tabs.includes(deadApplication), false)
+    assert.equal(tabs.includes(draft.tab), true)
+    assert.equal(harness.groups.length, 3)
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.panelColumn('codebook.studyContext'), 3)
+    assert.equal(harness.reader.inspect().view!.errors.length, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a live entry from the Study layout in a window the learner has not split; fails_when=the arrangement counts the Study pane's group while the editor has not yet closed the disposed pane's tab, and reports "Existing editor groups were preserved" with the layout left unconfirmed; why_new=native run of 2026-10-04 (live entry of run 92c27590, a16-panel-scroll.png); seam=workspace harness closing a disposed panel's tab one task later
+test('a live entry from the Study layout arranges the application above the source when the editor closes the retired Study pane a moment after its disposal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    await harness.reader.open()
+    const groupsOfStudyLayout = harness.groups.length
+    harness.closeDisposedPanelTabsLater()
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await [...harness.service.records.values()][0]!.preparation
+
+    // Act
+    await harness.reader.open()
+
+    // Assert
+    assert.equal(groupsOfStudyLayout, 3)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.panelColumn('codebook.studyContext'), undefined)
+    assert.equal(harness.groups.length, 2)
+    assert.equal(harness.reader.inspect().presentation.layoutConfirmed, true)
   } finally {
     await harness.close()
   }

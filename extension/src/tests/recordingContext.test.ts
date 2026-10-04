@@ -520,6 +520,52 @@ test('an observation the debugger bound at another column reports the bound posi
   }
 })
 
+// Value: protects=an agent citing a saved observation at the position the debugger bound; fails_when=the saved learning resource lists only the line and hash, so the bound column and the declared position are lost after shutdown; why_new=Cycle 0036 C02e (only the live inspection resource reported them); seam=none
+test('the saved learning resource lists each observation with its source line and column and the declared position as requestedSource', async () => {
+  // Arrange: one stop declared at 1:1 is captured and the study is saved.
+  const harness = await contextHarness(),
+    { service, record } = harness
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+    harness.clock(100)
+    service.action({
+      ...harness.receipt,
+      key: 'saved-position',
+      action: 'repository-click',
+    })
+    harness.clock(200)
+    await service.stop(harness.receipt)
+    await harness.checkpoint()
+    const id = record.recording!.header.studyId,
+      metadata = await readResource(
+        service,
+        `codebook://${service.instanceId}/studies/${id}/recording`,
+      )
+    assert.ok('text' in metadata)
+
+    // Act
+    const learning = await readResource(
+      service,
+      JSON.parse(metadata.text).learningUri,
+    )
+
+    // Assert
+    assert.ok('text' in learning)
+    const observation = JSON.parse(JSON.parse(learning.text).content)
+      .observations[0]
+    assert.equal(
+      JSON.stringify(observation.source),
+      '{"hash":"f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771","line":1,"column":1}',
+    )
+    assert.equal(
+      JSON.stringify(observation.requestedSource),
+      '{"line":1,"column":1}',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('ordinary readers discover bounded actual facts and saved explanations without opening debugger graphs', async () => {
   // Arrange
   const harness = await contextHarness(),
@@ -649,6 +695,35 @@ test('a checkpoint that loses a confirmed phase image while copying it is discar
       service.state(record).captures.map((capture) => capture.phase),
       ['before', 'paused-browser'],
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a checkpoint racing a newer run state that withdrew an observation's sealed source; fails_when=the withdrawn source read fails the refresh instead of discarding the stale copy; why_new=Cycle 0044 (0032-T6f / 0033-S7d); seam=ControlledRuntime.source
+test('a checkpoint whose observation source is withdrawn while it is read is discarded instead of failing the refresh', async () => {
+  // Arrange: one committed observation; reading its source finds it withdrawn by a newer run state.
+  const harness = await contextHarness(),
+    { runtime, record, service, workspaceKey } = harness
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+    harness.clock(100)
+    service.action({
+      ...harness.receipt,
+      key: 'input',
+      action: 'repository-click',
+    })
+    assert.equal(service.state(record).observations.length, 1)
+    runtime.source = () => {
+      delete runtime.captures.after
+      return undefined
+    }
+
+    // Act
+    const discarded = await captureStudy(service, record, workspaceKey)
+
+    // Assert: the stale copy is dropped; the newer state is left for the next checkpoint.
+    assert.equal(discarded, undefined)
   } finally {
     await harness.close()
   }

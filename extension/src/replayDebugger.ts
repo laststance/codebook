@@ -28,6 +28,9 @@ export type ReplayInspection = 'inspected' | 'uninspected' | 'no-values'
 /** Why {@link ReplayDebugger} asks the reader to re-evaluate its Run and Debug hint and Node debugger availability. */
 export type ReplayDebuggerChange = 'values-loaded' | 'session-ended'
 
+/** What {@link ReplayDebugger.awaitRetrieval} waits for native Variables to have asked of the presented stop: its inspection frame's scopes, or also the first scope's values. */
+export type ReplayRetrievalStage = 'scopes' | 'values'
+
 /** How one {@link ReplayDebugger} inspection wait ends: with a presentation outcome or with the error that ended it. */
 type InspectionOutcome = { inspection: ReplayInspection } | { error: unknown }
 
@@ -40,6 +43,10 @@ export class ReplayDebugger {
   private starting?: Promise<void>
   private retiring?: Promise<void>
   private retiringSessionId?: string
+  /** The session {@link stopSessionStartedAfterExpiry} already asked the editor to stop, so expiry and a late startup stop it only once. */
+  private expiredSessionStopped?: vscode.DebugSession
+  /** The startup outlived its bound while no one ended the session, so {@link adoptLateStartup} may still take the session over once the editor finishes starting it. */
+  private startupExpired = false
   private closed = false
   private detached = false
   private revision = 0
@@ -52,7 +59,7 @@ export class ReplayDebugger {
   private lastPresentedSnapshot?: ReplayDebugSnapshot
   /** The last committed moment's values were not loaded and native Run and Debug has requested none since. */
   private valuesUnrequested = false
-  /** Pending {@link awaitInspection} checks, re-run whenever values load, a `stopped` event is sent or ownership changes. */
+  /** Pending {@link awaitInspection} and {@link awaitRetrieval} checks, re-run whenever the native client's request was served, values load, a `stopped` event is sent or ownership changes. */
   private readonly inspectionWaiters = new Set<() => void>()
 
   /**
@@ -73,7 +80,9 @@ export class ReplayDebugger {
         | 'onDidTerminateDebugSession'
         | 'startDebugging'
         | 'stopDebugging'
-      >
+      > &
+        // Optional so an editor surface without the focused stack item (a test port) keeps the full grace.
+        Partial<Pick<typeof vscode.debug, 'activeStackItem'>>
     },
     private readonly changed: (reason: ReplayDebuggerChange) => void = () => {},
     private readonly failed: (error: unknown) => void = () => {},
@@ -105,7 +114,12 @@ export class ReplayDebugger {
                     this.wakeInspection()
                 },
                 () => {
-                  this.detached = true
+                  // Codebook's own stop-change retirement disconnects before termination; only another stop makes history unavailable.
+                  if (this.retiringSessionId !== session.id) {
+                    this.detached = true
+                    // A session the learner stopped is never adopted back after a slow startup.
+                    this.startupExpired = false
+                  }
                   this.wakeInspection()
                 },
                 () => {
@@ -119,7 +133,11 @@ export class ReplayDebugger {
               ))
             return new this.editor.DebugAdapterInlineImplementation({
               onDidSendMessage: events.event,
-              handleMessage: (message) => adapter.handleMessage(message),
+              handleMessage: (message) => {
+                adapter.handleMessage(message)
+                // A served request may be the one a wait is for (the presented stop's scopes), and only the adapter knows which.
+                this.wakeInspection()
+              },
               dispose: () => {
                 adapter.dispose()
                 events.dispose()
@@ -137,6 +155,7 @@ export class ReplayDebugger {
         this.adapter = undefined
         this.session = undefined
         this.detached = true
+        this.startupExpired = false
         this.selected = undefined
         // A wait on the ended adapter fails now instead of at its deadline.
         this.wakeInspection()
@@ -147,7 +166,16 @@ export class ReplayDebugger {
           return
         }
         this.valuesUnrequested = false
-        this.changed('session-ended')
+        // The reader's listener and its error channel may both throw; neither may escape into the editor's event loop.
+        try {
+          this.changed('session-ended')
+        } catch (error) {
+          try {
+            this.failed(error)
+          } catch {
+            // The error channel failed as well; the owner is already detached, which is the signal that remains.
+          }
+        }
       }),
     )
   }
@@ -238,15 +266,19 @@ export class ReplayDebugger {
    * On expiry the owner gives up its session through {@link giveUp}, so every waiter and later presentation fails with the
    * closed-debugger error instead of waiting for an editor that never answers.
    *
-   * @param operation - The shared operation; it keeps running, and its late outcome is ignored.
+   * @param operation - The shared operation; it keeps running, and its late outcome is ignored except for a startup that {@link adoptLateStartup} takes over.
+   * @param isStartup - Whether the operation launches the owned session, which a healthy but slow editor may still finish.
    * @returns The operation's outcome, or a rejection with the closed-debugger error on expiry.
-   * @example this.starting = this.bounded(this.launchSession())
+   * @example this.starting = this.bounded(this.launchSession(), true)
    */
-  private bounded(operation: Promise<void>): Promise<void> {
+  private bounded(operation: Promise<void>, isStartup = false): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const expiry = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        if (isStartup) this.startupExpired = true
         this.giveUp()
+        // A session still alive after its retirement expired would keep showing history: ask again, as the first stop may be lost. A slow startup is left for adoptLateStartup.
+        if (!isStartup) this.stopSessionStartedAfterExpiry()
         reject(new Error(HISTORICAL_DEBUGGER_CLOSED))
       }, REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
     })
@@ -355,15 +387,75 @@ export class ReplayDebugger {
     // Gaps and scope-less stops have nothing for Variables to load: commit at once and leave the session-level state alone.
     if (!adapter.hasLoadableValues) return 'no-values'
     // While Run and Debug requests no values, waiting on every stop would stall playback without ever loading them.
+    // A paused frame of another session keeps the Run and Debug focus, so this stop's values are not requested either: the grace would only delay the frame.
     const inspection = adapter.inspectionReady
       ? 'inspected'
-      : this.valuesUnrequested
+      : this.valuesUnrequested || this.foreignPauseFocused()
         ? 'uninspected'
         : await this.awaitInspection(adapter, revision, signal)
     signal.throwIfAborted()
     // Only a loaded Variables page (the adapter's report) clears this; a gap or scope-less stop proves nothing about Variables.
     if (inspection === 'uninspected') this.valuesUnrequested = true
     return inspection
+  }
+
+  /**
+   * Waits until native Variables retrieved the presented stop's scopes or its first values, on behalf of {@link StudyWorkspace.showNativeVariables}, without polling.
+   *
+   * A Variables view that was hidden while the stop changed loads it only in its own deferred refresh (400 ms after it is shown
+   * again in VS Code 1.140); its tree holds no row of the stop until then. The adapter serving `scopes` for the stop's inspection
+   * frame is the earliest moment that tree can hold those rows, and serving the first scope's `variables` is the moment they are listed.
+   *
+   * @param stage - `'scopes'` for the inspection frame's scopes, `'values'` for everything {@link ReplayDebugAdapter.inspectionReady} requires.
+   * @param timeoutMs - Longest wait; a view that shows another session, or a host that never asks, ends it there.
+   * @returns
+   * - `true` once native Variables retrieved that stage of the presented stop (at once when it already had)
+   * - `false` when `timeoutMs` elapsed first, or at once when the owned session ends: the reader closed, the learner stopped it, or Codebook restarts it for another stop
+   * @example
+   * await debuggerView.awaitRetrieval('scopes', 2_000) // => true about 400 ms after a hidden Variables view is shown
+   */
+  awaitRetrieval(
+    stage: ReplayRetrievalStage,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      const finish = (retrieved: boolean): void => {
+        clearTimeout(timer)
+        this.inspectionWaiters.delete(check)
+        resolve(retrieved)
+      }
+      const check = (): void => {
+        // An ended session answers no request, so nothing is left to wait for; the next stop's session is another press's concern.
+        if (this.closed || this.detached) return finish(false)
+        if (
+          stage === 'scopes'
+            ? this.adapter?.scopesRetrieved
+            : this.adapter?.inspectionReady
+        )
+          finish(true)
+      }
+      const timer = setTimeout(() => finish(false), timeoutMs)
+      this.inspectionWaiters.add(check)
+      check()
+    })
+  }
+
+  /**
+   * Says whether a paused thread or frame of another debug session holds the focus of native Run and Debug, on behalf of {@link present}.
+   *
+   * The editor gives that focus to a newly stopped session only when nothing is focused or the focused frame is that
+   * session's own. While a learner's or a live run's pause is focused, Variables therefore keeps showing that pause and
+   * never requests the recorded stop's values, until the learner selects the recorded session in Call Stack. Pressing
+   * Recording on a paused live run's own recording is that case every time; waiting {@link REPLAY_DEBUG_INSPECTION_GRACE_MS}
+   * there added one second to each reload.
+   *
+   * @returns `true` while another session's paused thread or frame is the focused stack item; `false` when nothing is focused, the focus is this owner's session, or the editor surface does not report it.
+   * @example
+   * this.foreignPauseFocused() // => true while "Next.js: debug server-side" is paused and selected in Call Stack
+   */
+  private foreignPauseFocused(): boolean {
+    const focused = this.editor.debug.activeStackItem
+    return focused !== undefined && focused.session.id !== this.session?.id
   }
 
   /**
@@ -380,14 +472,15 @@ export class ReplayDebugger {
   private async awaitSession(signal: AbortSignal): Promise<void> {
     await untilAborted(this.retiring, signal)
     if (!this.starting) {
-      const starting: Promise<void> = this.bounded(this.launchSession()).catch(
-        (error: unknown) => {
-          // A refused startup must not poison later presentations, even after every waiter left: the next one retries it.
-          if (this.starting === starting && !this.session)
-            this.starting = undefined
-          throw error
-        },
-      )
+      const starting: Promise<void> = this.bounded(
+        this.launchSession(),
+        true,
+      ).catch((error: unknown) => {
+        // A refused startup must not poison later presentations, even after every waiter left: the next one retries it.
+        if (this.starting === starting && !this.session)
+          this.starting = undefined
+        throw error
+      })
       this.starting = starting
     }
     await untilAborted(this.starting, signal)
@@ -418,6 +511,8 @@ export class ReplayDebugger {
         suppressDebugStatusbar: true,
       },
     )
+    // A healthy startup that outlived its bound becomes this owner's session again, so the next presentation recovers without an explicit reopen.
+    if (this.adoptLateStartup(started)) return
     this.stopSessionStartedAfterExpiry()
     if (!started || !this.session || !this.adapter)
       throw new Error('The editor did not start its historical debug session.')
@@ -426,15 +521,48 @@ export class ReplayDebugger {
   }
 
   /**
-   * Stops a session that only appeared after this owner gave up on its startup (see {@link expire}), on behalf of {@link launchSession}.
+   * Takes over a session whose startup outlived {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} but then completed, on behalf of {@link launchSession}.
+   *
+   * The expired startup already failed its waiters and made this owner unavailable; a healthy but slow editor would otherwise
+   * leave replay failing until the learner reopens the recording. A session the learner stopped meanwhile is never adopted.
+   *
+   * @param started - The editor's answer to the launch.
+   * @returns `true` when this owner is available again with the late session, `false` when nothing was adopted.
+   * @example if (this.adoptLateStartup(started)) return
+   */
+  private adoptLateStartup(started: boolean): boolean {
+    if (!this.startupExpired) return false
+    this.startupExpired = false
+    if (
+      !started ||
+      this.closed ||
+      !this.session ||
+      !this.adapter ||
+      this.adapter.disposed
+    )
+      return false
+    this.detached = false
+    this.starting = Promise.resolve()
+    return true
+  }
+
+  /**
+   * Stops a session that is still alive after this owner gave up on it (see {@link expire}), on behalf of {@link launchSession} and an expired retirement in {@link bounded}; each session is asked once.
    *
    * A closed owner is left to {@link dispose}, which stops the session itself once the startup settles.
    *
    * @example this.stopSessionStartedAfterExpiry()
    */
   private stopSessionStartedAfterExpiry(): void {
-    if (this.detached && !this.closed && this.session)
+    if (
+      this.detached &&
+      !this.closed &&
+      this.session &&
+      this.session !== this.expiredSessionStopped
+    ) {
+      this.expiredSessionStopped = this.session
       void this.stopOwnedSession(this.session)
+    }
   }
 
   /**
@@ -581,7 +709,7 @@ export class ReplayDebugger {
     )
   }
 
-  /** Re-runs every pending {@link awaitInspection} check after values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */
+  /** Re-runs every pending {@link awaitInspection} and {@link awaitRetrieval} check after a native request was served, values load, a `stopped` event is sent or ownership changes. @example this.wakeInspection() */
   private wakeInspection(): void {
     for (const check of [...this.inspectionWaiters]) check()
   }
@@ -601,7 +729,16 @@ export class ReplayDebugger {
     try {
       await this.retiring?.catch(() => {})
       await this.starting?.catch(() => {})
-      if (this.session) await this.stopOwnedSession(this.session)
+      const session = this.session
+      if (session) {
+        await this.stopOwnedSession(session)
+        // A stop the editor never acknowledged is asked once more without holding closure, so a lost first request cannot leave the session alive.
+        if (this.session === session)
+          void this.editor.debug.stopDebugging(session).then(
+            () => {},
+            () => {},
+          )
+      }
     } finally {
       this.adapter?.dispose()
       for (const disposable of this.disposables) disposable.dispose()

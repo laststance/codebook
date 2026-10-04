@@ -16,6 +16,12 @@ import {
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import {
+  advanceClock,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 test('restored Observed moments leaves its loading state after workspace initialization', async () => {
   // Arrange
@@ -1797,6 +1803,495 @@ test('closing the reader drops the Run and Debug hint of a saved Node stop', asy
   }
 })
 
+// Value: protects=one click from the Run and Debug hint to the recorded values; fails_when=Show Variables stops opening Run and Debug, expanding Variables or expanding its first scope, so the learner must do each by hand again; why_new=Cycle 0044 (0031-U1 / 0031-D4a); seam=vscode.commands.executeCommand, recorded by the harness
+test('Show Variables opens Run and Debug with Variables expanded and then expands its first scope', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('show-variables')
+
+    // Assert
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+      'list.focusFirst',
+      'list.expand',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables on a host that registers no command that focuses Variables; fails_when=the reader runs a command without asking the host, so the button does nothing and "command … not found" stays in the Learning summary and the panel; why_new=Cycle 0044 (row 0031-U1: `workbench.debug.variablesView.focus`, which no host has, left that error in Cursor 3.23.12); seam=vscode.commands.getCommands and executeCommand, modelled by the harness
+test('Show Variables on a host without a Variables focus command opens Run and Debug and leaves no error', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.removeHostCommands('workbench.debug.action.focusVariablesView')
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.receiveContext({
+      type: 'action',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      action: 'show-variables',
+    })
+    await waitUntil(
+      () =>
+        harness.commands.length > commandsBefore ||
+        Boolean(harness.reader.inspect().view?.errors.length),
+      'Show Variables ran a command or reported an error',
+      1_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      Array.from(harness.reader.inspect().view?.errors ?? []),
+      [],
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.view.debug',
+    ])
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables on a host that focuses Variables but lacks a later step; fails_when=the reader runs a list command the host does not register, so the click ends in "command … not found", or it leaves Variables for the Run and Debug fallback; why_new=Cycle 0044 (row 0031-U1 in Cursor: the host is asked which commands exist); seam=vscode.commands.getCommands and executeCommand, modelled by the harness
+test('Show Variables on a host with the Variables focus command runs only the steps that host registers', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.removeHostCommands('list.expand')
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.receiveContext({
+      type: 'action',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      action: 'show-variables',
+    })
+    await waitUntil(
+      () =>
+        harness.commands.length >= commandsBefore + 2 ||
+        Boolean(harness.reader.inspect().view?.errors.length),
+      'Show Variables ran its commands or reported an error',
+      1_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      Array.from(harness.reader.inspect().view?.errors ?? []),
+      [],
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+      'list.focusFirst',
+    ])
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner knowing what to do when the host can open neither Variables nor Run and Debug; fails_when=Show Variables shows a raw "command … not found" error or nothing at all on such a host; why_new=Cycle 0044 (row 0031-U1 in Cursor); seam=vscode.commands.getCommands and window.showInformationMessage, modelled by the harness
+test('Show Variables on a host with neither a Variables nor a Run and Debug command tells the learner the manual step in one sentence', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    harness.removeHostCommands(
+      'workbench.debug.action.focusVariablesView',
+      'workbench.view.debug',
+    )
+    await harness.reader.open()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    harness.receiveContext({
+      type: 'action',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      action: 'show-variables',
+    })
+    await waitUntil(
+      () =>
+        harness.informationMessages.length > 0 ||
+        Boolean(harness.reader.inspect().view?.errors.length),
+      'Show Variables told the learner the manual step or reported an error',
+      1_000,
+    )
+
+    // Assert
+    assert.deepEqual(
+      Array.from(harness.reader.inspect().view?.errors ?? []),
+      [],
+    )
+    assert.deepEqual(harness.informationMessages, [
+      {
+        message:
+          'Open Run and Debug and expand Variables to see the recorded values.',
+        items: [],
+      },
+    ])
+    assert.deepEqual(harness.commands.slice(commandsBefore), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=one press of Show Variables listing the recorded values when Run and Debug was not opened before; fails_when=the list commands run before the just-opened Variables tree holds the stop's rows, so nothing is expanded, the hint stays and the learner must press again; why_new=Cycle 0044 (0031-U1 in VS Code 1.140: with Explorer in front and Variables never shown, the first press left every scope collapsed); seam=the harness's fake Variables view, which fills its tree 60 ms after it asked for the scopes
+test('Show Variables lists the recorded values on its first press when Run and Debug was not opened in the editor session', async () => {
+  // Arrange: a recorded stop presented while the host's Variables view was never shown, so its values are not loaded.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('never-opened')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const hintBefore = harness.postedMessages().slice(-1)[0]
+      ?.recording?.nativeValuesUninspected
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('show-variables')
+
+    // Assert
+    assert.equal(hintBefore, true)
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: true,
+      valuesListed: true,
+    })
+    assert.equal(
+      harness.postedMessages().slice(-1)[0]?.recording?.nativeValuesUninspected,
+      false,
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+      'list.focusFirst',
+      'list.expand',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables leaving a Variables view alone that loads the stop by itself; fails_when=the list commands run while that view's tree is still empty (they then act on whichever list last held the focus), or the press ends before the values are listed; why_new=Cycle 0044 (0031-U1 in VS Code 1.140: a Variables view hidden while the recording moved on loads the stop 400 ms after it is shown and expands the first scope itself); seam=the harness's fake Variables view and its deferred refresh
+test('Show Variables waits for a Variables view that missed the stop while hidden and sends it no list command once it listed the values itself', async () => {
+  // Arrange: a recorded stop presented while the host's Variables view, which showed an earlier stop, was hidden.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('missed-the-stop')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.action('show-variables')
+
+    // Assert
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: false,
+      valuesListed: true,
+    })
+    assert.equal(
+      harness.postedMessages().slice(-1)[0]?.recording?.nativeValuesUninspected,
+      false,
+    )
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Show Variables ending when the host's Variables view never loads the recorded stop; fails_when=the press waits without a bound, reports an error, or stops trying the list commands a host without that signal still needs; why_new=Cycle 0044 (0031-U1: the wait for the view must not hang or fail when its signal never comes); seam=the harness's fake Variables view showing another debug session, and a faked clock
+test('Show Variables finishes without an error when Run and Debug keeps showing another debug session', async (context) => {
+  // Arrange: a recorded stop whose values the host's Variables view never asks for.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('shows-another-session')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const commandsBefore = harness.commands.length
+    enableFakeClock(context)
+
+    // Act
+    const press = harness.reader.action('show-variables').then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    const elapsedMs = await advanceClockUntilSettled(context, press, 10_000)
+
+    // Assert: 2,000 ms for the scopes, then 200 ms before each of the two attempts.
+    assert.equal(await press, 'completed')
+    assert.equal(elapsedMs, 2_400)
+    assert.deepEqual(harness.commands.slice(commandsBefore), [
+      'workbench.debug.action.focusVariablesView',
+      'list.focusFirst',
+      'list.expand',
+      'list.focusFirst',
+      'list.expand',
+    ])
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: false,
+      valuesListed: false,
+    })
+    assert.equal(
+      harness.postedMessages().slice(-1)[0]?.recording?.nativeValuesUninspected,
+      true,
+    )
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard focus of whatever list the learner went on to after closing the reader during a Show Variables press; fails_when=the press runs its list commands although the reader is closing, so list.focusFirst and list.expand act on a list that is not Variables; why_new=every other Show Variables test keeps the reader open until the press ends; seam=none
+test('Show Variables on a reader that is closed while the press waits for Variables sends no list command', async (context) => {
+  // Arrange: a recorded stop whose values the host's Variables view never asks for, and an editor slow to stop the recorded session.
+  const harness = await recordedReaderHarness(true, true)
+  let releaseDisposal = (): void => {}
+  let closing: Promise<void> | undefined
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('shows-another-session')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const commandsBefore = harness.commands.length
+    const disposal = harness.holdHistoricalDebugDisposal()
+    releaseDisposal = disposal.release
+    enableFakeClock(context)
+    const press = harness.reader.action('show-variables').then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await advanceClock(context, 1_000)
+
+    // Act: the learner closes the reader one second into the press's wait for the scopes.
+    closing = harness.reader.close()
+    await advanceClockUntilSettled(context, press, 10_000)
+
+    // Assert
+    assert.equal(await press, 'completed')
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) => command.startsWith('list.')),
+      [],
+    )
+  } finally {
+    resetFakeClock(context)
+    releaseDisposal()
+    await closing
+    await harness.close()
+  }
+})
+
+// Value: protects=no enabled Inspect on a Node stop that can never be shown natively; fails_when=the reader is told about a source mismatch only for the selected stop, so an unselected stop with edited captured text keeps an Inspect that fails on every press; why_new=Cycle 0044 (0033-F3a / 0034-C3); seam=the loaded journal entry replaced in memory by one with edited captured text
+test('a shown Node stop whose captured text no longer matches its hash is reported to the reader even while another event is selected', async () => {
+  // Arrange: a loaded Node history whose first event (test output) is selected.
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    const verifiedBefore =
+      harness.reader.inspect().view!.nodeHistoryUnverifiedStops
+    const loaded = harness.reader['selectedNodeHistory']!
+    const stopIndex = loaded.entries.findIndex((entry) => entry.type === 'stop')
+    const stop = loaded.entries[stopIndex]!
+    assert.ok(stop.type === 'stop')
+
+    // Act: the stop's captured text differs from the text its hash sealed.
+    loaded.entries[stopIndex] = {
+      ...stop,
+      debuggerSnapshot: {
+        ...stop.debuggerSnapshot,
+        frames: stop.debuggerSnapshot.frames.map((frame, index) =>
+          index === 0 && frame.source
+            ? {
+                ...frame,
+                source: {
+                  ...frame.source,
+                  text: `${frame.source.text}// edited`,
+                },
+              }
+            : frame,
+        ),
+      },
+    }
+
+    // Assert
+    assert.deepEqual([...(verifiedBefore ?? [])], [])
+    assert.deepEqual(
+      [...(harness.reader.inspect().view!.nodeHistoryUnverifiedStops ?? [])],
+      [stop.sequence],
+    )
+    assert.equal(
+      harness.reader.inspect().view!.nodeHistoryPosition?.sequence,
+      1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Inspect offered again for a saved Node stop after closing disposed its native session; fails_when=close() keeps the stop's debugger availability, so the reopened reader hides Inspect although no session shows the stop; why_new=Cycle 0044 (0032-T6d / 0033-S7c); seam=none
+test('a saved Node stop shown in Run and Debug before the reader closed offers Inspect again after the reader reopens', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.debuggerAvailable === true,
+      'the Node stop shows its values in Run and Debug',
+      1_000,
+    )
+
+    // Act
+    await harness.reader.close()
+    await harness.reader.open()
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+        2,
+      'the reopened reader restores the Node stop',
+      1_000,
+    )
+
+    // Assert: no native session shows the stop, so Inspect (offered while debuggerAvailable is false) is back.
+    const reopened = harness.postedMessages().slice(-1)[0]!
+    assert.equal(reopened.nodeHistoryPosition?.sourceAvailable, true)
+    assert.equal(reopened.nodeHistoryPosition?.debuggerAvailable, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the two debugger notifications keeping their own meaning for a saved Node stop; fails_when=a values-loaded notification is handled like an ended session, so the stop that Run and Debug now shows is marked unavailable and offers Inspect again; why_new=Cycle 0044 (0032-T6h, "the reason mapping": only the session-ended branch had a failing control); seam=TestReplayDebugger models the native load notification
+test('native values loading for a saved Node stop drops its Run and Debug hint and keeps the stop shown in the native debugger', async () => {
+  // Arrange: a selected Node stop committed without native values.
+  const harness = await workspaceHarness()
+  try {
+    const history = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    harness.setHistoricalDebugInspection('uninspected')
+    await harness.reader.open()
+    harness.receiveContext({
+      type: 'node-history',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition?.sequence ===
+          1 && !harness.postedMessages().slice(-1)[0]?.loading,
+      'the sealed Node history is loaded',
+      1_000,
+    )
+    harness.receiveContext({
+      type: 'node-history-stop',
+      revision: harness.postedMessages().slice(-1)[0]!.revision,
+      studyId: history.studyId,
+      sequence: 2,
+    })
+    await waitUntil(
+      () =>
+        harness.postedMessages().slice(-1)[0]?.nodeHistoryPosition
+          ?.nativeValuesUninspected === true,
+      'the stop shows the Run and Debug hint',
+      1_000,
+    )
+    const beforeValuesLoad = harness.postedMessages().slice(-1)[0]!
+      .nodeHistoryPosition
+
+    // Act
+    harness.loadHistoricalDebugValues()
+
+    // Assert
+    const afterValuesLoad = harness.postedMessages().slice(-1)[0]!
+      .nodeHistoryPosition
+    assert.equal(beforeValuesLoad?.debuggerAvailable, true)
+    assert.equal(afterValuesLoad?.nativeValuesUninspected, false)
+    assert.equal(afterValuesLoad?.debuggerAvailable, true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a refused recording open leaves a Node stop that is still loading its native values to finish; fails_when=openRecording abandons the Node selection before its own admission checks pass; why_new=the supersede test only covers an admitted recording; seam=none
 test('a refused recording open lets a loading Node history stop finish its selection', async () => {
   // Arrange
@@ -2508,6 +3003,63 @@ test('a window round trip during summary opening cannot confirm an obsolete focu
   } finally {
     release()
     harness.changeWindowFocus(true)
+    await harness.close()
+  }
+})
+
+// Value: protects=Cursor's learner being told how to keep the Learning summary on the right; fails_when=the reader shows the summary where Cursor put it (the primary side bar) and never says so, or offers the move again on every replay; why_new=Cycle 0044 (0031-U2: Cursor rejects the secondarySidebar container and its chat containers refuse added views); seam=vscode.env.appName, showInformationMessage and executeCommand stubs
+test('in Cursor the first shown Learning summary offers the Move View step once, and choosing it opens the move list for the summary', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    harness.useHostAppName('Cursor')
+    harness.answerInformationMessages(async ([move]) => move)
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act
+    await harness.reader.showLearningSummary()
+    await waitUntil(
+      () => harness.commands.includes('workbench.action.moveFocusedView'),
+      'the Move View list for the Learning summary',
+      1_000,
+    )
+    await harness.reader.showLearningSummary()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(harness.informationMessages, [
+      {
+        message:
+          'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.',
+        items: ['Move Learning Summary…'],
+      },
+    ])
+    assert.equal(
+      harness.commands.filter(
+        (command) => command === 'workbench.action.moveFocusedView',
+      ).length,
+      1,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+test('in VS Code, which accepts the secondary side bar container, showing the Learning summary offers no move', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+
+    // Act
+    await harness.reader.showLearningSummary()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
     await harness.close()
   }
 })

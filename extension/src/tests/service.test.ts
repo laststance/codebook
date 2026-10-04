@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { lstat, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -12,8 +12,13 @@ import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { snapshotSourceHashes } from '../utils/snapshotSourceHashes'
+import { studyEvidenceDirectory } from '../utils/studyEvidenceDirectory'
+import { systemTrashName } from '../utils/systemTrashName'
 
 import { ControlledRuntime, createHarness } from './helpers'
+
+// The product names the system Trash the way the host's operating system does; the expected texts follow it, so the suite also holds on Windows ("Recycle Bin").
+const TRASH = systemTrashName()
 
 test('runtime success remains pending or partial until the latest terminal reader checkpoint is saved', async () => {
   // Arrange: the runtime outcome is injected; this tests the product persistence contract, not execution success.
@@ -663,7 +668,7 @@ test('a seventeenth start is accepted after the learner removed the saved study 
       receipts.push(receipt)
     }
     const removed = service.record(receipts[2]!)
-    service.excludeHistory(removed, 'removed-by-learner')
+    service.excludeHistory(removed)
     // Act
     const seventeenth = service.start({
       instanceId: service.instanceId,
@@ -712,12 +717,12 @@ test('the evidence resources of a run whose saved study the learner removed answ
       eventsUri = service.uri(record.id, 'events/0')
     const eventsBefore = await readResource(service, eventsUri)
     // Act
-    service.excludeHistory(record, 'removed-by-learner')
+    service.excludeHistory(record)
     // Assert
     const unavailable = (error: unknown): boolean =>
       error instanceof StudyError &&
       error.code === 'EVIDENCE_UNAVAILABLE' &&
-      error.message === 'The learner moved this saved study to the Trash.'
+      error.message === `The learner moved this saved study to the ${TRASH}.`
     assert.ok('text' in eventsBefore)
     await assert.rejects(readResource(service, manifestUri), unavailable)
     await assert.rejects(readResource(service, eventsUri), unavailable)
@@ -727,13 +732,24 @@ test('the evidence resources of a run whose saved study the learner removed answ
     )
     const run = await readResource(service, service.uri(record.id))
     assert.ok('text' in run)
+    const answeredRun = JSON.parse(run.text)
     assert.deepEqual(
-      JSON.parse(run.text),
-      JSON.parse(JSON.stringify(service.state(record))),
+      [
+        answeredRun.runId,
+        answeredRun.state,
+        answeredRun.historyOutcome?.status,
+        answeredRun.historyOutcome?.reason,
+      ],
+      [
+        record.id,
+        'stopped',
+        'unavailable',
+        `The learner moved this saved study to the ${TRASH}.`,
+      ],
     )
     assert.equal(
       service.state(record).historyOutcome.reason,
-      'The learner moved this saved study to the Trash.',
+      `The learner moved this saved study to the ${TRASH}.`,
     )
   } finally {
     await harness.close()
@@ -765,7 +781,7 @@ test('an explanation for a run whose saved study the learner removed is refused 
     evidence.save = async (): Promise<void> => {
       saves++
     }
-    service.excludeHistory(record, 'removed-by-learner')
+    service.excludeHistory(record)
     // Act / Assert
     assert.throws(
       () =>
@@ -780,7 +796,7 @@ test('an explanation for a run whose saved study the learner removed is refused 
       (error) =>
         error instanceof StudyError &&
         error.code === 'EVIDENCE_UNAVAILABLE' &&
-        error.message === 'The learner moved this saved study to the Trash.',
+        error.message === `The learner moved this saved study to the ${TRASH}.`,
     )
     assert.equal(saves, 0)
     assert.equal(record.explanationKeys.size, 0)
@@ -914,7 +930,202 @@ test('a removal that throws releases the run for explanations again', async () =
       /Trash refused/,
     )
     // Assert
-    assert.equal(record.evidenceHeld, false)
+    assert.equal(record.evidenceHolds, 0)
+  } finally {
+    await harness.close()
+  }
+})
+
+/** Starts one run on a fresh harness, captures its first stop and stops it, as a run is whose saved study the learner may remove. @example const stopped = await stoppedRun('overlap') */
+async function stoppedRun(key: string) {
+  const harness = await createHarness(),
+    service = harness.service
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, key: 'module', action: 'repository-click' })
+  const snapshotUri = service.state(record).participants.browser.snapshotUri!
+  const explanation = {
+    ...receipt,
+    snapshotUri,
+    sourceHash: snapshotSourceHashes(service.snapshot(record, snapshotUri))
+      .typescript,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The theme is dark.',
+  }
+  await service.stop(receipt)
+  return { harness, service, receipt, record, explanation }
+}
+
+// Value: protects=two overlapping removals of one run keep explanations refused until both have ended; fails_when=the hold is a boolean, so the first removal to end releases the second one's mark (0039-F6); why_new=the hold was only tested alone; seam=none
+test('while two removals of one run overlap, an explanation is refused until both have ended', async () => {
+  // Arrange: two holds; the first ends while the second is still held.
+  const stopped = await stoppedRun('overlapping-holds')
+  let releaseSecond = (): void => {}
+  try {
+    const secondHeld = new Promise<void>((resolve) => {
+      releaseSecond = resolve
+    })
+    const second = stopped.service.withEvidenceHeld(
+      stopped.record,
+      () => secondHeld,
+    )
+    // Act
+    await stopped.service.withEvidenceHeld(stopped.record, async () => {})
+    const refusedWhileSecondHeld = explainRefusal(() =>
+      stopped.service.explain({ ...stopped.explanation, key: 'during' }),
+    )
+    releaseSecond()
+    await second
+    const acceptedAfterBoth = await stopped.service.explain({
+      ...stopped.explanation,
+      key: 'after',
+    })
+    // Assert
+    assert.deepEqual(refusedWhileSecondHeld, {
+      code: 'BUSY',
+      message:
+        "The learner is deleting this run's saved study; wait for it to finish.",
+    })
+    assert.match(acceptedAfterBoth.explanationUri, /\/explanations\//)
+  } finally {
+    releaseSecond()
+    await stopped.harness.close()
+  }
+})
+
+// Value: protects=an agent reading a run's evidence while its directory moves to the Trash gets the removal answer, never a raw file error with the storage path; fails_when=evidence resources are read during the move (0039-F14); why_new=only reads after the exclusion were tested; seam=none
+test('an evidence resource read while the run’s saved study is being removed answers EVIDENCE_UNAVAILABLE without a storage path', async () => {
+  // Arrange: a hold whose removal waits; the evidence directory is already gone.
+  const stopped = await stoppedRun('read-during-move')
+  let releaseRemoval = (): void => {}
+  try {
+    const removalHeld = new Promise<void>((resolve) => {
+      releaseRemoval = resolve
+    })
+    let moved = false
+    const removal = stopped.service.withEvidenceHeld(
+      stopped.record,
+      async () => {
+        moved = true
+        await removalHeld
+      },
+    )
+    await waitUntil(() => moved, 'the removal')
+    // Act
+    const read = readResource(
+      stopped.service,
+      stopped.service.uri(stopped.record.id, 'events/0'),
+    )
+    // Assert
+    await assert.rejects(
+      read,
+      (error) =>
+        error instanceof StudyError &&
+        error.code === 'EVIDENCE_UNAVAILABLE' &&
+        error.message ===
+          "The learner is deleting this run's saved study; its evidence is unavailable until that ends.",
+    )
+    releaseRemoval()
+    await removal
+  } finally {
+    releaseRemoval()
+    await stopped.harness.close()
+  }
+})
+
+// Value: protects=a removal still runs, and the run takes explanations again afterwards, when an accepted explanation or the evidence flush failed; fails_when=a failed write or flush rejects the hold before the removal, or leaves the hold set (0039-F17b); why_new=the hold was only tested with writes that succeed; seam=the evidence writer's save and flush, which reject
+test('a removal whose waited-for explanation write and evidence flush both fail still runs and releases the run for explanations', async () => {
+  // Arrange: the next explanation write and the flush reject.
+  const stopped = await stoppedRun('failed-writes')
+  try {
+    const evidence = stopped.harness.runtimes[0]!.evidence,
+      originalSave = evidence.save.bind(evidence),
+      originalFlush = evidence.flush.bind(evidence)
+    evidence.save = async (): Promise<void> => {
+      throw new Error('ENOSPC: no space left on device')
+    }
+    const failedExplanation = stopped.service
+      .explain({ ...stopped.explanation, key: 'failing' })
+      .catch(() => 'rejected')
+    evidence.flush = async (): Promise<void> => {
+      throw new Error('EIO: flush failed')
+    }
+    // Act
+    const removal = await stopped.service.withEvidenceHeld(
+      stopped.record,
+      async () => 'removed',
+    )
+    evidence.save = originalSave
+    evidence.flush = originalFlush
+    const acceptedAfterwards = await stopped.service.explain({
+      ...stopped.explanation,
+      key: 'after',
+    })
+    // Assert
+    assert.equal(removal, 'removed')
+    assert.equal(await failedExplanation, 'rejected')
+    assert.match(acceptedAfterwards.explanationUri, /\/explanations\//)
+  } finally {
+    await stopped.harness.close()
+  }
+})
+
+// Value: protects=an evidence event that arrives after the run's evidence directory went to the Trash neither recreates that directory nor puts a raw file error with the storage path into the run resource; fails_when=the late event's write failure becomes the removed run's terminal reason (0039-ER-a); why_new=the engineering-review note was never checked; seam=none
+test('an evidence event recorded after a removed run’s evidence directory left the storage leaves the directory gone and the run resource free of file errors', async () => {
+  // Arrange: the run's study is removed and its evidence directory is gone.
+  const stopped = await stoppedRun('late-event')
+  try {
+    const evidence = stopped.harness.runtimes[0]!.evidence
+    await evidence.flush()
+    await rm(evidence.directory, { recursive: true, force: true })
+    stopped.service.excludeHistory(stopped.record)
+    // Act
+    evidence.record('late.event', {})
+    await evidence.flush().catch(() => undefined)
+    // Assert
+    await assert.rejects(lstat(evidence.directory), { code: 'ENOENT' })
+    assert.equal(
+      JSON.stringify(stopped.service.state(stopped.record)).includes(
+        evidence.directory,
+      ),
+      false,
+    )
+  } finally {
+    await stopped.harness.close()
+  }
+})
+
+// Value: protects=the directory a removal moves as a run's raw evidence is the directory the run really writes it to; fails_when=the service's evidence layout and the removal's derivation drift apart, so a removal moves nothing or another run's evidence (0039-F17a); why_new=both sides were tested against their own literal paths; seam=none
+test('the evidence directory a removal derives for a study is the directory its run writes evidence to', async () => {
+  // Arrange: a real run of the service, whose runtime receives its evidence directory.
+  const harness = await createHarness(),
+    service = harness.service
+  try {
+    const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: PROFILE_ID,
+        configuration: harness.configuration,
+        key: 'evidence-directory',
+      }),
+      record = service.record(receipt)
+    await record.preparation
+    // Act
+    const derived = studyEvidenceDirectory(
+      harness.directory,
+      `${service.instanceId}_${record.id}`,
+    )
+    // Assert
+    assert.equal(derived, harness.runtimes[0]!.evidence.directory)
+    assert.equal(
+      derived,
+      join(harness.directory, service.instanceId, record.id),
+    )
   } finally {
     await harness.close()
   }

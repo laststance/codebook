@@ -105,6 +105,13 @@ export type RecordingInput = Pick<
   'elapsedMs' | 'kind' | 'phase' | 'browserTimestamp'
 > & { bytes: Buffer }
 
+/** What a recording's journal states about one frame image and {@link RecordingStore.read} compares with its bytes. */
+interface RecordedFrameFacts {
+  byteLength: number
+  width: number
+  height: number
+}
+
 /** Owns bounded local filmstrips for {@link StudyWorkspace}; reads never restore runtime authority. @example const store = new RecordingStore(learningDirectory, workspaceKey) */
 export class RecordingStore {
   readonly directory: string
@@ -139,7 +146,7 @@ export class RecordingStore {
       throw new Error('Recording journal must reserve terminal metadata.')
   }
 
-  /** Reports the current admission setting to {@link StudyService.status} without blocking history discovery on bad configuration. @example store.capacityStatus().limit // 64 */
+  /** Reports the current admission setting without blocking history discovery on bad configuration; called by {@link StudyService.status} and by the service's admission of a run, which refuses an invalid setting before it asks the library. @example store.capacityStatus().limit // 64 */
   capacityStatus(): {
     setting: string
     maximum: number
@@ -170,6 +177,21 @@ export class RecordingStore {
       this.workspaceKey,
       this.capacity,
     ).admitsStudy(studyId)
+  }
+
+  /**
+   * Counts the studies saved in the library that shares this store's directory, for {@link StudyService.status}.
+   * @returns The number of saved studies the Saved Study Limit is compared with.
+   * @throws When the library directory cannot be read.
+   * @example
+   * await store.savedStudyCount() // => 1
+   */
+  savedStudyCount(): Promise<number> {
+    return new LearningLibrary(
+      this.learningDirectory,
+      this.workspaceKey,
+      this.capacity,
+    ).savedStudyCount()
   }
 
   /** Reserves a private discoverable slot before input; an interrupted reservation is retained, never evicted. @example await store.start(binding, runtime.evidence.elapsedMs()) */
@@ -218,11 +240,13 @@ export class RecordingStore {
           join(directory, RECORDING_JOURNAL_FILE),
           Buffer.alloc(0),
         )
-        const writer = new RecordingWriter(
+        const writer: RecordingWriter = new RecordingWriter(
           directory,
           header,
           this.limits,
           this.io,
+          // A sealed recording is read from its final checkpoint; its writer, journal and frame hashes are not kept for the rest of the session.
+          () => this.release(header.studyId, writer),
         )
         this.active.set(header.studyId, writer)
         return writer
@@ -230,6 +254,17 @@ export class RecordingStore {
     )
     this.writes = pending.catch(() => undefined)
     return pending
+  }
+
+  /**
+   * Drops the writer this window keeps for a study's recording, so record-and-delete cycles do not accumulate journals and frame hashes; called when the writer has sealed its recording and by {@link StudyWorkspace} once the study was moved to the Trash.
+   * @param studyId - The study whose recording is no longer written.
+   * @param writer - When given, only this writer is dropped, so a newer recording under the same id keeps its own.
+   * @example store.release(studyId)
+   */
+  release(studyId: string, writer?: RecordingWriter): void {
+    if (writer && this.active.get(studyId) !== writer) return
+    this.active.delete(studyId)
   }
 
   /** Discovers incomplete headers independently of study archives, with per-entry failure instead of unrelated data substitution. @example await store.list() */
@@ -291,10 +326,9 @@ export class RecordingStore {
     const lines = bytes.toString('utf8').split('\n'),
       incomplete = lines.pop()
     const entries: RecordingEntry[] = []
-    const verifiedFrames = new Map<
-      string,
-      { byteLength: number; width: number; height: number }
-    >()
+    const verifiedFrames = new Map<string, RecordedFrameFacts>()
+    // The writer of this session already hashed and measured every frame it put on disk; reading those files again made a reload of a long in-progress recording grow by about 0.6 ms a frame.
+    const writer = seal ? undefined : this.ownWriter(studyId, header)
     let lastMs = header.startedMs,
       frameCount = 0,
       hasGap = false,
@@ -320,7 +354,8 @@ export class RecordingStore {
             )
           )
             throw new Error('Recording contains a foreign image phase.')
-          let verified = verifiedFrames.get(entry.hash)
+          let verified =
+            verifiedFrames.get(entry.hash) ?? writer?.writtenFrame(entry.hash)
           if (!verified) {
             const png = await this.readFrame(
               studyId,
@@ -817,6 +852,23 @@ export class RecordingStore {
     return seal
   }
 
+  /**
+   * Finds the writer that is recording this study in this session, for {@link read}: its frames are known without reading them back.
+   * A recording another process or an earlier session wrote has no such writer, so every one of its frames is read and hashed.
+   * @param studyId - The recording being read.
+   * @param header - Its header on disk, which names the session that owns it.
+   * @returns The active writer of this store's session, or `undefined`.
+   * @example const writer = seal ? undefined : this.ownWriter(studyId, header)
+   */
+  private ownWriter(
+    studyId: string,
+    header: RecordingHeader,
+  ): RecordingWriter | undefined {
+    return header.owner.sessionId === this.sessionId
+      ? this.active.get(studyId)
+      : undefined
+  }
+
   /** Keeps uncertain live/PID-reused owners unfinalized; only an absent local process establishes interruption. @example this.ownerState(header) // 'interrupted' */
   private ownerState(
     header: RecordingHeader,
@@ -882,19 +934,11 @@ export class RecordingStore {
       if (!stat) continue
       if (!stat.isDirectory())
         throw new Error('Recording root is not a regular directory.')
-      let count = 0
+      // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
       for await (const entry of await opendir(directory)) {
-        if (++count > MAX_SAVED_STUDIES)
-          throw new Error(
-            'Recording library exceeds its directory limit; no history was deleted.',
-          )
         if (!entry.isDirectory())
           throw new Error('Recording library contains a non-directory entry.')
         identities.add(studyIdSchema.parse(entry.name))
-        if (identities.size > MAX_SAVED_STUDIES)
-          throw new Error(
-            'Recording library exceeds its directory limit; no history was deleted.',
-          )
       }
     }
     return [...identities]
@@ -933,12 +977,16 @@ export class RecordingWriter {
   private lastWrittenMs: number
   private lastStreamMs = -Infinity
   private readonly hashes = new Set<string>()
+  /** The frames whose bytes this writer put on disk, by hash, with what it measured before writing them. */
+  private readonly writtenFrames = new Map<string, RecordedFrameFacts>()
 
   constructor(
     readonly directory: string,
     readonly header: RecordingHeader,
     private readonly limits: RecordingLimits,
     private readonly io: RecordingIo,
+    /** Called once the final checkpoint is on disk, so the owning store stops keeping this writer. */
+    private readonly sealed: () => void = () => {},
   ) {
     this.lastAdmittedMs = header.startedMs
     this.lastWrittenMs = header.startedMs
@@ -1006,8 +1054,13 @@ export class RecordingWriter {
       this.pending = this.pending
         .then(async () => {
           if (this.ioFailure) return
-          if (bytes)
+          if (bytes) {
             await this.io.binary(join(this.directory, `${hash}.png`), bytes)
+            this.writtenFrames.set(hash, {
+              byteLength: bytes.byteLength,
+              ...dimensions,
+            })
+          }
           await this.io.append(
             join(this.directory, RECORDING_JOURNAL_FILE),
             line,
@@ -1093,6 +1146,7 @@ export class RecordingWriter {
           MAX_RECORDING_HEADER_BYTES,
         )
         this.finalized = true
+        this.sealed()
         return seal
       })
       .catch((error) => {
@@ -1101,6 +1155,17 @@ export class RecordingWriter {
         throw error
       })
     return this.finishing
+  }
+
+  /**
+   * Tells {@link RecordingStore.read} what this writer measured for a frame it wrote, so an in-progress recording opens without reading its own frames back.
+   * A frame is known only once its bytes reached the disk; its journal line is appended after that, so every frame the journal lists is known here.
+   * @param hash - The frame's content hash, as the journal names it.
+   * @returns The byte length and pixel size the writer measured, or `undefined` for a frame this writer did not write.
+   * @example writer.writtenFrame(entry.hash) // => { byteLength: 35812, width: 1280, height: 800 }
+   */
+  writtenFrame(hash: string): RecordedFrameFacts | undefined {
+    return this.writtenFrames.get(hash)
   }
 
   /** Exposes bounded capture telemetry without parsing blobs on every workspace refresh. @example writer.state().pendingBytes // 0 */

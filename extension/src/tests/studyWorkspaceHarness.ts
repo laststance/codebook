@@ -10,12 +10,13 @@ import { promisify } from 'node:util'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
+import type { PlaybackController } from '../playbackController'
 import type {
   PresentationPoseCapture,
   PresentationPoseRestore,
 } from '../presentationSchemas'
 import { RecordingStore } from '../recordingStore'
-import type { ReplayInspection } from '../replayDebugger'
+import type { ReplayInspection, ReplayRetrievalStage } from '../replayDebugger'
 import type { ReplayDebugSnapshot } from '../replayDebugSchemas'
 import { RepositoryBookStore } from '../repositoryBook'
 import type * as RepositoryReaderModule from '../repositoryReader'
@@ -36,6 +37,19 @@ import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { loadModule } from './utils/loadModule'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 
+/** How long the fake host's Variables view defers the refresh that loads a stop it missed while hidden, counted from the moment it is shown again; VS Code 1.140 waits 400 ms. */
+const NATIVE_VARIABLES_REFRESH_MS = 400
+/** How long the fake host's Variables view, opened for the first time in the editor session, needs before its tree holds the rows that list commands act on; VS Code 1.140 took about 60 ms. */
+const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
+/**
+ * How the fake host's Variables view missed the presented stop, as observed in VS Code 1.140:
+ * - `'never-opened'`: Run and Debug was not opened in this editor session; the view asks for the stop's scopes as soon as it is shown, fills its tree a moment later and expands nothing by itself
+ * - `'missed-the-stop'`: the view showed an earlier stop and was hidden while the recording moved on; its tree is empty until a deferred refresh loads the stop and expands the first scope by itself
+ * - `'shows-another-session'`: the view keeps another debug session's frame and never asks for the recorded stop
+ */
+type NativeVariablesHiding =
+  'never-opened' | 'missed-the-stop' | 'shows-another-session'
+
 /** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
 export async function workspaceHarness(
   attach = true,
@@ -51,6 +65,35 @@ export async function workspaceHarness(
   let answerWarningDialog: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  const informationMessages: { message: string; items: string[] }[] = []
+  let answerInformationMessage: (
+    items: string[],
+  ) => Promise<string | undefined> = async () => undefined
+  let hostAppName = 'Visual Studio Code'
+  /** Native commands the fake editor answers `getCommands` with: the ones the reader asks the host about before it runs them. */
+  const nativeHostCommands = [
+    'workbench.debug.action.focusVariablesView',
+    'list.focusFirst',
+    'list.expand',
+    'workbench.view.debug',
+  ]
+  /** Commands this host does not register; see `removeHostCommands`. */
+  const absentHostCommands = new Set<string>()
+  /** The fake host's own Variables view for the presented stop, which the native commands of Show Variables act on; a view no test hides already lists the values. See `hideNativeVariables`. */
+  const nativeVariables: {
+    hiding?: NativeVariablesHiding
+    scopesRetrieved: boolean
+    treeHoldsStop: boolean
+    firstScopeFocused: boolean
+    valuesListed: boolean
+  } = {
+    scopesRetrieved: true,
+    treeHoldsStop: true,
+    firstScopeFocused: false,
+    valuesListed: true,
+  }
+  /** Pending `awaitRetrieval` checks of the fake historical debugger, re-run whenever the fake Variables view asks for scopes or lists values. */
+  const nativeVariablesWaiters = new Set<() => void>()
   const trashMoves: { path: string; options: unknown }[] = []
   let rejectsTrashMove: (path: string) => boolean = () => false
   let beforeTrashMove: (path: string) => Promise<void> = async () => {}
@@ -187,10 +230,13 @@ export async function workspaceHarness(
   let partialFocusEditor: { value: SourceEditor | undefined } | undefined
   // Captured-source tabs a previous host session left behind; only their close changes the active tab, so other close paths keep their recorded behavior.
   const leftoverCapturedTabs = new Set<Tab>()
-  let refuseLeftoverClose = false,
-    lateEditorAfterLeftoverClose = false
+  let lateEditorAfterLeftoverClose = false
+  // The captured document the active text editor still reports for a moment after its leftover tab closed.
+  let staleEditorAfterLeftoverClose: SourceEditor | undefined
   const deadPaneTabs = new Set<Tab>()
-  let refuseDeadPaneClose = false
+  // Tabs the editor will not release. A close request is answered group by group, as the editor closes: such a tab keeps the requested tabs of its own group only.
+  const closeRefusingTabs = new Set<Tab>()
+  let rejectNextTabClose = false
   const tabCloseRequests: Tab[][] = []
   let lastSourceEditor: SourceEditor | undefined
   let sourceFocusOnArrange: SourceEditor | undefined
@@ -324,6 +370,30 @@ export async function workspaceHarness(
       }
       return historicalDebugInspection
     }
+    /** Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter. @example await debuggerView.awaitRetrieval('scopes', 2_000) // => false when the view never asks */
+    awaitRetrieval(
+      stage: ReplayRetrievalStage,
+      timeoutMs: number,
+    ): Promise<boolean> {
+      return new Promise((resolve) => {
+        const finish = (retrieved: boolean): void => {
+          clearTimeout(timer)
+          nativeVariablesWaiters.delete(check)
+          resolve(retrieved)
+        }
+        const check = (): void => {
+          if (
+            stage === 'scopes'
+              ? nativeVariables.scopesRetrieved
+              : nativeVariables.valuesListed
+          )
+            finish(true)
+        }
+        const timer = setTimeout(() => finish(false), timeoutMs)
+        nativeVariablesWaiters.add(check)
+        check()
+      })
+    }
     /** Mirrors the real owner's cancellable retirement of a different recorded stop; no native session exists here. @example await debuggerView.retire(snapshot, signal) */
     async retire(
       _snapshot: ReplayDebugSnapshot | undefined,
@@ -349,6 +419,36 @@ export async function workspaceHarness(
       registeredHistoricalDebuggers--
     }
   }
+  /** Lists the first scope's recorded values in the fake host's Variables view and tells every owner, as the debug adapter does once the native client asked for them. @example listNativeValues() */
+  const listNativeValues = (): void => {
+    if (nativeVariables.valuesListed) return
+    nativeVariables.valuesListed = true
+    historicalDebugInspection = 'inspected'
+    for (const check of [...nativeVariablesWaiters]) check()
+    for (const debuggerView of historicalDebuggers)
+      debuggerView.changed('values-loaded')
+  }
+  /** Shows the fake host's Variables view as its focus command does; what the view then loads, and when, depends on how it missed the stop. @example showNativeVariablesView() */
+  const showNativeVariablesView = (): void => {
+    const hiding = nativeVariables.hiding
+    nativeVariables.hiding = undefined
+    if (hiding === 'never-opened') {
+      // The view asks for the scopes while it renders, but its tree takes list commands only a moment later.
+      nativeVariables.scopesRetrieved = true
+      for (const check of [...nativeVariablesWaiters]) check()
+      setTimeout(() => {
+        nativeVariables.treeHoldsStop = true
+      }, NATIVE_VARIABLES_FIRST_RENDER_MS).unref()
+    }
+    if (hiding === 'missed-the-stop')
+      // The deferred refresh loads the stop and expands the first scope by itself.
+      setTimeout(() => {
+        nativeVariables.scopesRetrieved = true
+        nativeVariables.treeHoldsStop = true
+        for (const check of [...nativeVariablesWaiters]) check()
+        listNativeValues()
+      }, NATIVE_VARIABLES_REFRESH_MS).unref()
+  }
   let sourceOpenFailure = false
   let delayedPanelKind: string | undefined
   let deferredPanelRegistration = false
@@ -370,6 +470,11 @@ export async function workspaceHarness(
     explicitEditorLayout = false,
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
+  let closeDisposedPanelTabsLater = false
+  /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
+  let panelMaximized = false
+  /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
+  const pendingDisposedTabCloses: (() => void)[] = []
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
     settledLayout: unknown,
@@ -408,7 +513,8 @@ export async function workspaceHarness(
   const postedMessages: StudyViewMessage[] = []
   // What a webview receives besides Study messages: the reader's replies to a pane's open requests, with the webview that got each.
   const openRequestReplies: {
-    webview: 'context' | 'summary' | 'moments'
+    /** The pane that was answered: `context` for the Study pane's panel, `summary` and `moments` for the two views, and the panel's own view type for any other panel, so a reply to a wrong panel is told apart. */
+    webview: string
     openRequest: number
   }[] = []
   let heldPresentationMessage:
@@ -475,6 +581,185 @@ export async function workspaceHarness(
           0,
         )
       : 1
+  }
+  /**
+   * Removes one leaf of a measured editor layout, as the editor does when it closes an emptied group: a branch left with one child is replaced by that child.
+   * @param layout - The layout the editor reports, with nested `groups`.
+   * @param leafIndex - The zero-based position of the removed group among the layout's leaves.
+   * @returns The layout without that leaf; a root left with a single branch takes that branch's children and the other orientation.
+   * @example layoutWithoutLeaf({ orientation: 0, groups: [{ groups: [{}, {}] }, {}] }, 2) // => { orientation: 1, groups: [{}, {}] }
+   */
+  function layoutWithoutLeaf(layout: unknown, leafIndex: number): unknown {
+    let seen = 0
+    const prune = (node: unknown): unknown[] => {
+      const children =
+        node && typeof node === 'object'
+          ? Reflect.get(node, 'groups')
+          : undefined
+      if (!Array.isArray(children)) return seen++ === leafIndex ? [] : [node]
+      const kept = children.flatMap((child: unknown) => prune(child))
+      // A branch with one child left is that child; an emptied branch disappears.
+      return kept.length > 1 ? [{ ...Object(node), groups: kept }] : kept
+    }
+    const root = structuredClone(layout),
+      orientation = Number(Reflect.get(Object(root), 'orientation') ?? 0),
+      children = Reflect.get(Object(root), 'groups')
+    const kept = Array.isArray(children)
+      ? children.flatMap((child: unknown) => prune(child))
+      : []
+    const only = kept.length === 1 ? kept[0] : undefined
+    const nested =
+      only && typeof only === 'object' ? Reflect.get(only, 'groups') : undefined
+    return Array.isArray(nested)
+      ? { orientation: orientation === 0 ? 1 : 0, groups: nested }
+      : { orientation, groups: kept }
+  }
+  // The editor area the fake window gives its groups, and the least an editor group takes (VS Code's DEFAULT_EDITOR_MIN_DIMENSIONS).
+  const EDITOR_AREA_PX = { width: 1100, height: 840 },
+    GROUP_MINIMUM_PX = { width: 220, height: 70 }
+  /** Reads the child groups of a layout node and whether they are stacked; sizes alternate between widths and heights by nesting level. */
+  const layoutChildren = (node: unknown): unknown[] | undefined => {
+    const children =
+      node && typeof node === 'object' ? Reflect.get(node, 'groups') : undefined
+    return Array.isArray(children) ? children : undefined
+  }
+  const layoutSize = (node: unknown): number =>
+    Number(Reflect.get(Object(node), 'size') ?? 1)
+  /**
+   * Projects the measured layout as a hidden editor area reports it: an area without height clamps every stacked group to its minimum height.
+   * @example collapsedLayout({ orientation: 0, groups: [{ size: 0.55, groups: [{ size: 0.5 }, { size: 0.5 }] }, { size: 0.45 }] })
+   * // => { orientation: 0, groups: [{ size: 0.55, groups: [{ size: 70 }, { size: 70 }] }, { size: 0.45 }] }
+   */
+  function collapsedLayout(layout: unknown): unknown {
+    const collapse = (node: unknown, isStack: boolean): unknown => {
+      const children = layoutChildren(node)
+      return {
+        ...Object(node),
+        ...(children
+          ? {
+              groups: children.map((child) => ({
+                ...Object(collapse(child, !isStack)),
+                ...(isStack ? { size: GROUP_MINIMUM_PX.height } : {}),
+              })),
+            }
+          : {}),
+      }
+    }
+    return collapse(layout, Reflect.get(Object(layout), 'orientation') === 1)
+  }
+  /**
+   * Applies the editor's "expand group" to the measured layout: on every level above the group, its branch takes all but the minimum of each sibling.
+   * VS Code does this whenever an editor is opened or revealed in a group that sits at its minimum size, which every stacked group of a hidden editor area does.
+   * @param column - The view column of the revealed group.
+   * @example expandGroup(2) // the source group takes the stack; the Application group keeps 70 of 840 px, the Study pane 220 of 1100 px
+   */
+  function expandGroup(column: number): void {
+    let seen = 0
+    const expand = (
+      node: unknown,
+      isStack: boolean,
+    ): { node: unknown; holdsTarget: boolean } => {
+      const children = layoutChildren(node)
+      if (!children) return { node, holdsTarget: ++seen === column }
+      const expanded = children.map((child) => expand(child, !isStack))
+      const target = expanded.findIndex((child) => child.holdsTarget)
+      if (target < 0)
+        return {
+          node: {
+            ...Object(node),
+            groups: expanded.map((child) => child.node),
+          },
+          holdsTarget: false,
+        }
+      const total = children.reduce(
+          (sum: number, child) => sum + layoutSize(child),
+          0,
+        ),
+        // Sizes are in the layout's own unit (pixels or proportions), so the minimum is taken as its share of the area.
+        minimum =
+          total *
+          (isStack
+            ? GROUP_MINIMUM_PX.height / EDITOR_AREA_PX.height
+            : GROUP_MINIMUM_PX.width / EDITOR_AREA_PX.width)
+      return {
+        node: {
+          ...Object(node),
+          groups: expanded.map((child, index) => ({
+            ...Object(child.node),
+            size:
+              index === target
+                ? total - minimum * (children.length - 1)
+                : minimum,
+          })),
+        },
+        holdsTarget: true,
+      }
+    }
+    editorLayout = expand(
+      editorLayout,
+      Reflect.get(Object(editorLayout), 'orientation') === 1,
+    ).node
+  }
+  /**
+   * Models what VS Code 1.140 does when an editor is opened or revealed while the bottom panel is maximized.
+   * The revealed group sits at its minimum height, so the editor expands it; a changed active editor or an activated group then brings the editor area back, which takes the panel out of its maximized state.
+   * @param column - The view column of the group that was revealed into.
+   * @param changesVisibleEditors - Whether the group shows another editor now or was activated; a reveal of the editor already in front only expands its group.
+   * @example revealIntoHiddenEditorArea(2, true)
+   */
+  function revealIntoHiddenEditorArea(
+    column: number,
+    changesVisibleEditors: boolean,
+  ): void {
+    if (!panelMaximized) return
+    expandGroup(column)
+    if (changesVisibleEditors) panelMaximized = false
+  }
+  /** Measures one group of the fake editor area in pixels, from the proportions or pixels of the measured layout. @example groupHeightPx(1) // 420 for the Application group of the Study layout */
+  function groupHeightPx(column: number): number | undefined {
+    let seen = 0,
+      found: number | undefined
+    const measure = (node: unknown, isStack: boolean, height: number): void => {
+      const children = layoutChildren(node)
+      if (!children) {
+        if (++seen === column) found = Math.round(height)
+        return
+      }
+      const total = children.reduce(
+        (sum: number, child) => sum + layoutSize(child),
+        0,
+      )
+      for (const child of children)
+        measure(
+          child,
+          !isStack,
+          isStack ? (height * layoutSize(child)) / total : height,
+        )
+    }
+    measure(
+      editorLayout,
+      Reflect.get(Object(editorLayout), 'orientation') === 1,
+      EDITOR_AREA_PX.height,
+    )
+    return found
+  }
+  /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
+  function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
+    const main = groups
+      .filter((candidate) => candidate !== separateEditorPart?.group)
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)
+    // The editor keeps its last group even when it is empty.
+    if (main.length < 2 || !groups.includes(emptied)) return
+    editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
+    groups.splice(groups.indexOf(emptied), 1)
+    for (const remaining of groups)
+      if (remaining.viewColumn > emptied.viewColumn) remaining.viewColumn--
+    for (const retained of panels)
+      retained.viewColumn = groups.find((candidate) =>
+        candidate.tabs.includes(retained.nativeTab),
+      )?.viewColumn
+    if (activeTabGroup === emptied) activeTabGroup = groups[0]!
+    changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
   }
   /** Models Cursor's refusal to place a normal reader in its separate chat part; panel and text opens share this boundary. @example nativeReaderColumn(2) // 1 when only main column one and chat column two exist */
   function nativeReaderColumn(requested: number): number {
@@ -543,6 +828,8 @@ export async function workspaceHarness(
       ? nativeReaderColumn(options.viewColumn)
       : options?.viewColumn
     const value = {
+      // As the editor's WebviewPanel names it, so a test can find one panel among the native ones.
+      viewType: kind,
       blockInnerFocus: false,
       webview: {
         html: '',
@@ -561,7 +848,7 @@ export async function workspaceHarness(
         ) => {
           if (message.type === 'open-request-settled') {
             openRequestReplies.push({
-              webview: 'context',
+              webview: kind === 'codebook.studyContext' ? 'context' : kind,
               openRequest: message.openRequest,
             })
             return true
@@ -727,11 +1014,20 @@ export async function workspaceHarness(
           nextMovedPanelLayout = undefined
         }
         {
+          const wasInFront = groups.some(
+            (group) =>
+              group.activeTab === nativeTab &&
+              group.viewColumn === value.viewColumn,
+          )
           for (const group of groups) {
             group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
             if (group.activeTab === nativeTab) group.activeTab = undefined
           }
           const group = nativeGroup(value.viewColumn ?? 1)
+          revealIntoHiddenEditorArea(
+            group.viewColumn,
+            !wasInFront || !preserveFocus,
+          )
           if (
             nativeLayout &&
             previousColumn !== value.viewColumn &&
@@ -903,10 +1199,21 @@ export async function workspaceHarness(
       },
       dispose(): void {
         if (!panels.delete(value)) return
-        for (const group of groups) {
-          group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
-          if (group.activeTab === nativeTab) group.activeTab = undefined
+        const closeTab = (): void => {
+          const emptied = groups.filter(
+            (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
+          )
+          for (const group of groups) {
+            group.tabs = group.tabs.filter((tab) => tab !== nativeTab)
+            if (group.activeTab === nativeTab) group.activeTab = undefined
+          }
+          // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
+          if (closeDisposedPanelTabsLater)
+            for (const group of emptied) removeEmptiedGroup(group)
         }
+        // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
+        if (closeDisposedPanelTabsLater) pendingDisposedTabCloses.push(closeTab)
+        else closeTab()
         for (const listener of disposed) listener()
       },
     }
@@ -1041,13 +1348,24 @@ export async function workspaceHarness(
       viewportEvents.push(`reveal:${this.mode}`)
     }
     /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
-    async showLive(): Promise<void> {
+    async showLive(signal?: AbortSignal): Promise<void> {
+      // Like the real viewport, a lease that is not pinned to history only restores a detached renderer, leaving an attached one's panel untouched.
+      if (!this.historical) {
+        if (!this.rendererAttached)
+          this.panel.webview.html = this.rendererDocument
+        this.rendererAttached = true
+        return
+      }
       this.historical = false
       this.panel.webview.html = this.rendererDocument
       this.rendererAttached = true
+      // Leaving history re-handshakes the renderer, as the real showLive awaits its reveal.
+      await this.reveal(signal)
     }
     /** Retains the hidden live lease while the workspace reads recorded evidence. @example viewport.showHistory() */
     showHistory(html: string): void {
+      // Like the real viewport, a lease whose panel closed cannot write its history page.
+      if (this.closed) throw new Error('Viewport lease is released')
       this.historical = true
       this.historicalHtml = html
       this.panel.webview.html = html
@@ -1270,8 +1588,21 @@ export async function workspaceHarness(
       TextEditorRevealType: { Default: 0, AtTop: 3 },
       ThemeColor: class {},
       RelativePattern,
+      env: {
+        get appName(): string {
+          return hostAppName
+        },
+      },
       commands: {
+        async getCommands(): Promise<string[]> {
+          return nativeHostCommands.filter(
+            (name) => !absentHostCommands.has(name),
+          )
+        },
         async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+          // Both native hosts reject a command they do not register, in these words.
+          if (absentHostCommands.has(name))
+            throw new Error(`command '${name}' not found`)
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
             playbackPanel.visible = true
@@ -1291,6 +1622,13 @@ export async function workspaceHarness(
             for (const listener of summaryVisibilityListeners) listener()
           }
           commands.push(name)
+          if (name === 'workbench.debug.action.focusVariablesView')
+            showNativeVariablesView()
+          // A list command acts on the rows the focused tree holds at that moment; an empty tree gives it nothing to focus or expand.
+          if (name === 'list.focusFirst' && nativeVariables.treeHoldsStop)
+            nativeVariables.firstScopeFocused = true
+          if (name === 'list.expand' && nativeVariables.firstScopeFocused)
+            listNativeValues()
           const held = nextCommand
           if (held?.name === name) {
             nextCommand = undefined
@@ -1384,11 +1722,19 @@ export async function workspaceHarness(
             if (asynchronousLayoutReads)
               await new Promise<void>((resolve) => setImmediate(resolve))
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
+            // The disposed panels' tabs close one task after this read is answered.
+            const dueTabCloses = pendingDisposedTabCloses.splice(0)
+            if (dueTabCloses.length)
+              setImmediate(() => {
+                for (const close of dueTabCloses) close()
+              })
             const layout = JSON.parse(
               JSON.stringify(
                 separateEditorPart?.focused
                   ? (separatePartLayoutReport ?? separateEditorPart.layout)
-                  : editorLayout,
+                  : panelMaximized
+                    ? collapsedLayout(editorLayout)
+                    : editorLayout,
                 (key, value) =>
                   key === 'groups' && Array.isArray(value)
                     ? value.map((group) => ({ size: 1, ...group }))
@@ -1567,6 +1913,10 @@ export async function workspaceHarness(
           warningDialogs.push({ title, options, items })
           return answerWarningDialog(items)
         },
+        showInformationMessage: (message: string, ...items: string[]) => {
+          informationMessages.push({ message, items })
+          return answerInformationMessage(items)
+        },
         createTextEditorDecorationType: disposable,
         createTreeView: (
           _id: string,
@@ -1643,6 +1993,10 @@ export async function workspaceHarness(
                 tab.input.uri.toString() === sourceDocument.uri.toString(),
             ) ?? { input: new TabInputText(sourceDocument.uri) }
           if (!group.tabs.includes(tab)) group.tabs.push(tab)
+          revealIntoHiddenEditorArea(
+            group.viewColumn,
+            group.activeTab !== tab || !options?.preserveFocus,
+          )
           group.activeTab = tab
           if (!options?.preserveFocus) {
             activeTabGroup = group
@@ -1724,19 +2078,23 @@ export async function workspaceHarness(
           },
           close: async (tabs: Tab[]) => {
             tabCloseRequests.push([...tabs])
-            if (
-              (refuseLeftoverClose &&
-                tabs.some((tab) => leftoverCapturedTabs.has(tab))) ||
-              (refuseDeadPaneClose && tabs.some((tab) => deadPaneTabs.has(tab)))
-            )
-              return false
-            let closedActiveLeftover = false
+            if (rejectNextTabClose) {
+              rejectNextTabClose = false
+              throw new Error('Canceled')
+            }
+            let accepted = true,
+              closedActiveLeftover = false
             const emptiedByDeadPane: typeof groups = []
             for (const group of groups) {
+              const requested = group.tabs.filter((tab) => tabs.includes(tab))
+              if (!requested.length) continue
+              // One tab the editor will not release keeps every requested tab of its group and fails the answer; the other groups still close.
+              if (requested.some((tab) => closeRefusingTabs.has(tab))) {
+                accepted = false
+                continue
+              }
               const active = group.activeTab,
-                heldDeadPane = group.tabs.some(
-                  (tab) => tabs.includes(tab) && deadPaneTabs.has(tab),
-                )
+                heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
               group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
               // The editor activates the neighbouring tab when the active one closes.
               if (
@@ -1780,18 +2138,26 @@ export async function workspaceHarness(
               })
             }
             if (closedActiveLeftover) {
-              if (lateEditorAfterLeftoverClose) {
-                // The tab model already names the next tab while the active text editor is still unset.
-                partialFocusEditor = { value: undefined }
+              if (
+                lateEditorAfterLeftoverClose ||
+                staleEditorAfterLeftoverClose
+              ) {
+                // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
+                partialFocusEditor = { value: staleEditorAfterLeftoverClose }
+                staleEditorAfterLeftoverClose = undefined
                 setTimeout(() => {
                   partialFocusEditor = undefined
                   activeTextEditorChanged(focusedSourceEditor())
                 }, 60)
               } else activeTextEditorChanged(focusedSourceEditor())
             }
-            return true
+            return accepted
           },
         },
+      },
+      debug: {
+        // No test of this harness pauses a native debug session; the Application pane then always preserves the keyboard focus when it is revealed.
+        activeStackItem: undefined,
       },
       workspace: {
         getConfiguration: (section: string) => ({
@@ -1860,6 +2226,16 @@ export async function workspaceHarness(
     openArticle: async (selection: RepositorySelection): Promise<void> => {
       articleOpens.push(selection)
     },
+    // The Wiki reader owns a panel exactly while a Repository Wiki tab that no earlier host left behind is in the window.
+    repositoryWikiOpen: (): boolean =>
+      groups.some((group) =>
+        group.tabs.some(
+          (tab) =>
+            tab.input instanceof TabInputWebview &&
+            tab.input.viewType.endsWith('codebook.repositoryWiki') &&
+            !deadPaneTabs.has(tab),
+        ),
+      ),
   }
   const presentationPreferences = new Map<string, unknown>()
   let preferenceFailure = false
@@ -1919,6 +2295,44 @@ export async function workspaceHarness(
     },
     /** Every native warning dialog the reader opened, with its title, options and buttons. @example harness.warningDialogs[0].title */
     warningDialogs,
+    /** Every native information message the reader showed, with its buttons. @example harness.informationMessages[0].message */
+    informationMessages,
+    /** Decides how the learner answers the reader's next information messages; unanswered ones are dismissed. @example harness.answerInformationMessages(async ([move]) => move) */
+    answerInformationMessages(
+      answer: (items: string[]) => Promise<string | undefined>,
+    ): void {
+      answerInformationMessage = answer
+    },
+    /** Names the editor the reader runs in, as `vscode.env.appName` reports it. @example harness.useHostAppName('Cursor') */
+    useHostAppName(name: string): void {
+      hostAppName = name
+    },
+    /** Models a host that does not register the named native commands: `getCommands` omits them and running one fails as the editor does. @example harness.removeHostCommands('workbench.debug.action.focusVariablesView') */
+    removeHostCommands(...names: string[]): void {
+      for (const name of names) absentHostCommands.add(name)
+    },
+    /**
+     * Models the host's own Variables view missing the presented stop, so Show Variables meets it as the editor leaves it.
+     * @param hiding - How the view missed the stop; each kind loads the stop differently once the focus command shows the view.
+     * @example harness.hideNativeVariables('never-opened')
+     */
+    hideNativeVariables(hiding: NativeVariablesHiding): void {
+      nativeVariables.hiding = hiding
+      nativeVariables.scopesRetrieved = false
+      nativeVariables.treeHoldsStop = false
+      nativeVariables.firstScopeFocused = false
+      nativeVariables.valuesListed = false
+    },
+    /** What the fake host's Variables view shows of the presented stop. @example harness.nativeVariablesView() // => { firstScopeFocused: true, valuesListed: true } */
+    nativeVariablesView(): {
+      firstScopeFocused: boolean
+      valuesListed: boolean
+    } {
+      return {
+        firstScopeFocused: nativeVariables.firstScopeFocused,
+        valuesListed: nativeVariables.valuesListed,
+      }
+    },
     /** Decides how the learner answers the reader's next native warning dialogs; unanswered dialogs are dismissed. @example harness.answerWarningDialogs(async ([confirm]) => confirm) */
     answerWarningDialogs(
       answer: (items: string[]) => Promise<string | undefined>,
@@ -2308,6 +2722,29 @@ export async function workspaceHarness(
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
     },
+    /**
+     * Maximizes the bottom panel as its title bar's "Maximize Panel Size" does: the editor area is hidden until the learner restores the panel or an editor is opened or revealed.
+     * While hidden, the fake editor reports every stacked group at its minimum height (70 px), expands a group an editor is revealed in, and brings the area back when that reveal changes a group's visible editor.
+     * @example harness.maximizePanel()
+     */
+    maximizePanel(): void {
+      panelMaximized = true
+    },
+    /** Restores the bottom panel to its normal height, as the learner does with "Restore Panel Size"; the editor area returns with the group sizes it had. @example harness.restorePanel() */
+    restorePanel(): void {
+      panelMaximized = false
+    },
+    isPanelMaximized: (): boolean => panelMaximized,
+    /** The height of one editor group in a fake editor area of 840 px, by view column. @example harness.groupHeightPx(1) // 420 */
+    groupHeightPx,
+    /**
+     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
+     * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
+     * @example harness.closeDisposedPanelTabsLater()
+     */
+    closeDisposedPanelTabsLater(): void {
+      closeDisposedPanelTabsLater = true
+    },
     automaticallyClosedColumns: () => [...automaticallyClosedColumns],
     useCursorGroupWrappers(twoEventContraction = false): void {
       cursorGroupWrappers = true
@@ -2442,7 +2879,7 @@ export async function workspaceHarness(
         },
       }
     },
-    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
+    /** Leaves a captured-source tab in a group as the host restores one after a restart: a text tab without a text editor. `textEditor` gives it a live editor instead, as a first open that failed leaves this host's own tab; `staleTextEditor` lets the editor report its document for a moment after the tab closed. @example const leftover = harness.restoreLeftoverCapturedSource(); harness.restoreLeftoverCapturedSource({ active: false, authority: 'f'.repeat(64) }) */
     restoreLeftoverCapturedSource(
       options: {
         active?: boolean
@@ -2450,27 +2887,37 @@ export async function workspaceHarness(
         column?: number
         refuseClose?: boolean
         lateTextEditor?: boolean
+        staleTextEditor?: boolean
+        textEditor?: boolean
       } = {},
     ) {
       const group = groups.find(
         (group) =>
           group.viewColumn === (options.column ?? groups[0]!.viewColumn),
       )!
+      const document = {
+        uri: Uri.from({
+          scheme: 'codebook-source',
+          authority:
+            options.authority ?? sha256(realpathSync(harness.directory)),
+          path: '/earlier-study/repository%2Finterface%2Ftheme/hash/Captured-login-form.tsx',
+        }),
+        version: 1,
+        getText: () => 'Captured source of an earlier study.\n',
+      }
       const tab: Tab = {
-        input: new TabInputText(
-          Uri.from({
-            scheme: 'codebook-source',
-            authority:
-              options.authority ?? sha256(realpathSync(harness.directory)),
-            path: '/earlier-study/repository%2Finterface%2Ftheme/hash/Captured-login-form.tsx',
-          }),
-        ),
+        input: new TabInputText(document.uri),
         isPreview: false,
         isDirty: false,
       }
       if (options.authority === undefined) leftoverCapturedTabs.add(tab)
-      refuseLeftoverClose = Boolean(options.refuseClose)
+      if (options.refuseClose) closeRefusingTabs.add(tab)
       lateEditorAfterLeftoverClose = Boolean(options.lateTextEditor)
+      const editor = Object.assign(sourceEditor(document, group), { group })
+      staleEditorAfterLeftoverClose = options.staleTextEditor
+        ? editor
+        : undefined
+      if (options.textEditor) visibleSourceEditors.push(editor)
       group.tabs.push(tab)
       if (options.active ?? true) {
         group.activeTab = tab
@@ -2481,7 +2928,10 @@ export async function workspaceHarness(
     },
     /** Leaves a Codebook pane tab without a panel in a group, as an extension-host restart leaves the old host's panes: the tab model lists it under the main-thread view type and this host owns no panel for it. @example const deadApplication = harness.leaveDeadCodebookPane('codebook.scopedBrowser', 1); harness.leaveDeadCodebookPane('codebook.studyContext', 3, { focused: true, refuseClose: true }) */
     leaveDeadCodebookPane(
-      kind: 'codebook.scopedBrowser' | 'codebook.studyContext',
+      kind:
+        | 'codebook.scopedBrowser'
+        | 'codebook.studyContext'
+        | 'codebook.repositoryWiki',
       column: number,
       options: { focused?: boolean; refuseClose?: boolean } = {},
     ) {
@@ -2489,15 +2939,16 @@ export async function workspaceHarness(
       assert.ok(group)
       const tab: Tab = {
         input: new TabInputWebview(`mainThreadWebview-${kind}`),
-        label:
-          kind === 'codebook.scopedBrowser'
-            ? 'codebook · Application'
-            : 'codebook · Study',
+        label: {
+          'codebook.scopedBrowser': 'codebook · Application',
+          'codebook.studyContext': 'codebook · Study',
+          'codebook.repositoryWiki': 'codebook · Repository Wiki',
+        }[kind],
         isPreview: false,
         isDirty: false,
       }
       deadPaneTabs.add(tab)
-      refuseDeadPaneClose ||= Boolean(options.refuseClose)
+      if (options.refuseClose) closeRefusingTabs.add(tab)
       group.tabs.push(tab)
       // The pane was the visible tab of its group when its host ended.
       group.activeTab = tab
@@ -2510,11 +2961,25 @@ export async function workspaceHarness(
     },
     /** Lets the editor close leftover captured-source tabs again after a refusal test, so the harness can shut its reader down. @example harness.acceptLeftoverClose() */
     acceptLeftoverClose(): void {
-      refuseLeftoverClose = false
+      for (const tab of leftoverCapturedTabs) closeRefusingTabs.delete(tab)
     },
     /** Lets the editor close dead Codebook panes again after a refusal, so a test can repeat the request the editor first refused. @example harness.acceptDeadPaneClose() */
     acceptDeadPaneClose(): void {
-      refuseDeadPaneClose = false
+      for (const tab of deadPaneTabs) closeRefusingTabs.delete(tab)
+    },
+    /** Makes the editor reject the next close request instead of answering it, as it does when the request is cancelled; no tab closes. @example harness.rejectNextTabClose() */
+    rejectNextTabClose(): void {
+      rejectNextTabClose = true
+    },
+    /** Gives focus to a non-text page of the editor that is already open, as a learner's click on its tab does. @example harness.focusOpaqueTab(harness.addOpaqueTab('Extension page', 2)) */
+    focusOpaqueTab(tab: Tab): void {
+      const group = groups.find((group) => group.tabs.includes(tab))
+      assert.ok(group)
+      group.activeTab = tab
+      activeTabGroup = group
+      if (separateEditorPart) separateEditorPart.focused = false
+      for (const listener of tabChangeListeners) listener()
+      activeTextEditorChanged(focusedSourceEditor())
     },
     useOpaquePrimary(kind: 'blank' | 'settings') {
       const group = groups.find((group) => group.viewColumn === 1)!
@@ -2540,6 +3005,7 @@ export async function workspaceHarness(
     addForeignDraft(column = groups[0]!.viewColumn) {
       const tab = {
         input: new TabInputText(Uri.file(join(harness.directory, 'notes.txt'))),
+        label: 'notes.txt',
         isDirty: true,
       }
       groups.find((group) => group.viewColumn === column)!.tabs.push(tab)
@@ -2909,6 +3375,8 @@ export async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
 export async function recordedReaderHarness(
   capturedApplication = false,
   recordedDebugger = false,
+  /** Column of the declared line at which the debugger bound and captured the stop; another column than the declared 1 gives a moved-column study. Used with `recordedDebugger`. */
+  boundColumn = 1,
 ) {
   const harness = await workspaceHarness(true, true),
     service = harness.service
@@ -2959,6 +3427,8 @@ export async function recordedReaderHarness(
     runtime.action = (key, value) => {
       const operation = action(key, value),
         stop = runtime.snapshots[0]!
+      // The run commits a stop where the debugger bound it, and its saved top frame names the same position.
+      stop.source = { ...stop.source, column: boundColumn }
       // Captured values reference the stop's own recorded source, as the configured browser run records them.
       stop.debugger = {
         version: 1,
@@ -2966,7 +3436,7 @@ export async function recordedReaderHarness(
           {
             name: 'applyTheme',
             line: 1,
-            column: 1,
+            column: boundColumn,
             source: {
               name: runtime.definition.configuration.source.path,
               text: stop.source.text,
@@ -3003,6 +3473,31 @@ export async function recordedReaderHarness(
     record,
     png,
     controller: service.playbackController!,
+    /**
+     * Holds every playback position save that starts from now on behind a storage lock, as a slow disk does, until `release()`.
+     * @returns `release` lets the held saves write and restores normal saving.
+     * @example const held = harness.holdPositionSaves(); held.release()
+     */
+    holdPositionSaves() {
+      const savePreference = RecordingStore.prototype.savePreference
+      let releaseStorage = (): void => {}
+      const storageHeld = new Promise<void>((resolve) => {
+        releaseStorage = resolve
+      })
+      RecordingStore.prototype.savePreference = async function (
+        this: RecordingStore,
+        preference,
+      ): Promise<void> {
+        await storageHeld
+        return savePreference.call(this, preference)
+      }
+      return {
+        release(): void {
+          RecordingStore.prototype.savePreference = savePreference
+          releaseStorage()
+        },
+      }
+    },
   }
 }
 
@@ -3142,5 +3637,98 @@ export async function articleRecordingLayoutHarness(
   } catch (error) {
     await harness.close()
     throw error
+  }
+}
+
+type WorkspaceReader = InstanceType<
+  (typeof StudyWorkspaceModule)['StudyWorkspace']
+>
+
+/**
+ * Gathers in one place what a reader test needs from inside the reader and its playback controller to arrange a race or to wait for an awaited outcome, so the tests themselves name no private member.
+ * The webview route ({@link workspaceHarness}'s `receive`) answers nothing to its sender; `receive` here is the same handling, awaited.
+ * @param harness - The reader, and its playback controller when the harness has one.
+ * @example
+ * await readerSeams(harness).receive({ type: 'delete-study', revision, studyId }, 'context')
+ * readerSeams(harness).debuggerReplacement = async () => { throw new Error('The historical debugger did not start.') }
+ */
+export function readerSeams(harness: {
+  reader: WorkspaceReader
+  controller?: PlaybackController
+}) {
+  const reader = harness.reader
+  return {
+    /** Handles one pane message as the webview route does and settles when the reader has handled it. */
+    receive: (message: unknown, origin: 'context' | 'moments'): Promise<void> =>
+      reader['receive'](message, origin),
+    /** Handles one pane message of a given panel through the reply-owing route. */
+    receiveFromPanel: (
+      message: unknown,
+      origin: 'context' | 'moments',
+      panel: unknown,
+    ): Promise<void> =>
+      Reflect.apply(reader['receivePaneMessage'], reader, [
+        message,
+        origin,
+        panel,
+      ]),
+    /** Runs one reader refresh, as the reader's timer does. */
+    refresh: (): Promise<void> => reader['refresh'](),
+    /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */
+    selectNoStudy: (): void => reader['selectNoStudy'](),
+    /** The reader's error lines, as its panes show them. */
+    errorLines: (): string[] => [...reader['errors'].values()],
+    /** Counts the study checkpoints that wait to be written. */
+    queuedStudyWrites: (): number => reader['pendingArchives'].size,
+    /** Says whether the reader holds an error line of one kind. */
+    hasErrorOfKind: (kind: string): boolean => reader['errors'].has(kind),
+    /** Drops the reader's error line of one kind, as the action that retires it does. */
+    dropErrorOfKind: (kind: string): boolean => reader['errors'].delete(kind),
+    isLoading: (): boolean => reader['loading'],
+    isRecordingActive: (): boolean => reader['recordingActive'],
+    isLiveArrangement: (): boolean => reader['liveComposition'],
+    /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */
+    checkpoint: (
+      ...input: Parameters<WorkspaceReader['checkpoint']>
+    ): Promise<void> => reader['checkpoint'](...input),
+    readSavedArchive: (studyId: string) => reader['readSavedArchive'](studyId),
+    saveSelection: (): Promise<void> => reader['saveSelection'](),
+    /** The reader's step that starts or replaces the historical debugger before a recording load; a test replaces it to hold or fail that load. */
+    get debuggerReplacement(): WorkspaceReader['replaceUnavailableReplayDebugger'] {
+      return reader['replaceUnavailableReplayDebugger'].bind(reader)
+    },
+    set debuggerReplacement(
+      step: WorkspaceReader['replaceUnavailableReplayDebugger'],
+    ) {
+      reader['replaceUnavailableReplayDebugger'] = step
+    },
+    /** The reader's retirement of a shown Node test history; a test replaces it to hold a saved-study choice between its read and its showing. */
+    get nodeHistoryRetirement(): () => Promise<void> {
+      return reader['retireNodeHistorySelection'].bind(reader)
+    },
+    set nodeHistoryRetirement(step: () => Promise<void>) {
+      reader['retireNodeHistorySelection'] = step
+    },
+    /** The reader's storage initialisation, the first step of an open; a test replaces it to hold an open in progress. */
+    get initialization(): () => Promise<void> {
+      return reader['initialize'].bind(reader)
+    },
+    set initialization(step: () => Promise<void>) {
+      reader['initialize'] = step
+    },
+    /** The mark a close in progress sets. */
+    get isClosing(): boolean {
+      return reader['closing']
+    },
+    set isClosing(closing: boolean) {
+      reader['closing'] = closing
+    },
+    /** Saves a playback position the way the controller does when playback is left. */
+    savePlaybackPosition: (
+      ...input: Parameters<PlaybackController['dependencies']['save']>
+    ): Promise<void> => harness.controller!['dependencies'].save(...input),
+    /** Reports a playback change to the reader, as the controller does on every state change. */
+    reportPlaybackChange: (): void =>
+      harness.controller!['dependencies'].changed(),
   }
 }

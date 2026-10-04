@@ -26,6 +26,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.declaredStops - Ordered checked stops, all at the same source line as a loop body would declare them.
  * @param options.observedLine - Line the native debugger reports for every breakpoint pause.
  * @param options.duringRetire - Learner action performed while the owned breakpoint is being retired.
+ * @param options.adapterPauseAfterContinue - After each Codebook continue the debug adapter pauses for a breakpoint of its own and resumes it: no `stopped`, only the `continued` it announces for its own resume, before the next declared stop.
  * @param options.exitAfterEntry - The test process exits after the entry pause, as when Vitest skips the cited test.
  * @param options.reportFailure - Error the Vitest report check raises after the process finishes.
  * @param options.reportStatus - Actual assertion result reported by Vitest, independent of the process exit code.
@@ -44,6 +45,7 @@ async function nodeRunHarness({
   declaredStops = 1,
   observedLine = 1,
   duringRetire,
+  adapterPauseAfterContinue,
   exitAfterEntry,
   reportFailure,
   reportStatus = 'passed',
@@ -52,10 +54,12 @@ async function nodeRunHarness({
   neverReachStop,
   budgetMs,
   acknowledgements,
+  bindingReportedLater,
 }: {
   declaredStops?: number
   observedLine?: number
   duringRetire?: () => void
+  adapterPauseAfterContinue?: boolean
   exitAfterEntry?: boolean
   reportFailure?: Error
   reportStatus?: 'passed' | 'failed'
@@ -73,6 +77,8 @@ async function nodeRunHarness({
     line?: number
     column?: number
   }>
+  /** What the adapter answers when it is asked where an owned breakpoint is bound, after a pending registration reply. */
+  bindingReportedLater?: { verified: boolean; line: number; column: number }
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -137,7 +143,11 @@ async function nodeRunHarness({
     name: '',
     workspaceFolder: undefined,
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
-    getDebugProtocolBreakpoint: async () => undefined,
+    // The adapter knows only breakpoints the editor still holds; a retired one is answered as gone.
+    getDebugProtocolBreakpoint: async (breakpoint: unknown) =>
+      editorBreakpoints.some((kept) => kept === breakpoint)
+        ? bindingReportedLater
+        : undefined,
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
@@ -164,6 +174,15 @@ async function nodeRunHarness({
           )
           return {}
         }
+        // js-debug announces the resume of a pause it made for itself (module entry breakpoint, WebAssembly hook) and never a stop for it.
+        if (adapterPauseAfterContinue)
+          queueMicrotask(() =>
+            tracker?.onDidSendMessage?.({
+              type: 'event',
+              event: 'continued',
+              body: { threadId: 1 },
+            }),
+          )
         // Each continuation before a declared stop reaches the line again; the final one lets the test finish.
         if (++continued <= declaredStops)
           queueMicrotask(() => stopped('breakpoint', [OWNED_BREAKPOINT_ID]))
@@ -710,6 +729,38 @@ test('Codebook finishes a two-stop Node test even though its own continue reques
   }
 })
 
+// Cycle 0044 (0042-ER-limit2): the inspection the review left open. The Node path reads only the debugger's DAP events, where the adapter's own pause shows as one extra `continued` before the next stop; that `continued` finds no accepted pause and drops none.
+test('a pause the debugger makes for itself and resumes between two declared Node stops keeps both stops and the test finishes', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    adapterPauseAfterContinue: true,
+  })
+  try {
+    await harness.run.prepare()
+    harness.calls.length = 0
+
+    // Act
+    await harness.run.advance()
+    const result = await harness.run.complete()
+
+    // Assert
+    assert.deepEqual(harness.calls, [
+      'retire',
+      'arm',
+      'continue',
+      'retire',
+      'continue',
+      'result',
+      'verify',
+    ])
+    assert.equal(result.exitCode, 0)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
 test('a native stack refresh at the accepted pause (Toggle Skipping this File) still lets Codebook finish the test', async () => {
   // Arrange
   const harness = await nodeRunHarness()
@@ -1047,7 +1098,7 @@ for (const acknowledged of ['verified', 'pending'] as const)
       // Act / Assert
       await assert.rejects(
         harness.run.prepare(),
-        /Selected adapter did not acknowledge the exact breakpoint registration/,
+        /Selected adapter did not acknowledge the declared breakpoint registration/,
       )
       assert.equal(
         harness.calls.filter((call) => call === 'continue').length,
@@ -1077,6 +1128,39 @@ test('a Node test stop whose pending registration names no column yet is accepte
   }
 })
 
+// Value: protects=a second Node test stop that the adapter first answers as pending and then binds at another column; fails_when=the pending reply is taken as accepted and the other column is found only at the pause, one resume later; why_new=Cycle 0037 D6; seam=the fake session answers getDebugProtocolBreakpoint
+test('a second Node test stop answered as pending and then bound at another column is refused before the test continues, naming both positions', async () => {
+  // Arrange: the first stop is acknowledged at its declared 1:14; the next one is answered pending without a position and is bound at 1:1.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    acknowledgements: [
+      { verified: true, line: 1, column: 14 },
+      { verified: false },
+    ],
+    bindingReportedLater: { verified: true, line: 1, column: 1 },
+  })
+  try {
+    await harness.run.prepare()
+
+    // Act
+    const refusal = await harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'Error: Declared breakpoint 1:14 is bound at 1:1; this stop is captured at its declared position, so declare 1:1 or another statement.',
+    )
+    // Only the continuation from the entry pause to the first stop was sent.
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
 test('a second Node test stop acknowledged at another column is refused before the test continues past the first stop', async () => {
   // Arrange: the first stop is acknowledged at its declared 1:14; the next one, armed while the test is paused, is answered at 1:1.
   const harness = await nodeRunHarness({
@@ -1091,7 +1175,7 @@ test('a second Node test stop acknowledged at another column is refused before t
     // Act / Assert
     await assert.rejects(
       harness.run.advance(),
-      /Selected adapter did not acknowledge the exact breakpoint registration/,
+      /Selected adapter did not acknowledge the declared breakpoint registration/,
     )
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)

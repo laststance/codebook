@@ -1,16 +1,12 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
 
-import {
-  WIKI_GIT_OUTPUT_LIMIT_BYTES,
-  WIKI_GIT_TIMEOUT_MS,
-  WIKI_SOURCE_LIMIT_BYTES,
-} from '../constants'
+import { WIKI_GIT_OUTPUT_LIMIT_BYTES, WIKI_GIT_TIMEOUT_MS } from '../constants'
 
 import type { WikiIncludedSource } from './answerDeepWikiQuestion'
+import { hashFileSha256 } from './hashFileSha256'
 import { matchesWikiExclusion } from './matchesWikiExclusion'
 import { sourceExclusion } from './sourceExclusion'
 
@@ -21,6 +17,8 @@ export type WikiFreshness = {
   changedPaths: string[]
   addedPaths: string[]
   reason?: string
+  /** First indexed source that could not be compared (a manifest entry without a usable path or hash, a path outside the project, a file that cannot be read); set only for `unknown`. */
+  uncheckedPath?: string
 }
 
 /** Checks a reader's indexed files and additions against its generation revision, including dirty source trees. @param projectRoot - Canonical opened repository. @param includedSources - Source hashes saved during generation. @param generatedRevision - Git commit captured during generation. @param excludedPaths - Manifest exclusions for new source detection. @returns Current, changed or explicitly unknown freshness. @example await inspectDeepWikiFreshness('/repo', [{ path: 'src/a.ts', sha256: hash }], commit, []) */
@@ -31,10 +29,10 @@ export async function inspectDeepWikiFreshness(
   excludedPaths: string[],
 ): Promise<WikiFreshness> {
   const changedPaths: string[] = []
-  let unreadable = false
+  let uncheckedPath: string | undefined
   for (const source of includedSources) {
     if (!source.path || !/^[a-f0-9]{64}$/i.test(source.sha256)) {
-      unreadable = true
+      uncheckedPath ??= source.path || '(an entry without a path)'
       continue
     }
     try {
@@ -45,16 +43,11 @@ export async function inspectDeepWikiFreshness(
         pathWithinProject === '..' ||
         pathWithinProject.startsWith(`..${sep}`)
       ) {
-        unreadable = true
+        uncheckedPath ??= source.path
         continue
       }
-      if ((await stat(canonicalFile)).size > WIKI_SOURCE_LIMIT_BYTES) {
-        unreadable = true
-        continue
-      }
-      const actualHash = createHash('sha256')
-        .update(await readFile(canonicalFile))
-        .digest('hex')
+      // A source of any size is compared: the question composer's size limit is no reason to call a large lockfile or image unchecked.
+      const actualHash = await hashFileSha256(canonicalFile)
       if (actualHash !== source.sha256.toLowerCase())
         changedPaths.push(source.path)
     } catch (error) {
@@ -65,7 +58,7 @@ export async function inspectDeepWikiFreshness(
         error.code === 'ENOENT'
       )
         changedPaths.push(source.path)
-      else unreadable = true
+      else uncheckedPath ??= source.path
     }
   }
   let addedPaths: string[] = []
@@ -127,14 +120,21 @@ export async function inspectDeepWikiFreshness(
   }
   if (changedPaths.length || addedPaths.length)
     return { status: 'changed', changedPaths, addedPaths }
-  if (unreadable || !additionCheckComplete)
+  if (uncheckedPath !== undefined)
     return {
       status: 'unknown',
       changedPaths,
       addedPaths,
-      reason: unreadable
-        ? 'Some indexed source could not be checked.'
-        : 'Added source files could not be checked against the generated revision.',
+      reason: `An indexed source could not be checked: ${uncheckedPath}.`,
+      uncheckedPath,
+    }
+  if (!additionCheckComplete)
+    return {
+      status: 'unknown',
+      changedPaths,
+      addedPaths,
+      reason:
+        'Added source files could not be checked against the generated revision.',
     }
   return { status: 'current', changedPaths, addedPaths }
 }

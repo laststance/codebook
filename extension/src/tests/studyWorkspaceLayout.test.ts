@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -14,7 +15,15 @@ import {
   openRetainedStudy,
   recordedReaderHarness,
   articleRecordingLayoutHarness,
+  readerSeams,
 } from './studyWorkspaceHarness'
+import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import {
+  advanceClock,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 for (const recording of [false, true])
   test(`Wiki ${recording ? 'recording' : 'observation'} reentry restores Study after an empty chat wrapper refresh following actual Return`, async () => {
     // Arrange
@@ -3227,11 +3236,12 @@ for (const [pane, kind] of [
     }
   })
 
-/** Settles a navigation to a short label so a regression that waits forever fails the test instead of hanging it. @example await settleWithin(opening, 6_500) */
+/** Settles a navigation to a short label so a regression that waits forever fails the test instead of hanging it; its timer never outlives the navigation. @example await settleWithin(opening, 6_500) */
 async function settleWithin(
   operation: Promise<unknown>,
   limitMs: number,
 ): Promise<string> {
+  let limit: ReturnType<typeof setTimeout> | undefined
   return Promise.race([
     operation.then(
       () => 'completed',
@@ -3240,20 +3250,21 @@ async function settleWithin(
           ? String(error.code)
           : String(error),
     ),
-    new Promise<string>((resolve) =>
-      setTimeout(() => resolve('still waiting'), limitMs),
-    ),
-  ])
+    new Promise<string>((resolve) => {
+      limit = setTimeout(() => resolve('still waiting'), limitMs)
+    }),
+  ]).finally(() => clearTimeout(limit))
 }
 
-// Value: protects=repository evidence navigation while the recorded application cannot paint (for example a hidden replay panel); fails_when=the navigation waits for the frame forever, so the reader stays busy and the next recording never presents; why_new=Cycle 0032 B1/D2/D5 at the repository evidence site; seam=none
-test('repository evidence whose recorded frame never paints fails within its bound and the next recording open presents its frame', async () => {
+// Value: protects=repository evidence navigation while the recorded application cannot paint (for example a hidden replay panel); fails_when=the navigation waits for the frame forever, so the reader stays busy and the next recording never presents; why_new=Cycle 0032 B1/D2/D5 at the repository evidence site; seam=node:test setTimeout mock (the 5 s bound passes without real waiting)
+test('repository evidence whose recorded frame never paints fails within its bound and the next recording open presents its frame', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true)
   let release = (): void => {}
   try {
     const neverPainted = harness.holdNextImage()
     release = neverPainted.release
+    enableFakeClock(context)
 
     // Act
     const navigation = settleWithin(
@@ -3263,24 +3274,26 @@ test('repository evidence whose recorded frame never paints fails within its bou
         undefined,
         harness.origin,
       ),
-      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+      PRESENTATION_SETTLE_CEILING_MS,
     )
-    await neverPainted.started
-    const paintStartedAt = performance.now()
+    await advanceClockUntilSettled(context, neverPainted.started, 2_000)
+    let outcomeBeforeBound = 'still painting'
+    void navigation.then((label) => {
+      outcomeBeforeBound = label
+    })
+    await advanceClock(context, PRESENTATION_READY_TIMEOUT_MS - 100)
+    const beforeBound = outcomeBeforeBound
+    // The navigation must have failed 6,000 ms after its paint began (the bound Cycle 0034 T2 decided); the helper fails the test otherwise.
+    await advanceClockUntilSettled(context, navigation, 1_100)
     const outcome = await navigation
-    const elapsedMs = performance.now() - paintStartedAt
+    resetFakeClock(context)
     // A navigation that still waits leaves playback busy; stop here instead of hanging the recovery open.
     assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
-    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4). The upper limit leaves room for the storage
-    // write that hiding the expired frame waits for before the navigation reports its failure.
-    assert.ok(
-      elapsedMs >= PRESENTATION_READY_TIMEOUT_MS - 50 &&
-        elapsedMs <= PRESENTATION_READY_TIMEOUT_MS + 1_000,
-      `bounded evidence navigation took ${Math.round(elapsedMs)} ms after its paint started`,
-    )
+    // Assert: the bound is measured from the paint phase (Cycle 0033 AC4): still painting 100 ms before it, failed by 6,000 ms.
+    assert.equal(beforeBound, 'still painting')
     assert.equal(harness.controller.state().readiness, 'ready')
     assert.equal(harness.controller.bundle()?.studyId, harness.studyId)
     assert.equal(
@@ -3288,19 +3301,21 @@ test('repository evidence whose recorded frame never paints fails within its bou
       harness.controller.state().requestedMs,
     )
   } finally {
+    resetFakeClock(context)
     release()
     await harness.close()
   }
 })
 
-// Value: protects=a learner seek made while an evidence navigation waits on a frame that never paints; fails_when=the navigation's expired bound hides playback although the learner's seek now owns it, so the seek never presents; why_new=Cycle 0032 D4 (outside voice); seam=none
-test('an evidence navigation that gives up never cancels a newer learner seek', async () => {
+// Value: protects=a learner seek made while an evidence navigation waits on a frame that never paints; fails_when=the navigation's expired bound hides playback although the learner's seek now owns it, so the seek never presents; why_new=Cycle 0032 D4 (outside voice); seam=node:test setTimeout mock
+test('an evidence navigation that gives up never cancels a newer learner seek', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true)
   const releases: Array<() => void> = []
   try {
     const stuckPaint = harness.holdNextImage()
     releases.push(stuckPaint.release)
+    enableFakeClock(context)
     const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -3308,9 +3323,9 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
         undefined,
         harness.origin,
       ),
-      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+      PRESENTATION_SETTLE_CEILING_MS,
     )
-    await stuckPaint.started
+    await advanceClockUntilSettled(context, stuckPaint.started, 2_000)
     const seekPaint = harness.holdNextImage()
     releases.push(seekPaint.release)
 
@@ -3321,8 +3336,14 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
       expectedRevision: harness.controller.state().revision,
       positionMs: 150,
     })
-    await seekPaint.started
+    await advanceClockUntilSettled(context, seekPaint.started, 2_000)
+    await advanceClockUntilSettled(
+      context,
+      navigation,
+      PRESENTATION_READY_TIMEOUT_MS + 1_500,
+    )
     const navigationOutcome = await navigation
+    resetFakeClock(context)
     seekPaint.release()
     await harness.controller.settle()
 
@@ -3331,13 +3352,14 @@ test('an evidence navigation that gives up never cancels a newer learner seek', 
     assert.equal(harness.controller.state().presentedMs, 150)
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
+    resetFakeClock(context)
     for (const release of releases) release()
     await harness.close()
   }
 })
 
-// Value: protects=a healthy cold presentation whose native debugger needs 4 s before a 2 s paint; fails_when=the 5 s bound again covers the native debugger wait instead of painting only; why_new=Cycle 0033 B2 (Red Team/Claude adversarial in Cycle 0032); seam=none
-test('a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents', async () => {
+// Value: protects=a healthy cold presentation whose native debugger needs 4 s before a 2 s paint; fails_when=the 5 s bound again covers the native debugger wait instead of painting only; why_new=Cycle 0033 B2 (Red Team/Claude adversarial in Cycle 0032); seam=node:test setTimeout mock
+test('a cold evidence navigation whose native debugger takes 4 s and whose frame paints in 2 s still presents', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true, true)
   const releases: Array<() => void> = []
@@ -3347,6 +3369,7 @@ test('a cold evidence navigation whose native debugger takes 4 s and whose frame
     releases.push(slowDebugger.release)
     const slowPaint = harness.holdNextImage()
     releases.push(slowPaint.release)
+    enableFakeClock(context)
 
     // Act
     const navigation = settleWithin(
@@ -3358,13 +3381,15 @@ test('a cold evidence navigation whose native debugger takes 4 s and whose frame
       ),
       PRESENTATION_SETTLE_CEILING_MS + 1_500,
     )
-    await slowDebugger.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 4_000))
+    await advanceClockUntilSettled(context, slowDebugger.started, 2_000)
+    await advanceClock(context, 4_000)
     slowDebugger.release()
-    await slowPaint.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 2_000))
+    await advanceClockUntilSettled(context, slowPaint.started, 2_000)
+    await advanceClock(context, 2_000)
     slowPaint.release()
+    await advanceClockUntilSettled(context, navigation, 2_000)
     const outcome = await navigation
+    resetFakeClock(context)
 
     // Assert
     assert.equal(outcome, 'completed')
@@ -3374,56 +3399,111 @@ test('a cold evidence navigation whose native debugger takes 4 s and whose frame
       harness.binding.elapsedMs,
     )
   } finally {
+    resetFakeClock(context)
     for (const release of releases) release()
     await harness.close()
   }
 })
 
-// Value: protects=an evidence navigation whose presentation never reaches painting still ending; fails_when=the settle has no ceiling once the paint bound covers painting only; why_new=Cycle 0033 B2 ceiling; seam=none
-test('an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents', async () => {
+// Value: protects=the slowest healthy replay sequence still presenting; fails_when=the settle ceiling leaves out the pending startup a retirement waits for or the inspection grace, so a healthy 15.7 s native debugger wait reports PRESENTATION_UNAVAILABLE and hides the frame; why_new=Cycle 0044 (0033-F2e3 / 0034-PL5); seam=node:test setTimeout mock
+test('an evidence navigation whose native debugger needs a pending startup, a retirement, the next startup and the inspection grace (15.7 s) before a 4.9 s paint still presents', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true, true)
-  const stuckDebugger = harness.holdHistoricalDebugPresentation()
+  const releases: Array<() => void> = []
   try {
-    const startedAt = performance.now()
+    // The opening gap frame has no image; hold the recorded stop so its debugger wait and its paint share one settle.
+    const slowDebugger = harness.holdHistoricalDebugPresentation(true)
+    releases.push(slowDebugger.release)
+    const slowPaint = harness.holdNextImage()
+    releases.push(slowPaint.release)
+    enableFakeClock(context)
 
-    // Act
-    const outcome = await settleWithin(
+    // Act: each native step stays just inside its own bound (3 × 4.9 s, then the 1 s grace).
+    const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
         true,
         undefined,
         harness.origin,
       ),
-      PRESENTATION_SETTLE_CEILING_MS + 1_500,
+      30_000,
     )
-    const elapsedMs = performance.now() - startedAt
+    await advanceClockUntilSettled(context, slowDebugger.started, 2_000)
+    await advanceClock(context, 15_700)
+    slowDebugger.release()
+    await advanceClockUntilSettled(context, slowPaint.started, 2_000)
+    await advanceClock(context, 4_900)
+    slowPaint.release()
+    await advanceClockUntilSettled(context, navigation, 2_000)
+    const outcome = await navigation
+    resetFakeClock(context)
+
+    // Assert
+    assert.equal(outcome, 'completed')
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(
+      harness.controller.state().presentedMs,
+      harness.binding.elapsedMs,
+    )
+  } finally {
+    resetFakeClock(context)
+    for (const release of releases) release()
+    await harness.close()
+  }
+})
+
+// Value: protects=an evidence navigation whose presentation never reaches painting still ending; fails_when=the settle has no ceiling once the paint bound covers painting only; why_new=Cycle 0033 B2 ceiling; seam=node:test setTimeout mock
+test('an evidence navigation stuck before painting fails at the settle ceiling and the next recording open presents', async (context) => {
+  // Arrange
+  const harness = await articleRecordingLayoutHarness(true, true)
+  const stuckDebugger = harness.holdHistoricalDebugPresentation()
+  try {
+    enableFakeClock(context)
+
+    // Act
+    const navigation = settleWithin(
+      harness.reader.openRepositoryEvidence(
+        harness.binding,
+        true,
+        undefined,
+        harness.origin,
+      ),
+      PRESENTATION_SETTLE_CEILING_MS + 5_000,
+    )
+    let outcomeBeforeCeiling = 'still waiting for the debugger'
+    void navigation.then((label) => {
+      outcomeBeforeCeiling = label
+    })
+    await advanceClock(context, PRESENTATION_SETTLE_CEILING_MS - 250)
+    const beforeCeiling = outcomeBeforeCeiling
+    await advanceClockUntilSettled(context, navigation, 4_000)
+    const outcome = await navigation
+    resetFakeClock(context)
     stuckDebugger.reject(new Error('Playback presentation superseded'))
     await harness.reader.openRecording(harness.studyId)
     await harness.controller.settle()
 
     // Assert
     assert.equal(outcome, 'PRESENTATION_UNAVAILABLE')
-    assert.ok(
-      elapsedMs >= PRESENTATION_SETTLE_CEILING_MS - 250 &&
-        elapsedMs <= PRESENTATION_SETTLE_CEILING_MS + 1_000,
-      `stuck evidence navigation took ${Math.round(elapsedMs)} ms`,
-    )
+    assert.equal(PRESENTATION_SETTLE_CEILING_MS, 23_000)
+    assert.equal(beforeCeiling, 'still waiting for the debugger')
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
+    resetFakeClock(context)
     stuckDebugger.release()
     await harness.close()
   }
 })
 
-// Value: protects=a navigation whose first frame is superseded by a learner seek giving the newer frame its own full paint bound; fails_when=the paint bound is armed once per settle instead of per paint phase; why_new=Cycle 0033 A3 (eng review); seam=none
-test('a newer frame painted during an evidence navigation gets its own paint bound', async () => {
+// Value: protects=a navigation whose first frame is superseded by a learner seek giving the newer frame its own full paint bound; fails_when=the paint bound is armed once per settle instead of per paint phase; why_new=Cycle 0033 A3 (eng review); seam=node:test setTimeout mock
+test('a newer frame painted during an evidence navigation gets its own paint bound', async (context) => {
   // Arrange
   const harness = await articleRecordingLayoutHarness(true)
   const releases: Array<() => void> = []
   try {
     const firstPaint = harness.holdNextImage()
     releases.push(firstPaint.release)
+    enableFakeClock(context)
     const navigation = settleWithin(
       harness.reader.openRepositoryEvidence(
         harness.binding,
@@ -3433,8 +3513,8 @@ test('a newer frame painted during an evidence navigation gets its own paint bou
       ),
       PRESENTATION_SETTLE_CEILING_MS + 1_500,
     )
-    await firstPaint.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    await advanceClockUntilSettled(context, firstPaint.started, 2_000)
+    await advanceClock(context, 3_000)
     const seekPaint = harness.holdNextImage()
     releases.push(seekPaint.release)
 
@@ -3445,10 +3525,12 @@ test('a newer frame painted during an evidence navigation gets its own paint bou
       expectedRevision: harness.controller.state().revision,
       positionMs: 150,
     })
-    await seekPaint.started
-    await new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    await advanceClockUntilSettled(context, seekPaint.started, 2_000)
+    await advanceClock(context, 3_000)
     seekPaint.release()
+    await advanceClockUntilSettled(context, navigation, 2_000)
     const outcome = await navigation
+    resetFakeClock(context)
     await harness.controller.settle()
 
     // Assert: 6 s after the first paint began, the newer frame had painted for only 3 s, so no bound expired.
@@ -3456,6 +3538,7 @@ test('a newer frame painted during an evidence navigation gets its own paint bou
     assert.equal(harness.controller.state().presentedMs, 150)
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
+    resetFakeClock(context)
     for (const release of releases) release()
     await harness.close()
   }
@@ -3492,6 +3575,135 @@ test('an evidence navigation cancelled while its frame paints ends with the canc
     assert.equal(harness.controller.state().readiness, 'ready')
   } finally {
     neverPainted.release()
+    await harness.close()
+  }
+})
+
+/**
+ * Opens the Study layout on one saved study and saves a second one, so a test can choose it in Saved studies.
+ * @returns The reader harness with the first study shown and the second study, which the Saved studies list holds.
+ * @example const { harness, second } = await studyLayoutWithSecondSavedStudy()
+ */
+async function studyLayoutWithSecondSavedStudy() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  await openRetainedStudy(harness)
+  const library = await harness.reader.learningStorage(),
+    second = createConfiguredStudy(),
+    runId = randomUUID()
+  for (const observation of second.observations)
+    observation.snapshotUri = observation.snapshotUri.replace(
+      second.runId,
+      runId,
+    )
+  second.workspaceKey = library.workspaceKey
+  second.runId = runId
+  second.id = `${second.instanceId}_${runId}`
+  second.savedAt = '2026-09-20T00:00:01.000Z'
+  await library.saveStudy(second)
+  // Retry storage / refresh reloads the catalog the reader shows.
+  await harness.reader.action('retry')
+  return { harness, second }
+}
+
+// Value: protects=the maximized bottom panel of a learner who works through Saved studies (0038-N7-e); fails_when=a choice shows the study's source at once, which brings the hidden editor area back and takes the panel out of its maximized state, so the Saved studies section leaves the view; why_new=native run of 2026-10-04 (two choices, c05-chosen-7s.png, c08-chosen2.png); seam=workspace harness with a maximized bottom panel
+test('choosing another saved study while the bottom panel is maximized leaves the panel maximized and shows the chosen study in it', async () => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+
+    // Act: the learner chooses the other entry in the panel's Saved studies list, and the reader's timer runs once.
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    await readerSeams(harness).refresh()
+
+    // Assert
+    const view = harness.reader.inspect().view!
+    assert.equal(harness.isPanelMaximized(), true)
+    assert.equal(view.model.selection.studyId, second.id)
+    assert.equal(view.loading, false)
+    assert.equal(view.errors.join(' | '), '')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height and the confirmed layout after a Saved studies choice made with the bottom panel maximized (0039-N8-b / 0040-N9-img); fails_when=the choice reveals the source into the hidden editor area, where the editor expands the source group: the Application group stays a 70 px strip and the layout is unconfirmed after the panel is restored; why_new=native run of 2026-10-04 (c08-chosen2.png, c09-crop.png: strip, layoutConfirmed false); seam=workspace harness with a maximized bottom panel
+test('after a saved study was chosen with the bottom panel maximized, restoring the panel shows that study with the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    const applicationHeightBefore = harness.groupHeightPx(1)
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const confirmedWhileMaximized = (
+      await harness.reader.readPresentationState()
+    ).layoutConfirmed
+
+    // Act: the learner restores the panel, and the reader's timer runs once.
+    harness.restorePanel()
+    await readerSeams(harness).refresh()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedWhileMaximized, true)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+    assert.equal(harness.reader.inspect().sourceUri!.includes(second.id), true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized (0039-N8-b / 0040-N9-img, second occurrence); fails_when=the seek reveals its source into the hidden editor area, the editor expands the source group and brings the area back, and nothing gives the Application group its height back: it stays a 70 px strip with the layout unconfirmed until Restore; why_new=native run of 2026-10-04 (u18-max-seek.png, repaired only by Restore, u25-restored.png); seam=workspace harness with a maximized bottom panel
+test('a recorded seek made while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const applicationHeightBefore = harness.groupHeightPx(1),
+      confirmedBefore = (await harness.reader.readPresentationState())
+        .layoutConfirmed
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedBefore, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    // The editor itself brings the hidden editor area back for the recorded source.
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+  } finally {
     await harness.close()
   }
 })

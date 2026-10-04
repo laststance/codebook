@@ -9,15 +9,29 @@ import { join, relative, sep } from 'node:path'
 
 import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
+  WIKI_MANIFEST_FILE,
   WIKI_QUESTION_LIMIT_CHARS,
+  WIKI_UPDATE_IDLE_POLL_MS,
+  WIKI_UPDATE_REASON_LIMIT_CHARS,
+  WIKI_UPDATE_SHOWN_PATH_LIMIT,
+  WIKI_UPDATE_START_WAIT_MS,
+  WIKI_UPDATE_STATUS_POLL_MS,
+  WIKI_UPDATE_STATUS_RETRY_LIMIT,
 } from './constants'
 import type {
   WikiAnswer,
   WikiIncludedSource,
 } from './utils/answerDeepWikiQuestion'
+import { describeWikiUpdate } from './utils/describeWikiUpdate'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { installShortcutHelp } from './utils/installShortcutHelp'
+import {
+  installWikiUpdateStatus,
+  type WikiUpdateStatusAnswer,
+} from './utils/installWikiUpdateStatus'
+import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
+import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
 
 export type DeepWikiReader = { url: string; close(): Promise<void> }
 type WikiQuestionResult = WikiAnswer | { handoff: string }
@@ -45,20 +59,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  var freshness = document.querySelector('[data-codebook-freshness]');
-  async function refreshFreshness() {
-    if (!freshness) return;
-    try {
-      var response = await fetch(prefix + 'api/freshness');
-      if (!response.ok) throw new Error('Freshness check unavailable');
-      var result = await response.json();
-      freshness.textContent = result.status === 'current' ? 'Wiki source current' : result.status === 'changed' ? 'Source changed — update LLM Wiki' : 'Wiki freshness unknown';
-      freshness.setAttribute('data-status', result.status);
-      if (result.reason) freshness.title = result.reason;
-    } catch { freshness.textContent = 'Wiki freshness unknown'; freshness.setAttribute('data-status', 'unknown'); }
-  }
-  void refreshFreshness();
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) void refreshFreshness(); });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
@@ -98,7 +99,7 @@ export async function readDeepWikiManifest(
   excludedPaths: string[]
 }> {
   const manifest: unknown = JSON.parse(
-    await readFile(join(outputDirectory, 'codebook-wiki.json'), 'utf8'),
+    await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
   )
   if (
     typeof manifest !== 'object' ||
@@ -179,12 +180,13 @@ export async function readDeepWikiManifest(
   return { files: new Set(paths), sources, revision, excludedPaths }
 }
 
-/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
+/** Serves one generated Wiki on loopback and binds its editor links when the current host opens it. @param outputDirectory - Generated Wiki directory. @param projectRoot - Canonical opened repository. @param answerQuestion - Editor model request with validated source context. @param editorScheme - Active editor URI scheme. @param readUpdateStatus - Current Wiki update run state served at `api/update-status`. @returns Loopback URL and owned close operation. @example const reader = await startDeepWikiReader('/repo/.codebook/wiki', '/repo', answer, 'cursor') */
 export async function startDeepWikiReader(
   outputDirectory: string,
   projectRoot: string,
   answerQuestion: AnswerQuestion,
   editorScheme: 'vscode' | 'cursor' = 'vscode',
+  readUpdateStatus: () => WikiUpdateStatus = () => ({ state: 'idle' }),
 ): Promise<DeepWikiReader> {
   await readDeepWikiManifest(outputDirectory, projectRoot)
   const canonicalOutput = await realpath(outputDirectory)
@@ -215,14 +217,25 @@ export async function startDeepWikiReader(
     }
     const relativePath =
       decodeURIComponent(url.pathname.slice(prefix.length)) || 'index.html'
+    // The update state needs no manifest, so it answers while a publish is replacing the site.
+    if (relativePath === 'api/update-status') {
+      if (request.method !== 'GET') {
+        sendGetOnly(response)
+        return
+      }
+      // The publish time lets the page tell a publish after the run ended from a source that went back by itself.
+      sendJson(response, 200, {
+        ...readUpdateStatus(),
+        sitePublishedAt: await readWikiPublishedAt(outputDirectory),
+      } satisfies WikiUpdateStatusAnswer)
+      return
+    }
     // An agent may publish a new owned directory while this reader stays open.
     const { files, sources, revision, excludedPaths } =
       await readDeepWikiManifest(outputDirectory, projectRoot)
     if (relativePath === 'api/freshness') {
       if (request.method !== 'GET') {
-        sendJson(response, 405, {
-          error: 'Unsupported Wiki freshness request.',
-        })
+        sendGetOnly(response)
         return
       }
       sendJson(
@@ -285,7 +298,7 @@ export async function startDeepWikiReader(
       return
     }
     if (request.method !== 'GET') {
-      sendJson(response, 405, { error: 'Unsupported Wiki request.' })
+      sendGetOnly(response)
       return
     }
     if (relativePath === 'codebook-qa.js') {
@@ -294,6 +307,12 @@ export async function startDeepWikiReader(
       return
     }
     if (!files.has(relativePath)) {
+      // A page the last update removed or renamed sends the learner to the overview instead of a JSON error.
+      if (relativePath.endsWith('.html')) {
+        response.writeHead(302, { Location: `${prefix}index.html` })
+        response.end()
+        return
+      }
       sendJson(response, 404, {
         error: 'This file is not published by the Wiki.',
       })
@@ -354,6 +373,12 @@ export async function startDeepWikiReader(
     if (server.listening) server.close()
     throw error
   }
+}
+
+/** Refuses any other method on a read-only Wiki route and names the one that works, so a caller is told what to send instead. @param response - The answer to the refused request. @example sendGetOnly(response) // 405, Allow: GET */
+function sendGetOnly(response: ServerResponse): void {
+  response.setHeader('Allow', 'GET')
+  sendJson(response, 405, { error: 'This Wiki route only answers GET.' })
 }
 
 /** Returns a no-store JSON result to the browser reader after a page or model request. @example sendJson(response, 404, { error: 'Missing' }) */

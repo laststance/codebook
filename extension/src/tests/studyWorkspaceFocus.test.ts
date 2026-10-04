@@ -1046,6 +1046,133 @@ test('an older presentation read cannot suppress original focus recovery after a
   }
 })
 
+for (const loss of [
+  'the workbench resized the split',
+  'the layout receipt was lost',
+] as const)
+  // Value: protects=an agent's or learner's Restore after a failed run working from wherever the focus is; fails_when=the live Restore refuses "Focus an owned Study pane before changing its reading layout." until an Application or Study pane is clicked; why_new=Cycle 0044 0036-N05 (the live Restore tests start from a focused Codebook pane or a chat part); seam=workspace harness with the fake editor and a leased live viewport
+  test(`Restore after a failed run confirms the app and source layout without a pane click when ${loss}`, async () => {
+    // Arrange: a live run whose explanation is in the chat; the learner's own file has the focus, beside the Application pane.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+    let live:
+      | ReturnType<
+          NonNullable<typeof harness.reader.presentation.createViewport>
+        >
+      | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: 'failed-run',
+      })
+      await harness.service.record(receipt).preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      const draft = harness.focusMutableDraft('auth.ts', 1)
+      // The run fails and is cleaned up; the editor's own panels then change the split, or the receipt is gone.
+      harness.runtimes[0]!.fail('Injected run failure')
+      await harness.service.stop({
+        instanceId: harness.service.instanceId,
+        runId: receipt.runId,
+      })
+      live.close()
+      if (loss === 'the workbench resized the split')
+        harness.changeEditorLayout({
+          orientation: 1,
+          groups: [{ size: 0.8 }, { size: 0.2 }],
+        })
+      else harness.reader['layoutReceipt'] = undefined
+      const failed = await harness.reader.readPresentationState()
+      assert.equal(failed.layoutConfirmed, false)
+      assert.equal(
+        failed.reason,
+        loss === 'the workbench resized the split'
+          ? 'The Study arrangement is not confirmed. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.'
+          : 'The native editor layout receipt no longer matches the Study panes. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.',
+      )
+      // Act: no pane is clicked first.
+      const restored = await harness.reader.changePresentation({
+        presentationId: failed.presentationId,
+        expectedRevision: failed.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+      // Assert
+      assert.equal(restored.layoutConfirmed, true)
+      assert.equal(restored.reason, undefined)
+      assert.deepEqual(harness.editorLayout(), {
+        orientation: 1,
+        groups: [{ size: 0.5 }, { size: 0.5 }],
+      })
+      assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+      assert.equal(restored.panes.sourceColumn, 2)
+      // The learner's file keeps its tab, its text and the focus.
+      assert.equal(harness.groups[0]!.activeTab, draft.tab)
+      assert.equal(harness.focusedPanel(), undefined)
+      assert.equal(draft.document.getText(), 'Original learner draft.\n')
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=an agent's Focus after a failed run reaching the Application pane from the learner's own file; fails_when=the focus control needs an Application or Study pane to be clicked first; why_new=Cycle 0044 0036-N05 named Focus beside Restore, and no test started Focus after a failed run; seam=workspace harness with the fake editor and a leased live viewport
+test('Focus after a failed run reaches the Application pane without a pane click', async () => {
+  // Arrange: a live run whose explanation is in the chat; the learner's own file has the focus, beside the Application pane.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{ size: 980 }] })
+  let live:
+    | ReturnType<NonNullable<typeof harness.reader.presentation.createViewport>>
+    | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'failed-run',
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    const draft = harness.focusMutableDraft('auth.ts', 1)
+    harness.runtimes[0]!.fail('Injected run failure')
+    await harness.service.stop({
+      instanceId: harness.service.instanceId,
+      runId: receipt.runId,
+    })
+    live.close()
+    const failed = await harness.reader.readPresentationState()
+    // Act: no pane is clicked first.
+    const focused = await harness.reader.changePresentation({
+      presentationId: failed.presentationId,
+      expectedRevision: failed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'focus',
+    })
+    // Assert
+    assert.equal(focused.state, 'open')
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
+    assert.equal(harness.panelColumn('codebook.scopedBrowser'), 1)
+    assert.equal(harness.groups[0]!.tabs.includes(draft.tab), true)
+    assert.equal(draft.document.getText(), 'Original learner draft.\n')
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 test('first configured Study pause keeps captured source visible beside the application without manual Arrange', async () => {
   // Arrange
   const harness = await configuredWorkspaceHarness()

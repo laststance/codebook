@@ -71,6 +71,8 @@ function harness(
   configurationGate?: Promise<void>,
   refusalGate?: Promise<void>,
   listeners?: { changed?: () => void; failed?: (error: unknown) => void },
+  /** The id of another debug session whose paused thread holds the Run and Debug focus, as while a live run or a learner's own session is paused and selected in Call Stack. */
+  focusedForeignPauseSessionId?: string,
 ) {
   const terminated = new TestEmitter<vscode.DebugSession>(),
     stopped: string[] = [],
@@ -139,6 +141,27 @@ function harness(
     EventEmitter: TestEmitter,
     DebugAdapterInlineImplementation: Inline,
     debug: {
+      get activeStackItem(): vscode.DebugThread | undefined {
+        // The editor reports the focused paused thread with its session; only the session's identity is read.
+        return focusedForeignPauseSessionId === undefined
+          ? undefined
+          : {
+              session: {
+                id: focusedForeignPauseSessionId,
+                type: 'pwa-node',
+                name: 'Next.js: debug server-side',
+                configuration: {
+                  type: 'pwa-node',
+                  name: 'Next.js: debug server-side',
+                  request: 'launch',
+                },
+                workspaceFolder: undefined,
+                customRequest: async () => undefined,
+                getDebugProtocolBreakpoint: async () => undefined,
+              },
+              threadId: 1,
+            }
+      },
       registerDebugAdapterDescriptorFactory(_type, value) {
         factory = value
         return {
@@ -520,6 +543,48 @@ test('replacing a recorded stop keeps history available when the editor disconne
   assert.deepEqual(stopped, ['historical-owned', 'historical-owned-2'])
 })
 
+// Value: protects=a seek during Codebook's own stop change; fails_when=the old adapter's disconnect marks history unavailable before its termination, so the seek is refused as closed and the reader reloads; why_new=Cycle 0044 (0034-C1 / 0034-PL3); seam=none
+test('a seek between the old adapter disconnect and its termination during a stop change still presents the next stop', async () => {
+  // Arrange
+  let releaseTermination = (): void => {}
+  const fixture = harness(
+    undefined,
+    new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    }),
+    0,
+    true,
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  fixture.owner.invalidate()
+  const retiring = fixture.owner.retire(undefined, new AbortController().signal)
+  await fixture.stopRequested
+  try {
+    // Act
+    const availableBetween = fixture.owner.available
+    const seeking = fixture.owner.present(
+      inspectedSnapshot,
+      'Second recorded stop',
+      new AbortController().signal,
+    )
+    releaseTermination()
+    await retiring
+    const outcome = await seeking
+
+    // Assert
+    assert.equal(availableBetween, true)
+    assert.equal(outcome, 'inspected')
+    assert.equal(fixture.owner.available, true)
+  } finally {
+    releaseTermination()
+    await fixture.owner.dispose()
+  }
+})
+
 test('replay remains loading until the native debugger retrieves the current recorded Local values', async () => {
   // Arrange
   const fixture = harness(undefined, undefined, 0, false, true)
@@ -649,6 +714,42 @@ for (const endSession of ['terminate', 'disconnect'] satisfies Array<
     } finally {
       await fixture.owner.dispose()
       await rejected.catch(() => {})
+    }
+  })
+
+  test(`native ${endSession} during a pending inspection wait fails the replay moment at once instead of at the inspection grace`, async (context) => {
+    // Arrange
+    context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+    const fixture = harness(undefined, undefined, 0, false, true)
+    let outcome = 'pending'
+    const showing = fixture.owner
+      .present(
+        inspectedSnapshot,
+        'Recorded pause',
+        new AbortController().signal,
+      )
+      .then(
+        (inspection) => {
+          outcome = inspection
+        },
+        (error: unknown) => {
+          outcome = error instanceof Error ? error.message : String(error)
+        },
+      )
+    try {
+      await fixture.started
+      await flushNative()
+
+      // Act: no timer advances, so only the ownership change can end the wait.
+      fixture[endSession]()
+      await flushNative()
+
+      // Assert
+      assert.match(outcome, /Reopen the learning replay/)
+    } finally {
+      context.mock.timers.reset()
+      await fixture.owner.dispose()
+      await showing
     }
   })
 }
@@ -1577,8 +1678,8 @@ test('a startup the editor never answers makes the historical debugger unavailab
   }
 })
 
-// Value: protects=no unowned "Codebook · Recorded learning" session after a startup outlived its bound; fails_when=a late session of an expired owner keeps running; why_new=Cycle 0033 A2; seam=none
-test('a session the editor starts after the startup bound expired is stopped once its startup completes', async (context) => {
+// Value: protects=replay after a healthy but slow historical-debugger startup; fails_when=the late session is stopped and replay fails until the learner reopens the recording; why_new=Cycle 0044 (0033-F2e2 / 0034-OOS1); seam=none
+test('a healthy startup slower than the capture timeout is adopted when it completes, so the next stop presents without reopening the replay', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
   let releaseStart = (): void => {}
@@ -1598,10 +1699,18 @@ test('a session the editor starts after the startup bound expired is stopped onc
     // Act
     releaseStart()
     await flushNative()
+    const next = await fixture.owner.present(
+      inspectedSnapshot,
+      'Next recorded pause',
+      new AbortController().signal,
+    )
 
     // Assert
     assert.match(outcome, /Historical debugger closed/)
-    assert.deepEqual(fixture.stopped, ['historical-owned'])
+    assert.equal(fixture.owner.available, true)
+    assert.equal(next, 'inspected')
+    assert.deepEqual(fixture.stopped, [])
+    assert.equal(fixture.startCalls(), 1)
   } finally {
     context.mock.timers.reset()
     await fixture.owner.dispose()
@@ -1705,6 +1814,47 @@ test('a retirement the editor never finishes makes later presentations fail with
 })
 
 // Value: protects=an expired retirement staying unavailable when the editor finally reports termination; fails_when=the termination handler re-attaches the owner because the retiring session id survived expiry; why_new=Cycle 0033 O3 (Codex outside voice); seam=none
+// Value: protects=no recorded session left alive after a retirement outlived its bound; fails_when=the expired owner never asks the editor again and the session stays until an explicit reopen; why_new=Cycle 0044 (0033-F2d / 0034-OOS2); seam=none
+test('a retirement that outlives the capture timeout asks the editor once more to stop the session still showing history', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseTermination = (): void => {}
+  const fixture = harness(
+    undefined,
+    new Promise<void>((resolve) => {
+      releaseTermination = resolve
+    }),
+  )
+  await fixture.owner.present(
+    firstSnapshot,
+    'First recorded stop',
+    new AbortController().signal,
+  )
+  fixture.owner.invalidate()
+  const retiring = fixture.owner
+    .retire(undefined, new AbortController().signal)
+    .catch((error: unknown) => String(error))
+  try {
+    await fixture.stopRequested
+    await flushNative()
+    const stopsBeforeExpiry = [...fixture.stopped]
+
+    // Act
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    await retiring
+    await flushNative()
+
+    // Assert
+    assert.deepEqual(stopsBeforeExpiry, ['historical-owned'])
+    assert.deepEqual(fixture.stopped, ['historical-owned', 'historical-owned'])
+    assert.equal(fixture.owner.available, false)
+  } finally {
+    context.mock.timers.reset()
+    releaseTermination()
+    await fixture.owner.dispose()
+  }
+})
+
 test('a termination that arrives after the retirement bound expired leaves the historical debugger unavailable', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
@@ -1749,7 +1899,7 @@ test('a termination that arrives after the retirement bound expired leaves the h
 })
 
 // Value: protects=closing the reader and replacing an unavailable debugger when the editor never acknowledges the stop; fails_when=dispose() awaits stopDebugging without a bound; why_new=Cycle 0033 A1; seam=none
-test('closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop', async (context) => {
+test('closing the historical debugger completes after the capture timeout when the editor never acknowledges the stop, and asks the editor to stop once more', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
   const fixture = harness(undefined, new Promise<void>(() => {}))
@@ -1775,7 +1925,7 @@ test('closing the historical debugger completes after the capture timeout when t
   // Assert
   assert.equal(beforeDeadline, false)
   assert.equal(closed, true)
-  assert.deepEqual(fixture.stopped, ['historical-owned'])
+  assert.deepEqual(fixture.stopped, ['historical-owned', 'historical-owned'])
 })
 
 // Value: protects=the 1 s grace when the wall clock jumps backward before a later presentation waits on the same stop; fails_when=the grace delay is computed from Date without a nominal cap; why_new=Cycle 0033 M1 (e); seam=node:test Date mock
@@ -2273,6 +2423,11 @@ test('a stop the editor never answers after a 4 s startup fails the retirement 5
 test('a waiting presentation still fails with the closed-debugger error when the reader listener and its error channel both throw as the startup bound expires', async (context) => {
   // Arrange
   context.mock.timers.enable({ apis: ['setTimeout'] })
+  let releaseStartup = (): void => {}
+  // Released only in cleanup, so dispose cannot hang on the startup when the give-up regresses and the assertion fails instead.
+  const startupGate = new Promise<void>((resolve) => {
+    releaseStartup = resolve
+  })
   const fixture = harness(
     undefined,
     undefined,
@@ -2280,7 +2435,7 @@ test('a waiting presentation still fails with the closed-debugger error when the
     false,
     false,
     undefined,
-    new Promise<void>(() => {}),
+    startupGate,
     {
       changed: () => {
         throw new Error('reader publish failed')
@@ -2318,6 +2473,7 @@ test('a waiting presentation still fails with the closed-debugger error when the
     assert.equal(fixture.owner.available, false)
   } finally {
     context.mock.timers.reset()
+    releaseStartup()
     await fixture.owner.dispose()
   }
 })
@@ -2370,6 +2526,58 @@ test('a stop presented after the editor disposed the historical adapter still fa
   }
 })
 
+// Value: protects=the editor's DAP stream and event loop when the reader's listener and its error channel both fail outside the give-up path; fails_when=the values-loaded notification or the session-ended handler lets the error channel's own error escape; why_new=Cycle 0035 R09 (only giveUp() guarded the double fault); seam=none
+test('a reader listener and error channel that both throw when Run and Debug loads values or the historical session ends let no error escape into the editor', async () => {
+  // Arrange: the first stop commits without values, so a later inspection reports values-loaded.
+  let readerFailing = false
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    {
+      changed: () => {
+        if (readerFailing) throw new Error('reader publish failed')
+      },
+      failed: () => {
+        throw new Error('reader error channel failed')
+      },
+    },
+  )
+  const escapedError = (notify: () => void): string => {
+    try {
+      notify()
+      return 'none'
+    } catch (error) {
+      return String(error)
+    }
+  }
+  try {
+    const committed = await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    readerFailing = true
+
+    // Act
+    const escapedOnValuesLoaded = escapedError(() => fixture.inspect())
+    const escapedOnSessionEnded = escapedError(() => fixture.terminate())
+
+    // Assert
+    assert.equal(committed, 'uninspected')
+    assert.equal(escapedOnValuesLoaded, 'none')
+    assert.equal(escapedOnSessionEnded, 'none')
+    assert.equal(fixture.owner.available, false)
+  } finally {
+    readerFailing = false
+    await fixture.owner.dispose()
+  }
+})
+
 // Value: protects=an owner the reader closed while its native startup was still pending; fails_when=the retirement that waited for that startup resolves as retired or stops the session a second time; why_new=Cycle 0035 H5c (Cycle 0034 E2 covers the gave-up arm of the same guard only); seam=none
 test('a retirement that was waiting for a startup during which the reader closed fails closed and stops the session only once', async () => {
   // Arrange
@@ -2398,7 +2606,158 @@ test('a retirement that was waiting for a startup during which the reader closed
   const outcome = await retiring
   await closing
 
-  // Assert
-  assert.match(outcome, /Historical debugger closed/)
+  // Assert: the retirement's own closed guard answers, not the startup's "closed during startup" rejection.
+  assert.equal(
+    outcome,
+    'Error: Historical debugger closed. Reopen the learning replay to restore it.',
+  )
   assert.deepEqual(fixture.stopped, ['historical-owned'])
+})
+
+// Value: protects=the 2.0 s bound of a Recording press on a paused live run's own recording (0035-O01); fails_when=a recorded stop waits the whole inspection grace although another session's paused frame keeps the Run and Debug focus, so its values can never load during the wait; why_new=native run of 2026-10-04 measured 1.2 to 1.3 s between the shown range and the presented position in three takes; seam=none
+test('a recorded stop is shown at once, without its values, while a paused frame of another debug session keeps the Run and Debug focus', async (context) => {
+  // Arrange
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    'live-next-server',
+  )
+  let outcome = 'pending'
+
+  // Act
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .then((result) => {
+      outcome = result
+    })
+  try {
+    await fixture.started
+    await flushNative()
+
+    // Assert
+    assert.equal(outcome, 'uninspected', 'shown before any timer ran')
+    assert.equal(fixture.stopped.length, 0)
+  } finally {
+    // A presentation that still waits is released, so a failure reports instead of holding the file.
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await showing
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Show Variables acting on a Variables tree that holds the presented stop; fails_when=the wait for native Variables ends before that view asked for the stop's scopes, so list commands run on an empty tree again, or it never ends; why_new=Cycle 0044 (0031-U1 in VS Code 1.140: a hidden Variables view asks for a stop's scopes only 400 ms after it is shown); seam=none
+test('a wait for native Variables ends when that view asks for the presented stop scopes, and its values wait ends when the first scope is listed', async () => {
+  // Arrange: Variables is hidden, so the stop commits without the native client asking for its scopes.
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    let scopesOutcome: boolean | 'pending' = 'pending',
+      valuesOutcome: boolean | 'pending' = 'pending'
+    const scopesWait = fixture.owner
+        .awaitRetrieval('scopes', 5_000)
+        .then((retrieved) => {
+          scopesOutcome = retrieved
+        }),
+      valuesWait = fixture.owner
+        .awaitRetrieval('values', 5_000)
+        .then((retrieved) => {
+          valuesOutcome = retrieved
+        })
+
+    // Act: the shown view refreshes, as native Variables does: threads and stack, then the frame's scopes, then the first scope's values.
+    const thread = fixture.request('threads').body.threads[0]
+    const frame = fixture.request('stackTrace', { threadId: thread.id }).body
+      .stackFrames[0]
+    await flushNative()
+    const scopesBeforeTheViewAsked = scopesOutcome
+    const scope = fixture.request('scopes', { frameId: frame.id }).body
+      .scopes[0]
+    await scopesWait
+    await flushNative()
+    const valuesBeforeTheScopeWasListed = valuesOutcome
+    fixture.request('variables', {
+      variablesReference: scope.variablesReference,
+    })
+    await valuesWait
+
+    // Assert
+    assert.equal(scopesBeforeTheViewAsked, 'pending')
+    assert.equal(scopesOutcome, true)
+    assert.equal(valuesBeforeTheScopeWasListed, 'pending')
+    assert.equal(valuesOutcome, true)
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Show Variables finishing when Run and Debug shows another session or never opens; fails_when=the wait for native Variables has no bound, so the button's action hangs, or it reports the scopes as retrieved although nobody asked; why_new=Cycle 0044 (0031-U1: the wait must end when the signal never comes); seam=none
+test('a wait for native Variables that never asks for the stop ends at its bound without the scopes', async (context) => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    let outcome: boolean | 'pending' = 'pending'
+    const waiting = fixture.owner
+      .awaitRetrieval('scopes', 2_000)
+      .then((retrieved) => {
+        outcome = retrieved
+      })
+
+    // Act
+    context.mock.timers.tick(1_999)
+    await flushNative()
+    const beforeTheBound = outcome
+    context.mock.timers.tick(1)
+    await waiting
+
+    // Assert
+    assert.equal(beforeTheBound, 'pending')
+    assert.equal(outcome, false)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=Show Variables returning at once after the learner stopped the recorded session; fails_when=the wait for native Variables sits out its whole bound on a session that can answer nothing; why_new=Cycle 0044 (0031-U1); seam=none
+test('a wait for native Variables ends at once without the scopes when the learner stops the recorded session', async () => {
+  // Arrange
+  const fixture = harness(undefined, undefined, 0, false, true)
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause',
+      new AbortController().signal,
+    )
+    const waiting = fixture.owner.awaitRetrieval('scopes', 60_000)
+
+    // Act
+    fixture.terminate()
+    const outcome = await Promise.race([
+      waiting,
+      delay(1_000, 'still waiting for native Variables'),
+    ])
+
+    // Assert
+    assert.equal(outcome, false)
+  } finally {
+    await fixture.owner.dispose()
+  }
 })

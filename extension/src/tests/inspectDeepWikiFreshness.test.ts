@@ -83,6 +83,110 @@ test('Wiki freshness detects edited, deleted and added source against a clean ge
   }
 })
 
+test('a Wiki that indexes a lockfile larger than the question composer reads is current while that file is unchanged and changed once it is edited', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-freshness-'))
+  const root = await realpath(directory)
+  const lockfile = `lockfileVersion: '9.0'\n${'# resolved package entry\n'.repeat(12_000)}`
+  await writeFile(join(root, 'pnpm-lock.yaml'), lockfile)
+  await runGit('git', ['init', '-q'], { cwd: root })
+  await runGit('git', ['add', 'pnpm-lock.yaml'], { cwd: root })
+  await runGit(
+    'git',
+    [
+      '-c',
+      'user.name=Codebook',
+      '-c',
+      'user.email=codebook@example.invalid',
+      'commit',
+      '-qm',
+      'baseline',
+    ],
+    { cwd: root },
+  )
+  const { stdout: revisionOutput } = await runGit(
+    'git',
+    ['rev-parse', 'HEAD'],
+    { cwd: root },
+  )
+  const revision = revisionOutput.trim()
+  const included = [
+    {
+      path: 'pnpm-lock.yaml',
+      sha256: createHash('sha256').update(lockfile).digest('hex'),
+    },
+  ]
+  try {
+    // Act
+    const unchanged = await inspectDeepWikiFreshness(
+      root,
+      included,
+      revision,
+      [],
+    )
+    await writeFile(join(root, 'pnpm-lock.yaml'), `${lockfile}# one more\n`)
+    const edited = await inspectDeepWikiFreshness(root, included, revision, [])
+
+    // Assert
+    assert.equal(Buffer.byteLength(lockfile), 300_023)
+    assert.deepEqual(unchanged, {
+      status: 'current',
+      changedPaths: [],
+      addedPaths: [],
+    })
+    assert.deepEqual(edited, {
+      status: 'changed',
+      changedPaths: ['pnpm-lock.yaml'],
+      addedPaths: [],
+    })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('an indexed source outside the project keeps freshness unknown and is named as the one that could not be checked', async () => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-wiki-freshness-'))
+  const root = join(await realpath(directory), 'project')
+  await mkdir(root)
+  await writeFile(join(root, 'source.ts'), 'export const answer = 1;\n')
+  await writeFile(join(root, '..', 'outside.ts'), 'export const outside = 1;\n')
+  const included = [
+    {
+      path: 'source.ts',
+      sha256: createHash('sha256')
+        .update('export const answer = 1;\n')
+        .digest('hex'),
+    },
+    {
+      path: '../outside.ts',
+      sha256: createHash('sha256')
+        .update('export const outside = 1;\n')
+        .digest('hex'),
+    },
+  ]
+  try {
+    // Act
+    const freshness = await inspectDeepWikiFreshness(
+      root,
+      included,
+      undefined,
+      [],
+    )
+
+    // Assert
+    assert.deepEqual(freshness, {
+      status: 'unknown',
+      changedPaths: [],
+      addedPaths: [],
+      reason: 'An indexed source could not be checked: ../outside.ts.',
+      uncheckedPath: '../outside.ts',
+    })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('a Wiki generated from dirty source reports current until another source file is added', async () => {
   // Arrange
   const directory = await mkdtemp(

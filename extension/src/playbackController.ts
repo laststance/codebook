@@ -4,7 +4,12 @@ import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
+import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
 import { untilAborted } from './utils/untilAborted'
+
+/** Refusal of a seek or play while the replay reader's panes do not exist; it names the only remedy, an explicit open. */
+const REPLAY_READER_CLOSED =
+  'The replay reader is closed; open the recording before another control.'
 
 export interface PlaybackData {
   index: RecordingIndex
@@ -24,7 +29,8 @@ export interface PlaybackDependencies {
   load(studyId: string, signal: AbortSignal): Promise<PlaybackData>
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
-  invalidate(): void
+  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded: its frame stays until the reloaded moment paints, instead of a blank pane. */
+  invalidate(keepPixels?: boolean): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
   /** Whether the committed moment can be shown again as it is: the reader is open and its historical debugger is usable. Defaults to true. */
@@ -64,8 +70,8 @@ export class PlaybackController {
   private readonly clock: () => number
   private disposed = false
   private saves: Promise<void> = Promise.resolve()
-  /** The position of the bundle {@link remember} last queued for saving; an open of the same study prefers it to a stored preference that the queued save may not have written yet. It deliberately survives {@link leave}. */
-  private rememberedPosition?: { studyId: string; positionMs: number }
+  /** The position of the bundle {@link remember} last queued for saving, per study; an open of that study prefers it to a stored preference that the queued save may not have written yet, also after another recording was opened in between. It deliberately survives {@link leave}. */
+  private readonly rememberedPositionMsByStudy = new Map<string, number>()
 
   constructor(private readonly dependencies: PlaybackDependencies) {
     this.clock = dependencies.now ?? (() => performance.now())
@@ -98,6 +104,9 @@ export class PlaybackController {
         return this.state()
       }
       this.remember()
+      // A reload of the recording that is on screen keeps its frame until the reloaded moment is presented.
+      const reloadsDisplayedRecording =
+        this.studyId === input.studyId && Boolean(this.presented)
       this.controlRevision++
       this.mode = 'paused'
       this.stopTimer()
@@ -106,7 +115,11 @@ export class PlaybackController {
       this.presented = undefined
       this.requestedMs = undefined
       this.boundaries = []
-      this.queue({ studyId: input.studyId, save: true })
+      this.queue(
+        { studyId: input.studyId, save: true },
+        true,
+        reloadsDisplayedRecording,
+      )
       return this.state()
     }
     if (input.studyId !== this.studyId)
@@ -139,15 +152,20 @@ export class PlaybackController {
     }
     const range = this.range()
     // Checked before the reader guard: the reader is marked open only late in a load, and a control sent meanwhile must hear that the recording is not ready, not that the reader is closed.
-    if (!range || !this.data)
+    if (!range || !this.data) {
+      // A load the reader's close cancelled will never deliver the recording, so waiting for readiness cannot help; only open does.
+      if (
+        this.readiness !== 'loading' &&
+        !(this.dependencies.readerOpen?.() ?? true)
+      )
+        throw new Error(REPLAY_READER_CLOSED)
       throw new Error(
         'Recording is not ready; read playback state before another control.',
       )
+    }
     // A closed reader has no panes to present in, so a seek or play would recreate the Application panel alone; only an explicit open brings the reader back.
     if (!(this.dependencies.readerOpen?.() ?? true))
-      throw new Error(
-        'The replay reader is closed; open the recording before another control.',
-      )
+      throw new Error(REPLAY_READER_CLOSED)
     if (input.action === 'seek') {
       if (input.positionMs < range.startMs || input.positionMs > range.endMs)
         throw new Error('Seek lies outside the returned recording range.')
@@ -156,7 +174,13 @@ export class PlaybackController {
       this.stopTimer()
       this.queue({
         studyId: input.studyId,
-        positionMs: input.positionMs,
+        // Recorded stops sit at fractional receipt times; a seek rounded down to whole milliseconds still presents the stop.
+        positionMs: snapSeekToRecordedStop(
+          input.positionMs,
+          (this.data.context?.study.observations ?? [])
+            .map((observation) => observation.elapsedMs)
+            .filter((stopMs) => stopMs <= range.endMs),
+        ),
         save: true,
       })
       return this.state()
@@ -198,6 +222,8 @@ export class PlaybackController {
       contextHash: this.data?.contextHash,
       contextReason: this.data?.contextReason,
       reason: this.reason,
+      // Agents read this before a control: false means only open (or pause) is accepted until the reader is reopened.
+      readerOpen: this.dependencies.readerOpen?.() ?? true,
       frame: this.presented?.projection.frame && {
         sequence: this.presented.projection.frame.sequence,
         hash: this.presented.projection.frame.hash,
@@ -346,8 +372,9 @@ export class PlaybackController {
   private queue(
     input: Omit<PresentationRequest, 'revision'>,
     clear = true,
+    keepPixels = false,
   ): void {
-    if (clear) this.invalidate()
+    if (clear) this.invalidate(keepPixels)
     else {
       this.presentationRevision++
       this.abort?.abort(new Error('New playback frame'))
@@ -398,9 +425,8 @@ export class PlaybackController {
           const range = this.range()!
           // The moment this controller last confirmed for the study outranks storage: its save may still be queued, and a failed save must not move the learner back.
           const preferredPositionMs =
-            this.rememberedPosition?.studyId === request.studyId
-              ? this.rememberedPosition.positionMs
-              : data.preferredPositionMs
+            this.rememberedPositionMsByStudy.get(request.studyId) ??
+            data.preferredPositionMs
           const positionMs =
             request.positionMs ??
             Math.min(
@@ -514,21 +540,21 @@ export class PlaybackController {
   }
 
   /** Invalidates renderer work synchronously so a slow read or late ACK cannot commit across controls. @example this.invalidate() */
-  private invalidate(): void {
+  private invalidate(keepPixels = false): void {
     this.presentationRevision++
     this.abort?.abort(new Error('Playback presentation superseded'))
     this.cleared = true
-    this.dependencies.invalidate()
+    this.dependencies.invalidate(keepPixels)
   }
 
   /** Serializes explicit navigation saves and records the confirmed position that the next open of the same study prefers over the stored preference, also when its save fails; callbacks receive the confirmed bundle, never requested position B. @example this.remember() */
   private remember(): void {
     const bundle = this.presented
     if (!bundle) return
-    this.rememberedPosition = {
-      studyId: bundle.studyId,
-      positionMs: bundle.projection.positionMs,
-    }
+    this.rememberedPositionMsByStudy.set(
+      bundle.studyId,
+      bundle.projection.positionMs,
+    )
     this.saves = this.saves
       .then(() => this.dependencies.save(bundle))
       .catch((error) => {

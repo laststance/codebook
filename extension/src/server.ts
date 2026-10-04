@@ -180,12 +180,28 @@ export async function startServer(service: StudyService, now = Date.now) {
             isInitializeRequest(body)
           ) {
             if (sessions.size + pendingSessions.size >= MAX_SESSIONS) {
-              rejectHttp(
-                response,
-                429,
-                'MCP session limit exceeded; close idle clients.',
+              // Clients that end without DELETE leave idle sessions behind; the least recently seen one makes room, and only busy sessions refuse.
+              const idle = [...sessions].filter(
+                ([, candidate]) => !candidate.active,
               )
-              return
+              const replaced = idle.reduce<(typeof idle)[number] | undefined>(
+                (oldest, entry) =>
+                  !oldest || entry[1].lastSeen < oldest[1].lastSeen
+                    ? entry
+                    : oldest,
+                undefined,
+              )
+              if (!replaced) {
+                rejectHttp(
+                  response,
+                  429,
+                  'MCP session limit exceeded; every session has a request in flight. Retry after one completes.',
+                )
+                return
+              }
+              // Remove before closing so a concurrent initialize cannot pick the same session.
+              sessions.delete(replaced[0])
+              await replaced[1].protocol.close()
             }
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: randomUUID,

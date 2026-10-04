@@ -17,6 +17,30 @@ import {
   POLL_INTERVAL_MS,
 } from '../runtimeSupport/constants'
 
+import {
+  advanceClock,
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
+
+/** Races an operation against a labelled limit and cancels the limit's timer once the race is decided, so no timer outlives its test. @example await withinLimit(pending, 500, 'still waiting for cleanup') */
+async function withinLimit<Outcome>(
+  operation: Promise<Outcome>,
+  limitMs: number,
+  label: string,
+): Promise<Outcome | string> {
+  const limit = new AbortController()
+  try {
+    return await Promise.race([
+      operation,
+      delay(limitMs, label, { signal: limit.signal }),
+    ])
+  } finally {
+    limit.abort()
+  }
+}
+
 /** Models multiple viewport listeners on one reader so {@link viewportHarness} can verify shared lease retirement. @example const renderer = viewportPanel() */
 function viewportPanel() {
   const messages: Record<string, unknown>[] = []
@@ -25,9 +49,12 @@ function viewportPanel() {
     disposal = new Set<() => void>()
   const posted = new Set<(message: Record<string, unknown>) => void>()
   let panelDisposals = 0
+  const reveals: { preserveFocus: boolean | undefined }[] = []
   const panel = {
     visible: true,
-    reveal(): void {
+    viewColumn: 1,
+    reveal(_column?: number, preserveFocus?: boolean): void {
+      reveals.push({ preserveFocus })
       panel.visible = true
       for (const callback of visibility) callback()
     },
@@ -72,6 +99,8 @@ function viewportPanel() {
   return {
     panel,
     messages,
+    /** How each reveal of the panel treated the keyboard focus, in order. */
+    reveals,
     disposals: () => panelDisposals,
     callbacks: () => ({
       receivers: [...receivers],
@@ -110,6 +139,9 @@ function viewportPanel() {
   }
 }
 
+/** Stands for the editor's `TabInputText` of the file the debugger opened at a pause; only its class identity is read. */
+class PausedFileTab {}
+
 /** Drives actual {@link BrowserViewport} through editor lifecycle boundaries without pretending to verify native paint. @example await viewportHarness('normal') */
 async function viewportHarness(
   scenario: Scenario,
@@ -117,6 +149,8 @@ async function viewportHarness(
   observer?: ViewportModule.ViewportRecordingObserver,
   mode: 'live' | 'recording' = 'live',
   renderer = viewportPanel(),
+  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. */
+  pausedFile?: { focusEditorOnBreak: boolean },
 ) {
   const filename = join(__dirname, '../runtimeSupport/browserViewport.js')
   const nativeRequire = createRequire(filename)
@@ -132,8 +166,29 @@ async function viewportHarness(
       require: (name: string) =>
         name === 'vscode'
           ? {
-              window: { createWebviewPanel: () => panel },
+              window: {
+                createWebviewPanel: () => panel,
+                state: { focused: true },
+                tabGroups: {
+                  activeTabGroup: {
+                    viewColumn: 1,
+                    activeTab: { input: new PausedFileTab() },
+                  },
+                },
+                activeTextEditor: { viewColumn: 1 },
+              },
               ViewColumn: { One: 1 },
+              TabInputText: PausedFileTab,
+              debug: {
+                activeStackItem: pausedFile
+                  ? { session: { id: 'live-next-server' }, threadId: 1 }
+                  : undefined,
+              },
+              workspace: {
+                getConfiguration: () => ({
+                  get: () => pausedFile?.focusEditorOnBreak,
+                }),
+              },
             }
           : nativeRequire(name),
     },
@@ -250,9 +305,10 @@ async function recordedRenderer(initiallyVisible: boolean) {
 }
 
 for (const start of ['already hidden', 'hidden after decode'] as const)
-  test(`a recorded image ${start} waits for real painting instead of exhausting its deadline in the background`, async () => {
+  test(`a recorded image ${start} waits for real painting instead of exhausting its deadline in the background`, async (context) => {
     // Arrange
     const renderer = await recordedRenderer(start !== 'already hidden')
+    enableFakeClock(context)
     let outcome = 'pending'
     const capture = renderer.viewport
       .present('cGl4ZWxz', 'Recorded · 55.87 s')
@@ -265,14 +321,14 @@ for (const start of ['already hidden', 'hidden after decode'] as const)
         },
       )
     try {
-      await delay(0)
+      await advanceClock(context, 0)
       if (start === 'hidden after decode') renderer.hide()
       // Act: Chromium cannot run animation callbacks while hidden, even though decoding and native panel visibility succeed.
-      await delay(CAPTURE_TIMEOUT_MS + 100)
+      await advanceClock(context, CAPTURE_TIMEOUT_MS + 100)
       const hiddenOutcome = outcome
       renderer.show()
       renderer.paint()
-      await capture
+      await advanceClockUntilSettled(context, capture, 1_000)
       // Assert
       assert.equal(hiddenOutcome, 'pending')
       assert.equal(outcome, 'painted')
@@ -284,14 +340,16 @@ for (const start of ['already hidden', 'hidden after decode'] as const)
         1,
       )
     } finally {
+      resetFakeClock(context)
       renderer.viewport.close()
       await capture
     }
   })
 
-test('an explicit recorded gap waits through background suspension and confirms only its own painted placeholder', async () => {
+test('an explicit recorded gap waits through background suspension and confirms only its own painted placeholder', async (context) => {
   // Arrange
   const renderer = await recordedRenderer(false)
+  enableFakeClock(context)
   let outcome = 'pending'
   const missing = renderer.viewport
     .presentMissing('Not recorded at this moment', new AbortController().signal)
@@ -305,11 +363,11 @@ test('an explicit recorded gap waits through background suspension and confirms 
     )
   try {
     // Act
-    await delay(CAPTURE_TIMEOUT_MS + 100)
+    await advanceClock(context, CAPTURE_TIMEOUT_MS + 100)
     const hiddenOutcome = outcome
     renderer.show()
     renderer.paint()
-    await missing
+    await advanceClockUntilSettled(context, missing, 1_000)
     // Assert
     assert.equal(hiddenOutcome, 'pending')
     assert.equal(outcome, 'painted')
@@ -319,6 +377,7 @@ test('an explicit recorded gap waits through background suspension and confirms 
       false,
     )
   } finally {
+    resetFakeClock(context)
     renderer.viewport.close()
     await missing
   }
@@ -518,10 +577,11 @@ for (const boundary of [
           { epoch: '22222222-2222-2222-2222-222222222222' },
         )
       } else renderer.viewport.close()
-      const promptOutcome = await Promise.race([
+      const promptOutcome = await withinLimit(
         missing.then(() => outcome),
-        delay(500).then(() => 'still waiting for hidden paint'),
-      ])
+        500,
+        'still waiting for hidden paint',
+      )
 
       // Assert: lifecycle retirement must reject before visibility resumes, and late paint cannot resurrect it.
       assert.equal(
@@ -569,10 +629,11 @@ test('cancelling placement while a recorded image is hidden releases only the pl
   try {
     // Act
     cancellation.abort(new Error('Learner cancelled placement'))
-    const outcome = await Promise.race([
+    const outcome = await withinLimit(
       placement,
-      delay(100).then(() => 'still waiting for hidden paint'),
-    ])
+      100,
+      'still waiting for hidden paint',
+    )
     // Assert: cancelling a layout action reports the learner's reason without waiting for visibility or retiring another owned frame.
     assert.equal(outcome, 'Error: Learner cancelled placement')
     assert.equal(captureOutcome, 'pending')
@@ -587,7 +648,7 @@ test('cancelling placement while a recorded image is hidden releases only the pl
 })
 
 for (const mode of ['live', 'recording'] as const)
-  test(`${mode} painting without a valid current hidden receipt retains a bounded timeout`, async () => {
+  test(`${mode} painting without a valid current hidden receipt retains a bounded timeout`, async (context) => {
     // Arrange
     const harness = await viewportHarness('normal', true, undefined, mode),
       epoch = '11111111-1111-1111-1111-111111111111'
@@ -597,35 +658,47 @@ for (const mode of ['live', 'recording'] as const)
       epoch: mode === 'live' ? epoch : '22222222-2222-2222-2222-222222222222',
       visibility: 'hidden',
     })
+    enableFakeClock(context)
     try {
-      // Act / Assert
-      await assert.rejects(
+      // Act / Assert: the paint budget passes on a faked clock.
+      const refused = assert.rejects(
         harness.viewport.present('cGl4ZWxz', 'before'),
         /acknowledgement timed out/,
       )
+      await advanceClockUntilSettled(
+        context,
+        refused,
+        CAPTURE_TIMEOUT_MS + 1_000,
+      )
+      await refused
       assert.equal(
         harness.events.some((event) => event.type === 'viewport.acknowledged'),
         false,
       )
     } finally {
+      resetFakeClock(context)
       harness.viewport.close()
     }
   })
 
-test('a visible unresponsive recorded gap still fails within its paint budget', async () => {
+test('a visible unresponsive recorded gap still fails within its paint budget', async (context) => {
   // Arrange
   const renderer = await recordedRenderer(true)
+  enableFakeClock(context)
   try {
-    // Act / Assert: deliberately withhold visible animation callbacks.
-    await assert.rejects(
+    // Act / Assert: deliberately withhold visible animation callbacks; the paint budget passes on a faked clock.
+    const refused = assert.rejects(
       renderer.viewport.presentMissing('Not recorded at this moment'),
       /Timed out waiting for recorded gap presentation/,
     )
+    await advanceClockUntilSettled(context, refused, CAPTURE_TIMEOUT_MS + 1_000)
+    await refused
     assert.equal(
       renderer.events.some((event) => event.type === 'viewport.acknowledged'),
       false,
     )
   } finally {
+    resetFakeClock(context)
     renderer.viewport.close()
   }
 })
@@ -672,9 +745,10 @@ test('a recorded gap receipt sent while the recording is hidden cannot confirm t
 })
 
 // Value: protects=hiding and revealing Application cannot extend a stalled recorded gap beyond its visible paint budget; fails_when=the recording paint clock forgets or over-counts visible time used before a visibility change; why_new=the gap deadline reads BrowserViewport's own clock rather than FrameDelivery's, and existing gap tests never toggle visibility after visible time was consumed; seam=none
-test('a stalled recorded gap keeps the paint time it used before Application was hidden', async () => {
+test('a stalled recorded gap keeps the paint time it used before Application was hidden', async (context) => {
   // Arrange: half of the paint budget elapses while the unpainted placeholder is visible.
   const renderer = await recordedRenderer(true)
+  enableFakeClock(context)
   let outcome = 'pending'
   const missing = renderer.viewport
     .presentMissing('Not recorded at this moment')
@@ -687,18 +761,17 @@ test('a stalled recorded gap keeps the paint time it used before Application was
       },
     )
   try {
-    await delay(CAPTURE_TIMEOUT_MS / 2)
+    await advanceClock(context, CAPTURE_TIMEOUT_MS / 2)
 
     // Act: a long hidden interval, then visibility returns without any painted placeholder.
     renderer.hide()
-    await delay(CAPTURE_TIMEOUT_MS / 2)
+    await advanceClock(context, CAPTURE_TIMEOUT_MS / 2)
     renderer.show()
-    await delay(400)
+    await advanceClock(context, 400)
     const soonAfterShowing = outcome
-    const settled = await Promise.race([
-      missing.then(() => outcome),
-      delay(1_900).then(() => 'still waiting after a fresh budget'),
-    ])
+    // A whole fresh budget would still be waiting 1.9 s later; the helper then fails the test.
+    await advanceClockUntilSettled(context, missing, 1_900)
+    const settled = outcome
 
     // Assert: hidden time is free, but the remaining half expires instead of restarting the whole budget.
     assert.equal(soonAfterShowing, 'pending')
@@ -711,16 +784,18 @@ test('a stalled recorded gap keeps the paint time it used before Application was
       false,
     )
   } finally {
+    resetFakeClock(context)
     renderer.viewport.close()
     await missing
   }
 })
 
 // Value: protects=native placement behind a hidden recorded image fails within its named active bound instead of hanging presentation; fails_when=the placement drain loses its response timeout while hidden paints may wait indefinitely; why_new=the only hidden drain test cancels explicitly, so nothing proves an uncancelled drain ends; seam=none
-test('placement behind a hidden recorded image times out, releases its reservation and leaves the image to paint later', async () => {
+test('placement behind a hidden recorded image times out, releases its reservation and leaves the image to paint later', async (context) => {
   // Arrange
   const renderer = await recordedRenderer(false),
     signal = new AbortController().signal
+  enableFakeClock(context)
   let captureOutcome = 'pending'
   const capture = renderer.viewport
     .present('cGl4ZWxz', 'Recorded · 55.87 s')
@@ -733,30 +808,32 @@ test('placement behind a hidden recorded image times out, releases its reservati
       },
     )
   try {
-    await delay(0)
+    await advanceClock(context, 0)
 
     // Act: nobody cancels the move, and the hidden document cannot run animation callbacks.
-    // The outer bound turns a lost drain timeout into a failed assertion instead of a hung test file.
-    const drainBound = new AbortController()
-    const drainOutcome = await Promise.race([
-      renderer.viewport.holdPlacement(signal).then(
-        () => 'placement acquired',
-        (error) => String(error),
-      ),
-      delay(
-        ACTIVE_TIMEOUT_MS + 5_000,
-        'still draining after the active bound',
-        { signal: drainBound.signal },
-      ),
-    ]).finally(() => drainBound.abort())
+    // The outer bound turns a lost drain timeout into a failed test instead of a hung test file.
+    const draining = renderer.viewport.holdPlacement(signal).then(
+      () => 'placement acquired',
+      (error) => String(error),
+    )
+    await advanceClock(context, ACTIVE_TIMEOUT_MS - 250)
+    let drainOutcomeBeforeBound = 'still draining'
+    void draining.then((label) => {
+      drainOutcomeBeforeBound = label
+    })
+    await advanceClock(context, 0)
+    const beforeBound = drainOutcomeBeforeBound
+    await advanceClockUntilSettled(context, draining, 5_000)
+    const drainOutcome = await draining
     const outcomeAfterTimeout = captureOutcome
     renderer.show()
     renderer.paint()
-    await capture
+    await advanceClockUntilSettled(context, capture, 1_000)
     const release = await renderer.viewport.holdPlacement(signal)
     release()
 
     // Assert
+    assert.equal(beforeBound, 'still draining')
     assert.equal(
       drainOutcome,
       'Error: Timed out waiting for viewport placement drain',
@@ -769,6 +846,7 @@ test('placement behind a hidden recorded image times out, releases its reservati
       1,
     )
   } finally {
+    resetFakeClock(context)
     renderer.viewport.close()
     await capture
   }
@@ -805,6 +883,65 @@ test('closing a shared application panel ends both live and replay leases unless
   assert.deepEqual(closes, [false])
   live.viewport.close()
   replay.viewport.close()
+})
+
+// Value: protects=the real BrowserViewport behaviour that the workspace harness models for a shared Application panel; fails_when=the recording viewport rewrites its own document or confirms a paint after a live lease's history page replaced it; why_new=Cycle 0035 R07g (only the workspace harness modelled the replaced-document sequence); seam=the test panel answers a frame only while the recording renderer's document is in place
+test('a live lease writing its history page over the recording renderer on one shared panel leaves that renderer unable to confirm a paint', async () => {
+  // Arrange: a live lease and a recording lease share one panel, the recording renderer wrote its document last and confirms a first paint.
+  const renderer = viewportPanel()
+  const live = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    renderer,
+  )
+  const replay = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'recording',
+    renderer,
+  )
+  const recordingDocument = renderer.panel.webview.html,
+    epoch = '11111111-1111-1111-1111-111111111111'
+  replay.ready(epoch)
+  const answerFrameWhileRendererInPlace = async (): Promise<void> => {
+    const frame = await renderer.nextFrame()
+    // A webview whose document was replaced has no renderer left to answer.
+    if (renderer.panel.webview.html === recordingDocument)
+      renderer.receive({ type: 'painted', epoch, id: frame.id })
+  }
+  const firstAnswer = answerFrameWhileRendererInPlace()
+  await replay.viewport.present('Zmlyc3Q=', 'Recorded 0.10 s')
+  await firstAnswer
+  try {
+    // Act
+    live.viewport.showHistory('<p>Loading recording</p>')
+    const secondAnswer = answerFrameWhileRendererInPlace()
+    const secondPaint = replay.viewport
+      .present('c2Vjb25k', 'Recorded 0.20 s')
+      .then(
+        () => 'confirmed',
+        (error: unknown) => String(error),
+      )
+    await secondAnswer
+
+    // Assert
+    assert.equal(
+      await secondPaint,
+      'Error: Viewport frame acknowledgement timed out',
+    )
+    assert.equal(renderer.panel.webview.html, '<p>Loading recording</p>')
+    assert.equal(
+      replay.events.filter((event) => event.type === 'viewport.acknowledged')
+        .length,
+      1,
+    )
+  } finally {
+    live.viewport.close()
+    replay.viewport.close()
+  }
 })
 
 test('revealing a destroyed renderer cannot confirm an image using its old readiness response', async () => {
@@ -1508,10 +1645,7 @@ test('closing the current panel releases a reserved placement and rejects waitin
   )
   // Act
   harness.panel.dispose()
-  const outcome = await Promise.race([
-    queued,
-    delay(100).then(() => 'still waiting for cleanup'),
-  ])
+  const outcome = await withinLimit(queued, 100, 'still waiting for cleanup')
   // Assert
   try {
     assert.equal(outcome, 'closed')
@@ -1644,10 +1778,11 @@ test('disposing the recording panel promptly rejects a hidden recorded gap witho
 
     // Act
     renderer.panel.dispose()
-    const promptOutcome = await Promise.race([
+    const promptOutcome = await withinLimit(
       missing.then(() => outcome),
-      delay(500).then(() => 'still waiting for hidden paint'),
-    ])
+      500,
+      'still waiting for hidden paint',
+    )
 
     // Assert
     assert.equal(promptOutcome, 'Error: Recorded gap presentation invalidated.')
@@ -1659,3 +1794,58 @@ test('disposing the recording panel promptly rejects a hidden recorded gap witho
     renderer.viewport.close()
   }
 })
+
+// Value: protects=the keyboard focus after each captured pause of a live run (0037-F6); fails_when=the Application pane is revealed over the paused file the debugger focused while preserving focus, which hides the focused editor and leaves document.activeElement on body until a click; why_new=native run of 2026-10-04 (a57.focuslog.txt: body 5.5 s after each stop); seam=fake editor with a paused debug session
+test('the Application pane takes the keyboard focus when it is revealed over the file the debugger focused at a pause', async () => {
+  // Arrange: the debugger opened the paused file in the Application pane's group and focused it.
+  const harness = await viewportHarness(
+    'normal',
+    true,
+    undefined,
+    'live',
+    viewportPanel(),
+    { focusEditorOnBreak: true },
+  )
+  harness.hide()
+  const signal = new AbortController().signal
+
+  // Act
+  const revealed = harness.viewport.reveal(signal)
+  harness.ready('11111111-1111-1111-1111-111111111111')
+  await revealed
+
+  // Assert
+  assert.deepEqual(harness.reveals, [{ preserveFocus: false }])
+  harness.viewport.close()
+})
+
+for (const [situation, pausedFile] of [
+  ['no debug session is paused', undefined],
+  [
+    'the learner turned off debug.focusEditorOnBreak',
+    { focusEditorOnBreak: false },
+  ],
+] as const)
+  // Value: protects=the keyboard focus of a learner who types in the chat or another pane while the Application pane is brought back; fails_when=the Application pane takes the focus although the editor it covers was not focused by a pause; why_new=control for the 0037-F6 fix; seam=fake editor
+  test(`the Application pane leaves the keyboard focus where it is when it is revealed while ${situation}`, async () => {
+    // Arrange
+    const harness = await viewportHarness(
+      'normal',
+      true,
+      undefined,
+      'live',
+      viewportPanel(),
+      pausedFile,
+    )
+    harness.hide()
+    const signal = new AbortController().signal
+
+    // Act
+    const revealed = harness.viewport.reveal(signal)
+    harness.ready('11111111-1111-1111-1111-111111111111')
+    await revealed
+
+    // Assert
+    assert.deepEqual(harness.reveals, [{ preserveFocus: true }])
+    harness.viewport.close()
+  })

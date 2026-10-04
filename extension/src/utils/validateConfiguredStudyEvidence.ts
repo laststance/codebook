@@ -8,6 +8,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { configuredStops } from './configuredStops'
+import { isSavedBindingReceiptAtStop } from './isSavedBindingReceiptAtStop'
 import { isSavedSourceAtStop } from './isSavedSourceAtStop'
 
 /** Validates sealed configured facts for archive and recording readers without requiring current files or granting runtime authority. @example validateConfiguredStudyEvidence(study, workspaceKey) // rejects altered source or pause */
@@ -51,6 +52,10 @@ export function validateConfiguredStudyEvidence(
   const sessionOwners = new Map<string, string>(),
     participantSessions = new Map<string, string>(),
     generations = new Map<string, number>()
+  // A study of this format carries the receipt on every observation; one saved by 0.2.27 or older carries none (the legacy rule of isSavedBindingReceiptAtStop).
+  const studyHasBindingReceipts = study.observations.some(
+    (observation) => observation.source.binding !== undefined,
+  )
   for (const [index, observation] of study.observations.entries()) {
     const stop = stops[index]!,
       previous = study.observations[index - 1]
@@ -105,10 +110,25 @@ export function validateConfiguredStudyEvidence(
         Boolean(observation.debugger),
         stop.source,
         descriptor.anchors[stop.anchorIndex],
-      )
+      ) ||
+      // A moved position must still be a place of the cited text, as a declared one must: a column past its line's end names nothing.
+      observation.source.column >
+        (source.text.split(/\r\n|\r|\n/)[observation.source.line - 1]?.length ??
+          -1) +
+          1
     )
       throw new Error(
         'Configured observation source differs from its sealed definition.',
+      )
+    if (
+      !isSavedBindingReceiptAtStop(
+        observation.source,
+        stop.source.line,
+        studyHasBindingReceipts,
+      )
+    )
+      throw new Error(
+        'Configured observation binding receipt is missing or differs from its declared and observed lines.',
       )
     if (
       study.version === CROSS_RUNTIME_STUDY_VERSION &&
