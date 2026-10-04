@@ -48,11 +48,11 @@ jobs:
         if: steps.dependencies.outputs.cache-hit != 'true'
         uses: ./.github/actions/prepare
 
-      # The two commands of `pnpm build:fast`. Type errors are reported by the TypeCheck and Build workflows;
-      # package.yml proves that this emit equals the compiler's output.
+      # The command of `pnpm build:fast`; it writes the build metadata itself. Type errors are reported by the TypeCheck
+      # and Build workflows; package.yml proves that this emit equals the compiler's output.
       - name: Emit the compiled tests without type checking
         working-directory: extension
-        run: node scripts/build-fast.mjs && node scripts/build-metadata.mjs
+        run: node scripts/build-fast.mjs
 
       # Two lanes match the runner's two processors; most of the suite waits on real deadlines.
       - name: Run this shard's tests with coverage

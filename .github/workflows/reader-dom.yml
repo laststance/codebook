@@ -44,15 +44,28 @@ jobs:
 
       - name: Emit the compiled reader without type checking
         working-directory: extension
-        run: node scripts/build-fast.mjs && node scripts/build-metadata.mjs
+        run: node scripts/build-fast.mjs
 
-      # The harness drives the runner's preinstalled Google Chrome through playwright-cli; the release is pinned.
-      # It records a video of the run, which needs the ffmpeg build of the Playwright that playwright-cli bundles; the
-      # runner carries none, so the job's first run ended at "Executable doesn't exist at …/ffmpeg-linux".
-      - name: Install playwright-cli and its video encoder
+      # The harness drives the runner's preinstalled Google Chrome through playwright-cli. The CLI and everything it
+      # depends on come from the lockfile in .github/reader-dom, so each package is pinned by its integrity hash.
+      - name: Install playwright-cli from its lockfile
+        working-directory: .github/reader-dom
         run: |
-          npm install --global @playwright/cli@0.1.22
-          playwright-cli install-browser ffmpeg
+          npm ci --ignore-scripts
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+
+      # The harness records a video of the run, which needs the ffmpeg build of the Playwright that playwright-cli
+      # bundles; the runner carries none, so the job's first run ended at "Executable doesn't exist at …/ffmpeg-linux".
+      # One playwright-cli release always downloads the same build, so it is kept between runs under that release's key.
+      - name: Restore the video encoder
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-cli-0.1.22-ffmpeg-${{ runner.os }}-${{ hashFiles('.github/reader-dom/package-lock.json') }}
+
+      # Downloads nothing when the restored encoder is complete.
+      - name: Install the video encoder
+        run: playwright-cli install-browser ffmpeg
 
       # Run from the repository root: the harness reads extension/dist and exits non-zero when any case fails.
       - name: Run the reader DOM cases
