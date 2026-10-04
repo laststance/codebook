@@ -26,6 +26,7 @@ import {
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   type ReaderErrorKind,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
+  REPLAY_COVERED_LABEL,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
@@ -401,6 +402,8 @@ export class StudyWorkspace {
   private readonly replayPaintWatchers = new Set<() => void>()
   private playbackPending?: PlaybackBundle
   private playbackPresentingReady = false
+  /** Whether another tab of the Application pane's group is in front of the recorded application; the moment is then recorded and only hidden, so Run and Debug and the summary say that it is covered instead of "Not recorded" and "Loading". */
+  private replayApplicationCovered = false
   /** The recorded stop committed before native Run and Debug loaded its values; every frame of that stop shows how to load them. */
   private replayUninspectedSnapshot?: ReplayDebugSnapshot
   private initializing?: Promise<void>
@@ -4976,7 +4979,9 @@ export class StudyWorkspace {
         presentable: () =>
           this.replayReaderOpen && this.replayDebugger?.available !== false,
         invalidate: (keepPixels) => {
-          this.replayDebugger?.invalidate()
+          this.replayDebugger?.invalidate(
+            this.replayApplicationCovered ? REPLAY_COVERED_LABEL : undefined,
+          )
           if (this.highlight)
             for (const editor of vscode.window.visibleTextEditors) {
               if (
@@ -5943,6 +5948,7 @@ export class StudyWorkspace {
         )
       signal.throwIfAborted()
       this.playbackPresentingReady = true
+      this.replayApplicationCovered = false
       this.lastRendered = undefined
       this.lastPublished = undefined
       this.publish()
@@ -6102,6 +6108,7 @@ export class StudyWorkspace {
     this.recordingActive = false
     this.playbackPending = undefined
     this.playbackPresentingReady = false
+    this.replayApplicationCovered = false
     this.replayUninspectedSnapshot = undefined
     this.lastApplicationKey = undefined
     this.lastSelectionKey = undefined
@@ -6424,6 +6431,7 @@ export class StudyWorkspace {
         nativeValuesUninspected:
           bundle?.projection.debugger !== undefined &&
           bundle.projection.debugger === this.replayUninspectedSnapshot,
+        applicationCovered: this.replayApplicationCovered,
       },
       nodeHistoryCatalog: this.nodeHistoryCatalog,
       nodeHistory: this.selectedNodeHistory && {
@@ -6503,9 +6511,14 @@ export class StudyWorkspace {
       deadlineAt: live?.deadlineAt,
       busy: this.busy,
       saving: this.saving,
+      // A covered recording is not loading: its moment is retired until the pane is in front again, and the pane says so.
       loading:
         this.loading ||
-        Boolean(playbackState?.cleared && !this.playbackPresentingReady),
+        Boolean(
+          playbackState?.cleared &&
+          !this.playbackPresentingReady &&
+          !this.replayApplicationCovered,
+        ),
       errors: [
         ...this.errors.values(),
         ...this.catalog.flatMap((entry) =>
@@ -7274,6 +7287,7 @@ export class StudyWorkspace {
         new Error('The current application pane was closed.'),
       )
       this.app = undefined
+      this.replayApplicationCovered = false
       // A renderer created for the next pane performs its own first reveal, so a reveal owed to this pane is dropped with it.
       this.dropReplayViewport()
       if (this.recordingActive) this.playback?.hide()
@@ -7288,10 +7302,36 @@ export class StudyWorkspace {
       // Only visibility of the replay surface pauses playback; runtime/debugger exit is unrelated.
       if (this.recordingActive && !this.placingPresentation) {
         this.replayNeedsReveal = true
+        // A tab the learner opened over the pane hides a moment that is recorded; the retired moment is labelled as covered, not as missing.
+        this.replayApplicationCovered =
+          !visible && this.isApplicationCoveredByTab(panel)
         if (visible) this.playback?.reveal()
         else this.playback?.hide()
       }
     })
+  }
+
+  /**
+   * Tells whether another tab of the Application pane's group is in front of the pane; {@link bindApplicationPanel}'s view-state handler asks when a recording's pane stops being visible.
+   * A pane hidden together with its whole editor area (a maximized bottom panel) is still its group's active tab and is not covered.
+   * @param panel - The Application pane that reported the change.
+   * @returns `true` when the pane's group shows another tab, `false` when the pane is that group's active tab or the group is gone.
+   * @example this.isApplicationCoveredByTab(panel) // => true after the learner opened a workspace file in the Application group
+   */
+  private isApplicationCoveredByTab(panel: vscode.WebviewPanel): boolean {
+    const activeTab = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === panel.viewColumn,
+    )?.activeTab
+    return Boolean(
+      activeTab &&
+      !(
+        activeTab.input instanceof vscode.TabInputWebview &&
+        isCodebookPaneViewType(
+          activeTab.input.viewType,
+          'codebook.scopedBrowser',
+        )
+      ),
+    )
   }
 
   /** Finishes the owned creation receipt on native events so later MCP-first learner moves remain manual. @example this.confirmInitialAppRegistration() */

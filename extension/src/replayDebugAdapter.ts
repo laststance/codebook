@@ -192,7 +192,14 @@ export class ReplayDebugAdapter {
     return topFrameId
   }
 
-  /** Replaces every handle on committed moment changes; an invalid snapshot first clears previous state. @example adapter.select(undefined, 'Not recorded at this moment') */
+  /**
+   * Replaces every handle when {@link ReplayDebugger} presents another moment or retires the displayed one; an invalid snapshot first clears previous state.
+   * @param value - The recorded stop to serve, or `undefined` for a moment without history to show.
+   * @param label - What the thread and the stop description read: the recorded moment, or for `undefined` why no stack is shown ("Not recorded at this moment", or that the recorded application is covered).
+   * @param sourceDocument - The captured source document the native editor opens for the stop's frames.
+   * @throws When the snapshot is invalid or its source hash does not match; the session then shows "Not recorded at this moment".
+   * @example adapter.select(undefined, 'Not recorded at this moment')
+   */
   select(
     value: ReplayDebugSnapshot | undefined,
     label: string,
@@ -274,6 +281,8 @@ export class ReplayDebugAdapter {
           this.frameScopes.set(frameId, scopes)
         }
       }
+      // Without history to show, the label is the reason the caller gives for the empty stack.
+      else this.label = label
       this.selectionValid = true
     } finally {
       if (this.configured) {

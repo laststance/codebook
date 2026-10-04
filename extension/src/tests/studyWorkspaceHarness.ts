@@ -356,6 +356,8 @@ export async function workspaceHarness(
     sourceDocument?: { uri: string; hash: string }
   }> = []
   let historicalDebugInvalidations = 0
+  /** What each invalidation told the fake historical debugger its emptied session reads in Run and Debug, in order. */
+  const historicalDebugInvalidationLabels: string[] = []
   const historicalDebuggers: TestReplayDebugger[] = []
   let historicalDebugInspection: ReplayInspection = 'inspected'
   let nextHistoricalDebugPresentation:
@@ -449,8 +451,9 @@ export async function workspaceHarness(
     ): Promise<void> {
       signal.throwIfAborted()
     }
-    invalidate(): void {
+    invalidate(label = 'Not recorded at this moment'): void {
       historicalDebugInvalidations++
+      historicalDebugInvalidationLabels.push(label)
     }
     /** Mirrors the real owner: a second call returns at once, and the registration ends only when the first call finishes stopping the session. @example await debuggerView.dispose() */
     async dispose(): Promise<void> {
@@ -2662,6 +2665,10 @@ export async function workspaceHarness(
     historicalDebugPresentations,
     historicalDebuggers,
     historicalDebugInvalidations: () => historicalDebugInvalidations,
+    /** What each invalidation told the historical debugger its emptied session reads in Run and Debug, in order. @example harness.historicalDebugInvalidationLabels().at(-1) // => 'Not recorded at this moment' */
+    historicalDebugInvalidationLabels: () => [
+      ...historicalDebugInvalidationLabels,
+    ],
     readCapturedSource: (uri: string) => {
       const parsed = new URL(uri)
       return sourceProvider(

@@ -778,6 +778,77 @@ test('opening a recording restores its captured source after context focus cover
   }
 })
 
+// Value: protects=the learner who opened a workspace file in the Application group during a replay being told what happened; fails_when=the reader retires the covered moment like a missing one, so Run and Debug reads "Not recorded at this moment" and the Learning summary reads "Loading the selected observation…" for as long as the file stays in front; why_new=Cycle 0045 NF-31 as DR-19; seam=the harness's fake historical debugger keeps the label of each invalidation
+test('a workspace file opened over the recorded application is reported to Run and Debug and to the Learning summary as a covered recording, not as a missing or loading moment', async () => {
+  // Arrange: a recorded stop is shown in the Application pane.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (candidate) => candidate.mode === 'recording',
+    )
+    assert.ok(viewport)
+    const application = viewport.panel
+    const applicationGroup = harness.groups.find(
+      (group) => group.activeTab === application.nativeTab,
+    )
+    assert.ok(applicationGroup)
+
+    // Act: the learner opens a workspace file in the Application group, which comes in front of the pane.
+    applicationGroup.activeTab = harness.addTextPreview(
+      join(harness.directory, 'app', 'notes.ts'),
+      applicationGroup.viewColumn,
+    )
+    application.notifyViewState()
+    const whileCovered = harness.postedMessages().at(-1)!
+    const labelWhileCovered = harness.historicalDebugInvalidationLabels().at(-1)
+
+    // Act: the learner brings the pane to the front again.
+    applicationGroup.activeTab = application.nativeTab
+    application.notifyViewState()
+    await harness.controller.settle()
+    const afterReturn = harness.postedMessages().at(-1)!
+
+    // Assert
+    assert.equal(
+      labelWhileCovered,
+      'Recorded application is covered by another tab',
+    )
+    assert.deepEqual(
+      {
+        loading: whileCovered.loading,
+        applicationCovered: whileCovered.recording?.applicationCovered,
+        cleared: whileCovered.recording?.cleared,
+      },
+      { loading: false, applicationCovered: true, cleared: true },
+    )
+    assert.deepEqual(
+      {
+        loading: afterReturn.loading,
+        applicationCovered: afterReturn.recording?.applicationCovered,
+        cleared: afterReturn.recording?.cleared,
+        presentedMs: afterReturn.recording?.presentedMs,
+      },
+      {
+        loading: false,
+        applicationCovered: false,
+        cleared: false,
+        presentedMs: 100,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('one bottom playback seek from a hidden Application commits the requested recorded moment without another target action', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)

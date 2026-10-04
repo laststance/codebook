@@ -218,12 +218,16 @@ export class ReplayDebugger {
     return !this.closed && !this.detached
   }
 
-  /** Clears native state immediately when a pending seek retires the displayed bundle. @example debuggerView.invalidate() */
-  invalidate(): void {
+  /**
+   * Clears native state immediately when {@link StudyWorkspace}'s playback retires the displayed bundle: a pending seek, a hidden or covered replay surface, or closing.
+   * @param label - What the emptied session's thread and stop description read; the default says that nothing is recorded at the moment, and a caller whose moment is recorded but hidden says so instead.
+   * @example debuggerView.invalidate('Recorded application is covered by another tab')
+   */
+  invalidate(label = 'Not recorded at this moment'): void {
     this.revision++
     this.wakeInspection()
     this.selected = undefined
-    this.adapter?.select(undefined, 'Not recorded at this moment')
+    this.adapter?.select(undefined, label)
   }
 
   /**

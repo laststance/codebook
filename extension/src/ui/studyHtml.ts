@@ -128,6 +128,8 @@ export interface StudyViewMessage {
     > & {
       learningSummary?: ReturnType<typeof projectLearningSummary>
       nativeValuesUninspected?: boolean
+      /** Another tab is in front of the recorded application: the moment is recorded and only hidden, and `loading` is not raised for it. */
+      applicationCovered?: boolean
     }
 }
 declare function acquireVsCodeApi(): {

@@ -2892,6 +2892,47 @@ test('a stop whose first frame with source lies past the first Call Stack page a
   }
 })
 
+// Value: protects=Run and Debug telling the truth while a tab the learner opened covers the recorded application; fails_when=the emptied recorded session always reads "Not recorded at this moment", although the moment is recorded and only hidden; why_new=Cycle 0045 NF-31 as DR-19 (opening a workspace file in the application group emptied Run and Debug with that label); seam=none
+test('while another tab covers the recorded application Run and Debug says that the recording is covered, not that the moment was not recorded', async () => {
+  // Arrange: Run and Debug shows a recorded stop.
+  const fixture = harness()
+  try {
+    await fixture.owner.present(
+      inspectedSnapshot,
+      'Recorded pause · 0.10 s',
+      new AbortController().signal,
+    )
+    const messagesBefore = fixture.messages.length
+
+    // Act: the reader retires the displayed moment because another tab is in front of the recorded application.
+    fixture.owner.invalidate('Recorded application is covered by another tab')
+
+    // Assert: the stop description and the thread name the cover, and no stack of the hidden moment is served.
+    const stopDescriptions = fixture.messages
+      .slice(messagesBefore)
+      .flatMap((message) =>
+        'event' in message && message.event === 'stopped'
+          ? [message.body.description]
+          : [],
+      )
+    const threads = fixture.request('threads').body.threads
+    assert.deepEqual(stopDescriptions, [
+      'Recorded application is covered by another tab',
+    ])
+    assert.deepEqual(
+      threads.map((thread: { name: string }) => thread.name),
+      ['Recorded application is covered by another tab'],
+    )
+    assert.deepEqual(
+      fixture.request('stackTrace', { threadId: threads[0].id }).body
+        .stackFrames,
+      [],
+    )
+  } finally {
+    await fixture.owner.dispose()
+  }
+})
+
 // Value: protects=the recorded values and the reader's dropped hint both reaching the screen after one press of Show Variables; fails_when=the reader is told in the same instant the adapter served the values, so its repaint lands within a few milliseconds of the native view's and, under WSLg, neither is shown until the pointer moves; why_new=Cycle 0044 (0031-U1 in VS Code 1.140 on WSLg: the first scope stayed open and empty and the hint stayed, although the editor held the values); seam=none
 test('the reader is told that Run and Debug loaded the values 150 ms after they were served, not in the same instant', async (context) => {
   // Arrange: Variables is hidden, so the stop commits without its values.

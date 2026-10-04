@@ -714,6 +714,9 @@ export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096
 export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 /** Native Call Stack name of the owned historical session; the Study hint names it for learners. */
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
+/** What the recorded session's thread and stop description read in Run and Debug while another tab is in front of the recorded application: the moment is recorded and only hidden, so "Not recorded at this moment" would be wrong. The Study pane says the same with the remedy. */
+export const REPLAY_COVERED_LABEL =
+  'Recorded application is covered by another tab'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
 /** How long after the historical adapter served a stop's values the reader is told that Run and Debug loaded them. The adapter knows when it answered, not when native Variables drew the rows; a reader that drops its hint in the same instant repaints within a few milliseconds of that view, and the Linux editors under WSLg do not put a frame on the screen that follows another that closely until the window is repainted again (measured 2026-10-04: a change 4 ms after another stayed off the screen, one 30 ms after it was shown), which left the first scope open and empty and the hint in place. 100 ms is not enough: the Variables pane hides its scrollbar 500 ms after it is shown and loads a missed stop 400 ms after, so in Cursor 3.23 a reader told 100 ms later repainted on top of that scrollbar repaint and kept its hint on the screen. */
