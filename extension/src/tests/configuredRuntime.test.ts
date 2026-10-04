@@ -2226,6 +2226,73 @@ test('a browser stop the debugger moves to another line after it was armed fails
   assert.equal(run.view().snapshots.length, 0)
 })
 
+// Cycle 0045 (ST-19, class B): every test put the unmapped line on the first stop; this is the browser twin of the server test for a later one. Green today; its control requests a later stop at its declared position.
+test('a later browser stop declared on an unmapped line is requested at the first mapped position after it inside the continuation and captured there', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches and line 2 the statement; both stops are declared at 1:1, and the debugger verifies a breakpoint on line 2 only.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(
+      context,
+      undefined,
+      [
+        {
+          line: 1,
+          column: 1,
+          inspections: [{ path: 'enabled', mode: 'value', required: true }],
+        },
+      ],
+      {
+        mappings: ';AACA',
+        fixture: {
+          source: '// toggles the theme\nconst nextTheme = "dark";\n',
+          citationEndLine: 2,
+        },
+      },
+    )
+  verifyBreakpointsOnlyOnLines([2])
+  await run.prepare()
+  run.action('ordered', 'repository-click')
+  const first = await waitUntil(
+    () => run.view().participants.browser.snapshot,
+    'first stop',
+  )
+
+  // Act
+  await run.continue('browser', first.pause)
+  const requestedSecond = breakpoints.find((breakpoint) =>
+    breakpoint.id.startsWith('owned-breakpoint-'),
+  )?.location.range.start
+  const second = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1]
+  }, 'later stop captured at the first mapped position after its declared line')
+  const armings = run
+    .view()
+    .events.filter(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+  await run.stop()
+
+  // Assert: the second request was made on line 2 (zero-based 1), inside the continuation.
+  assert.equal(requestedSecond?.line, 1)
+  assert.equal(requestedSecond?.character, 0)
+  assert.deepEqual(armings, [
+    {
+      participant: 'browser',
+      declared: { line: 1, column: 1 },
+      armed: { line: 2, column: 1 },
+    },
+    {
+      participant: 'browser',
+      declared: { line: 1, column: 1 },
+      armed: { line: 2, column: 1 },
+    },
+  ])
+  assert.equal(second.source.line, 2)
+  assert.equal(second.source.column, 1)
+})
+
 // Cycle 0045 (ST-16, class B): the binding timeout of a stop requested after its declared line had no test; its control takes the "requested column" branch for every stop. The sentence is asserted through the seam that ends the binding wait (PC-2.8: the harness clock does not drive that wait).
 test('a stop requested after its unmapped declared line whose binding never verifies times out naming the place it was requested at', async (context) => {
   // Arrange: line 1 is a comment the map never reaches and line 2 the statement, so the stop declared at 1:1 is requested at 2:1; the debugger never verifies a binding.
