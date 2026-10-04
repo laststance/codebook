@@ -98,6 +98,41 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
     this.gate.invalidate()
     this.status = 'running'
   }
+  /**
+   * Commits the next stop as the coordinator does after a continuation: a new pause, its snapshot and the paused status.
+   * @returns The committed snapshot, a copy of the stop before it under the new pause identity.
+   * @throws When no stop was committed before; the first stop comes from {@link ControlledConfiguredRuntime.action}.
+   * @example const next = runtime.commitNextStop() // next.id === 'browser-session:2'
+   */
+  commitNextStop(): ConfiguredRuntimeSnapshot {
+    const previous = this.snapshots.at(-1)
+    if (!previous) throw new Error('No stop was committed before this one.')
+    const pause = this.gate.stop('browser-session', 1),
+      id = `${pause.sessionId}:${pause.generation}`
+    const receipt = this.evidence.record('snapshot.committed', {
+      snapshotId: id,
+    })
+    const snapshot = {
+      ...previous,
+      id,
+      pause,
+      capturedAt: receipt.wallTime,
+      elapsedMs: receipt.elapsedMs,
+    }
+    this.snapshots.push(snapshot)
+    this.status = 'paused-browser'
+    return snapshot
+  }
+  /**
+   * Ends the operation as the coordinator does once the after conditions held after the last continuation.
+   * @throws When no input was dispatched.
+   * @example runtime.observeResult() // runtime.view().status === 'completed'
+   */
+  observeResult(): void {
+    if (!this.operation) throw new Error('No input was dispatched.')
+    this.operation.afterVerified = true
+    this.status = 'completed'
+  }
   /** Projects the configured variant without manufacturing a server participant or demo values. @example Object.keys(runtime.view().participants) // ['browser'] */
   view(): ConfiguredRuntimeView {
     return {
@@ -115,7 +150,8 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
           sessionId: 'browser-session',
           pause: this.gate.current,
           phase: this.gate.phase,
-          snapshot: this.snapshots[0],
+          // The stop a participant is at is the last one committed.
+          snapshot: this.snapshots.at(-1),
           continued: undefined,
           conflict: this.gate.conflict,
         },
@@ -126,7 +162,9 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
         this.status === 'ready' && !this.operation
           ? 'repository-click'
           : undefined,
-      observed: undefined,
+      observed: this.operation?.afterVerified
+        ? { afterVerified: true }
+        : undefined,
       links: [],
       captures: {},
       failures: [...this.failures],

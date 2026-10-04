@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -1807,6 +1808,478 @@ test('the input schema of codebook_explain says that a fact path is taken with i
   assert.equal(
     schema.properties.valuePaths.items.description,
     'A captured fact key of this snapshot: value:<path> or type:<path>. The path alone is accepted when exactly one captured fact of the snapshot has that path, and the explanation is saved under that key.',
+  )
+})
+
+/** Where a test's hand-moved service clock starts: the real time of the file's load, because the harness's source and book stores read the real clock for the preparation deadline. A test moves its own copy forward, so a bound of seconds passes without waiting for it. */
+const CLOCK_START_MS = Date.now()
+
+/**
+ * Starts a run on the fixture with the service's clock in the test's hand, sends its click and returns the arguments the run resource gives for the first stop's continuation.
+ * @param context - The test that owns the harness.
+ * @param key - The start key of the run.
+ * @param clock - Reads the test's clock, which the service uses for every deadline and bound.
+ * @returns The service, the synthetic runtime, the run's receipt and record, and the first stop's continueArguments.
+ * @example const { service, runtime, continueArguments } = await runPausedAtFirstStop(context, 'next', () => nowMs)
+ */
+const runPausedAtFirstStop = async (
+  context: TestContext,
+  key: string,
+  clock: () => number,
+) => {
+  const { service, configuration, runtimes } = await configuredServiceHarness(
+    context,
+    clock,
+  )
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key,
+      configuration: {
+        ...configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 7,
+            inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+          },
+        ],
+      },
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    continueArguments =
+      service.state(record).participants.browser.continueArguments
+  assert.ok(continueArguments)
+  return { service, runtime, receipt, record, continueArguments }
+}
+
+/** Tells whether a pending answer is still waiting after three of the wait's turns (150 ms of real time). @example await isStillWaiting(continuing) // => true while the run shows no next state */
+const isStillWaiting = (pending: Promise<unknown>): Promise<boolean> =>
+  Promise.race([pending.then(() => false), delay(150).then(() => true)])
+
+// Value: protects=an agent that copies continueArguments learning the next stop from the continuation's own answer; fails_when=the arguments carry no answer, the tool's schema refuses it, or the call answers accepted before the next pause is committed, so the agent polls the run resource after every continuation (8 of 24 reads in the VS Code run of the baseline round); why_new=Cycle 0045 cause 3 (ER-7); seam=the synthetic runtime, which commits its next stop when the test says so
+test('a continuation sent with the arguments the run resource gave answers with the next committed observation and its inspectionUri, without a poll', async (context) => {
+  // Arrange: a two-stop run is paused at its first stop.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+      context,
+      'answer-next-observation',
+      () => nowMs,
+    ),
+    client = await connectMcpClient(context, service)
+  nowMs += 1_000
+
+  // Act
+  const continuing = client.callTool({
+    name: 'codebook_continue',
+    arguments: continueArguments,
+  })
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const next = runtime.commitNextStop()
+  const answered = await continuing
+
+  // Assert
+  assert.equal(continueArguments.answer, 'next')
+  assert.equal(answered.isError, undefined, JSON.stringify(answered.content))
+  const answer = z
+    .object({
+      data: z.object({
+        accepted: z.boolean(),
+        next: z.string(),
+        state: z.object({
+          runtimeState: z.string(),
+          observations: z.array(
+            z.object({ id: z.string(), inspectionUri: z.string() }),
+          ),
+          participants: z.object({
+            browser: z.object({
+              continueArguments: z.object({
+                generation: z.number(),
+                answer: z.string(),
+              }),
+            }),
+          }),
+        }),
+      }),
+    })
+    .parse(answered.structuredContent).data
+  assert.equal(answer.accepted, true)
+  assert.equal(answer.next, 'observation')
+  assert.equal(answer.state.runtimeState, 'paused-browser')
+  assert.equal(answer.state.observations.length, 2)
+  assert.equal(answer.state.observations[1]?.id, next.id)
+  assert.equal(
+    answer.state.observations[1]?.inspectionUri,
+    `codebook://${service.instanceId}/runs/${continueArguments.runId}/snapshots/browser-session%3A2/inspection`,
+  )
+  assert.equal(
+    JSON.stringify(answer.state.participants.browser.continueArguments),
+    '{"generation":2,"answer":"next"}',
+  )
+})
+
+// Value: protects=an agent learning the observed result from its last continuation; fails_when=the last continuation answers accepted only, so the agent polls for observed.afterVerified; why_new=Cycle 0045 cause 3 (ER-7); seam=the synthetic runtime, which observes its result when the test says so
+test('after the last stop a continuation sent with those arguments answers the observed result', async (context) => {
+  // Arrange: a run is paused at its last stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-result',
+    () => nowMs,
+  )
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  runtime.observeResult()
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.accepted, true)
+  assert.equal(answer.next, 'result')
+  assert.equal(answer.state.runtimeState, 'completed')
+  assert.equal(JSON.stringify(answer.state.observed), '{"afterVerified":true}')
+})
+
+// Value: protects=a caller that does not ask for the next state being answered as before; fails_when=every continuation waits, also the Study pane's Continue, which would then stay busy until the next pause; why_new=Cycle 0045 cause 3 (ER-7: without the argument nothing changes); seam=none
+test('a continuation without the answer argument answers accepted at once', async (context) => {
+  // Arrange: a run is paused at its first stop; the arguments are sent without their answer.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-as-before', () => nowMs)
+  const { answer: _answer, ...withoutAnswer } = continueArguments
+
+  // Act
+  const viaTool = await service.continueToNextState(withoutAnswer)
+
+  // Assert
+  assert.equal(
+    JSON.stringify(viaTool),
+    JSON.stringify({ accepted: true, runUri: receipt.runUri }),
+  )
+  assert.equal(runtime.status, 'running')
+  assert.equal(runtime.snapshots.length, 1)
+})
+
+// The Study pane's Continue sends the run resource's arguments as they are: it must return at the acknowledgement.
+test('the pane’s continuation with the run resource’s arguments answers at the acknowledgement, without waiting for the next state', async (context) => {
+  // Arrange: a run is paused at its first stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'pane-continue', () => nowMs)
+
+  // Act
+  const acknowledged = await service.continue(continueArguments)
+
+  // Assert
+  assert.equal(
+    JSON.stringify(acknowledged),
+    JSON.stringify({ accepted: true, runUri: receipt.runUri }),
+  )
+  assert.equal(runtime.status, 'running')
+})
+
+// Value: protects=an agent reading why the run ended from the continuation's answer; fails_when=the wait ends only on a next pause or a result, so a run that fails is answered at the bound with accepted, as if it were still running; why_new=Cycle 0045 cause 3 (PC-2.7, PC-4.12, PC-5.8: the wait ends on every terminal state); seam=the synthetic runtime, which fails when the test says so
+test('a run that fails while a continuation waits for its next state answers with the failure text, not with the bound', async (context) => {
+  // Arrange: a run is paused at its first stop; the clock does not move during the wait.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-failure',
+    () => nowMs,
+  )
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  runtime.failures.push(
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s of the preceding continuation',
+  )
+  runtime.status = 'failed'
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'failure')
+  assert.equal(
+    answer.state.error?.cause,
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s of the preceding continuation',
+  )
+  assert.equal(answer.state.finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=the answer of a continuation whose next stop was committed and then failed its inspection; fails_when=the committed snapshot alone ends the wait as an observation the agent tries to continue, or the failure is left for a later poll; why_new=Cycle 0045 cause 3 (PC-2.7: a failure directly after the next pause); seam=the synthetic runtime, which commits a snapshot without a pause and fails
+test('a failure directly after the next pause was committed is in the continuation’s answer', async (context) => {
+  // Arrange: a run is paused at its first stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-failure-after-commit',
+    () => nowMs,
+  )
+
+  // Act: the next snapshot is committed, its required inspection fails and the run ends, as the coordinator does in one step.
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const firstStop = runtime.snapshots[0]!
+  runtime.snapshots.push({
+    ...firstStop,
+    id: 'browser-session:2',
+    pause: { ...firstStop.pause, generation: 2 },
+  })
+  runtime.failures.push(
+    'Required inspection value:nextTheme is unavailable; captured facts remain readable.',
+  )
+  runtime.status = 'failed'
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'failure')
+  assert.equal(answer.state.observations.length, 2)
+  assert.equal(
+    answer.state.error?.cause,
+    'Required inspection value:nextTheme is unavailable; captured facts remain readable.',
+  )
+  assert.equal(answer.state.participants.browser.continueArguments, undefined)
+})
+
+// Value: protects=a continuation that waits ending when the run is stopped from another call; fails_when=a cancelled run is none of "next pause, result, failure", so the request is held to its bound; why_new=Cycle 0045 cause 3 (PC-2.7: an explicit stop sets cancelled); seam=none
+test('a run stopped by another call while a continuation waits answers at once with the stopped run', async (context) => {
+  // Arrange: a run is paused at its first stop; the clock does not move during the wait.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-stopped', () => nowMs)
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const stopping = service.stop(receipt)
+  const answer = await continuing
+  await stopping
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'stopped')
+  assert.equal(['stopping', 'stopped'].includes(answer.state.state), true)
+  assert.equal(answer.state.participants.browser.resumable, false)
+})
+
+// Value: protects=the answer of a continuation that waits when the run's whole-run deadline passes; fails_when=the wait runs past the run's own deadline, or ends there with accepted as if the run went on; why_new=Cycle 0045 cause 3 (PC-2.7: one bound that never passes the run's remaining deadline); seam=the service's clock, moved by the test, and its maintenance turn, switched off
+test('a run whose whole-run deadline expires while a continuation waits answers with that end', async (context) => {
+  // Arrange: a run is paused at its first stop, five seconds before its whole-run deadline. The maintenance turn is switched off, so only the continuation's own wait can apply the deadline.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, record, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-deadline', () => nowMs)
+  service.maintain = (): void => {}
+  nowMs = record.deadlineAt - 5_000
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const waitingBeforeDeadline = await isStillWaiting(continuing)
+  nowMs = record.deadlineAt
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeDeadline, true)
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'failure')
+  assert.equal(
+    answer.state.terminalReason,
+    'Study wall deadline expired; history only.',
+  )
+})
+
+// Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20 second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
+test('a continuation whose run shows no next state within 22 seconds of its acknowledgement answers accepted with the latest state and no next state', async (context) => {
+  // Arrange: a run is paused at its first stop; after the continuation the synthetic runtime keeps running.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-bound', () => nowMs)
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  nowMs += 21_999
+  const waitingBeforeBound = await isStillWaiting(continuing)
+  nowMs += 1
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeBound, true)
+  assert.ok('state' in answer)
+  assert.equal(answer.accepted, true)
+  assert.equal(answer.runUri, receipt.runUri)
+  assert.equal('next' in answer, false)
+  assert.equal(answer.state.runtimeState, 'running')
+  assert.equal(answer.state.observations.length, 1)
+})
+
+// Value: protects=the whole call staying below an editor's request timeout when the runtime already took long to acknowledge the continuation; fails_when=the 22 second wait is added on top of a slow arming, so the call can pass a client's limit; why_new=Cycle 0045 cause 3 (the client-timeout rule: the whole call ends within 45 seconds of its start); seam=the synthetic runtime, whose acknowledgement takes 40 seconds of the test's clock
+test('a continuation acknowledged 40 seconds after the call began waits only five more seconds for the next state', async (context) => {
+  // Arrange: a run is paused at its first stop; arming the next stop and the acknowledgement take 40 seconds.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-call-budget',
+    () => nowMs,
+  )
+  const acknowledge = runtime.continue.bind(runtime)
+  runtime.continue = async (participant, pause): Promise<void> => {
+    nowMs += 40_000
+    await acknowledge(participant, pause)
+  }
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  nowMs += 4_999
+  const waitingBeforeBudget = await isStillWaiting(continuing)
+  nowMs += 1
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeBudget, true)
+  assert.ok('state' in answer)
+  assert.equal('next' in answer, false)
+  assert.equal(answer.state.runtimeState, 'running')
+})
+
+// Value: protects=the service's other calls answering while a continuation waits; fails_when=the wait blocks the service, so the run resource cannot be read until the next pause; why_new=Cycle 0045 cause 3 (PC-2.7); seam=none
+test('a continuation that waits for the next state does not hold other calls: the run resource is read meanwhile', async (context) => {
+  // Arrange: a run is paused at its first stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-not-blocking', () => nowMs)
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const readMeanwhile = await readResource(service, receipt.runUri)
+  const waitingAfterRead = await isStillWaiting(continuing)
+  runtime.commitNextStop()
+  const answer = await continuing
+
+  // Assert
+  assert.ok('text' in readMeanwhile)
+  assert.equal(JSON.parse(readMeanwhile.text).runtimeState, 'running')
+  assert.equal(waitingAfterRead, true)
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'observation')
+})
+
+// Value: protects=a request its client gave up releasing the wait; fails_when=the wait keeps polling until its bound although nobody reads the answer; why_new=Cycle 0045 cause 3 (the task: a request that the client abandons releases its wait); seam=none
+test('a continuation whose request is abandoned stops waiting at once', async (context) => {
+  // Arrange: a run is paused at its first stop; the clock does not move, so only the abandoned request can end the wait.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+      context,
+      'answer-abandoned',
+      () => nowMs,
+    ),
+    request = new AbortController()
+
+  // Act
+  const continuing = service.continueToNextState(
+    continueArguments,
+    request.signal,
+  )
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const waitingBeforeAbandon = await isStillWaiting(continuing)
+  request.abort()
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeAbandon, true)
+  assert.ok('state' in answer)
+  assert.equal('next' in answer, false)
+  assert.equal(answer.state.runtimeState, 'running')
+})
+
+// Value: protects=the help and the tool's own texts telling an agent that a continuation answers with the next state and when to poll; fails_when=the help still only says "After continuation, poll", or the tool's schema does not say what answer does; why_new=Cycle 0045 cause 3 (ER-7's help sentence); seam=none
+test('configured help and the continue tool tell an agent that a continuation sent with continueArguments answers with the next state, and to poll when it answers accepted only', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const help = await readResource(
+      service,
+      'codebook://help/repository-browser',
+    ),
+    tools = await client.listTools()
+
+  // Assert
+  assert.ok('text' in help)
+  const sequence = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text)).sequence
+  assert.equal(
+    (sequence[4] ?? '').startsWith(
+      "A continuation sent with the run resource's continueArguments answers with the next state: the next observation, the observed result or the failure. If it answers accepted only, poll. After continuation, poll for observed.afterVerified or explicit failure.",
+    ),
+    true,
+  )
+  const tool = tools.tools.find((tool) => tool.name === 'codebook_continue')
+  assert.equal(
+    tool?.description,
+    'Continue only the current inspected pause. Copy all continueArguments from the run resource; with their answer "next" the call answers with the run\'s next state (the next observation, the observed result or the failure) in state, and next names which. An answer without next means the run has not shown its next state yet: poll the run resource. A stale/reserved/historical pause is rejected; read state before recovery.',
+  )
+  assert.equal(
+    z
+      .object({
+        properties: z.object({
+          answer: z.object({ const: z.string(), description: z.string() }),
+        }),
+        required: z.array(z.string()),
+      })
+      .parse(tool?.inputSchema).properties.answer.description,
+    'Optional; the run resource\'s continueArguments carry it. With "next" the call answers when the run committed its next pause, observed its result or ended, and returns the run\'s state beside accepted; next names which. Without it the call answers as soon as the continuation is acknowledged.',
   )
 })
 

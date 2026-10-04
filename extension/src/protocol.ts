@@ -242,11 +242,12 @@ export function createProtocol(service: StudyService): McpServer {
     'codebook_continue',
     {
       description:
-        'Continue only the current inspected pause. Copy all continueArguments from the run resource. A stale/reserved/historical pause is rejected; read state before recovery.',
+        'Continue only the current inspected pause. Copy all continueArguments from the run resource; with their answer "next" the call answers with the run\'s next state (the next observation, the observed result or the failure) in state, and next names which. An answer without next means the run has not shown its next state yet: poll the run resource. A stale/reserved/historical pause is rejected; read state before recovery.',
       inputSchema: continueSchema,
       annotations: execution,
     },
-    (input) => toolResult(() => service.continue(input)),
+    (input, extra) =>
+      toolResult(() => service.continueToNextState(input, extra.signal)),
   )
   server.registerTool(
     'codebook_stop',
