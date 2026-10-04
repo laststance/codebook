@@ -16,6 +16,7 @@ import { test } from 'node:test'
 
 import * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
+import { readLiveWikiUpdateMarker } from '../utils/readLiveWikiUpdateMarker'
 
 import { loadModule } from './utils/loadModule'
 
@@ -125,6 +126,75 @@ test('the marker file a second window may be reading is not rewritten when it be
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'opened-by-a-reader',
+      'wiki',
+      'wiki.update-run.json',
+    ])
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the rule that of two windows that start at the same moment only one runs, when a killed editor's marker is in the way; fails_when=the second window removes "the stale marker" by its path after the first one has replaced it by its own, so both hold a claim and two agents update one Wiki; why_new=Cycle 0045 local review wiki-1 #7; seam=the second window's look at the marker, after which the first window's claim is let through
+test('of two windows that start on a killed editor’s marker at the same moment only one runs', async () => {
+  // Arrange: a marker of a process that is gone, and a second window whose look at it is followed by the first window's whole claim.
+  const wiki = await createWikiFolder()
+  const startedAtMs = Date.now()
+  await writeFile(
+    wiki.markerPath,
+    JSON.stringify({
+      pid: 2 ** 22 + 1,
+      windowId: 'killed-editor',
+      host: 'vscode',
+      startedAtMs,
+    }),
+  )
+  const firstWindow = {
+    pid: process.pid,
+    windowId: 'window-a',
+    host: 'vscode' as const,
+    startedAtMs,
+  }
+  let firstClaim: claimModule.WikiUpdateMarkerClaim | undefined
+  const { claimWikiUpdateMarker: claimAsSecondWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './readLiveWikiUpdateMarker': {
+      readLiveWikiUpdateMarker: async (
+        outputDirectory: string,
+        ownWindowId: string,
+      ) => {
+        const looked = await readLiveWikiUpdateMarker(
+          outputDirectory,
+          ownWindowId,
+        )
+        // Once: right after the second window saw the stale marker, the first window removes it and writes its own.
+        firstClaim ??= await claimWikiUpdateMarker(
+          wiki.outputDirectory,
+          firstWindow,
+        )
+        return looked
+      },
+    },
+  })
+  try {
+    // Act
+    const secondClaim = await claimAsSecondWindow(wiki.outputDirectory, {
+      pid: process.pid,
+      windowId: 'window-b',
+      host: 'vscode',
+      startedAtMs,
+    })
+
+    // Assert
+    assert.ok(firstClaim && 'release' in firstClaim)
+    assert.deepEqual(JSON.parse(JSON.stringify(secondClaim)), {
+      heldBy: firstWindow,
+    })
+    assert.deepEqual(
+      JSON.parse(await readFile(wiki.markerPath, 'utf8')),
+      firstWindow,
+    )
+    assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
       'wiki.update-run.json',
     ])

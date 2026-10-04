@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { rename, rm, writeFile } from 'node:fs/promises'
+import { link, rename, rm, writeFile } from 'node:fs/promises'
 
 import { WIKI_UPDATE_RUN_MARKER_SUFFIX } from '../constants'
 
@@ -55,6 +55,61 @@ function claimOfLiveHolder(
 }
 
 /**
+ * Reads what the marker file holds right now; called by {@link claimWikiUpdateMarker} before the marker in the way is judged, and by {@link removeJudgedMarker} for the file it moved aside.
+ * @param path - The marker file, or the name it was moved to.
+ * @returns The file's bytes, or `undefined` when no regular file is there.
+ * @example
+ * await readMarkerBytes('/repo/.codebook/wiki.update-run.json') // => <Buffer 7b 22 70 69 64 …>
+ */
+async function readMarkerBytes(path: string): Promise<Buffer | undefined> {
+  return (await readWikiRegularFile(path))?.bytes
+}
+
+/**
+ * Says whether the marker file that was moved aside is another one than the one that was looked at; called by {@link removeJudgedMarker} before it deletes the moved file.
+ * @param movedBytes - The bytes of the file that was moved aside.
+ * @param judgedBytes - The bytes of the marker that was judged; `undefined` when no regular file was read then.
+ * @returns `true` when the bytes differ or nothing was read at the look, so the moved file is a marker written since; `false` when it is the judged marker itself.
+ * @example
+ * isWrittenSinceTheLook(Buffer.from('{"pid":2}'), Buffer.from('{"pid":1}')) // => true
+ */
+function isWrittenSinceTheLook(
+  movedBytes: Buffer,
+  judgedBytes: Buffer | undefined,
+): boolean {
+  return judgedBytes === undefined || !movedBytes.equals(judgedBytes)
+}
+
+/**
+ * Removes the marker in the way only when it is still the one that was read and judged nobody's live run; called by {@link claimWikiUpdateMarker} before its second exclusive write.
+ *
+ * Why: between the look at a stale marker and its removal another window can have removed it and written its own, and that window's marker must stay. The file is moved aside first, so what is deleted is exactly what this call holds; another window's marker that was moved by mistake is put back with `link`, which does not replace a marker written meanwhile.
+ *
+ * @param markerPath - `<output>.update-run.json`.
+ * @param judgedBytes - The bytes of the marker that was judged; `undefined` when no regular file was read.
+ * @returns Nothing; a marker that is gone or was replaced since the look is left as it is.
+ * @example
+ * await removeJudgedMarker('/repo/.codebook/wiki.update-run.json', Buffer.from('{"pid":4242,…}'))
+ */
+async function removeJudgedMarker(
+  markerPath: string,
+  judgedBytes: Buffer | undefined,
+): Promise<void> {
+  const asidePath = `${markerPath}.${randomUUID()}.tmp`
+  try {
+    await rename(markerPath, asidePath)
+  } catch {
+    // The marker is gone already (another window removed it); the exclusive write decides next.
+    return
+  }
+  const movedBytes = await readMarkerBytes(asidePath)
+  // Another window wrote its marker after the look: it goes back, unless a third one took the place meanwhile.
+  if (movedBytes && isWrittenSinceTheLook(movedBytes, judgedBytes))
+    await link(asidePath, markerPath).catch(() => undefined)
+  await rm(asidePath, { force: true })
+}
+
+/**
  * Puts a text into the marker file as one new file; called by `reserve` of {@link claimWikiUpdateMarker}.
  *
  * Why: a write in place empties the file first, so another window that reads at that moment finds no marker, and a write that fails half-way leaves neither the run's marker nor the reservation. The text is written beside the marker and moved over it.
@@ -79,7 +134,7 @@ async function replaceMarker(markerPath: string, text: string): Promise<void> {
 /**
  * Writes this window's marker beside the Wiki when a run begins, exclusively, so that of two windows that start at the same moment only one runs.
  *
- * Why: a look at the marker and the start of a run are two steps; only an exclusive write decides a race between two windows. A marker in the way that no live window's run owns (a killed editor's, this window's own from a run that already ended, or the reservation of a stopped watch, which the start check has let pass) is removed and the write is tried once more.
+ * Why: a look at the marker and the start of a run are two steps; only an exclusive write decides a race between two windows. A marker in the way that no live window's run owns (a killed editor's, this window's own from a run that already ended, or the reservation of a stopped watch, which the start check has let pass) is removed and the write is tried once more; only the marker that was looked at is removed, never one another window wrote since.
  * Trigger: the extension calls it right before a run begins and calls `release` when the run has ended.
  *
  * @param outputDirectory - Resolved Wiki output folder; the marker is `<output>.update-run.json`.
@@ -122,6 +177,8 @@ export async function claimWikiUpdateMarker(
       }
     } catch (error) {
       rethrowUnlessMarkerExists(error)
+      // Read before the look that judges it, so the removal below can tell this marker from one written since.
+      const judgedBytes = await readMarkerBytes(markerPath)
       const heldBy = await readLiveWikiUpdateMarker(
         outputDirectory,
         marker.windowId,
@@ -129,7 +186,7 @@ export async function claimWikiUpdateMarker(
       // Another window's live run ends the claim; a marker that is nobody's live run is removed for the one retry.
       const liveHolder = claimOfLiveHolder(heldBy, isLastAttempt, error)
       if (liveHolder) return liveHolder
-      await rm(markerPath, { force: true })
+      await removeJudgedMarker(markerPath, judgedBytes)
     }
   }
   throw new Error('The Wiki update marker could not be written.')
