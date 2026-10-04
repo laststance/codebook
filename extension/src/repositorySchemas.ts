@@ -74,6 +74,7 @@ export const bookDocumentSchema = z
     title: z.string().min(1).max(BOOK_TITLE_LIMIT_CHARS),
     summary: z.string().min(1).max(BOOK_SECTION_LIMIT_CHARS),
     nodes: z.array(bookNodeSchema).min(1).max(BOOK_MAX_NODES),
+    // A document published without this member is one without relationships; the saved revision always holds the list.
     edges: z
       .array(
         z.strictObject({
@@ -83,7 +84,8 @@ export const bookDocumentSchema = z
           explanation: z.string().min(1).max(BOOK_SECTION_LIMIT_CHARS),
         }),
       )
-      .max(BOOK_MAX_EDGES),
+      .max(BOOK_MAX_EDGES)
+      .default([]),
   })
   .superRefine((document, context) => {
     const identities = new Set(document.nodes.map((node) => node.id))
@@ -104,12 +106,15 @@ export const bookDocumentSchema = z
         })
     })
   })
+/** The members of a published document, said where an agent reads last before it publishes: the description of `document` in the input schema of `codebook_publish_book`. */
+const BOOK_DOCUMENT_DESCRIPTION =
+  'A document has the members title, summary, nodes (at least one) and edges, the relationships between its nodes; a document without relationships may leave edges out or give an empty list.'
 export const publishBookSchema = z.strictObject({
   instanceId: z.uuid(),
   bookId: bookIdSchema,
   key: z.string().min(1).max(KEY_LENGTH_LIMIT),
   expectedRevision: z.number().int().nonnegative(),
-  document: bookDocumentSchema,
+  document: bookDocumentSchema.describe(BOOK_DOCUMENT_DESCRIPTION),
 })
 export const bookPublishIntentSchema = publishBookSchema.omit({
   instanceId: true,
