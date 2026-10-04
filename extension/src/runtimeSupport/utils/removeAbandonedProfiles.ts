@@ -34,28 +34,31 @@ async function removeUnusedProfile(profile: string): Promise<boolean> {
   }
 }
 
+/** What one sweep has done so far: how many folders with a readable owner marker it judged, which is what its bound counts, and the folders it removed. */
+type ProfileSweep = { judgedCount: number; removed: string[] }
+
 /**
- * Judges one profile folder by its owner marker and removes it when its owner is gone and nothing uses it; called by {@link removeAbandonedProfiles} for each real directory with the profile prefix.
+ * Judges one profile folder by its owner marker, removes it when its owner is gone and nothing uses it, and records both in the sweep; called by {@link removeAbandonedProfiles} for each real directory with the profile prefix.
+ * A folder without a readable marker is never touched, whoever made it, and is not counted: it takes none of the sweep's bound.
  * @param profile - The profile folder.
  * @param judgedBy - The identity of this process without its boot time ({@link withoutBootTime}), by which the marker's owner is judged.
- * @returns
- * - `unmarked` when the folder has no readable marker: it is never touched, whoever made it, and takes none of the sweep's bound
- * - `kept` when the marker's owner may still run ({@link isRecordedOwnerGone}), or a process still runs with the folder as its profile, or the removal failed
- * - `removed` when the folder was removed
+ * @param sweep - The running sweep: its `judgedCount` grows by one for a folder with a readable marker, and `removed` gains the folder when it was removed. A folder whose owner may still run ({@link isRecordedOwnerGone}), that a process still uses, or whose removal failed is counted and stays.
  * @example
- * await sweepProfile('/tmp/codebook-browser-a1b2c3', { hostname: 'workstation' }) // => 'removed' after the editor that made it was killed
+ * await sweepProfile('/tmp/codebook-browser-a1b2c3', { hostname: 'workstation' }, sweep) // sweep: { judgedCount: 1, removed: ['/tmp/codebook-browser-a1b2c3'] } after the editor that made it was killed
  */
 async function sweepProfile(
   profile: string,
   judgedBy: StorageOwnerIdentity,
-): Promise<'unmarked' | 'kept' | 'removed'> {
+  sweep: ProfileSweep,
+): Promise<void> {
   const owner = await readRecordedOwner(
     join(profile, MANAGED_PROFILE_OWNER_FILE),
   )
-  if (!owner) return 'unmarked'
+  if (!owner) return
+  sweep.judgedCount += 1
   // An owner that may still run: the folder is not known to be abandoned.
-  if (!isRecordedOwnerGone(owner, judgedBy)) return 'kept'
-  return (await removeUnusedProfile(profile)) ? 'removed' : 'kept'
+  if (!isRecordedOwnerGone(owner, judgedBy)) return
+  if (await removeUnusedProfile(profile)) sweep.removed.push(profile)
 }
 
 /**
@@ -85,17 +88,11 @@ export async function removeAbandonedProfiles(
       entry.isDirectory() && entry.name.startsWith(MANAGED_PROFILE_PREFIX),
   )
   const judgedBy = withoutBootTime(identity)
-  const removed: string[] = []
-  let judgedCount = 0
+  const sweep: ProfileSweep = { judgedCount: 0, removed: [] }
   for (const candidate of candidates) {
-    // The bound counts the folders whose marker was judged; the rest wait for a later run.
-    if (judgedCount >= MANAGED_PROFILE_SWEEP_LIMIT) break
-    const profile = join(root, candidate.name)
-    const outcome = await sweepProfile(profile, judgedBy)
-    // A folder without a readable marker costs one failed read and takes none of the bound.
-    if (outcome === 'unmarked') continue
-    judgedCount += 1
-    if (outcome === 'removed') removed.push(profile)
+    // The bound counts the folders whose marker was judged, not the listing: a folder without a readable marker costs one failed read. The rest wait for a later run.
+    if (sweep.judgedCount >= MANAGED_PROFILE_SWEEP_LIMIT) break
+    await sweepProfile(join(root, candidate.name), judgedBy, sweep)
   }
-  return removed
+  return sweep.removed
 }
