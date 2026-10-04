@@ -926,12 +926,16 @@ export function activate(
     }
     /** Starts the update again with the leftover ignored, when the learner presses "Update anyway". */
     const updateAnyway = (): void => {
-      updateDeepWiki(UPDATE_ANYWAY_ACTION).catch((error: unknown) => {
-        void showNotice(
-          'error',
-          `Codebook could not start the Wiki update: ${thrownMessage(error)}`,
-        )
-      })
+      // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
+      Promise.resolve(wikiUpdate)
+        .catch(() => undefined)
+        .then(() => updateDeepWiki(UPDATE_ANYWAY_ACTION))
+        .catch((error: unknown) => {
+          void showNotice(
+            'error',
+            `Codebook could not start the Wiki update: ${thrownMessage(error)}`,
+          )
+        })
     }
     /** The sentence for another window's running update; nothing overrides it. */
     const describeOtherWindow = (

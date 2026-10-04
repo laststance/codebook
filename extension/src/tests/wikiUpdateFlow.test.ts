@@ -7,6 +7,7 @@ import {
   realpath,
   rename,
   rm,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -30,48 +31,71 @@ const CURRENT: WikiFreshness = {
   addedPaths: [],
 }
 
-/** Opens a window on a project with a hand-written published Wiki and records what the learner sees of an update. */
+const INDEX_PAGE = '<title>Wiki</title>'
+
+/** Writes a published manifest and its receipt the way a publish through the publisher would: both as new files, the receipt naming the manifest's hash. */
+async function writePublishedWiki(
+  outputDirectory: string,
+  projectRoot: string,
+  sourceHash: string,
+  options: { excludedPaths?: string[]; recordsPageHashes?: boolean } = {},
+): Promise<void> {
+  const manifestPath = join(outputDirectory, 'codebook-wiki.json')
+  const receiptPath = join(outputDirectory, 'codebook-publication.json')
+  const manifestText = JSON.stringify({
+    schemaVersion: 1,
+    repositoryRoot: projectRoot,
+    generated: { revision: 'a1b2c3d4e5f6a7b8' },
+    pages: [],
+    assets: [],
+    excludedPaths: options.excludedPaths ?? [],
+    includedSources: [{ path: 'src/a.ts', sha256: sourceHash }],
+    // The publisher records the hash of every generated file; a Wiki published before it did has none.
+    ...(options.recordsPageHashes
+      ? {
+          ownedFiles: {
+            'index.html': createHash('sha256').update(INDEX_PAGE).digest('hex'),
+          },
+        }
+      : {}),
+  })
+  // Each file is written beside the old one and moved over it, so it has another inode than the one it replaces.
+  await writeFile(`${manifestPath}.next`, manifestText)
+  await rename(`${manifestPath}.next`, manifestPath)
+  await writeFile(
+    `${receiptPath}.next`,
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: 'published',
+      manifestSha256: createHash('sha256').update(manifestText).digest('hex'),
+    }),
+  )
+  await rename(`${receiptPath}.next`, receiptPath)
+}
+
+/** Opens a window on a project with a hand-written published Wiki and records what the learner sees of an update; `recordsPageHashes` publishes the Wiki with the hash of its index page, as the publisher does today. */
 async function openWikiWindow(
   options: Omit<
     Parameters<typeof openWikiUpdateWindow>[0],
     'projectRoot' | 'outputSetting'
-  > & { outputSetting?: string } = {},
+  > & { outputSetting?: string; recordsPageHashes?: boolean } = {},
 ) {
   const projectDirectory = await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-'))
   const projectRoot = await realpath(projectDirectory)
   const outputSetting = options.outputSetting ?? '.codebook/wiki'
   const outputDirectory = join(projectRoot, outputSetting)
   await mkdir(outputDirectory, { recursive: true })
-  await writeFile(join(outputDirectory, 'index.html'), '<title>Wiki</title>')
+  await writeFile(join(outputDirectory, 'index.html'), INDEX_PAGE)
   const manifestPath = join(outputDirectory, 'codebook-wiki.json')
-  const receiptPath = join(outputDirectory, 'codebook-publication.json')
-  /** Writes the published manifest and its receipt the way an agent's publish through the publisher would: both as new files, the receipt naming the manifest's hash. */
-  const publish = async (
+  /** Publishes the Wiki again the way an agent's publish would change it. */
+  const publish = (
     sourceHash: string,
     excludedPaths: string[] = [],
-  ): Promise<void> => {
-    const manifestText = JSON.stringify({
-      schemaVersion: 1,
-      repositoryRoot: projectRoot,
-      generated: { revision: 'a1b2c3d4e5f6a7b8' },
-      pages: [],
-      assets: [],
+  ): Promise<void> =>
+    writePublishedWiki(outputDirectory, projectRoot, sourceHash, {
       excludedPaths,
-      includedSources: [{ path: 'src/a.ts', sha256: sourceHash }],
+      recordsPageHashes: options.recordsPageHashes,
     })
-    // Each file is written beside the old one and moved over it, so it has another inode than the one it replaces.
-    await writeFile(`${manifestPath}.next`, manifestText)
-    await rename(`${manifestPath}.next`, manifestPath)
-    await writeFile(
-      `${receiptPath}.next`,
-      JSON.stringify({
-        schemaVersion: 1,
-        kind: 'published',
-        manifestSha256: createHash('sha256').update(manifestText).digest('hex'),
-      }),
-    )
-    await rename(`${receiptPath}.next`, receiptPath)
-  }
   await publish('a'.repeat(64))
   const window = await openWikiUpdateWindow({
     ...options,
@@ -240,7 +264,7 @@ test('a Wiki that already matches the source says so and opens no chat request',
   }
 })
 
-test('a chat that cannot open ends the update as failed, says what to install and shows one error that does not claim the update could not start', async () => {
+test('a chat that cannot open ends the update as failed, says what to install and shows one error notice with Open LLM Wiki that does not claim the update could not start', async () => {
   // Arrange
   const wiki = await openWikiWindow({ chatFails: true })
   try {
@@ -261,6 +285,9 @@ test('a chat that cannot open ends the update as failed, says what to install an
         `^Update failed at ${CLOCK_TIME}: The editor chat could not be opened \\(Chat is unavailable\\)\\. Install or enable GitHub Copilot Chat, then press Update LLM Wiki again\\. The last usable site is kept\\.$`,
       ),
     )
+    assert.deepEqual(wiki.offeredActions, [
+      { message: wiki.errors[0], actions: ['Open LLM Wiki'] },
+    ])
   } finally {
     await wiki.close()
   }
@@ -902,5 +929,667 @@ test(
       waitedMs >= 90 && waitedMs < 2_000,
       `the window waited ${waitedMs} ms for a grace of 100 ms`,
     )
+  },
+)
+
+test('an update of a Wiki whose index.html was deleted is refused as a missing generated page that names index.html, with no file error and no chat request', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({ recordsPageHashes: true })
+  await rm(join(wiki.outputDirectory, 'index.html'))
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'conflict')
+    assert.equal(
+      status.state === 'conflict' ? status.cause : '',
+      'missing-page',
+    )
+    assert.deepEqual(status.state === 'conflict' ? status.paths : [], [
+      'index.html',
+    ])
+    assert.equal(wiki.errors.length, 1)
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update not started \\(${CLOCK_TIME}\\): a generated page is missing \\(index\\.html\\)\\. Restore it from Git or the editor’s local history; if you cannot, move the Wiki folder aside and ask the editor chat "/codebook Generate the LLM Wiki for this project"\\.$`,
+      ),
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('with an unchanged source a deleted generated page is still refused as missing, not answered as Already current', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({ recordsPageHashes: true })
+  wiki.setFreshness(CURRENT)
+  await rm(join(wiki.outputDirectory, 'index.html'))
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'conflict')
+    assert.equal(
+      status.state === 'conflict' ? status.cause : '',
+      'missing-page',
+    )
+    assert.deepEqual(wiki.notices, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('an update of a Wiki published without recorded page hashes whose index.html was deleted starts', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  await rm(join(wiki.outputDirectory, 'index.html'))
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 1)
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('an update whose start checks throw is answered on the page as a start that failed, with the reason, instead of a wait for a confirmation', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    publishTokenReadFails: 'EIO: i/o error, read',
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'EIO: i/o error, read',
+    )
+    assert.equal(status.state === 'failed' ? status.site : '', 'kept')
+    assert.deepEqual(wiki.errors, [
+      'Codebook could not start the Wiki update: EIO: i/o error, read',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('an update that fails with a thrown object that only carries a message shows that message, not [object Object]', async () => {
+  // Arrange
+  const thrownByTheAgent: unknown = { message: 'The agent lost its session.' }
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      throw thrownByTheAgent
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The agent lost its session.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a VS Code watch that itself fails ends the update as failed with that reason and frees the button', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    watchClock: {
+      now: () => {
+        throw new Error('The clock stopped.')
+      },
+      sleep: async () => {},
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+    const ended = await waitForEnd(wiki.status)
+    await wiki.clickUpdate()
+    await waitForEnd(wiki.status)
+
+    // Assert
+    assert.equal(ended.state, 'failed')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The clock stopped.',
+    )
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The clock stopped\\. The last usable site is kept\\.$`,
+      ),
+    )
+    // The second press was not refused as "already updating": it sent its own request.
+    assert.equal(wiki.chatRequests.length, 2)
+    assert.equal(wiki.errors.length, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a Cursor update during which another repository was opened ends as failed and says to reopen the Wiki', async () => {
+  // Arrange
+  const otherRepository = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-other-')),
+  )
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      // The learner opens another folder in this window while the agent works.
+      wiki.openWorkspace(otherRepository)
+      return 'Updated'
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The opened repository changed during the Wiki update. Reopen its Wiki to see the result.',
+    )
+  } finally {
+    await wiki.close()
+    await rm(otherRepository, { recursive: true, force: true })
+  }
+})
+
+test('a chat that never opens ends the update as failed at its bound, and the next press can start', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    constants: { WIKI_CHAT_OPEN_TIMEOUT_MS: 100 },
+  })
+  const chatThatNeverOpens = wiki.hold('chat-open')
+  try {
+    // Act: the press is raced against two seconds, so a start that waits for the chat forever fails here instead of hanging.
+    const firstPress = await Promise.race([
+      wiki.clickUpdate().then(() => 'ended'),
+      new Promise((resolveWait) =>
+        setTimeout(() => resolveWait('still waiting for the chat'), 2_000),
+      ),
+    ])
+    const afterFirstPress = wiki.status()
+    chatThatNeverOpens.release()
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(firstPress, 'ended')
+    assert.equal(afterFirstPress.state, 'failed')
+    assert.equal(
+      afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
+      'The editor chat did not open within 0.1 seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.',
+    )
+    assert.equal(wiki.status().state, 'running')
+  } finally {
+    chatThatNeverOpens.release()
+    await wiki.close()
+  }
+})
+
+test('in Cursor a second Update LLM Wiki command while the agent works says that Codebook is already updating and starts no second agent', async () => {
+  // Arrange
+  let agentStarts = 0
+  let reportAgentStart = (): void => {}
+  const agentStarted = new Promise<void>((resolveStarted) => {
+    reportAgentStart = resolveStarted
+  })
+  let letAgentFinish = (): void => {}
+  const agentMayFinish = new Promise<void>((resolveFinish) => {
+    letAgentFinish = resolveFinish
+  })
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      agentStarts += 1
+      reportAgentStart()
+      await agentMayFinish
+      return 'Updated'
+    },
+  })
+  try {
+    const firstCommand = wiki.runUpdateCommand()
+    await agentStarted
+
+    // Act
+    const secondCommand = wiki.runUpdateCommand()
+    const noticesWhileTheAgentWorks = [...wiki.notices]
+    letAgentFinish()
+    await Promise.all([firstCommand, secondCommand])
+
+    // Assert
+    assert.deepEqual(noticesWhileTheAgentWorks, [
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
+    ])
+    assert.equal(agentStarts, 1)
+  } finally {
+    letAgentFinish()
+    await wiki.close()
+  }
+})
+
+test('a second window’s Update is refused while the first window’s run has staged nothing yet', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+  })
+  try {
+    await wiki.clickUpdate()
+
+    // Act
+    await secondWindow.clickUpdate()
+
+    // Assert
+    const refused = secondWindow.status()
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(refused.state, 'failed')
+    assert.match(
+      refused.state === 'failed' ? refused.reason : '',
+      /^Another editor window is updating this Wiki \(VS Code, started \d{1,2}:\d{2}[^)]*\)\. Wait for it to finish, then press Update LLM Wiki again\.$/,
+    )
+    assert.deepEqual(secondWindow.chatRequests, [])
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
+test('Update anyway is not offered while another window’s update is running', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+    // A learner who is offered the override takes it.
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Update anyway'),
+  })
+  try {
+    await wiki.clickUpdate()
+
+    // Act
+    await secondWindow.clickUpdate()
+
+    // Assert
+    assert.deepEqual(
+      secondWindow.offeredActions.map((offered) => offered.actions),
+      [['Open LLM Wiki']],
+    )
+    assert.deepEqual(secondWindow.chatRequests, [])
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
+test('a VS Code watch that was stopped before the chat staged anything still refuses the next press, until the learner chooses Update anyway', async () => {
+  // Arrange
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+
+    // Act: the chat was not stopped by the cancel, so the next press is refused; the one after it takes the override.
+    await wiki.clickUpdate()
+    const refused = wiki.status()
+    const requestsAfterRefusal = wiki.chatRequests.length
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    const deadline = Date.now() + 2_000
+    while (wiki.status().state !== 'running' && Date.now() < deadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+
+    // Assert
+    assert.equal(refused.state, 'failed')
+    assert.match(
+      refused.state === 'failed' ? refused.reason : '',
+      /^The VS Code chat this window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; Codebook stopped watching it at \d{1,2}:\d{2}[^.]* and waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
+    )
+    assert.equal(requestsAfterRefusal, 1)
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a press after a publish stopped inside its swap names the unfinished publish, not a missing Wiki', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  // A publisher that was stopped between its two moves: the old folder is the backup, the journal is left, no Wiki folder.
+  await rename(wiki.outputDirectory, `${wiki.outputDirectory}.previous-stopped`)
+  const journalPath = `${wiki.outputDirectory}.publish-journal.json`
+  await writeFile(journalPath, '{}')
+  const aMinuteAgo = new Date(Date.now() - 60_000)
+  await utimes(journalPath, aMinuteAgo, aMinuteAgo)
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'conflict')
+    assert.equal(
+      status.state === 'conflict' ? status.cause : '',
+      'unfinished-publish',
+    )
+    assert.equal(wiki.errors.length, 1)
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update not started \\(${CLOCK_TIME}\\): an earlier publish did not finish \\(wiki\\.publish-journal\\.json\\)\\. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again\\.$`,
+      ),
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a Cursor run whose publish was stopped inside its swap says the Wiki is missing and names the recovery, and the next press names the same step', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      // The publisher moved the old folder away and was stopped before it moved the new one in.
+      await rename(
+        wiki.outputDirectory,
+        `${wiki.outputDirectory}.previous-stopped`,
+      )
+      const journalPath = `${wiki.outputDirectory}.publish-journal.json`
+      await writeFile(journalPath, '{}')
+      const aMinuteAgo = new Date(Date.now() - 60_000)
+      await utimes(journalPath, aMinuteAgo, aMinuteAgo)
+      throw new Error(
+        'Cursor Agent stopped on signal SIGKILL before finishing.',
+      )
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+    const ended = wiki.status()
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(ended.state, 'failed')
+    assert.equal(ended.state === 'failed' ? ended.site : '', 'missing')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The Wiki is missing after a publish that did not finish. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+    )
+    assert.equal(wiki.errors.length, 2)
+    assert.match(
+      wiki.errors[1] ?? '',
+      /Ask the editor chat "\/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again\.$/,
+    )
+    assert.equal(wiki.status().state, 'conflict')
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a new publish whose manifest stays unreadable ends the run after its grace with the recovery request, and the next press names the same step', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    constants: { WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS: 100 },
+  })
+  try {
+    await wiki.clickUpdate()
+
+    // Act: the chat publishes a manifest that is no JSON, with a receipt that names it.
+    const brokenManifest = '{ "schemaVersion": 1, "pages": ['
+    await writeFile(`${wiki.manifestPath}.next`, brokenManifest)
+    await rename(`${wiki.manifestPath}.next`, wiki.manifestPath)
+    const receiptPath = join(wiki.outputDirectory, 'codebook-publication.json')
+    await writeFile(
+      `${receiptPath}.next`,
+      JSON.stringify({
+        kind: 'published',
+        manifestSha256: createHash('sha256')
+          .update(brokenManifest)
+          .digest('hex'),
+      }),
+    )
+    await rename(`${receiptPath}.next`, receiptPath)
+    const ended = await waitForEnd(wiki.status, 3_000)
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(ended.state, 'failed')
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : '',
+      'The editor agent published a new Wiki, but Codebook cannot read its manifest. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+    )
+    const refused = wiki.status()
+    assert.equal(refused.state, 'conflict')
+    assert.equal(
+      refused.state === 'conflict' ? refused.cause : '',
+      'unreadable-manifest',
+    )
+    assert.match(
+      wiki.errors[1] ?? '',
+      new RegExp(
+        `^Update not started \\(${CLOCK_TIME}\\): Codebook cannot read the Wiki’s manifest \\(codebook-wiki\\.json\\)\\. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again\\.$`,
+      ),
+    )
+    assert.equal(wiki.chatRequests.length, 1)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('rewriting the manifest file without a publish is not recorded as Updated', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    await wiki.clickUpdate()
+    wiki.setFreshness(CURRENT)
+
+    // Act: the same bytes are put back under a new inode (a checkout, an editor's save); the old receipt still vouches for them.
+    await writeFile(
+      `${wiki.manifestPath}.copy`,
+      await readFile(wiki.manifestPath),
+    )
+    await rename(`${wiki.manifestPath}.copy`, wiki.manifestPath)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    const afterSameBytes = wiki.status().state
+    // Then other bytes are written, again without the publisher: no receipt names them.
+    await writeFile(
+      wiki.manifestPath,
+      `${await readFile(wiki.manifestPath, 'utf8')}\n`,
+    )
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    const afterOtherBytes = wiki.status().state
+
+    // Assert
+    assert.equal(afterSameBytes, 'running')
+    assert.equal(afterOtherBytes, 'running')
+    assert.deepEqual(wiki.notices, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('an update of a project without a Git repository ends as Updated and says that no revision is recorded and that added files are not checked', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    await wiki.clickUpdate()
+
+    // Act: what the freshness check answers in a folder without a Git repository once every indexed source matches.
+    wiki.setFreshness({ ...CURRENT, addedFilesUnchecked: true })
+    await wiki.publish('b'.repeat(64))
+    const ended = await waitForEnd(wiki.status)
+
+    // Assert
+    assert.equal(ended.state, 'succeeded')
+    assert.equal(ended.state === 'succeeded' ? ended.revision : '', undefined)
+    assert.match(
+      wiki.notices[0] ?? '',
+      new RegExp(
+        `^Updated at ${CLOCK_TIME} \\(index [0-9a-f]{8}; no Git revision recorded, so added files are not checked\\)\\. Reload the browser reader to read the new pages\\.$`,
+      ),
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a failed, refused or timed-out update’s notification is an error notice with Open LLM Wiki, so the editor keeps it until dismissed', async () => {
+  // Arrange
+  let nowMs = 0
+  const failed = await openWikiWindow({ chatFails: true })
+  const refused = await openWikiWindow({ recordsPageHashes: true })
+  await rm(join(refused.outputDirectory, 'index.html'))
+  const timedOut = await openWikiWindow({
+    watchClock: {
+      now: () => nowMs,
+      // The watch's own waits pass its fifteen minutes.
+      sleep: async (delayMs) => {
+        nowMs += delayMs
+      },
+    },
+  })
+  try {
+    // Act
+    await failed.clickUpdate()
+    await refused.clickUpdate()
+    await timedOut.clickUpdate()
+    const timedOutEnd = await waitForEnd(timedOut.status)
+
+    // Assert
+    assert.equal(failed.status().state, 'failed')
+    assert.equal(refused.status().state, 'conflict')
+    assert.equal(timedOutEnd.state, 'timed-out')
+    for (const window of [failed, refused, timedOut]) {
+      assert.equal(window.errors.length, 1)
+      assert.deepEqual(window.warnings, [])
+      assert.deepEqual(window.offeredActions, [
+        { message: window.errors[0], actions: ['Open LLM Wiki'] },
+      ])
+    }
+  } finally {
+    await failed.close()
+    await refused.close()
+    await timedOut.close()
+  }
+})
+
+test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there', async () => {
+  // Arrange
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-inside-')),
+  )
+  const outsideDirectory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-flow-outside-')),
+  )
+  await writeFile(join(outsideDirectory, 'index.html'), INDEX_PAGE)
+  await writePublishedWiki(outsideDirectory, projectRoot, 'a'.repeat(64))
+  const approvalsNote =
+    'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
+  const fromTheLink = await openWikiUpdateWindow({
+    projectRoot,
+    outputSetting: outsideDirectory,
+  })
+  try {
+    // Act: once through the browser link, which confirms first, and once (in a window of its own) through the command, which does not.
+    await fromTheLink.clickUpdate()
+    const runningFromTheLink = fromTheLink.status()
+    await fromTheLink.close()
+    const fromTheCommand = await openWikiUpdateWindow({
+      projectRoot,
+      outputSetting: outsideDirectory,
+    })
+    await fromTheCommand.runUpdateCommand()
+    const runningFromTheCommand = fromTheCommand.status()
+    await fromTheCommand.close()
+
+    // Assert
+    assert.deepEqual(fromTheLink.confirmationDetails, [
+      `${projectRoot}\n\nCopilot Chat receives the update request for this project. ${approvalsNote}`,
+    ])
+    for (const [window, running] of [
+      [fromTheLink, runningFromTheLink],
+      [fromTheCommand, runningFromTheCommand],
+    ] as const) {
+      assert.deepEqual(window.progressTitles, [
+        `Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat). ${approvalsNote}`,
+      ])
+      assert.equal(
+        running.state === 'running' ? running.isOutputOutsideProject : false,
+        true,
+      )
+    }
+    assert.deepEqual(fromTheCommand.confirmations, [])
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true })
+    await rm(outsideDirectory, { recursive: true, force: true })
+  }
+})
+
+test(
+  'a publish that finishes while the start check waits for it is the generation the run starts from, not one the watch later takes for its own result',
+  { timeout: 15_000 },
+  async () => {
+    // Arrange
+    const wiki = await openWikiWindow()
+    const journalPath = `${wiki.outputDirectory}.publish-journal.json`
+    // Another chat's publish is in progress: its journal was written just now.
+    await writeFile(journalPath, '{}')
+    try {
+      // Act: that publish lands while the start check waits for its second look at the journal.
+      const press = wiki.clickUpdate()
+      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      await wiki.publish('c'.repeat(64))
+      await rm(journalPath)
+      await press
+      // The watch makes several looks at the folder.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+
+      // Assert
+      assert.equal(wiki.status().state, 'running')
+      assert.equal(wiki.chatRequests.length, 1)
+      assert.deepEqual(wiki.notices, [])
+      assert.deepEqual(wiki.errors, [])
+    } finally {
+      await wiki.close()
+    }
   },
 )

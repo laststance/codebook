@@ -5,6 +5,8 @@ import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
 import type { WikiFreshness } from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
+import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
+import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
@@ -24,8 +26,9 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update's start that a test can keep open: the freshness inspection among the start checks, or VS Code's chat command. */
-export type HeldUpdateStep = 'freshness-inspection' | 'chat-open'
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command, or one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass). */
+export type HeldUpdateStep =
+  'freshness-inspection' | 'chat-open' | 'candidate-listing'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -45,7 +48,8 @@ export type HeldUpdateStep = 'freshness-inspection' | 'chat-open'
  * @param options.constants - Replaces numeric constants of the extension (the grace a closing window gives the Cursor agent, the Cursor run's two-second look interval, a bound), so a test need not wait for them.
  * @param options.chooseAction - Presses a button of a notification: it gets the notification's text and its button labels and returns the label to press; no button is pressed when omitted.
  * @param options.workspaceState - The window's workspace state; two windows opened with the same map are one window before and after a reload.
- * @returns What the window showed (chat requests, notifications by severity, the buttons each notification offered, confirmations, progress titles), how often its looks listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
+ * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
+ * @returns What the window showed (chat requests, notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
  *
  * @example
  * ```ts
@@ -76,6 +80,7 @@ export async function openWikiUpdateWindow(options: {
   constants?: Partial<Record<NumericConstantName, number>>
   chooseAction?: (message: string, actions: string[]) => string | undefined
   workspaceState?: Map<string, unknown>
+  publishTokenReadFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   notices: string[]
@@ -83,8 +88,9 @@ export async function openWikiUpdateWindow(options: {
   errors: string[]
   offeredActions: Array<{ message: string; actions: string[] }>
   confirmations: string[]
+  confirmationDetails: string[]
   progressTitles: string[]
-  looks: { candidateListings: number }
+  looks: { candidateListings: number; stampReads: number }
   openWorkspace(nextProjectRoot: string): void
   clickUpdate(): Promise<void>
   runUpdateCommand(): Promise<void>
@@ -124,8 +130,9 @@ export async function openWikiUpdateWindow(options: {
     )
   }
   const confirmations: string[] = []
+  const confirmationDetails: string[] = []
   const progressTitles: string[] = []
-  const looks = { candidateListings: 0 }
+  const looks = { candidateListings: 0, stampReads: 0 }
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
     HeldUpdateStep,
@@ -203,7 +210,7 @@ export async function openWikiUpdateWindow(options: {
           // A modal warning is the confirmation of the browser link; a plain one is a notification.
           showWarningMessage: (
             message: string,
-            messageOptions?: { modal?: boolean } | string,
+            messageOptions?: { modal?: boolean; detail?: string } | string,
             ...choices: string[]
           ) => {
             if (typeof messageOptions === 'string')
@@ -214,6 +221,7 @@ export async function openWikiUpdateWindow(options: {
             if (!messageOptions?.modal)
               return showNotification(warnings, message, [])
             confirmations.push(message)
+            confirmationDetails.push(messageOptions.detail ?? '')
             return Promise.resolve(
               options.declineConfirmation ? undefined : choices[0],
             )
@@ -228,11 +236,33 @@ export async function openWikiUpdateWindow(options: {
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
         : {}),
-      // The real listing runs; the window only counts how often a look parsed the candidates.
+      // The real listing runs; the window only counts how often a look parsed the candidates, and can keep one listing open after it has read the folder.
       './utils/listWikiCandidates': {
-        listWikiCandidates: (outputDirectory: string) => {
+        listWikiCandidates: async (outputDirectory: string) => {
           looks.candidateListings += 1
-          return listWikiCandidates(outputDirectory)
+          const candidates = await listWikiCandidates(outputDirectory)
+          const hold = holds.get('candidate-listing')
+          if (hold) {
+            // Only this one listing is kept open; the run's later looks pass.
+            holds.delete('candidate-listing')
+            hold.reached()
+            await hold.released
+          }
+          return candidates
+        },
+      },
+      // The real stamp is read; the window only counts the looks of a watch or of a Cursor run.
+      './utils/readWikiWatchStamp': {
+        readWikiWatchStamp: (outputDirectory: string) => {
+          looks.stampReads += 1
+          return readWikiWatchStamp(outputDirectory)
+        },
+      },
+      './utils/readWikiPublishToken': {
+        readWikiPublishToken: async (outputDirectory: string) => {
+          if (options.publishTokenReadFails !== undefined)
+            throw new Error(options.publishTokenReadFails)
+          return readWikiPublishToken(outputDirectory)
         },
       },
       './deepWikiReader': {
@@ -312,6 +342,7 @@ export async function openWikiUpdateWindow(options: {
     errors,
     offeredActions,
     confirmations,
+    confirmationDetails,
     progressTitles,
     looks,
     openWorkspace(nextProjectRoot: string): void {
