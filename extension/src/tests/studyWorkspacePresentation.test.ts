@@ -4887,6 +4887,152 @@ test("a selection made on a closed reader that holds a recording arranges the re
   }
 })
 
+// Value: protects=an agent's selection on a closed reader whose recording was never read to its end (the Study workspace was closed while the recording was loading, or its load had failed): the selection reads the recording again, arranges its panes and answers confirmed; fails_when=the read that the selection's own entry restarts opens the reader a second time, which the selection's pending presentation change refuses ("A presentation change or reader close is pending. …"), so the recording fails to load and the selection is refused with "The recording's Study layout could not be confirmed after Restore." at every repeat; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R, e-select1 and e-select2: refused after 1.93 s and 194 ms, the Application tab never got the recording's title, the reader's content revision went from 9 to 12); seam=the recorded reader harness, focusMutableDraft
+test('a selection made on a closed reader whose recording was closed while it was loading reads the recording again and answers confirmed', async () => {
+  // Arrange: a recording was opened and the Study workspace closed before the recording was read; the learner types in a file.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.reader.close()
+    harness.focusMutableDraft('actions.ts', 1)
+    const closed = harness.reader.presentationState(),
+      readBeforeSelect = {
+        readiness: harness.controller.state().readiness,
+        presentedMs: harness.controller.state().presentedMs,
+      }
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: closed.presentationId,
+      expectedRevision: closed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(closed.state, 'closed')
+    assert.equal(closed.reader.contentTab, 'recording')
+    assert.deepEqual(readBeforeSelect, {
+      readiness: 'idle',
+      presentedMs: undefined,
+    })
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.reader.contentTab, 'recording')
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, undefined)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the cause an agent reads when the recording the reader holds failed to load: it names the failure and the step that loads the recording again; fails_when=the state and the refusal say "The current captured source is not ready in its native pane. Wait for it, or use Return to current …", which names a step that loads no recording, so the agent waits or returns to the current run and the select is refused again; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: that sentence stood in the state after both refused selects while the recording's load had failed); seam=the recorded reader harness, failNextCommand
+test('the refusal of a selection on a reader whose recording failed to load names that failure and the step that loads the recording again', async () => {
+  // Arrange: the Study workspace is open; a recording is opened and the editor fails the layout read of its entry, so the recording's load fails with the reader open.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}] })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    harness.failNextCommand('vscode.getEditorLayout')
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    const failed = harness.reader.presentationState()
+    // Act
+    const refused = harness.reader.changePresentation({
+      presentationId: failed.presentationId,
+      expectedRevision: failed.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'failed')
+    assert.equal(failed.state, 'open')
+    assert.equal(failed.layoutConfirmed, false)
+    assert.equal(
+      failed.reason,
+      'The recording is not shown: it could not be loaded (Native layout command failed). Open the recording again, then restore the layout.',
+    )
+    await assert.rejects(refused, {
+      code: 'PRESENTATION_UNAVAILABLE',
+      message:
+        "The recording's Study layout could not be confirmed after Restore.",
+      causeDetail:
+        'The recording is not shown: it could not be loaded (Native layout command failed). Open the recording again, then restore the layout.',
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent's replay opened from Cursor's chat while the Study workspace is open: the recording is read, its two panes are arranged and confirmed, and the chat has the keyboard again; fails_when=the entry measures the main editor by focusing its first group, which shows the Application pane, Cursor reports no focus of a pane beside the chat, the wait ends after five seconds and the recording fails to load with "The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s …"; why_new=Cycle 0045 cause 12 (e), second native result (obs15 R: `codebook_playback` open made with the caret in the chat on the three-pane layout; 3.7 s later the state read open, unconfirmed, "The native editor layout receipt no longer matches the Study panes. …", and the recording was never read); seam=the recorded reader harness with a separate editor part whose group the editor names, the fake Cursor's unreported pane focus and stale group name
+test("a recording opened from Cursor's chat while the Study workspace is open is arranged and confirmed, and the chat gets the keyboard back", async () => {
+  // Arrange: the three Study panes are open (the Application pane is the tab the first group shows), and the editor names the chat's group, whose input has the keyboard.
+  const harness = await recordedReaderHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    chat.focusTab()
+    const before = await harness.reader.readPresentationState(),
+      commandsBefore = harness.commands.length
+    // Act
+    harness.controller.command({
+      studyId: harness.studyId,
+      action: 'open',
+      expectedRevision: harness.controller.state().revision,
+    })
+    await harness.controller.settle()
+    // Assert
+    const opened = await harness.reader.readPresentationState()
+    assert.equal(before.layoutConfirmed, true)
+    assert.equal(before.panes.contextColumn, 3)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.controller.state().reason, undefined)
+    assert.equal(opened.state, 'open')
+    assert.equal(opened.reader.contentTab, 'recording')
+    assert.equal(opened.layoutConfirmed, true)
+    assert.equal(opened.reason, undefined)
+    assert.equal(opened.panes.appColumn, 1)
+    assert.equal(opened.panes.sourceColumn, 2)
+    assert.equal(opened.panes.contextColumn, undefined)
+    // Two groups of the main editor and the chat's, none of them empty.
+    assert.deepEqual(
+      harness.groups.map((group) => [group.viewColumn, group.tabs.length]),
+      [
+        [1, 3],
+        [2, 1],
+        [3, 1],
+      ],
+    )
+    // The measurement entered the main editor through the captured source's text editor, not through the first group's pane, and the chat has the keyboard again through Cursor's own command.
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBefore)
+        .filter((command) =>
+          /^workbench\.action\.focus\w+EditorGroup$|^composer\.focusComposer$/.test(
+            command,
+          ),
+        ),
+      ['composer.focusComposer'],
+    )
+    assert.equal(chat.focused(), true)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a repeated selection on a reader whose recording layout is confirmed answering confirmed without arranging, measuring by focus or focusing anything; fails_when=the selection runs the whole arrangement again (the expand command, the grid, a focus hand-over), which in Cursor ended with "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved." although nobody touched the window; why_new=Cycle 0045 cause 12 (e) (obs15 P4, third select); seam=the recorded reader harness and its command log
 test('a repeated selection on the confirmed layout of a recording answers confirmed and runs no layout or focus command', async () => {
   // Arrange: the reader shows a recording in its two confirmed panes; the keyboard is in the captured source.

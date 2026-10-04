@@ -2436,6 +2436,14 @@ export async function workspaceHarness(
           const showsAnotherTab = group.activeTab !== tab
           group.activeTab = tab
           if (!options?.preserveFocus) {
+            // Cursor beside the chat: a text editor that takes the keyboard is reported as the active text editor, while the chat's group stays the named one until a tab or group changes (as after the command that focuses the first editor group).
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              separateEditorPart &&
+              !showsAnotherTab &&
+              (staleNamedGroup ?? activeTabGroup) === separateEditorPart.group
+            )
+              staleNamedGroup = separateEditorPart.group
             activeTabGroup = group
             innerFocusedPanel = undefined
             if (separateEditorPart) separateEditorPart.focused = false

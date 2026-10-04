@@ -1497,6 +1497,51 @@ test("the fake editor leaves the keyboard on the page body when a disposed pane'
   }
 })
 
+// Value: protects=reader tests meeting Cursor as it answers a text editor that is shown with the keyboard while it names the chat's group: the editor is reported as the active text editor and the chat's group stays the named one; fails_when=the fake names the shown editor's group as the active tab group, which Cursor does only after the next tab or group change, so a measurement that waits for that name passes in the tests and is refused in the editor; why_new=Cycle 0045 cause 12 (e), second native result (the measurement enters the main editor through the captured source's text editor when the first group shows a pane); seam=the fake editor with a separate editor part and leavePaneFocusUnreportedBesideChat
+test("the fake Cursor reports a text editor shown with the keyboard beside the chat as the active text editor and keeps naming the chat's group", async () => {
+  // Arrange: the editor names the chat's group, whose input has the keyboard; the first group shows a file.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.groups.at(-1)!.tabs = []
+  harness.groups.at(-1)!.activeTab = undefined
+  const chat = harness.addSeparateEditorPart()
+  harness.leavePaneFocusUnreportedBesideChat()
+  try {
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    chat.focusTab()
+
+    // Act
+    await harness.editor.window.showTextDocument(learnerFile.document, {
+      viewColumn: 1,
+      preserveFocus: false,
+    })
+    const afterShow = {
+      namesChatGroup:
+        harness.editor.window.tabGroups.activeTabGroup.tabs.includes(chat.tab),
+      activeTextEditor:
+        harness.editor.window.activeTextEditor?.document.uri.toString(),
+      chatHasKeyboard: chat.focused(),
+      layoutRead: await harness.editor.commands.executeCommand(
+        'vscode.getEditorLayout',
+      ),
+    }
+    // The next change of a tab group rebuilds the tab model, which corrects the name.
+    chat.resync('wrapper')
+
+    // Assert
+    assert.deepEqual(afterShow, {
+      namesChatGroup: true,
+      activeTextEditor: learnerFile.document.uri.toString(),
+      chatHasKeyboard: false,
+      // The main editor's two rows, not the chat part's one group of 743.
+      layoutRead: { orientation: 1, groups: [{ size: 1 }, { size: 1 }] },
+    })
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests meeting the editor as it answers a numbered focus command for the column after the main editor's last group, where Cursor's chat group sits; fails_when=the fake focuses the chat's group for that command, which neither editor does: the command opens a new empty group in the main editor, so a reader that returns the focus that way passes in the tests and leaves an empty group in the editor; why_new=Cycle 0045 cause 12 (d) (obs15 P1 and P2: a new empty group at the chat's column, the chat's group one column on, the caret on the empty group); seam=the fake editor's group focus commands and its "Focus Agent" command
 test("the fake editor opens a new empty group for the focus command of the column after the main editor's last group, and Cursor's Focus Agent command gives the chat the keyboard without changing a group", async () => {
   // Arrange: two groups of the main editor, and the chat's group at column 3 with the keyboard.
