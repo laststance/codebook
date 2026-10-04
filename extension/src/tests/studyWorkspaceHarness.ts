@@ -524,6 +524,8 @@ export async function workspaceHarness(
   let closeDisposedPanelTabsLater = false
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard; the next tab or group change rebuilds the tab model and corrects the name.
   let staleNamedGroup: (typeof groups)[number] | undefined
+  // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
+  let keyboardOnBody = false
   // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
   let revealsPanelsLater = false,
     applyingLaterReveal = false
@@ -1438,6 +1440,12 @@ export async function workspaceHarness(
       },
       dispose(): void {
         if (!panels.delete(value)) return
+        // A disposed pane that had the keyboard leaves it to no editor.
+        if (
+          !separateEditorPart?.focused &&
+          activeTabGroup.activeTab === nativeTab
+        )
+          keyboardOnBody = true
         const closeTab = (): void => {
           const emptied = groups.filter(
             (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
@@ -2004,6 +2012,14 @@ export async function workspaceHarness(
           // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
           if (name === 'workbench.action.focusActiveEditorGroup')
             panelMaximized = false
+          // Every command that gives an editor group or the chat the keyboard takes it from the page body.
+          if (
+            name === 'workbench.action.focusActiveEditorGroup' ||
+            name === 'workbench.action.focusFirstEditorGroup' ||
+            focusGroupAtColumnCommands.includes(name) ||
+            name === CURSOR_FOCUS_AGENT_COMMAND
+          )
+            keyboardOnBody = false
           const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
           // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
           if (focusedColumn > 1) {
@@ -2481,13 +2497,21 @@ export async function workspaceHarness(
               },
             }
           },
-          close: async (tabs: Tab[]) => {
+          close: async (tabs: Tab[], preserveFocus?: boolean) => {
             tabCloseRequests.push([...tabs])
             if (rejectNextTabClose) {
               rejectNextTabClose = false
               throw new Error('Canceled')
             }
-            return closeTabs(tabs)
+            // Closing the tab that has the keyboard while preserving the focus focuses nothing in its place.
+            const closesFocusedTab =
+              Boolean(preserveFocus) &&
+              !separateEditorPart?.focused &&
+              activeTabGroup.activeTab !== undefined &&
+              tabs.includes(activeTabGroup.activeTab)
+            const closed = closeTabs(tabs)
+            if (closesFocusedTab && closed) keyboardOnBody = true
+            return closed
           },
         },
       },
@@ -3128,6 +3152,8 @@ export async function workspaceHarness(
     replaceGroupObjectsOnTabChanges(): void {
       replacesGroupObjectsOnTabChanges = true
     },
+    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
+    keyboardOnBody: () => keyboardOnBody,
     /**
      * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
      * @example harness.revealPanelsLater()

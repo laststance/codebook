@@ -5025,6 +5025,15 @@ export class StudyWorkspace {
   /** Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels. @example await workspace.close() */
   async close(): Promise<void> {
     if (this.closingPromise) return this.closingPromise
+    // A pane or the captured source that has the keyboard is closed below: the editor group that remains then gets it.
+    const closesKeyboardHolder = Boolean(
+      this.app?.active ||
+      this.contextPanel?.active ||
+      (vscode.window.activeTextEditor &&
+        this.isCapturedSourceInput(
+          vscode.window.tabGroups.activeTabGroup.activeTab?.input,
+        )),
+    )
     this.closing = true
     this.revision++
     this.lifetime++
@@ -5116,6 +5125,11 @@ export class StudyWorkspace {
       this.app?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
+      // The tabs are closed without moving the focus, so the keyboard a closed pane or source held would fall to the page body: the group the editor now shows as active takes it.
+      if (closesKeyboardHolder && vscode.window.state.focused)
+        await vscode.commands
+          .executeCommand('workbench.action.focusActiveEditorGroup')
+          .then(undefined, () => undefined)
       clearTimeout(this.citationRefreshTimer)
       this.citationRevision++
       this.citationKey = undefined
