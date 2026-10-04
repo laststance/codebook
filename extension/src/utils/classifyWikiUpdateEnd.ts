@@ -52,7 +52,113 @@ const UNVERIFIED_REMEDIES: Record<
     'Run "git status" in this project to see what Git reports, then press Update LLM Wiki again.',
 }
 
-/** Says why a site that changed on disk is not accepted as the run's success, with the next step that can help. */
+/**
+ * Says that a new Wiki leaves added source files out that nobody indexed before the run either; called by {@link describeChangedSource} when waiting changed no file.
+ * @param agent - The agent's name as the sentence's subject.
+ * @param uncovered - The added files the new Wiki neither indexes nor excludes.
+ * @returns The sentence with the count, the first file and the request for the editor chat; another press would only repeat the same run.
+ * @example
+ * describeUncoveredSources('Cursor Agent', ['src/new.ts']) // => 'Cursor Agent published a new Wiki, but 1 source file is neither indexed nor excluded (first: src/new.ts). Ask the editor chat to index or exclude it.'
+ */
+function describeUncoveredSources(agent: string, uncovered: string[]): string {
+  return `${agent} published a new Wiki, but ${uncovered.length} source ${uncovered.length === 1 ? 'file is' : 'files are'} neither indexed nor excluded (first: ${uncovered[0] ?? 'unknown'}). Ask the editor chat to index or exclude ${uncovered.length === 1 ? 'it' : 'them'}.`
+}
+
+/**
+ * Says that source files changed while the agent worked; called by {@link describeChangedSource} when the new Wiki is already behind the source.
+ * @param agent - The agent's name as the sentence's subject.
+ * @param changedDuringRun - The indexed files that differ and the files added during the run.
+ * @returns The sentence with the count, the first file and the advice to update again.
+ * @example
+ * describeSourcesChangedDuringRun('The editor agent', ['src/a.ts', 'src/b.ts']) // => 'The editor agent published a new Wiki, but 2 source files changed while it worked (first: src/a.ts). Press Update LLM Wiki again.'
+ */
+function describeSourcesChangedDuringRun(
+  agent: string,
+  changedDuringRun: string[],
+): string {
+  return `${agent} published a new Wiki, but ${changedDuringRun.length} source ${changedDuringRun.length === 1 ? 'file' : 'files'} changed while it worked (first: ${changedDuringRun[0] ?? 'unknown'}). Press Update LLM Wiki again.`
+}
+
+/**
+ * Says why a new Wiki that differs from the source is not the run's success; called by {@link describeUnverifiedFreshness} for the freshness answer `changed`.
+ * @param agent - The agent's name as the sentence's subject.
+ * @param freshness - The freshness answer of the published manifest, with status `changed`.
+ * @param uncoveredAtStart - Added files that were already neither indexed nor excluded when the run started.
+ * @returns
+ * - Only files that were uncovered before the run are left: the sentence of {@link describeUncoveredSources}
+ * - Otherwise: the sentence of {@link describeSourcesChangedDuringRun}
+ * @example
+ * describeChangedSource('Cursor Agent', { status: 'changed', changedPaths: ['src/a.ts'], addedPaths: [] }, [])
+ * // => 'Cursor Agent published a new Wiki, but 1 source file changed while it worked (first: src/a.ts). Press Update LLM Wiki again.'
+ */
+function describeChangedSource(
+  agent: string,
+  freshness: WikiFreshness,
+  uncoveredAtStart: string[],
+): string {
+  const uncoveredBefore = new Set(uncoveredAtStart)
+  const changedDuringRun = [
+    ...freshness.changedPaths,
+    ...freshness.addedPaths.filter((path) => !uncoveredBefore.has(path)),
+  ]
+  // Files nobody indexed before the run were not changed by waiting; another press would only repeat the same run.
+  if (changedDuringRun.length === 0)
+    return describeUncoveredSources(agent, freshness.addedPaths)
+  return describeSourcesChangedDuringRun(agent, changedDuringRun)
+}
+
+/**
+ * Picks the remedy for a publish that could not be checked against the source; called by {@link describeUnverifiedFreshness} for the end of its sentence.
+ * @param freshness - The freshness answer of the published manifest, with status `unknown`.
+ * @returns The sentence of {@link UNVERIFIED_REMEDIES} for the named cause; an answer without a named cause is told by what it could not check (an unchecked path: `unchecked-source`, none: `no-revision`).
+ * @example
+ * unverifiedRemedy({ status: 'unknown', changedPaths: [], addedPaths: [], unknownCause: 'git-timeout' }) // => 'Press Update LLM Wiki again.'
+ */
+function unverifiedRemedy(freshness: WikiFreshness): string {
+  // An answer without a named cause is told by what it could not check.
+  const unknownCause =
+    freshness.unknownCause ??
+    (freshness.uncheckedPath === undefined ? 'no-revision' : 'unchecked-source')
+  return UNVERIFIED_REMEDIES[unknownCause]
+}
+
+/**
+ * Says why a readable new publication is not verified current; called by {@link describeUnverifiedPublish} with the freshness answer of the published manifest.
+ * @param agent - The agent's name as the sentence's subject.
+ * @param freshness - The freshness answer, `changed` or `unknown`.
+ * @param uncoveredAtStart - Added files that were already neither indexed nor excluded when the run started.
+ * @returns
+ * - `changed`: the sentence of {@link describeChangedSource}
+ * - Otherwise: that Codebook cannot check the Wiki against the source, with the check's reason (ended with a full stop) and the remedy of {@link unverifiedRemedy}
+ * @example
+ * describeUnverifiedFreshness('Cursor Agent', { status: 'unknown', changedPaths: [], addedPaths: [], reason: 'Git timed out', unknownCause: 'git-timeout' }, [])
+ * // => 'Cursor Agent published a new Wiki, but Codebook cannot check it against the source: Git timed out. Press Update LLM Wiki again.'
+ */
+function describeUnverifiedFreshness(
+  agent: string,
+  freshness: WikiFreshness,
+  uncoveredAtStart: string[],
+): string {
+  if (freshness.status === 'changed')
+    return describeChangedSource(agent, freshness, uncoveredAtStart)
+  const cause = (
+    freshness.reason ?? 'The freshness check gave no reason.'
+  ).trim()
+  return `${agent} published a new Wiki, but Codebook cannot check it against the source: ${/[.!?]$/.test(cause) ? cause : `${cause}.`} ${unverifiedRemedy(freshness)}`
+}
+
+/**
+ * Says why a site that changed on disk is not accepted as the run's success, with the next step that can help; called by {@link classifyWikiUpdateEnd} for a replaced site that is not verified current.
+ * @param agent - The agent's name as the sentence's subject.
+ * @param facts - What the host observed when the run stopped.
+ * @returns
+ * - No new publication identity: that the manifest changed without a publish of the Codebook publisher
+ * - A new publication whose manifest cannot be read: that, with the recovery request
+ * - A readable new publication: the sentence of {@link describeUnverifiedFreshness}
+ * @example
+ * describeUnverifiedPublish('Cursor Agent', { ...facts, publicationAtStart: 'a@7', publicationAtEnd: 'b@8', published: undefined })
+ * // => 'Cursor Agent published a new Wiki, but Codebook cannot read its manifest. Ask the editor chat "…", then press Update LLM Wiki again.'
+ */
 function describeUnverifiedPublish(
   agent: string,
   facts: WikiUpdateEndFacts,
@@ -66,28 +172,11 @@ function describeUnverifiedPublish(
   const { published } = facts
   if (!published)
     return `${agent} published a new Wiki, but Codebook cannot read its manifest. Ask the editor chat "${WIKI_UPDATE_RECOVERY_REQUEST}", then press Update LLM Wiki again.`
-  const { freshness } = published
-  if (freshness.status === 'changed') {
-    const uncoveredBefore = new Set(facts.uncoveredAtStart)
-    const changedDuringRun = [
-      ...freshness.changedPaths,
-      ...freshness.addedPaths.filter((path) => !uncoveredBefore.has(path)),
-    ]
-    // Files nobody indexed before the run were not changed by waiting; another press would only repeat the same run.
-    if (changedDuringRun.length === 0) {
-      const uncovered = freshness.addedPaths
-      return `${agent} published a new Wiki, but ${uncovered.length} source ${uncovered.length === 1 ? 'file is' : 'files are'} neither indexed nor excluded (first: ${uncovered[0] ?? 'unknown'}). Ask the editor chat to index or exclude ${uncovered.length === 1 ? 'it' : 'them'}.`
-    }
-    return `${agent} published a new Wiki, but ${changedDuringRun.length} source ${changedDuringRun.length === 1 ? 'file' : 'files'} changed while it worked (first: ${changedDuringRun[0] ?? 'unknown'}). Press Update LLM Wiki again.`
-  }
-  const cause = (
-    freshness.reason ?? 'The freshness check gave no reason.'
-  ).trim()
-  // An answer without a named cause is told by what it could not check.
-  const unknownCause =
-    freshness.unknownCause ??
-    (freshness.uncheckedPath === undefined ? 'no-revision' : 'unchecked-source')
-  return `${agent} published a new Wiki, but Codebook cannot check it against the source: ${/[.!?]$/.test(cause) ? cause : `${cause}.`} ${UNVERIFIED_REMEDIES[unknownCause]}`
+  return describeUnverifiedFreshness(
+    agent,
+    published.freshness,
+    facts.uncoveredAtStart,
+  )
 }
 
 /**
