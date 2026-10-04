@@ -198,10 +198,10 @@
     },
     "src/extension.ts": {
       "complexity_critical": {
-        "count": 3
+        "count": 5
       },
       "crap_critical": {
-        "count": 8
+        "count": 10
       },
       "crap_high": {
         "count": 1
@@ -698,6 +698,14 @@
         "count": 2
       }
     },
+    "src/utils/findWikiUpdateStartBlock.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
     "src/utils/focusWebview.ts": {
       "crap_high": {
         "count": 1
@@ -770,6 +778,14 @@
       }
     },
     "src/utils/listVitestTestFiles.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "src/utils/listWikiCandidates.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
       "crap_critical": {
         "count": 1
       }
@@ -1028,6 +1044,14 @@
       "crap_critical": {
         "count": 1
       }
+    },
+    "src/utils/waitForWikiPublish.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
     }
   },
   "runtime_coverage_findings": [],
@@ -1068,6 +1092,7 @@
     "scripts/utils/runPackageCommand.mjs:complexity",
     "src/cursorSkillDeployment.ts:complexity",
     "src/ownedRepositoryBreakpoint.ts:complexity",
+    "src/utils/waitForWikiPublish.ts:complexity",
     "scripts/utils/readBuildIdentity.mjs:complexity",
     "src/replayDebugAdapter.ts:complexity",
     "scripts/study-bootstrap-qa.mjs:complexity"
