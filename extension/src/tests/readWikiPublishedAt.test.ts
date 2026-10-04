@@ -22,6 +22,8 @@ test('a publish is dated by the move of its folder into place, not by its manife
       manifestWrittenAt,
       manifestWrittenAt,
     )
+    // The folder's content last changed with that manifest. Setting the time by hand keeps the test off the filesystem's clock: it stamps the publisher's last write and the move alike when both fall into one of its ticks, and the helper then cannot tell the move from a change.
+    await utimes(wiki.outputDirectory, manifestWrittenAt, manifestWrittenAt)
 
     // Act
     const publishedAt = await readWikiPublishedAt(wiki.outputDirectory)
