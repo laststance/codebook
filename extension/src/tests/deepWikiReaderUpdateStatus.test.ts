@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
-import { rm, utimes, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { serveMinimalWiki } from './utils/serveMinimalWiki'
@@ -222,6 +224,53 @@ test('a reader of one Wiki folder answers idle while the window’s update run i
       state: 'idle',
       sitePublishedAt: '2026-10-03T11:50:00.000Z',
     })
+  } finally {
+    await wiki.close()
+  }
+})
+
+/** Writes the publisher's receipt for the manifest now on disk as a new file, the way a publish leaves the folder. @returns The publication identity that receipt gives the folder. */
+async function writePublicationReceipt(manifestPath: string): Promise<string> {
+  const manifestSha256 = createHash('sha256')
+    .update(await readFile(manifestPath))
+    .digest('hex')
+  const receiptPath = join(dirname(manifestPath), 'codebook-publication.json')
+  await rm(receiptPath, { force: true })
+  await writeFile(receiptPath, JSON.stringify({ manifestSha256 }))
+  return `${manifestSha256}@${(await stat(receiptPath)).ino}`
+}
+
+test('a served page carries the publication it was read from, and the update state names the one on disk after a later publish', async () => {
+  // Arrange
+  const wiki = await serveMinimalWiki()
+  const publicationAtLoad = await writePublicationReceipt(wiki.manifestPath)
+  try {
+    // Act: the page is served, then a publish replaces the manifest and its receipt.
+    const pageHtml = await (await fetch(wiki.reader.url)).text()
+    const manifest = JSON.parse(await readFile(wiki.manifestPath, 'utf8'))
+    await writeFile(
+      wiki.manifestPath,
+      JSON.stringify({
+        ...manifest,
+        generated: { at: '2026-10-03T12:05:00Z' },
+      }),
+    )
+    const publicationAfterPublish = await writePublicationReceipt(
+      wiki.manifestPath,
+    )
+    const answer = await (
+      await fetch(new URL('api/update-status', wiki.reader.url))
+    ).json()
+
+    // Assert
+    assert.ok(
+      pageHtml.includes(
+        `codebook-qa.js" data-codebook-publication="${publicationAtLoad}"></script></body>`,
+      ),
+      `the page does not carry ${publicationAtLoad}: ${pageHtml}`,
+    )
+    assert.equal(answer.publication, publicationAfterPublish)
+    assert.notEqual(publicationAfterPublish, publicationAtLoad)
   } finally {
     await wiki.close()
   }

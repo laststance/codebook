@@ -121,16 +121,15 @@ test('a published update names its time, revision and index, and offers a reload
     index: '0f9e8d7c',
     ...place,
   } as const
-  const finishedAtMs = Date.parse(finishedAt)
 
   // Act
   const onOlderPage = describeWikiUpdate(status, {
     ...wording,
-    pageLoadedAtMs: finishedAtMs - 60_000,
+    isPageOlderThanSite: true,
   })
   const onReloadedPage = describeWikiUpdate(status, {
     ...wording,
-    pageLoadedAtMs: finishedAtMs + 1_000,
+    isPageOlderThanSite: false,
   })
   const inEditor = describeWikiUpdate(status, wording)
 

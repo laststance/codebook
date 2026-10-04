@@ -10,7 +10,7 @@ export type WikiUpdateDescription = {
   detail: string[]
   /** The output line, for example "Output: .codebook/wiki". */
   output: string
-  /** Whether the page was loaded before this result and should offer a reload. */
+  /** Whether the reading page shows an older publication than this result and should offer a reload. */
   offerReload: boolean
 }
 
@@ -26,8 +26,8 @@ export type WikiUpdateWording = {
   msPerMinute: number
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
-  /** When the reading page was loaded (epoch ms); omitted by the editor, which never offers a reload. */
-  pageLoadedAtMs?: number
+  /** Whether the reading page was served from another publication than the one on disk now; omitted by the editor, which never offers a reload. */
+  isPageOlderThanSite?: boolean
 }
 
 /**
@@ -37,7 +37,7 @@ export type WikiUpdateWording = {
  * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param wording - Time format, the bounds of the sentence, the minute length, where the freshness label is and the page's load time.
+ * @param wording - Time format, the bounds of the sentence, the minute length, where the freshness label is and whether the reading page is older than the site.
  * @returns
  * - Idle: undefined (nothing to show)
  * - A state this version does not know: "Update status unknown."
@@ -111,9 +111,8 @@ export function describeWikiUpdate(
   }
   const at = wording.formatTime(status.finishedAt)
   if (status.state === 'succeeded') {
-    const offerReload =
-      wording.pageLoadedAtMs !== undefined &&
-      Date.parse(status.finishedAt) > wording.pageLoadedAtMs
+    // The page compares the publication it was served from with the one on disk, never two clocks.
+    const offerReload = wording.isPageOlderThanSite === true
     // Without a Git repository no revision was checked, and neither were added files.
     if (status.revision === undefined)
       return describe(

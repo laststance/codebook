@@ -1,9 +1,10 @@
 import type { describeWikiUpdate } from './describeWikiUpdate'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
-/** What the reader answers at `api/update-status`: the run state and when the site on disk was published (absent while no manifest is readable). */
+/** What the reader answers at `api/update-status`: the run state, when the site on disk was published (absent while no manifest is readable) and which publication it is (absent while the folder holds no publisher's receipt for its manifest). */
 export type WikiUpdateStatusAnswer = WikiUpdateStatus & {
   sitePublishedAt?: string
+  publication?: string
 }
 
 /** What the served page script hands to {@link installWikiUpdateStatus}: where its reader answers, the shared wording and the page's bounds. */
@@ -14,6 +15,8 @@ export type WikiUpdatePageSettings = {
   updateStatusRoute: string
   /** Route under the prefix that answers the freshness of the Wiki. */
   freshnessRoute: string
+  /** The publication the page's HTML was read from, as the reader wrote it into the page; undefined when that site had no publisher's receipt. The page offers a reload when the reader answers another one. */
+  pagePublication: string | undefined
   /** The one wording shared with the editor notification, embedded next to this function. */
   describeUpdate: typeof describeWikiUpdate
   /** How often the page asks for the update state while a run is active or awaited (ms). */
@@ -47,6 +50,7 @@ export type WikiUpdatePageSettings = {
  *   readerPrefix: '/w/3f9a/',
  *   updateStatusRoute: 'api/update-status',
  *   freshnessRoute: 'api/freshness',
+ *   pagePublication: 'dc9d3160…@1837466',
  *   describeUpdate: describeWikiUpdate,
  *   statusPollMs: 2_000,
  *   idlePollMs: 15_000,
@@ -154,6 +158,8 @@ export function installWikiUpdateStatus(
   let freshness: string | undefined
   /** When the site on disk was published, as the reader last answered it (epoch ms); undefined while no manifest is readable. */
   let sitePublishedAtMs: number | undefined
+  /** Which publication is on disk, as the reader last answered it; the pages on screen are older when it is not the one they were served from. */
+  let sitePublication: string | undefined
   /** After a press of the link: the answer at that moment, and until when the page waits for a different one. */
   let isAwaitingStart = false
   let answerAtPress: string | undefined
@@ -295,7 +301,8 @@ export function installWikiUpdateStatus(
       msPerMinute: settings.msPerMinute,
       // The page shows the freshness label above the update line.
       freshnessLabelPlace: 'above',
-      pageLoadedAtMs: performance.timeOrigin,
+      // The host names both publications, so the browser's clock decides nothing.
+      isPageOlderThanSite: sitePublication !== settings.pagePublication,
     })
     if (!described) return undefined
     const state = lastAnswer.state
@@ -321,8 +328,8 @@ export function installWikiUpdateStatus(
           rest: ' after this run ended and matches the source.',
           detail: [],
           output: described.output,
-          // Only a page loaded before that publish still shows the older pages.
-          offerReload: sitePublishedAtMs > performance.timeOrigin,
+          // Only a page served before that publish still shows the older pages.
+          offerReload: sitePublication !== settings.pagePublication,
         }
       // Nothing was published since, so the source itself went back to what the site describes: "needs another run" no longer holds.
       if (state === 'failed' && lastAnswer.site === 'replaced') return undefined
@@ -424,7 +431,9 @@ export function installWikiUpdateStatus(
       if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))
         throw new Error('The update answer has no state.')
-      const { sitePublishedAt, ...status } = answer
+      const { sitePublishedAt, publication, ...status } = answer
+      sitePublication =
+        typeof publication === 'string' ? publication : undefined
       const answeredPublishMs =
         typeof sitePublishedAt === 'string'
           ? Date.parse(sitePublishedAt)

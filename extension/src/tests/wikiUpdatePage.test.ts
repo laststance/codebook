@@ -537,6 +537,7 @@ test('a publish that lands after the watch was stopped replaces the sentence and
 
   // Act
   page.reader.sitePublishedAt = '2026-10-03T12:00:10.000Z'
+  page.reader.publication = 'publication-after-the-watch'
   page.reader.freshness = 'current'
   await page.advance(15_000)
 
@@ -688,6 +689,7 @@ test('an update that finished after the page was loaded offers a reload button a
     index: '0f9e8d7c',
     ...output,
   }
+  page.reader.publication = 'publication-of-the-update'
   page.reader.freshness = 'current'
   await page.advance(2_000)
   const status = page.find('[data-codebook-update-status]')
@@ -1205,4 +1207,70 @@ test('the page reads the update state from the route the reader serves', async (
     await reader.close()
     await rm(projectRoot, { recursive: true, force: true })
   }
+})
+
+test('Reload is offered for an update that finished after the page loaded although the browser’s clock runs five minutes ahead of the editor’s', async () => {
+  // Arrange: the editor's clock reads 12:00 at the load, the browser's 12:05.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+    { browserClockAheadMs: 300_000 },
+  )
+
+  // Act: the update ends at 12:04 by the editor's clock, before the browser's idea of the load.
+  page.reader.updateStatus = {
+    state: 'succeeded',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:04:00.000Z',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
+    ...output,
+  }
+  page.reader.publication = 'publication-of-the-update'
+  page.reader.freshness = 'current'
+  await page.advance(2_000)
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.getAttribute('data-state'),
+    'succeeded',
+  )
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
+})
+
+test('Reload is offered when the update published between the page’s HTML and its first status answer', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: the HTML was read from the older publication; the very first answer already names the new one.
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    {
+      updateStatus: {
+        state: 'succeeded',
+        host: 'vscode',
+        finishedAt: '2026-10-03T12:00:00.200Z',
+        identity: 'a1b2c3d4e5f6+0f9e8d7c',
+        revision: 'a1b2c3d4e5f6',
+        index: '0f9e8d7c',
+        ...output,
+      },
+      publication: 'publication-of-the-update',
+      freshness: 'current',
+    },
+    {
+      publication: 'publication-before-the-update',
+      browserClockAheadMs: 300_000,
+    },
+  )
+
+  // Assert
+  assert.equal(
+    page.find('[data-codebook-update-status]')?.textContent,
+    'Updated at 12:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
+  )
+  assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
 })

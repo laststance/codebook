@@ -34,6 +34,7 @@ import {
   installWikiUpdateStatus,
   type WikiUpdateStatusAnswer,
 } from './utils/installWikiUpdateStatus'
+import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
 import type { WikiUpdateStatus } from './utils/wikiUpdateRun'
@@ -64,7 +65,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE} });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');
@@ -239,6 +240,8 @@ export async function startDeepWikiReader(
       sendJson(response, 200, {
         ...ownStatus,
         sitePublishedAt: await readWikiPublishedAt(outputDirectory),
+        // The page compares it with the publication it was served from: a difference means newer pages are on disk.
+        publication: await readWikiPublicationIdentity(outputDirectory),
       } satisfies WikiUpdateStatusAnswer)
       return
     }
@@ -344,6 +347,10 @@ export async function startDeepWikiReader(
       })
       return
     }
+    // Read before the page itself: a publish between the two reads then leaves the page with the older identity, and it offers a reload instead of hiding one.
+    const publication = relativePath.endsWith('.html')
+      ? await readWikiPublicationIdentity(outputDirectory)
+      : undefined
     const content = await readFile(filePath)
     if (relativePath.endsWith('.html')) {
       const html = content.toString('utf8')
@@ -351,7 +358,8 @@ export async function startDeepWikiReader(
       response.end(
         rebindDeepWikiEditorLinks(html, editorScheme).replace(
           '</body>',
-          `<script src="${prefix}codebook-qa.js"></script></body>`,
+          // The page carries the publication it was served from, so it can tell when newer pages are on disk.
+          `<script src="${prefix}codebook-qa.js"${publication ? ` data-codebook-publication="${publication}"` : ''}></script></body>`,
         ),
       )
       return
