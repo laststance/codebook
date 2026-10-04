@@ -576,7 +576,7 @@ test('a publish that lands after the watch was stopped replaces the sentence and
   )
   assert.equal(
     status?.textContent,
-    'A new site was published after this run ended and matches the source.',
+    'A new site was published after this run ended and matches the source. Reload is offered below.',
   )
   assert.equal(status?.getAttribute('data-state'), 'late-publish')
   assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
@@ -977,7 +977,7 @@ test('a conflict over twelve files names three in the sentence and lists all twe
   const detail = page.find('[data-codebook-update-detail]')
   assert.equal(
     status?.textContent,
-    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them, then press Update LLM Wiki again.',
+    'Update stopped at 11:58: it would overwrite your own files in the Wiki folder (pages/01.html, pages/02.html, pages/03.html and 9 more). Nothing was replaced. Move or rename them, then press Update LLM Wiki again. The full list is below.',
   )
   assert.equal(detail?.tagName, 'details')
   assert.equal(detail?.parentNode, status?.parentNode)
@@ -1028,7 +1028,7 @@ test('a failure reason of 400 characters is cut to 160 in the rail and kept whol
   assert.equal(longReason.length, 400)
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    'Update failed at 11:58: The editor agent reported a very long explanation a very long explanation a very long explanation a very long explanation a very long explanation a very long… The last usable site is kept.',
+    'Update failed at 11:58: The editor agent reported a very long explanation a very long explanation a very long explanation a very long explanation a very long explanation a very long… The last usable site is kept. The full message is below.',
   )
   assert.equal(
     detail?.querySelector('summary')?.textContent,
@@ -1300,7 +1300,7 @@ test('Reload is offered when the update published between the page’s HTML and 
   // Assert
   assert.equal(
     page.find('[data-codebook-update-status]')?.textContent,
-    'Updated at 12:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
+    'Updated at 12:00 to revision a1b2c3d4e5f6 (index 0f9e8d7c). Reload is offered below.',
   )
   assert.equal(page.isShown(page.find('[data-codebook-reload]')), true)
 })
@@ -1591,4 +1591,164 @@ test('a failed result from an earlier day is still shown', async () => {
     'Update failed at 30 Sep, 11:58: Cursor Agent stopped with exit code 1 before finishing. The last usable site is kept.',
   )
   assert.equal(status?.getAttribute('data-state'), 'failed')
+})
+
+/** An update that ended after the fake page was loaded and published another site than the page was served from. */
+const updatedAfterTheLoad = {
+  updateStatus: {
+    state: 'succeeded',
+    host: 'vscode',
+    finishedAt: '2026-10-03T12:05:00.000Z',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
+    ...output,
+  },
+  publication: 'publication-of-the-update',
+  freshness: 'current',
+} as const
+
+test('after an update that finished while the page was open, Reload is the filled button and Update LLM Wiki is outlined, and the swap ends with the offer', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+    updatedAfterTheLoad,
+    { publication: 'publication-before-the-update' },
+  )
+  const group = page.find('[data-codebook-update-group]')
+  const styles = page.injectedStyles()
+  const markWhileOffered = group?.getAttribute('data-codebook-reload-offered')
+  const isReloadShownWhileOffered = page.isShown(
+    page.find('[data-codebook-reload]'),
+  )
+
+  // Act: the source changes again, so the result and its reload offer leave the panel.
+  page.reader.sourceChangeStamp = 1
+  page.reader.freshness = 'changed'
+  await page.advance(15_000)
+
+  // Assert
+  const filledUpdate =
+    '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}'
+  const outlinedUpdate =
+    '[data-codebook-update-group][data-codebook-reload-offered] .wiki-update:not([aria-disabled=true]){background:var(--panel,Canvas);color:var(--link,LinkText)}'
+  assert.equal(markWhileOffered, '')
+  assert.equal(isReloadShownWhileOffered, true)
+  assert.ok(
+    styles.includes(
+      '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--link,LinkText);color:var(--bg,Canvas)}',
+    ),
+  )
+  assert.ok(styles.includes(outlinedUpdate))
+  // The outlined look must come after the filled one to win while the offer lasts.
+  assert.ok(styles.indexOf(outlinedUpdate) > styles.indexOf(filledUpdate))
+  assert.equal(group?.getAttribute('data-codebook-reload-offered'), null)
+  assert.equal(page.find('[data-codebook-reload]'), undefined)
+})
+
+test('a result that offers a reload or a full message says so inside the announced status line', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const withReload = await openFakeWikiPage(
+    script,
+    'current-shell',
+    updatedAfterTheLoad,
+    { publication: 'publication-before-the-update' },
+  )
+  const withFullMessage = await openFakeWikiPage(script, 'current-shell', {
+    updateStatus: {
+      state: 'failed',
+      host: 'vscode',
+      finishedAt: '2026-10-03T11:58:00.000Z',
+      reason: `The editor agent reported ${'a very long explanation '.repeat(15)}and stopped it`,
+      site: 'kept',
+      ...output,
+    },
+    freshness: 'changed',
+  })
+  const withoutEither = await openFakeWikiPage(script, 'current-shell', {
+    updateStatus: updatedAfterTheLoad.updateStatus,
+    freshness: 'current',
+  })
+
+  // Assert
+  const announced = '[data-codebook-update-status]'
+  assert.equal(
+    withReload.find(announced)?.textContent,
+    'Updated at 12:05 to revision a1b2c3d4e5f6 (index 0f9e8d7c). Reload is offered below.',
+  )
+  assert.equal(
+    withFullMessage.find(announced)?.textContent,
+    'Update failed at 11:58: The editor agent reported a very long explanation a very long explanation a very long explanation a very long explanation a very long explanation a very long… The last usable site is kept. The full message is below.',
+  )
+  assert.equal(
+    withoutEither.find(announced)?.textContent,
+    'Updated at 12:05 to revision a1b2c3d4e5f6 (index 0f9e8d7c).',
+  )
+  // The controls themselves stay outside the region, so one sentence is announced.
+  assert.equal(
+    withReload.find(announced)?.querySelector('[data-codebook-reload]'),
+    null,
+  )
+})
+
+test('the clause that names the reload is in the announced status line and is not visible text', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    updatedAfterTheLoad,
+    { publication: 'publication-before-the-update' },
+  )
+
+  // Assert: the clause is its own element of the region, and the page hides that element from sight only.
+  const status = page.find('[data-codebook-update-status]')
+  assert.deepEqual(
+    status?.children.map((child) => [
+      child.tagName,
+      child.hasAttribute('data-codebook-update-note'),
+      child.textContent,
+    ]),
+    [
+      ['strong', false, 'Updated'],
+      ['span', true, ' Reload is offered below.'],
+    ],
+  )
+  assert.ok(
+    page
+      .injectedStyles()
+      .includes(
+        '[data-codebook-update-status] [data-codebook-update-note]{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}',
+      ),
+  )
+})
+
+test('the update button and the reload button change under the pointer and while pressed, and the held-back button does not', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'current-shell')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.wiki-update:not([aria-disabled=true]):hover,[data-codebook-reload]:hover{filter:brightness(.9)}',
+    '.wiki-update:not([aria-disabled=true]):active,[data-codebook-reload]:active{filter:brightness(.8)}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+  // No pointer rule reaches a held-back button: every :hover and :active selector of the update button excludes it.
+  assert.deepEqual(
+    styles.match(
+      /\.wiki-update(?!:not\(\[aria-disabled=true\]\))[^{},]*:(?:hover|active)/g,
+    ),
+    null,
+  )
 })

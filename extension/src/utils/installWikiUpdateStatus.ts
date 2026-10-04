@@ -84,6 +84,11 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-group=bare]{background:none;border:0;padding:0}',
     '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem;overflow-wrap:anywhere}',
     '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}',
+    // While a reload is offered it is the one action that changes what the learner reads: Reload is the filled button and the update button is outlined.
+    '[data-codebook-update-group][data-codebook-reload-offered] .wiki-update:not([aria-disabled=true]){background:var(--panel,Canvas);color:var(--link,LinkText)}',
+    // Both buttons answer the pointer and a press at once, without a transition; a held-back button does not.
+    '.wiki-update:not([aria-disabled=true]):hover,[data-codebook-reload]:hover{filter:brightness(.9)}',
+    '.wiki-update:not([aria-disabled=true]):active,[data-codebook-reload]:active{filter:brightness(.8)}',
     // In the narrow layout the rail is a short scrolling row; the group keeps a bounded column of it and its own height, so the panel encloses its text.
     '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
@@ -93,6 +98,8 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-status]:empty{margin:0;padding:0;border:0}',
     // State is carried by the lead words, their weight and their colour together, never by colour alone.
     '[data-codebook-update-status] strong{font-weight:650}',
+    // The clause that names the control below the region is announced with the sentence and not printed above that control.
+    '[data-codebook-update-status] [data-codebook-update-note]{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}',
     '[data-codebook-update-status][data-state=succeeded] strong,[data-codebook-update-status][data-state=already-current] strong,[data-codebook-update-status][data-state=late-publish] strong{color:var(--current,#236b55)}',
     '[data-codebook-update-status][data-state=failed] strong,[data-codebook-update-status][data-state=conflict] strong{color:var(--changed,#8a3a1c)}',
     '[data-codebook-update-status][data-state=timed-out] strong,[data-codebook-update-status][data-state=unreachable] strong{color:var(--unknown,#6b4d00)}',
@@ -101,7 +108,7 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-status]~[data-codebook-update-detail] summary{cursor:pointer}',
     '[data-codebook-update-status]~[data-codebook-update-detail] ul{margin:.3rem 0 0;padding-left:1.1rem}',
     '[data-codebook-update-status]~[data-codebook-update-detail] p{margin:.3rem 0 0}',
-    '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--panel,Canvas);color:var(--link,LinkText)}',
+    '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--link,LinkText);color:var(--bg,Canvas)}',
     '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
   ].join('')
   document.head.append(styles)
@@ -151,6 +158,9 @@ export function installWikiUpdateStatus(
   reloadButton.addEventListener('click', () => {
     location.reload()
   })
+  // The controls after the region are not announced with it, so the announced sentence ends with a clause that names them.
+  const followNote = document.createElement('span')
+  followNote.setAttribute('data-codebook-update-note', '')
 
   // A page this script runs in is served by Codebook: the offline text of the published page gives way to what happens until the first answer.
   if (freshnessLabel) freshnessLabel.textContent = 'Checking freshness…'
@@ -235,19 +245,16 @@ export function installWikiUpdateStatus(
             .slice(0, lastSpace > 0 ? lastSpace : settings.reasonLimitChars)
             .trimEnd() + '…'
         : reason
-    const currentLabel = isAdditionUnchecked
-      ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
-      : 'Wiki source current'
     // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus.
-    const unknownLabel = reason
+    let label = reason
       ? 'Wiki freshness unknown: ' + shownReason
       : 'Wiki freshness unknown'
-    freshnessLabel.textContent =
-      status === 'current'
-        ? currentLabel
-        : status === 'changed'
-          ? 'Source changed · Update available'
-          : unknownLabel
+    if (status === 'changed') label = 'Source changed · Update available'
+    else if (status === 'current')
+      label = isAdditionUnchecked
+        ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
+        : 'Wiki source current'
+    freshnessLabel.textContent = label
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
     // The reason of an earlier look must not outlive it.
     if (reason) freshnessLabel.setAttribute('title', reason)
@@ -433,6 +440,10 @@ export function installWikiUpdateStatus(
     detailBox.remove()
     reloadButton.remove()
     outputLine.remove()
+    // The mark swaps the two buttons' looks for as long as the reload is offered.
+    if (shown?.offerReload)
+      group.setAttribute('data-codebook-reload-offered', '')
+    else group.removeAttribute('data-codebook-reload-offered')
     if (!shown) {
       statusRegion.replaceChildren()
       statusRegion.removeAttribute('data-state')
@@ -440,7 +451,18 @@ export function installWikiUpdateStatus(
     }
     const lead = document.createElement('strong')
     lead.textContent = shown.lead
-    statusRegion.replaceChildren(lead, shown.rest)
+    followNote.textContent = ''
+    if (shown.offerReload) followNote.textContent = ' Reload is offered below.'
+    else if (shown.detail.length > 0)
+      followNote.textContent =
+        shown.state === 'conflict'
+          ? ' The full list is below.'
+          : ' The full message is below.'
+    statusRegion.replaceChildren(
+      lead,
+      shown.rest,
+      ...(followNote.textContent ? [followNote] : []),
+    )
     statusRegion.setAttribute('data-state', shown.state)
     const besideTheRegion: HTMLElement[] = []
     if (shown.detail.length > 0) {
