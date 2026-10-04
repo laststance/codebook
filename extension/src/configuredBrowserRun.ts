@@ -36,6 +36,7 @@ import {
 } from './constants'
 import { StudyError } from './errors'
 import {
+  OwnedBreakpointMovedError,
   OwnedBreakpointRemovedError,
   OwnedRepositoryBreakpoint,
   verifiedPlaceSchema,
@@ -830,13 +831,19 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * Words a refused or lost registration for {@link registeredStop} and for the synchronous receipt check before input in {@link dispatchInput}, so each place the run reads the receipt names the declared stop.
    * @param stop - The declared server stop whose registration failed.
    * @param error - What the tracker threw.
-   * @returns The error to throw. A refusal names the next step (a new run, then another statement of the citation) and the configuration field of the stop, followed by the mapping hints; a removed breakpoint gets neither, because another line would not help.
+   * @returns The error to throw. A refusal names the next step (a new run, then another statement of the citation) and the configuration field of the stop, followed by the mapping hints; a removed breakpoint gets neither, because another line would not help. A breakpoint the adapter moved to a line the stop's rule refuses is worded as every refused binding ({@link refusedBindingText}): the place and the rule's reason.
    * @example
    * ```ts
    * throw this.registrationFailure(stop, error) // 'Declared stop app/lib/actions.ts:36 was not registered: …. Start a new run; if the registration is refused again, declare this stop on another statement of its citation (configuration.source). Frozen source map positions …'
    * ```
    */
   private registrationFailure(stop: PreparedStop, error: unknown): Error {
+    // The adapter's later news put the acknowledged breakpoint on a line the stop's rule refuses.
+    if (error instanceof OwnedBreakpointMovedError)
+      return this.bindingFailure(
+        stop,
+        this.refusedBindingText(stop, error.place),
+      )
     const reason = thrownMessage(error),
       message = `Declared stop ${this.declaredAt(stop)} was not registered: ${reason}`
     // A removed breakpoint is told by its type, not by its text.

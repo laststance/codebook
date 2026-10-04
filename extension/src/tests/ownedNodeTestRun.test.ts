@@ -56,6 +56,7 @@ async function nodeRunHarness({
   budgetMs,
   acknowledgements,
   bindingReportedLater,
+  bindingReadUnanswered,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -80,6 +81,8 @@ async function nodeRunHarness({
   }>
   /** What the adapter answers when it is asked where an owned breakpoint is bound, after a pending registration reply. */
   bindingReportedLater?: { verified: boolean; line: number; column: number }
+  /** The adapter never answers when it is asked where an owned breakpoint is bound. */
+  bindingReadUnanswered?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -121,6 +124,11 @@ async function nodeRunHarness({
     pausedLine = observedLine,
     pausedFile = sourceFile
   let terminate: ((session: vscode.DebugSession) => void) | undefined
+  let bindingReadAsked = (): void => {}
+  /** Settles when the run asks an adapter that does not answer where its owned breakpoint is bound. */
+  const bindingReadStarted = new Promise<void>((resolve) => {
+    bindingReadAsked = resolve
+  })
   const stopped = (reason: string, hitBreakpointIds?: number[]) =>
     tracker?.onDidSendMessage?.({
       type: 'event',
@@ -145,10 +153,16 @@ async function nodeRunHarness({
     workspaceFolder: undefined,
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
     // The adapter knows only breakpoints the editor still holds; a retired one is answered as gone.
-    getDebugProtocolBreakpoint: async (breakpoint: unknown) =>
-      editorBreakpoints.some((kept) => kept === breakpoint)
-        ? bindingReportedLater
-        : undefined,
+    getDebugProtocolBreakpoint: async (breakpoint: unknown) => {
+      if (!editorBreakpoints.some((kept) => kept === breakpoint))
+        return undefined
+      // An adapter that does not answer leaves the read open for as long as the caller waits.
+      if (bindingReadUnanswered) {
+        bindingReadAsked()
+        return new Promise<never>(() => {})
+      }
+      return bindingReportedLater
+    },
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
@@ -442,6 +456,7 @@ async function nodeRunHarness({
     launch,
     reportDirectory,
     sourceFile,
+    bindingReadStarted,
     cleanup: async (): Promise<void> => {
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
@@ -1177,6 +1192,44 @@ test('a second Node test stop acknowledged at another column is refused before t
       harness.run.advance(),
       /Selected adapter did not acknowledge the breakpoint registration/,
     )
+    // Only the continuation from the entry pause to the first stop was sent.
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0045 (CR-7): red while the read of the next stop's bound place took no cancellation: an adapter that never answered it held the continuation after the run was stopped.
+test('a run cancelled while the adapter does not answer the breakpoint read ends at once', async () => {
+  // Arrange: the first stop is acknowledged at its declared 1:14; the next one is answered pending, and the adapter never says where it is bound.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    acknowledgements: [
+      { verified: true, line: 1, column: 14 },
+      { verified: false },
+    ],
+    bindingReadUnanswered: true,
+  })
+  try {
+    await harness.run.prepare()
+    const advancing = harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+    await harness.bindingReadStarted
+
+    // Act
+    await harness.run.stop()
+    const outcome = await Promise.race([
+      advancing,
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'Error: Cancelled owned breakpoint binding')
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
   } finally {

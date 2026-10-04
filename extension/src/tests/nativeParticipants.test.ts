@@ -771,6 +771,31 @@ test('server registration revoked during the final DOM check prevents the mouse 
   )
 })
 
+// Cycle 0045 (X7-A.1): red while the adapter's news of a refused place was ignored: the receipt stayed pending, the last check before the input passed, and the click was sent for a stop that could not be captured.
+test('a server stop the adapter reports verified on a line its rule refuses after acknowledging it ends the action before any input is sent, naming that place and why it is refused', async (context) => {
+  // Arrange: the stop is declared at 1:1 and its citation is line 1; the adapter acknowledged it as pending and then reports it verified at 2:1.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.announceBreakpointVerified('server', 2, 1)
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the action failed or reached its stop')
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: Declared stop src/mode.ts:1 bound at 2:1, refused: line 2 is after the last line 1 of the citation. Frozen source map positions in the selected citation: 1:1. These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
 // Value: protects=a run stopped while a later stop is still being armed inside a continuation; fails_when=the cancelled arming goes on to resume the paused server, or ends as a binding failure with mapping hints instead of the cancellation; why_new=Cycle 0036 C07d (only an adapter failure during arming was tested); seam=holdBindingLookup keeps the adapter's binding answer back
 test('a run stopped while its next stop is still being armed ends without resuming the paused server and without a binding failure', async (context) => {
   // Arrange: the server stop is captured and its continuation waits for the browser stop's binding answer.

@@ -65,6 +65,30 @@ export class OwnedBreakpointRemovedError extends Error {
 }
 /** Where an adapter verified a breakpoint: one-based line and column. */
 type VerifiedPlace = { line: number; column: number }
+/**
+ * The failure of a registration read after the adapter reported the acknowledged breakpoint verified at a place its owner refuses, in a DAP `breakpoint` event that followed the registration reply. The first reply refuses the same place, so the adapter's later news must not leave the earlier receipt standing.
+ * {@link OwnedRepositoryBreakpoint.registration} throws it until a later event names an accepted place. It carries the place, so the caller words the refusal with its own rule: {@link ConfiguredBrowserRun} names the declared stop, the place and why the stop's rule refuses it.
+ * @example
+ * try {
+ *   owned.registration(session)
+ * } catch (error) {
+ *   if (error instanceof OwnedBreakpointMovedError) error.place // => { line: 30, column: 1 }
+ * }
+ */
+export class OwnedBreakpointMovedError extends Error {
+  /**
+   * @param requested - The position the owner requested the breakpoint at.
+   * @param place - Where the adapter reported it verified.
+   */
+  constructor(
+    requested: VerifiedPlace,
+    readonly place: VerifiedPlace,
+  ) {
+    super(
+      `Selected adapter moved the acknowledged breakpoint to ${place.line}:${place.column} (requested ${requested.line}:${requested.column}), a place its owner does not accept`,
+    )
+  }
+}
 /** The breakpoint of a DAP `breakpoint` event: the adapter's later news about a breakpoint it acknowledged, for example a pending one verified when its module loads. */
 const breakpointEventSchema = z.object({
   breakpoint: z.object({
@@ -97,6 +121,8 @@ export class OwnedRepositoryBreakpoint {
       count: number
       receipt?: RegistrationReceipt
       failure?: string
+      /** Where the adapter's latest `breakpoint` event put the acknowledged breakpoint when the owner refuses that place; while it is set the receipt does not stand. */
+      refusedAt?: VerifiedPlace
     } & VerifiedRegistration
   >()
   /** `ownedBreakpointId` is the adapter id acknowledged for this breakpoint; with it, a learner breakpoint left on the same line is told apart from the owned one. */
@@ -387,7 +413,7 @@ export class OwnedRepositoryBreakpoint {
    * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
    * @param session - The debug session whose adapter acknowledges the breakpoint.
    * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.
-   * @throws An {@link OwnedBreakpointRemovedError} when the owned breakpoint is retired or gone from the editor, and a plain error with the adapter's refusal when the registration failed.
+   * @throws An {@link OwnedBreakpointRemovedError} when the owned breakpoint is retired or gone from the editor, a plain error with the adapter's refusal when the registration failed, and an {@link OwnedBreakpointMovedError} while the adapter's latest news has the breakpoint at a place the owner refuses.
    * @example
    * owned.registration(session)?.status // 'pending'
    */
@@ -402,12 +428,18 @@ export class OwnedRepositoryBreakpoint {
       throw new OwnedBreakpointRemovedError()
     const registration = this.registrations.get(session.id)
     if (registration?.failure) throw new Error(registration.failure)
+    // The adapter's latest news put the acknowledged breakpoint where its owner cannot use it.
+    if (registration?.refusedAt)
+      throw new OwnedBreakpointMovedError(
+        { line: this.line, column: this.column },
+        registration.refusedAt,
+      )
     return registration?.receipt && { ...registration.receipt }
   }
 
   /**
    * Reads where the adapter currently has this breakpoint when it moved it to another line than requested, for a deadline text that must name that place while it fails a run; {@link ConfiguredBrowserRun} calls it when such a deadline expires.
-   * Unlike {@link registration} it never throws: a refused, revoked or retired registration has no moved place.
+   * Unlike {@link registration} it never throws: a refused, revoked or retired registration has no moved place, and neither has one the adapter moved to a place the owner refuses.
    * @param session - The debug session whose adapter acknowledged the breakpoint.
    * @returns The verified line and column of the current acknowledgement, or `undefined` when it is on the requested line, pending, refused or gone.
    * @example
@@ -415,20 +447,30 @@ export class OwnedRepositoryBreakpoint {
    */
   movedTo(session: vscode.DebugSession): VerifiedPlace | undefined {
     const registration = this.registrations.get(session.id)
-    return registration?.failure ? undefined : registration?.receipt?.movedTo
+    return registration?.failure || registration?.refusedAt
+      ? undefined
+      : registration?.receipt?.movedTo
   }
 
   /**
    * Asks the adapter where it has this breakpoint now and refuses a verified binding away from the declared position, for an owner whose first reply was pending and named no position; {@link OwnedNodeTestRun} calls it before it resumes the test.
    * A binding the adapter does not report, or one that is still unverified, decides nothing: the pause check remains.
    * @param session - The debug session whose adapter holds the breakpoint.
-   * @throws When the adapter reports the breakpoint verified at another line or column than declared; the text names both positions.
+   * @param signal - The caller's cancellation: an adapter that never answers this read must not hold a run that is being stopped.
+   * @throws When the adapter reports the breakpoint verified at another line or column than declared; the text names both positions. When the run is cancelled, or the adapter does not answer within the active bound, the wait ends with that reason.
    * @example
-   * await owned.assertBoundAsDeclared(session) // throws 'Declared breakpoint 20:5 is bound at 20:12; …'
+   * await owned.assertBoundAsDeclared(session, signal) // throws 'Declared breakpoint 20:5 is bound at 20:12; …'
    */
-  async assertBoundAsDeclared(session: vscode.DebugSession): Promise<void> {
+  async assertBoundAsDeclared(
+    session: vscode.DebugSession,
+    signal: AbortSignal,
+  ): Promise<void> {
     const place = verifiedPlaceSchema.safeParse(
-      await session.getDebugProtocolBreakpoint(this.breakpoint),
+      await awaitResponse(
+        session.getDebugProtocolBreakpoint(this.breakpoint),
+        'owned breakpoint binding',
+        signal,
+      ),
     )
     if (
       place.success &&
@@ -449,12 +491,14 @@ export class OwnedRepositoryBreakpoint {
    */
   verifiedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
     const registration = this.registrations.get(session.id)
-    return registration?.failure ? undefined : registration?.verifiedAt
+    return registration?.failure || registration?.refusedAt
+      ? undefined
+      : registration?.verifiedAt
   }
 
   /**
    * Reads the adapter's later news about the acknowledged breakpoint, a DAP `breakpoint` event; the run forwards every event of a selected session. A pending registration that the adapter verifies when its module loads gains its place here, so a deadline can name a moved place and a pause is compared with the bound line.
-   * An event that names a place the owner refuses, or another source, is not taken: the pause check still refuses such a binding when it arrives.
+   * An event that names a place the owner refuses is the adapter's news that the breakpoint is no longer where its owner can use it: {@link registration} then fails with an {@link OwnedBreakpointMovedError}, as the first reply is refused for the same place, so no input is sent for a stop that cannot be captured; a later event that names an accepted place restores the receipt. An event for another source, or one that names no whole position, is not taken.
    * @param session - The debug session that sent the event.
    * @param event - Any DAP event of that session.
    * @example
@@ -472,12 +516,17 @@ export class OwnedRepositoryBreakpoint {
       parsed.data.breakpoint.id !== receipt.breakpointId ||
       !parsed.data.breakpoint.verified ||
       (parsed.data.breakpoint.source?.path &&
-        resolve(parsed.data.breakpoint.source.path) !== resolve(this.path)) ||
-      !this.acknowledgesPosition(parsed.data.breakpoint)
+        resolve(parsed.data.breakpoint.source.path) !== resolve(this.path))
     )
       return
     const { verifiedAt, ...moved } = this.verifiedPlaces(parsed.data.breakpoint)
     if (!verifiedAt) return
+    // The adapter moved the acknowledged breakpoint to a place the owner refuses: the earlier receipt no longer stands.
+    if (!this.acknowledgesPosition(parsed.data.breakpoint)) {
+      registration.refusedAt = verifiedAt
+      return
+    }
+    registration.refusedAt = undefined
     registration.verifiedAt = verifiedAt
     // The receipt is rebuilt so a place of an earlier reply never outlives the adapter's news.
     registration.receipt = {

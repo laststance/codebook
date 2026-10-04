@@ -115,6 +115,7 @@ async function breakpointHarness(
     signal: new AbortController().signal,
     editorBreakpoints: breakpoints,
     OwnedBreakpointRemovedError: module.OwnedBreakpointRemovedError,
+    OwnedBreakpointMovedError: module.OwnedBreakpointMovedError,
   }
 }
 
@@ -913,6 +914,58 @@ test('a pending registration that the adapter later reports verified on a later 
     JSON.stringify(breakpoint.movedTo(session)),
     '{"line":21,"column":7}',
   )
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',
+  )
+})
+
+// Cycle 0045 (X7-A.1): red while an event that named a refused place was ignored, so the earlier receipt still authorized the input for a stop that could not be captured.
+test('a registration the adapter later reports verified on a line the owner’s rule refuses no longer authorizes input, and does again once the adapter reports an accepted place', async () => {
+  // Arrange: the owner requested 20:5 and its rule accepts line 21; the registration is acknowledged as pending.
+  const { breakpoint, session, request, response, OwnedBreakpointMovedError } =
+    await breakpointHarness('declared-line', (line) => line === 21)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(session, response())
+  // Act: the adapter reports the breakpoint verified at 30:1, and afterwards at 21:7.
+  breakpoint.onEvent(session, {
+    seq: 200,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 30, column: 1 },
+    },
+  })
+  let refusal: unknown
+  try {
+    breakpoint.registration(session)
+  } catch (error) {
+    refusal = error
+  }
+  const verifiedWhileRefused = breakpoint.verifiedPlace(session)
+  breakpoint.onEvent(session, {
+    seq: 201,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 21, column: 7 },
+    },
+  })
+  const receipt = breakpoint.registration(session)
+  // Assert
+  assert.equal(
+    String(refusal),
+    'Error: Selected adapter moved the acknowledged breakpoint to 30:1 (requested 20:5), a place its owner does not accept',
+  )
+  assert.equal(
+    refusal instanceof OwnedBreakpointMovedError
+      ? JSON.stringify(refusal.place)
+      : 'another error',
+    '{"line":30,"column":1}',
+  )
+  assert.equal(verifiedWhileRefused, undefined)
   assert.equal(
     JSON.stringify(receipt),
     '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',
