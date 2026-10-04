@@ -37,14 +37,16 @@ Historical cycles, generation prompts and external references are evidence consu
 
 ## Cycle rule: every carried defect is fixed in the next cycle
 
-This rule is absolute. No planning choice, review outcome or skill default overrides it.
+This rule is absolute. No planning choice, review outcome or skill default overrides it. Its purpose is that a feature cycle starts from a clean state.
 
-- A cycle is planned from the final product alone. `/spec` and the plan reviews derive its increment from PRODUCT_GOAL, the feature contracts and the gap audit; carried defects are not weighed, ranked or selected there.
-- Every defect a cycle leaves unfixed is a task of the next cycle. All of them are added to the next cycle's Issue beside the planned increment, without selection. None is dropped, reduced or carried a second time.
-- A carried defect is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies. A cycle closes only when every defect carried into it is closed.
-- Carried defects live in the next cycle's Issue and its cycle record, as tasks. A TODOS file, backlog or ledger of them is forbidden: a list that only records lets the work end at the recording.
-- During a delivery a critical review finding is fixed before the merge. Every other finding of that cycle (review, delegated review, native trial, audit) is a carried defect.
-- The rule is in force from Cycle 0044. Cycle 0043 was planned and delivered before it; what it and earlier cycles left open goes to Cycle 0044's Issue in full.
+- A cycle is one of two kinds. A **feature cycle** builds an increment of the final product. A **bug-fix cycle** fixes the defects the previous cycle left, and nothing else.
+- A feature cycle starts only when no defect is carried into it. It is planned from the final product alone: `/spec` and the plan reviews derive its increment from PRODUCT_GOAL, the feature contracts and the gap audit.
+- Every defect a feature cycle leaves unfixed is carried. When a cycle leaves at least one defect, the next cycle is a bug-fix cycle: its Issue holds every one of them as a task, without selection, and no increment. None is dropped or reduced.
+- A bug-fix cycle carries nothing. Every defect found during it (implementation, review, delegated review, native trial, audit) is fixed in it. It closes only when every defect carried into it and every defect found in it is closed, and the cycle after it is a feature cycle.
+- A defect is closed by a fix with a test that fails without it, or by recorded evidence that it is not a defect or no longer applies.
+- Carried defects live in the bug-fix cycle's Issue and its cycle record, as tasks. A TODOS file, backlog or ledger of them is forbidden: a list that only records lets the work end at the recording.
+- During a feature cycle's delivery a critical review finding is fixed before the merge, and every other finding of that cycle (review, delegated review, native trial, audit) is a carried defect. During a bug-fix cycle's delivery every finding is fixed before the merge.
+- The two kinds are in force from the cycle after Cycle 0045. Cycle 0045 was planned before them, as an increment together with every defect Cycle 0044 left: it closes only when every defect carried into it is closed, and what it leaves unfixed goes in full to Cycle 0046, which is then a bug-fix cycle.
 
 [DEVELOPMENT.md](DEVELOPMENT.md#carried-defects-in-the-skills) says how `/spec`, the plan reviews and `/ship` are used under this rule.
 
