@@ -99,6 +99,15 @@ async function check(page, options) {
           window.dispatchEvent(new MessageEvent('message', { data: message })),
         message,
       )
+  /** Reads where the replay transport's controls stand in the viewport. */
+  const transportTops = () =>
+    page.evaluate(() =>
+      ['playback-toggle', 'previous-moment', 'next-moment', 'playhead']
+        .map((id) =>
+          Math.round(document.getElementById(id).getBoundingClientRect().top),
+        )
+        .join(','),
+    )
   const inspect = () =>
     page.evaluate(() => ({
       text: document.body.innerText,
@@ -676,17 +685,14 @@ async function check(page, options) {
         recording: { ...replay.recording, nativeValuesUninspected: true },
       })
       cases.push({
-        name: 'a moment committed without native values names where Run and Debug loads them in a polite status',
+        name: 'a moment committed without native values names Show Variables first and the manual step after it, in a polite status',
+        actual: await page.locator('#playback-hint').textContent(),
         passed:
           (await page.locator('#playback-hint').isVisible()) &&
           (await page.locator('#playback-hint').getAttribute('role')) ===
             'status' &&
-          (await page.locator('#playback-hint').textContent()).includes(
-            'expand Variables, then expand its first scope if it stays closed',
-          ) &&
-          (await page.locator('#playback-hint').textContent()).includes(
-            'Codebook · Recorded learning',
-          ),
+          (await page.locator('#playback-hint').textContent()) ===
+            'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.',
       })
       await page.screenshot({
         path: `${options.output}/replay-native-values-hint.png`,
@@ -770,9 +776,8 @@ async function check(page, options) {
         passed:
           nodeWithoutValues.position ===
             'Debugger stop 1 · 1.20 s · output shown through this event.' &&
-          nodeWithoutValues.hint.startsWith(
-            'Recorded values for this moment load in Run and Debug',
-          ) &&
+          nodeWithoutValues.hint ===
+            'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.' &&
           nodeWithoutValues.role === 'status' &&
           nodeWithoutValues.muted &&
           nodeWithValues.position ===
@@ -1320,6 +1325,289 @@ async function check(page, options) {
           !(await page.locator('#learning-material').isVisible()) &&
           (await page.locator('#learning-unavailable').isVisible()),
       })
+
+      // Arrange: one replay moment without its native values and the same moment with them (SD-8, T-3, SD-15).
+      const withoutValues = {
+          ...replay,
+          revision: revisionAt(11),
+          recording: { ...replay.recording, nativeValuesUninspected: true },
+        },
+        withValues = { ...replay, revision: revisionAt(12) }
+      /** Names the element that holds the pane's focus by its id, or by its tag when it has none. */
+      const focusedControl = () =>
+        page.evaluate(
+          () => document.activeElement.id || document.activeElement.tagName,
+        )
+      // Act
+      await publish(withoutValues)
+      const footerButton = await page.evaluate(() => {
+        const style = (id) => getComputedStyle(document.getElementById(id)),
+          height = (id) =>
+            Math.round(
+              document.getElementById(id).getBoundingClientRect().height,
+            )
+        return {
+          showVariablesHeight: height('playback-show-variables'),
+          showVariablesMinHeight: style('playback-show-variables').minHeight,
+          showVariablesFontSize: style('playback-show-variables').fontSize,
+          // The transport's buttons share the 32 px rule; their 16 px text makes them two pixels taller.
+          playHeight: height('playback-toggle'),
+          playMinHeight: style('playback-toggle').minHeight,
+          hintFontSize: style('playback-hint').fontSize,
+        }
+      })
+      // Assert
+      cases.push({
+        name: "Show Variables in the replay footer is as tall as the transport buttons and set in the hint's text size",
+        actual: footerButton,
+        passed:
+          footerButton.showVariablesHeight === 32 &&
+          footerButton.showVariablesMinHeight === '32px' &&
+          footerButton.playMinHeight === '32px' &&
+          footerButton.playHeight === 34 &&
+          footerButton.showVariablesFontSize === '12px' &&
+          footerButton.hintFontSize === '12px',
+      })
+
+      // Act: the same moment with and without the hint, in a side bar at two widths (T-3, ER-18).
+      // The playback details opened earlier in this flow are closed again: a learner's footer starts without them.
+      await page.locator('#playback-options').evaluate((details) => {
+        details.open = false
+      })
+      const sideBarTops = {}
+      for (const width of [600, 300]) {
+        await page.setViewportSize({ width, height: 720 })
+        await publish(withValues)
+        const before = await transportTops()
+        await publish(withoutValues)
+        sideBarTops[width] = {
+          before,
+          withHint: await transportTops(),
+          // The footer scrolls inside itself once it reaches its greatest height; a hint that makes it scroll would hide controls.
+          footerScrolls: await page
+            .locator('#recording-transport')
+            .evaluate((footer) => footer.scrollHeight > footer.clientHeight),
+          hintShown: await page.locator('#playback-hint').isVisible(),
+          footerHeight: await page
+            .locator('#recording-transport')
+            .evaluate((footer) =>
+              Math.round(footer.getBoundingClientRect().height),
+            ),
+        }
+      }
+      await page.setViewportSize({ width: 600, height: 800 })
+      // Assert
+      cases.push({
+        name: "the transport's buttons do not move when the values hint appears",
+        actual: sideBarTops,
+        passed:
+          sideBarTops[600].before === sideBarTops[600].withHint &&
+          sideBarTops[600].hintShown &&
+          !sideBarTops[600].footerScrolls &&
+          sideBarTops[300].before === sideBarTops[300].withHint &&
+          sideBarTops[300].hintShown &&
+          !sideBarTops[300].footerScrolls,
+      })
+
+      // Arrange: a press on the replay thumb that moves nothing fires neither input nor change (SD-17).
+      await publish(withValues)
+      const playheadValue = () =>
+        page.locator('#playhead').evaluate((playhead) => playhead.value)
+      await page
+        .locator('#playhead')
+        .dispatchEvent('pointerdown', { bubbles: true })
+      // Act: the host answers a keyboard seek with a new presented position.
+      await publish({
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 3000 },
+      })
+      const afterPressWithoutDrag = await playheadValue()
+      // A drag holds the thumb under the pointer until it ends, also when it ends without a change event.
+      await page.locator('#playhead').evaluate((playhead) => {
+        playhead.value = '5000'
+        playhead.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await publish({
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 3500 },
+      })
+      const whileDragging = await playheadValue()
+      await page
+        .locator('#playhead')
+        .dispatchEvent('pointercancel', { bubbles: true })
+      await publish({
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 3600 },
+      })
+      const afterCancelledDrag = await playheadValue()
+      // Assert
+      cases.push({
+        name: 'a press on the replay thumb without a drag does not stop the playhead from following a keyboard seek',
+        actual: { afterPressWithoutDrag, whileDragging, afterCancelledDrag },
+        passed:
+          afterPressWithoutDrag === '3000' &&
+          whileDragging === '5000' &&
+          afterCancelledDrag === '3600',
+      })
+
+      // Arrange: keyboard focus on Show Variables (SD-15).
+      await publish(withoutValues)
+      await page.locator('#playback-show-variables').focus()
+      // Act: the learner presses it, and the values load.
+      await page.keyboard.press('Enter')
+      await publish(withValues)
+      // Assert
+      cases.push({
+        name: 'after Show Variables is pressed by keyboard and the values load, focus rests on Play, not on the document body (replay)',
+        actual: await focusedControl(),
+        passed: (await focusedControl()) === 'playback-toggle',
+      })
+
+      // Arrange: the same press, but the editor moved the focus to Run and Debug, so this document has none (DR-24).
+      await publish(withoutValues)
+      await page.locator('#playback-show-variables').focus()
+      await page.keyboard.press('Enter')
+      await page.evaluate(() => {
+        document.hasFocus = () => false
+      })
+      // Act: the values load while the learner is in Run and Debug; later the learner returns to the pane.
+      await publish(withValues)
+      const focusWhileAway = await focusedControl()
+      await page.evaluate(() => {
+        delete document.hasFocus
+        window.dispatchEvent(new Event('focus'))
+      })
+      const focusOnReturn = await focusedControl()
+      // Assert
+      cases.push({
+        name: "when Show Variables is hidden while the pane does not have the focus, the pane's focus is on Play when the learner returns",
+        actual: { focusWhileAway, focusOnReturn },
+        passed:
+          focusWhileAway !== 'playback-toggle' &&
+          focusOnReturn === 'playback-toggle',
+      })
+
+      // Arrange: a Node test history of two stops whose first, selected stop has no native values (SD-15, the Node button).
+      const nodeWithoutNativeValues = {
+          ...twoStops,
+          revision: revisionAt(13),
+          nodeHistoryPosition: {
+            ...nodeStop,
+            eventIndex: 0,
+            nativeValuesUninspected: true,
+          },
+          nodeHistoryPlayback: {
+            mode: 'paused',
+            sequence: 2,
+            positionMs: 1200,
+            startMs: 0,
+            endMs: 1500,
+            loading: false,
+          },
+        },
+        nodeWithNativeValues = {
+          ...nodeWithoutNativeValues,
+          revision: revisionAt(14),
+          nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+        }
+      await publish(nodeWithoutNativeValues)
+      await page.locator('#node-history-show-variables').focus()
+      // Act
+      await page.keyboard.press('Enter')
+      await publish(nodeWithNativeValues)
+      // Assert
+      cases.push({
+        name: 'after Show Variables is pressed by keyboard and the values load, focus rests on Play, not on the document body (Node test history)',
+        actual: await focusedControl(),
+        passed: (await focusedControl()) === 'node-history-playback-toggle',
+      })
+
+      // Act: Play cannot take the focus at the end of a recording (PC-3.7).
+      const atRecordingEnd = {
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 8000 },
+      }
+      await publish({
+        ...atRecordingEnd,
+        recording: {
+          ...atRecordingEnd.recording,
+          nativeValuesUninspected: true,
+        },
+      })
+      await page.locator('#playback-show-variables').focus()
+      await publish(atRecordingEnd)
+      const focusAtRecordingEnd = await page.evaluate(() => ({
+        playDisabled: document.getElementById('playback-toggle').disabled,
+        focused: document.activeElement.getAttribute('aria-label'),
+      }))
+      // Act: while the replay loads its next moment the toggle is Pause and stays usable.
+      await publish(withoutValues)
+      await page.locator('#playback-show-variables').focus()
+      await publish({
+        ...withValues,
+        recording: {
+          ...replay.recording,
+          cleared: true,
+          readiness: 'loading',
+          requestedMs: 4000,
+        },
+      })
+      const focusWhileLoading = await page.evaluate(() => ({
+        focused: document.activeElement.id,
+        label: document.activeElement.textContent,
+      }))
+      // Act: a Node test history with a single event, whose transport has no usable control.
+      const singleEvent = {
+        ...nodeReader,
+        revision: revisionAt(15),
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence: 2,
+          positionMs: 1200,
+          startMs: 1200,
+          endMs: 1200,
+          loading: false,
+        },
+      }
+      await publish({
+        ...singleEvent,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          eventIndex: 0,
+          nativeValuesUninspected: true,
+        },
+      })
+      await page.locator('#node-history-show-variables').focus()
+      await publish({
+        ...singleEvent,
+        nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+      })
+      const focusWithSingleEvent = await page.evaluate(() => ({
+        transportDisabled: [
+          'node-history-playback-toggle',
+          'node-history-playhead',
+          'node-history-moment-previous',
+          'node-history-moment-next',
+        ].every((id) => document.getElementById(id).disabled),
+        focused: document.activeElement.id,
+      }))
+      // Assert
+      cases.push({
+        name: 'when Play cannot be used as Show Variables leaves, focus goes to the first transport control that can: at the end of a recording, while a moment loads and in a history with a single event',
+        actual: {
+          focusAtRecordingEnd,
+          focusWhileLoading,
+          focusWithSingleEvent,
+        },
+        passed:
+          focusAtRecordingEnd.playDisabled &&
+          focusAtRecordingEnd.focused === 'Replay from start' &&
+          focusWhileLoading.focused === 'playback-toggle' &&
+          focusWhileLoading.label === 'Pause' &&
+          focusWithSingleEvent.transportDisabled &&
+          focusWithSingleEvent.focused === 'node-history-understood',
+      })
+      await publish({ ...replay, revision: revisionAt(10) })
     } else {
       await page.setViewportSize({ width: 1200, height: 180 })
       await publish({
@@ -1431,6 +1719,44 @@ async function check(page, options) {
       })
       await page.screenshot({
         path: `${options.output}/bottom-playback-panel.png`,
+      })
+      // Arrange: the bottom panel's transport starts at the panel's top, so its hint stands below the controls (T-3, ER-18).
+      const panelReplay = {
+        ...options.message,
+        revision: revisionAt(7),
+        contentTab: 'recording',
+        playbackPanelVisible: true,
+        recording: {
+          revision: revisionAt(6),
+          mode: 'paused',
+          readiness: 'ready',
+          cleared: false,
+          presentedMs: 2000,
+          range: { startMs: 0, endMs: 5000, endKnown: true },
+          recordingStatus: 'finalized',
+        },
+      }
+      await publish(panelReplay)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const panelTopsBefore = await transportTops()
+      // Act
+      await publish({
+        ...panelReplay,
+        recording: { ...panelReplay.recording, nativeValuesUninspected: true },
+      })
+      const panelTopsWithHint = await transportTops(),
+        panelHintBelowControls = await page.evaluate(
+          () =>
+            document.getElementById('playback-hint').getBoundingClientRect()
+              .top >
+            document.getElementById('playback-toggle').getBoundingClientRect()
+              .bottom,
+        )
+      // Assert
+      cases.push({
+        name: "in the bottom panel the transport's buttons do not move when the values hint appears",
+        actual: { panelTopsBefore, panelTopsWithHint, panelHintBelowControls },
+        passed: panelTopsBefore === panelTopsWithHint && panelHintBelowControls,
       })
     }
   }

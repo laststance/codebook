@@ -147,6 +147,9 @@ declare function acquireVsCodeApi(): {
 /** Supplies a nonce-scoped thin reader; {@link StudyWorkspace} posts typed snapshots separately from HTML. @example studyHtml('context') */
 export function studyHtml(kind: 'context' | 'moments'): string {
   const nonce = randomUUID()
+  // The values hint and its button stand where their arrival moves no transport control: above the controls in the summary, whose transport is fixed to the bottom and grows upward, and below them in the bottom panel, whose transport starts at the top.
+  const valuesHint =
+    '<p id="playback-hint" class="muted" role="status" aria-live="polite"></p><button id="playback-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button>'
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${kind === 'moments' ? 'moments-only' : ''}">
 <p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
 <header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title">Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header>
@@ -167,7 +170,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved Node test entry selected in Saved studies. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. This test has no application video or synchronized application replay.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it does not create application video or claim synchronized application replay.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; application video is unavailable.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden>This saved study cannot be opened. It can still be deleted.</p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden>This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study.</p><div id="delete-study-row" class="row" hidden><button id="repair-study" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><div id="study-files" hidden><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy path</button><button type="button" data-action="retry">Retry storage / refresh</button></div></div></section>
-<section id="recording-transport" aria-label="Recorded playback" hidden><div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p><p id="playback-hint" class="muted" role="status" aria-live="polite"></p><button id="playback-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button></section>
+<section id="recording-transport" aria-label="Recorded playback" hidden>${kind === 'context' ? valuesHint : ''}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${kind === 'moments' ? valuesHint : ''}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()})</script></body></html>`
 }
@@ -199,6 +202,10 @@ function studyClient(
   let filesRequest: { studyId: string; revision: number } | undefined
   let scrubbing = false
   let nodeHistoryScrubbing = false
+  // A Show Variables button that left while it held this pane's focus, and where that focus goes: paid when the Study message is rendered if this document has the focus, else at its next focus event, so a pane the learner left for Run and Debug takes no focus back.
+  let transportFocusOwed:
+    | { leaving: HTMLElement; preferred: readonly string[]; section: string }
+    | undefined
   let inputRevision = 0
   let poseTransaction:
     | {
@@ -507,12 +514,15 @@ function studyClient(
     nodePlayhead.addEventListener(scrubEnd, () => {
       nodeHistoryScrubbing = false
     })
-  element('playhead').addEventListener('pointerdown', () => {
+  // Only a moved thumb holds the playhead: a press without a drag fires no input and no change, and must not stop it from following later seeks.
+  element('playhead').addEventListener('input', () => {
     scrubbing = true
   })
-  element('playhead').addEventListener('blur', () => {
-    scrubbing = false
-  })
+  // A scrub that ends without a change event (focus lost, pointer cancelled) releases the playhead as well.
+  for (const scrubEnd of ['blur', 'pointercancel'])
+    element('playhead').addEventListener(scrubEnd, () => {
+      scrubbing = false
+    })
   element('playhead').addEventListener('change', (event) => {
     scrubbing = false
     if (event.target instanceof HTMLInputElement)
@@ -1159,6 +1169,59 @@ function studyClient(
     askForStudyFiles(message, chosen, reason)
     answerRemovalRequest(message.studyRemoval, inProgress)
   }
+  /**
+   * Shows or hides a Show Variables button, and remembers where the keyboard focus goes when the button leaves while it holds this pane's focus; called for the replay's and the Node history's button on every Study message.
+   * @param buttonId - The Show Variables button.
+   * @param isOffered - Whether the selected moment's native values are not loaded, so the button is shown.
+   * @param preferred - Selectors of that transport's controls in the order the focus tries them, Play first.
+   * @param section - Id of the section whose first usable control takes the focus when none of the preferred ones can.
+   * @example offerShowVariables('playback-show-variables', false, options.replayTransportFocus, 'recording-transport')
+   */
+  const offerShowVariables = (
+    buttonId: string,
+    isOffered: boolean,
+    preferred: readonly string[],
+    section: string,
+  ): void => {
+    const control = element(buttonId)
+    // Read before the button is hidden: an element that is no longer rendered loses the focus to the document body.
+    if (!isOffered && document.activeElement === control)
+      transportFocusOwed = { leaving: control, preferred, section }
+    control.hidden = !isOffered
+  }
+  /**
+   * Finds the control that takes the focus of a Show Variables button that left: the first preferred transport control that is shown and enabled (Play can be disabled at a recording's end or on a history's last event), else the first such control of the section.
+   * @param owed - The button that left, the preferred selectors and the section.
+   * @returns The control, or nothing when the section shows no enabled control.
+   * @example usableTransportControl(transportFocusOwed)?.id // => 'playback-toggle'
+   */
+  const usableTransportControl = (
+    owed: NonNullable<typeof transportFocusOwed>,
+  ): HTMLElement | undefined =>
+    [
+      ...owed.preferred.map((selector) => document.querySelector(selector)),
+      ...Array.from(element(owed.section).querySelectorAll('button,input')),
+    ].find(
+      (control): control is HTMLButtonElement | HTMLInputElement =>
+        (control instanceof HTMLButtonElement ||
+          control instanceof HTMLInputElement) &&
+        control !== owed.leaving &&
+        !control.disabled &&
+        control.getClientRects().length > 0,
+    )
+  /** Moves the focus a Show Variables button left behind to its transport, once; called after a Study message was rendered while this document has the focus, and at the document's next focus event otherwise. A learner who already put the focus on another control keeps it. @example payTransportFocus() */
+  const payTransportFocus = (): void => {
+    const owed = transportFocusOwed
+    if (!owed) return
+    transportFocusOwed = undefined
+    if (
+      document.activeElement !== document.body &&
+      document.activeElement !== owed.leaving
+    )
+      return
+    usableTransportControl(owed)?.focus({ preventScroll: true })
+  }
+  window.addEventListener('focus', payTransportFocus)
   window.addEventListener('message', (event) => {
     const message:
       | StudyViewMessage
@@ -1332,8 +1395,12 @@ function studyClient(
           : '',
       )
       // The hint comes with a control that opens Run and Debug and expands Variables in one click.
-      element('playback-show-variables').hidden =
-        failed || !recording.nativeValuesUninspected
+      offerShowVariables(
+        'playback-show-variables',
+        !failed && Boolean(recording.nativeValuesUninspected),
+        options.replayTransportFocus,
+        'recording-transport',
+      )
       text('playback-diagnostic', failed ? diagnostic : '')
       element('playback-diagnostics').hidden = !failed || !diagnostic
       const toggle = element('playback-toggle')
@@ -2098,8 +2165,12 @@ function studyClient(
         'node-history-hint',
         position?.nativeValuesUninspected ? options.nativeValuesHint : '',
       )
-      element('node-history-show-variables').hidden =
-        !position?.nativeValuesUninspected
+      offerShowVariables(
+        'node-history-show-variables',
+        Boolean(position?.nativeValuesUninspected),
+        options.nodeTransportFocus,
+        'node-history',
+      )
       text(
         'node-history-output',
         message.nodeHistoryOutput ??
@@ -2241,6 +2312,8 @@ function studyClient(
     element('study-content').inert = false
     element('study-content').hidden = false
     element('bootstrap-status').hidden = true
+    // Every control is in its state for this message now; a pane without the focus (the learner is in Run and Debug) waits for its next focus event.
+    if (document.hasFocus()) payTransportFocus()
     // A newly followed pause should reveal its interpretation and facts without requiring a learner scroll past run controls.
     if (shouldRevealFollowedPause && !message.loading) {
       element('live-content').scrollIntoView({

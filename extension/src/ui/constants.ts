@@ -115,7 +115,21 @@ export const STUDY_UI_OPTIONS = {
     'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study to list its files for removal by hand.',
   playbackFailureRecovery:
     'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.',
-  nativeValuesHint: `Recorded values for this moment load in Run and Debug: open it, expand Variables, then expand its first scope if it stays closed. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.`,
+  nativeValuesHint: `Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.`,
+  // Where the keyboard focus goes when a Show Variables button leaves while it holds the focus: Play, else the first of these that is shown and enabled.
+  replayTransportFocus: [
+    '#playback-toggle',
+    '[data-playback="start"]',
+    '#previous-moment',
+    '#next-moment',
+    '#playhead',
+  ],
+  nodeTransportFocus: [
+    '#node-history-playback-toggle',
+    '#node-history-playhead',
+    '#node-history-moment-previous',
+    '#node-history-moment-next',
+  ],
 }
 export const STUDY_STYLES = `
 .shortcut-dialog{width:min(640px,90vw);max-height:85vh;overflow:auto;background:var(--vscode-editor-background,#181818);color:var(--vscode-foreground,#ddd);border:1px solid var(--vscode-panel-border,#777);border-radius:8px;padding:20px}.shortcut-dialog::backdrop{background:rgb(0 0 0 / .5)}.shortcut-dialog input{display:block;width:100%;padding:10px;margin:16px 0;background:var(--vscode-input-background,#333);color:var(--vscode-input-foreground,#fff);border:1px solid var(--vscode-input-border,#777)}.shortcut-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--vscode-panel-border,#444)}.shortcut-list section{padding:12px 0;border:0}.shortcut-list h3{font-size:13px;color:var(--vscode-descriptionForeground,#aaa);margin:0 0 8px}kbd{font:inherit;white-space:nowrap;border:1px solid var(--vscode-panel-border,#777);border-radius:4px;padding:2px 6px}.shortcut-tooltip{position:fixed;z-index:10;left:16px;right:16px;bottom:12px;max-height:40vh;overflow:auto;padding:8px 12px;background:var(--vscode-editorHoverWidget-background,#333);color:var(--vscode-editorHoverWidget-foreground,#fff);border:1px solid var(--vscode-editorHoverWidget-border,#777);pointer-events:none}
@@ -132,10 +146,10 @@ export const STUDY_STYLES = `
 .learning-header{margin-bottom:12px}.learning-header p{margin:0}.learning-header h1{margin:4px 0 8px}
 body.moments-only[data-replay=true] .learning-header,body.moments-only[data-replay=true] #observed-moments,body.moments-only[data-replay=true] #saved-studies,body.moments-only[data-replay=true] .live-strip,body.moments-only[data-replay=true] [data-action="open-article"],body.moments-only[data-replay=true] [data-action="return-wiki"],body.moments-only[data-replay=true] #recording-save-state,body.moments-only[data-replay=true] #evidence-details{display:none}
 body[data-replay=true]{padding-bottom:calc(var(--playback-height,150px) + 20px)}
-body[data-replay=true] #recording-transport{position:fixed;z-index:3;bottom:0;left:0;right:0;margin:0;padding:10px 16px;border-top:1px solid var(--vscode-panel-border,#444);background:var(--vscode-editor-background,#181818);max-height:40vh;overflow:auto}
+body[data-replay=true] #recording-transport{position:fixed;z-index:3;bottom:0;left:0;right:0;margin:0;padding:10px 16px;border-top:1px solid var(--vscode-panel-border,#444);background:var(--vscode-editor-background,#181818);max-height:60vh;overflow:auto}
 body.moments-only[data-replay=true] #study-content{display:flex;flex-direction:column}
 body.moments-only[data-replay=true] #recording-transport{order:-1;position:sticky;top:0;max-height:none;overflow:visible;padding:0;border-top:0}
-.playback-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.playback-row button{min-height:32px;padding:4px 8px}.playback-row #playhead{flex:1;min-width:80px;width:auto;min-height:32px}.playback-row #playback-position{font-size:12px;white-space:nowrap}
+.playback-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.playback-row button{min-height:32px;padding:4px 8px}.playback-row #playhead{flex:1;min-width:80px;width:auto;min-height:32px}.playback-row #playback-position{font-size:12px;white-space:nowrap}#playback-show-variables{min-height:32px;padding:4px 8px;font-size:12px;margin:6px 0}
 .timeline-track{position:relative;flex:1;min-width:100px;display:flex;flex-direction:column;align-items:stretch}.timeline-track #playhead{width:100%;flex:none}.timeline-track #history-coverage{position:relative;height:6px;margin:0 8px;overflow:hidden;background:var(--vscode-panel-border,#555)}.timeline-track .history-gap{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--vscode-editorWarning-foreground,#d7ba7d) 0 3px,transparent 3px 6px)}.timeline-track .history-stop{position:absolute;top:0;bottom:0;width:3px;background:var(--vscode-focusBorder,#007fd4)}#history-coverage-label{font-size:11px;line-height:1.2}
 .playback-status-row{display:flex;justify-content:space-between;gap:12px;align-items:start;font-size:12px}.playback-status-row summary{min-height:0;padding:0}.playback-status-row p{margin:8px 0}#playback-pending:empty,#playback-reason:empty,#playback-hint:empty,#node-history-hint:empty{display:none}#playback-pending,#playback-reason,#playback-hint,#node-history-hint{margin:6px 0 0;font-size:12px}
 
