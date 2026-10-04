@@ -543,6 +543,11 @@ export async function workspaceHarness(
   let keyboardOnBody = false
   /** Which side bars the fake window shows, once a test models them with `modelSideBars`; the editor area then has the width they leave. */
   let sideBars: { primary: boolean; auxiliary: boolean } | undefined
+  /** The widths of the fake window's side bars in pixels; `modelSideBars` can replace Cursor's. */
+  let sideBarWidthsPx = {
+    primary: SIDE_BAR_WINDOW_PX.primary,
+    auxiliary: SIDE_BAR_WINDOW_PX.auxiliary,
+  }
   /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
   let keyboardInSideBar = false
   // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
@@ -2220,8 +2225,8 @@ export async function workspaceHarness(
             ) {
               const areaPx =
                   SIDE_BAR_WINDOW_PX.window -
-                  (sideBars.primary ? SIDE_BAR_WINDOW_PX.primary : 0) -
-                  (sideBars.auxiliary ? SIDE_BAR_WINDOW_PX.auxiliary : 0),
+                  (sideBars.primary ? sideBarWidthsPx.primary : 0) -
+                  (sideBars.auxiliary ? sideBarWidthsPx.auxiliary : 0),
                 columns: { size: number }[] = layout.groups,
                 total = columns.reduce((sum, column) => sum + column.size, 0)
               for (const column of columns)
@@ -3288,11 +3293,18 @@ export async function workspaceHarness(
     keyboardOnBody: () => keyboardOnBody,
     /**
      * Gives the fake window a primary and a secondary side bar that are open or closed, as the learner has them, and makes the fake editor behave as both editors were seen to (Cycle 0045 NF-22, obs15 P4): `workbench.action.maximizeEditorHideSidebar` hides both bars, and leaving that maximization (`workbench.action.minimizeOtherEditors`, a new layout, closing the panes) shows neither again. `workbench.action.closeSidebar` hides the primary one; `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` show their bar when it is hidden and give it the keyboard. No API of the editor says which bars are open: a layout read of columns answers in pixels of the editor area the bars leave (214 + 660 + 461 = 1335 with both open).
+     * @param open - Which of the two bars the learner has open.
+     * @param widthsPx - The bars' widths in the window of 1335 px; left out, Cursor's 214 and 461.
      * @example
      * harness.modelSideBars({ primary: true, auxiliary: false })
+     * harness.modelSideBars({ primary: false, auxiliary: true }, { primary: 300, auxiliary: 300 })
      */
-    modelSideBars(open: { primary: boolean; auxiliary: boolean }): void {
+    modelSideBars(
+      open: { primary: boolean; auxiliary: boolean },
+      widthsPx: { primary: number; auxiliary: number } = sideBarWidthsPx,
+    ): void {
       sideBars = { ...open }
+      sideBarWidthsPx = { ...widthsPx }
     },
     /** The side bars the fake window shows now, and whether one of them has the keyboard; `undefined` bars without `modelSideBars`. @example harness.sideBars() // => { primary: true, auxiliary: true, hasKeyboard: false } */
     sideBars: () => ({ ...sideBars, hasKeyboard: keyboardInSideBar }),

@@ -457,6 +457,48 @@ test('a Restore that ends a Read brings back the side bars the Read hid and conf
   }
 })
 
+for (const before of [
+  { primary: false, auxiliary: true },
+  { primary: false, auxiliary: false },
+])
+  // Value: protects=the side bars after a Read during which the learner opened the primary side bar again: the Restore brings back the secondary bar the Read hid and leaves the primary one open; fails_when=the Restore compares the editor area beside the reopened primary bar with the width it had beside the secondary one, sees no gain for bars of about the same width, and leaves the chat hidden; or its second measurement hides the reopened primary bar and does not show it again; why_new=Cycle 0045 local review study-1 #1, second case (the measurement assumed that no bar is opened between Read and Restore); seam=the workspace harness's side bar model with both bars 300 px wide, and the learner's own show command
+  test(`a Restore after the learner opened the primary side bar during a Read shows the bars the Read hid and keeps the primary one open, with the secondary side bar ${before.auxiliary ? 'open' : 'closed'} before the Read`, async () => {
+    // Arrange: both bars are 300 px wide; the primary one is closed before the Read, and the learner opens it while reading and returns to the pane.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars(before, { primary: 300, auxiliary: 300 })
+    try {
+      await harness.reader.open()
+      await harness.reader.action('read-context')
+      await harness.editor.commands.executeCommand(
+        'workbench.action.focusSideBar',
+      )
+      await harness.editor.commands.executeCommand(
+        'workbench.action.focusActiveEditorGroup',
+      )
+      const duringRead = harness.sideBars()
+
+      // Act
+      await harness.reader.action('arrange')
+
+      // Assert
+      assert.deepEqual(duringRead, {
+        primary: true,
+        auxiliary: false,
+        hasKeyboard: false,
+      })
+      assert.deepEqual(harness.sideBars(), {
+        primary: true,
+        auxiliary: before.auxiliary,
+        hasKeyboard: false,
+      })
+      assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+      assert.equal(harness.maximizedEditorGroup(), false)
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=Restore leaving the enlarged Study pane while a tab the learner keeps covers the captured source, and saying which tab and what clears it; fails_when=the Restore finds the source not shown and enlarges the Study pane again, so the pane fills the window after every Restore and no tab is named; why_new=Cycle 0045 NF-22 with PC-1.10 (a kept tab that is no text editor is its own case, and the step the refusal names makes the next Restore possible); seam=addOpaqueTab, focusOpaqueTab, the fake editor's maximized group
 test('Restore beside a kept image tab leaves the enlarged Study pane and names the tab that keeps the panes from being arranged', async () => {
   // Arrange: the learner keeps an image open in front of the captured source and read the explanation enlarged.

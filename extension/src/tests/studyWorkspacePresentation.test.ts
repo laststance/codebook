@@ -874,13 +874,8 @@ test('restoring replay preserves a learner draft opened over historical source d
     assert.equal(draft.tab.isDirty, true)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
     assert.deepEqual(harness.editorLayout(), placedLayout)
-    // The held read was the width read that follows the end of the Read's maximization: the side bars the Read hid come back (the recording's two rows give no width, so both are shown) and the editor group the learner is in gets the keyboard back (Cycle 0045 NF-22). No layout command follows.
-    assert.deepEqual(harness.commands, [
-      ...commands,
-      'workbench.action.focusAuxiliaryBar',
-      'workbench.action.focusSideBar',
-      'workbench.action.focusActiveEditorGroup',
-    ])
+    // The held read was the first layout read after the end of the Read's maximization. The recording's two rows gave the Read no width to measure the side bars by, so it hid none and none is shown (Cycle 0045 local review study-1 #1). No command follows.
+    assert.deepEqual(harness.commands, commands)
     assert.deepEqual(harness.panelReveals(), reveals)
     assert.equal(harness.reader.presentationState().layoutConfirmed, false)
     assert.equal(harness.presentationPreferences.size, 0)
@@ -3895,6 +3890,109 @@ test('a selection after Close Study Workspace during a paused run opens the read
     assert.equal(selected.panes.appColumn, 1)
     assert.equal(selected.panes.sourceColumn, 2)
     assert.equal(selected.panes.contextColumn, 3)
+  } finally {
+    await harness.close()
+  }
+})
+
+/** The editor commands that hide or show a side bar; a reading whose side bars could not be measured runs none of them. */
+const SIDE_BAR_COMMANDS = [
+  'workbench.action.closeSidebar',
+  'workbench.action.maximizeEditorHideSidebar',
+  'workbench.action.focusSideBar',
+  'workbench.action.focusAuxiliaryBar',
+]
+
+for (const open of [
+  { primary: false, auxiliary: true },
+  { primary: true, auxiliary: false },
+  { primary: false, auxiliary: false },
+  { primary: true, auxiliary: true },
+])
+  // Value: protects=the learner's side bars through a Read of the Application pane during a live run and the Restore that ends it: each bar is open or closed as the learner had it; fails_when=the live arrangement's two rows give the reader no width to measure the bars by, the Read hides both anyway and its end shows both, so a learner who keeps the file explorer or the chat closed gets it opened by every Read; why_new=Cycle 0045 local review study-1 #1 (the "stays closed" tests of NF-22 used the three-pane columns only); seam=the workspace harness's side bar model, the controlled runtime and the fake editor's maximized group
+  test(`a Read in the live arrangement and its Restore leave the side bars as the learner has them, with the primary side bar ${open.primary ? 'open' : 'closed'} and the secondary one ${open.auxiliary ? 'open' : 'closed'}`, async () => {
+    // Arrange: a paused live run in its two rows; the learner reads the Application pane enlarged.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars(open)
+    try {
+      await pauseLiveRun(harness)
+      await harness.reader.open()
+      const liveBeforeRead = readerSeams(harness).isLiveArrangement()
+      await harness.reader.action('read-app')
+      const duringRead = {
+        ...harness.sideBars(),
+        maximized: harness.maximizedEditorGroup(),
+      }
+      const state = harness.reader.presentationState()
+
+      // Act
+      const restored = await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: 'study-workspace',
+        action: 'restore',
+      })
+
+      // Assert
+      assert.equal(liveBeforeRead, true)
+      assert.deepEqual(duringRead, {
+        ...open,
+        hasKeyboard: false,
+        maximized: true,
+      })
+      assert.deepEqual(harness.sideBars(), { ...open, hasKeyboard: false })
+      assert.equal(harness.maximizedEditorGroup(), false)
+      assert.equal(restored.layoutConfirmed, true)
+      assert.equal(restored.reason, undefined)
+      // No bar is hidden for a measurement that cannot be made, and none is shown.
+      assert.deepEqual(
+        harness.commands.filter((command) =>
+          SIDE_BAR_COMMANDS.includes(command),
+        ),
+        [],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the learner's side bars through a Read of the captured source in a recording and Close Study Workspace: a bar the learner keeps closed is closed afterwards and an open one is open; fails_when=the replay arrangement's two rows give no width, the Read hides both bars and Close shows both, which opens the bar the learner had closed; why_new=Cycle 0045 local review study-1 #1 (the replay arrangement was covered only by a test that pinned both show commands); seam=the recorded reader harness, the workspace harness's side bar model and the fake editor's maximized group
+test('a Read in a recording and Close Study Workspace leave a side bar the learner had closed as it was', async () => {
+  // Arrange: a recording is open in its two rows, the primary side bar closed and the secondary one open; the learner reads the captured source enlarged.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: false, auxiliary: true })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    await harness.reader.action('read-source')
+    const duringRead = {
+      ...harness.sideBars(),
+      maximized: harness.maximizedEditorGroup(),
+    }
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(duringRead, {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: false,
+      maximized: true,
+    })
+    assert.deepEqual(harness.sideBars(), {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.deepEqual(
+      harness.commands.filter((command) => SIDE_BAR_COMMANDS.includes(command)),
+      [],
+    )
+    assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
     await harness.close()
   }
