@@ -165,6 +165,45 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
   }
 })
 
+// Value: protects=every update running inside the editor's progress notification, the only place its Cancel button is, in tests as in a real editor; fails_when=the test window offers the notification only to a test that collects Cancel buttons, so every other test runs a fallback no editor takes, or the notification's task no longer runs the watch or the agent; why_new=Cycle 0045 D-L8 with PC-5.10 (the title is recorded before the task runs, so the end of each run is asserted too); seam=none
+test('every Wiki update shows one progress notification that can be cancelled, also when nobody cancels it', async () => {
+  // Arrange: one window per host, and neither collects a Cancel button.
+  const vsCodeWiki = await openWikiWindow()
+  let publishFromCursor: (() => Promise<void>) | undefined
+  const cursorWiki = await openWikiWindow({
+    cursor: true,
+    cursorAgent: async () => {
+      await publishFromCursor!()
+      return 'Updated'
+    },
+  })
+  publishFromCursor = async (): Promise<void> => {
+    cursorWiki.setFreshness(CURRENT)
+    await cursorWiki.publish('c'.repeat(64))
+  }
+  try {
+    // Act: each run ends through the task of its notification, the watch in VS Code and the agent in Cursor.
+    await vsCodeWiki.clickUpdate()
+    vsCodeWiki.setFreshness(CURRENT)
+    await vsCodeWiki.publish('b'.repeat(64))
+    const vsCodeEnd = await waitForEnd(vsCodeWiki.status)
+    await cursorWiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(vsCodeWiki.progressTitles, [
+      'Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat)',
+    ])
+    assert.deepEqual(cursorWiki.progressTitles, [
+      'Updating LLM Wiki with Cursor Agent',
+    ])
+    assert.equal(vsCodeEnd.state, 'succeeded')
+    assert.equal(cursorWiki.status().state, 'succeeded')
+  } finally {
+    await vsCodeWiki.close()
+    await cursorWiki.close()
+  }
+})
+
 test('a Wiki that already matches the source says so and opens no chat request', async () => {
   // Arrange
   const wiki = await openWikiWindow()
