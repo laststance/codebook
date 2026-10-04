@@ -2893,6 +2893,102 @@ test('the Study header Restore exits a maximized pane while keeping the settled 
   }
 })
 
+// Value: protects=the Study pane leaving its loading line after the editor failed to show a captured source, and showing the source by itself once the editor can; fails_when=a failed render keeps the loading state, so the pane reads "Loading the selected observation…" beside the error for good, or keeps the failed selection as already shown, so no refresh ever shows it; why_new=Cycle 0045 NF-8 with DR-8 and PC-1.3 (each of the two fixes alone leaves the other half); seam=the harness's editor refuses to open captured-source documents until it is restored
+test("the Study pane leaves 'Loading the selected observation…' at the next refresh after showing the captured source failed once", async () => {
+  // Arrange: an open reader, and an editor that cannot open captured-source documents for now.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.failCurrentSourceOpen()
+
+    // Act: the learner selects another item, whose captured source fails to show; then the editor recovers and the reader's timer runs once.
+    await harness.reader.select('repository/workspace/overview')
+    const afterFailure = harness.postedMessages().at(-1)!
+    harness.restoreCurrentSourceOpen()
+    await readerSeams(harness).refresh()
+    const afterRefresh = harness.postedMessages().at(-1)!
+
+    // Assert: first the reason with Retry (the line is one Retry storage / refresh answers) and no loading line, then the selected source without either.
+    assert.deepEqual(
+      {
+        loading: afterFailure.loading,
+        errors: [...afterFailure.errors],
+        unretryableErrorCount: afterFailure.unretryableErrorCount,
+      },
+      {
+        loading: false,
+        errors: ['Error: Injected current source open failure'],
+        unretryableErrorCount: 0,
+      },
+    )
+    assert.deepEqual(
+      {
+        loading: afterRefresh.loading,
+        errors: [...afterRefresh.errors],
+        selectedItem: afterRefresh.model.selection.itemId,
+        sourceShown: readerSeams(harness).isSourceShown(),
+      },
+      {
+        loading: false,
+        errors: [],
+        selectedItem: 'repository/workspace/overview',
+        sourceShown: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's tabs while a captured source keeps failing to show; fails_when=every failed render forgets its selection, so the reader's timer renders the same source again four times a second and each attempt brings its tab to the front of the learner's group; why_new=Cycle 0045 NF-8 with PC-1.3 (the failed render now forgets its selection once, which needs this bound); seam=the harness's editor refuses to open captured-source documents until it is restored
+test('a captured source that failed to show twice in a row is left to Retry storage / refresh instead of being tried again at every refresh', async () => {
+  // Arrange: the selected item's captured source failed to show, and failed again at the reader's next refresh.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.failCurrentSourceOpen()
+    await harness.reader.select('repository/workspace/overview')
+    await readerSeams(harness).refresh()
+    const afterSecondFailure = harness.postedMessages().at(-1)!
+    harness.restoreCurrentSourceOpen()
+
+    // Act: further refreshes of the reader's timer, then the learner presses Retry storage / refresh.
+    await readerSeams(harness).refresh()
+    await readerSeams(harness).refresh()
+    const sourceShownByTheTimer = readerSeams(harness).isSourceShown()
+    const afterTimerRefreshes = harness.postedMessages().at(-1)!
+    await harness.reader.action('retry')
+    const afterRetry = harness.postedMessages().at(-1)!
+
+    // Assert
+    assert.deepEqual(
+      {
+        loading: afterSecondFailure.loading,
+        errors: [...afterSecondFailure.errors],
+      },
+      {
+        loading: false,
+        errors: ['Error: Injected current source open failure'],
+      },
+    )
+    assert.equal(sourceShownByTheTimer, false)
+    assert.deepEqual(
+      [...afterTimerRefreshes.errors],
+      ['Error: Injected current source open failure'],
+    )
+    assert.deepEqual(
+      {
+        loading: afterRetry.loading,
+        errors: [...afterRetry.errors],
+        sourceShown: readerSeams(harness).isSourceShown(),
+      },
+      { loading: false, errors: [], sourceShown: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('reading the sidebar beside an enlarged application preserves replay and restores the same source', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)

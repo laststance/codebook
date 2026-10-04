@@ -6,6 +6,7 @@ import {
   REPLAY_DEBUG_CAPTURE_TIMEOUT_MS,
   REPLAY_DEBUG_INSPECTION_GRACE_MS,
   REPLAY_DEBUG_SESSION_NAME,
+  REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS,
   REPLAY_DEBUG_TYPE,
 } from './constants'
 import {
@@ -65,7 +66,7 @@ export class ReplayDebugger {
   /**
    * Registers the owned historical debug adapter for {@link StudyWorkspace}.
    * @param editor - VS Code API surface used to start, observe and stop the owned session.
-   * @param changed - Runs when native Run and Debug loads the selected stop's values or the learner ends the owned session, so the reader can drop a stale hint and re-enable Node Inspect.
+   * @param changed - Runs {@link REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS} after native Run and Debug loaded the selected stop's values, and when the learner ends the owned session, so the reader can drop a stale hint and re-enable Node Inspect.
    * @param failed - Receives an error the `changed` listener throws, while handling a values-loaded notification or while this owner gives up; the native session never sees it.
    * @example new ReplayDebugger(vscode, (reason) => this.replayDebuggerChanged(reason), (error) => this.report('replay-debugger', error))
    */
@@ -92,10 +93,10 @@ export class ReplayDebugger {
         REPLAY_DEBUG_TYPE,
         {
           createDebugAdapterDescriptor: (session) => {
-            // A learner-stopped owner stays detached: an editor relaunch would otherwise be adopted without history.
+            // A learner-stopped owner stays detached: an editor relaunch would otherwise be adopted without history. A startup that outlived its bound is still this owner's own launch, so its adapter is served and adoptLateStartup takes the session over.
             if (
               this.closed ||
-              this.detached ||
+              (this.detached && !this.startupExpired) ||
               session.configuration.codebookReplayOwner !== this.token ||
               this.session
             )
@@ -127,7 +128,7 @@ export class ReplayDebugger {
                   if (this.adapter !== adapter) return
                   this.valuesUnrequested = false
                   this.wakeInspection()
-                  this.changed('values-loaded')
+                  this.notifyValuesLoaded(adapter)
                 },
                 (error) => this.failed(error),
               ))
@@ -180,17 +181,53 @@ export class ReplayDebugger {
     )
   }
 
+  /**
+   * Tells the reader that native Run and Debug loaded the presented stop's values, {@link REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS} after the adapter served them; called by the adapter's `inspected` callback.
+   *
+   * The adapter knows when it answered the request, not when native Variables drew the rows, so the reader's own repaint (its hint
+   * leaving) is kept apart from that view's. A stop that is no longer the presented one by then is not reported, and a listener
+   * that throws reaches the reader's error channel, as it did from inside the adapter.
+   *
+   * @param adapter - The adapter that served the values.
+   * @example this.notifyValuesLoaded(adapter)
+   */
+  private notifyValuesLoaded(adapter: ReplayDebugAdapter): void {
+    setTimeout(() => {
+      // A reader told late about a stop it no longer shows would drop the hint of the stop it does show.
+      if (
+        this.closed ||
+        this.adapter !== adapter ||
+        !adapter.inspectionReady ||
+        !adapter.hasLoadableValues
+      )
+        return
+      try {
+        this.changed('values-loaded')
+      } catch (error) {
+        try {
+          this.failed(error)
+        } catch {
+          // The error channel failed as well; nothing may escape into the editor's timer queue.
+        }
+      }
+    }, REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS)
+  }
+
   /** Reports whether playback may still present history; false after the learner stops the owned session, so an explicit replay reopen replaces this owner. @example if (!debuggerView.available) await debuggerView.dispose() */
   get available(): boolean {
     return !this.closed && !this.detached
   }
 
-  /** Clears native state immediately when a pending seek retires the displayed bundle. @example debuggerView.invalidate() */
-  invalidate(): void {
+  /**
+   * Clears native state immediately when {@link StudyWorkspace}'s playback retires the displayed bundle: a pending seek, a hidden or covered replay surface, or closing.
+   * @param label - What the emptied session's thread and stop description read; the default says that nothing is recorded at the moment, and a caller whose moment is recorded but hidden says so instead.
+   * @example debuggerView.invalidate('Recorded application is covered by another tab')
+   */
+  invalidate(label = 'Not recorded at this moment'): void {
     this.revision++
     this.wakeInspection()
     this.selected = undefined
-    this.adapter?.select(undefined, 'Not recorded at this moment')
+    this.adapter?.select(undefined, label)
   }
 
   /**
@@ -341,7 +378,7 @@ export class ReplayDebugger {
    * @returns
    * - `'inspected'` when current stack, scopes and first values were retrieved
    * - `'uninspected'` when the grace elapsed first, or at once while Run and Debug still loads no values
-   * - `'no-values'` at once for a gap or a stop without scopes, which native Variables cannot load
+   * - `'no-values'` at once for a gap or a stop without scopes, which native Variables cannot load, and as soon as a served Call Stack page shows that the frame native Run and Debug focuses has none
    * @throws When the learner stopped the owned session, the workspace closed, a newer presentation superseded this one or `signal` aborted.
    * @example
    * await debuggerView.present(snapshot, 'Recorded pause · 55.87 s', signal) // => 'inspected'
@@ -524,7 +561,8 @@ export class ReplayDebugger {
    * Takes over a session whose startup outlived {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} but then completed, on behalf of {@link launchSession}.
    *
    * The expired startup already failed its waiters and made this owner unavailable; a healthy but slow editor would otherwise
-   * leave replay failing until the learner reopens the recording. A session the learner stopped meanwhile is never adopted.
+   * leave replay failing until the learner reopens the recording. The editor may ask for the adapter before or after the bound
+   * expired: the descriptor factory serves both. A session the learner stopped meanwhile is never adopted.
    *
    * @param started - The editor's answer to the launch.
    * @returns `true` when this owner is available again with the late session, `false` when nothing was adopted.
@@ -590,7 +628,7 @@ export class ReplayDebugger {
    * @param adapter - Adapter that received the current selection.
    * @param revision - Presentation revision that owns this wait.
    * @param signal - Caller cancellation.
-   * @returns `'inspected'` when retrieval completed, otherwise `'uninspected'` once the grace or the `stopped` deadline elapsed.
+   * @returns `'inspected'` when retrieval completed, `'no-values'` once a served Call Stack page left the stop with an inspection frame that has no scopes, otherwise `'uninspected'` once the grace or the `stopped` deadline elapsed.
    * @throws When the session closed, a newer presentation superseded this one or `signal` aborted, each with its own error.
    * @example await this.awaitInspection(adapter, revision, signal) // => 'uninspected' while Variables is hidden
    */
@@ -652,6 +690,7 @@ export class ReplayDebugger {
    * @param expired - Whether the grace or the stopped-event deadline elapsed.
    * @returns
    * - `{ error }` when the caller aborted, the session closed or a newer presentation superseded this one
+   * - `{ inspection: 'no-values' }` once the stop's inspection frame is one without scopes: native Call Stack loaded its first page without a frame with source, so it focuses the top frame, which has nothing for Variables to load
    * - `{ inspection: 'inspected' }` once native Run and Debug loaded the values
    * - `{ inspection: 'uninspected' }` after a deadline without loaded values
    * - `undefined` while the wait continues
@@ -666,6 +705,8 @@ export class ReplayDebugger {
     if (signal.aborted) return { error: signal.reason }
     const ownership = this.ownershipError(adapter, revision)
     if (ownership) return { error: ownership }
+    // The inspection frame moves to the top frame when the first Call Stack page holds no frame with source; without scopes there, waiting out the grace would only delay the frame and leave a hint for values that do not exist.
+    if (!adapter.hasLoadableValues) return { inspection: 'no-values' }
     if (adapter.inspectionReady) return { inspection: 'inspected' }
     return expired ? { inspection: 'uninspected' } : undefined
   }

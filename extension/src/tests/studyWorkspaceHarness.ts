@@ -7,6 +7,7 @@ import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
+import type { ReaderErrorKind } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -69,6 +70,8 @@ export async function workspaceHarness(
   let answerInformationMessage: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  /** The text of every native error notification the reader showed. */
+  const errorMessages: string[] = []
   let hostAppName = 'Visual Studio Code'
   /** Native commands the fake editor answers `getCommands` with: the ones the reader asks the host about before it runs them. */
   const nativeHostCommands = [
@@ -107,6 +110,14 @@ export async function workspaceHarness(
     firstScopeFocused: false,
     valuesListed: true,
   }
+  /** Which list of the fake host holds the keyboard focus, and so takes the list commands: its Variables view, or another list the learner clicked (the Explorer). See `clickAnotherList`. */
+  let focusedList: 'variables' | 'another-list' = 'variables'
+  /** What the list commands did to the other list while it held the focus. */
+  const anotherList = { firstRowFocused: false, firstRowExpanded: false }
+  /** Whether the Learning summary shares its side bar with Run and Debug, as in Cursor: the focus command of Variables then puts Run and Debug in the summary's place. See `shareSummarySideBarWithRunAndDebug`. */
+  let summarySharesSideBarWithRunAndDebug = false
+  /** The context keys the reader set with the editor's `setContext` command. */
+  const contextKeys = new Map<string, unknown>()
   /** Pending `awaitRetrieval` checks of the fake historical debugger, re-run whenever the fake Variables view asks for scopes or lists values. */
   const nativeVariablesWaiters = new Set<() => void>()
   const trashMoves: { path: string; options: unknown }[] = []
@@ -120,22 +131,36 @@ export async function workspaceHarness(
       return runtime
     },
   })
-  const saveStatus = {
-    name: '',
-    text: '',
-    tooltip: '',
-    command: undefined as unknown,
-    visible: false,
-    show(): void {
-      this.visible = true
-    },
-    hide(): void {
-      this.visible = false
-    },
-    dispose(): void {
-      this.visible = false
-    },
+  /** Builds one fake status bar item. It counts the assignments of its command, because the editor turns every assigned command object into a new internal command and disposes the one before. @example createStatusItem().commandAssignments // => 0 */
+  const createStatusItem = () => {
+    let assignedCommand: unknown
+    return {
+      name: '',
+      text: '',
+      tooltip: '',
+      commandAssignments: 0,
+      get command(): unknown {
+        return assignedCommand
+      },
+      set command(value: unknown) {
+        this.commandAssignments++
+        assignedCommand = value
+      },
+      visible: false,
+      show(): void {
+        this.visible = true
+      },
+      hide(): void {
+        this.visible = false
+      },
+      dispose(): void {
+        this.visible = false
+      },
+    }
   }
+  const saveStatus = createStatusItem()
+  /** The identifier of every status bar item the reader created, in order; the first one is `saveStatus`, a later one would be a second control in the status bar. */
+  const createdStatusItemIds: string[] = []
   let changed = (): void => {}
   const disposable = () => ({ dispose(): void {} })
   let outlineUpdates = 0
@@ -331,6 +356,8 @@ export async function workspaceHarness(
     sourceDocument?: { uri: string; hash: string }
   }> = []
   let historicalDebugInvalidations = 0
+  /** What each invalidation told the fake historical debugger its emptied session reads in Run and Debug, in order. */
+  const historicalDebugInvalidationLabels: string[] = []
   const historicalDebuggers: TestReplayDebugger[] = []
   let historicalDebugInspection: ReplayInspection = 'inspected'
   let nextHistoricalDebugPresentation:
@@ -424,8 +451,9 @@ export async function workspaceHarness(
     ): Promise<void> {
       signal.throwIfAborted()
     }
-    invalidate(): void {
+    invalidate(label = 'Not recorded at this moment'): void {
       historicalDebugInvalidations++
+      historicalDebugInvalidationLabels.push(label)
     }
     /** Mirrors the real owner: a second call returns at once, and the registration ends only when the first call finishes stopping the session. @example await debuggerView.dispose() */
     async dispose(): Promise<void> {
@@ -1785,10 +1813,19 @@ export async function workspaceHarness(
             (name) => !absentHostCommands.has(name),
           )
         },
-        async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+        async executeCommand(
+          name: string,
+          layout?: unknown,
+          contextValue?: unknown,
+        ): Promise<unknown> {
           // Both native hosts reject a command they do not register, in these words.
           if (absentHostCommands.has(name))
             throw new Error(`command '${name}' not found`)
+          // A context key changes no pane, focus or layout; it is kept apart from the recorded native commands.
+          if (name === 'setContext') {
+            contextKeys.set(String(layout), contextValue)
+            return
+          }
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
             playbackPanel.visible = true
@@ -1808,13 +1845,27 @@ export async function workspaceHarness(
             for (const listener of summaryVisibilityListeners) listener()
           }
           commands.push(name)
-          if (name === 'workbench.debug.action.focusVariablesView')
+          if (name === 'workbench.debug.action.focusVariablesView') {
+            focusedList = 'variables'
             showNativeVariablesView()
-          // A list command acts on the rows the focused tree holds at that moment; an empty tree gives it nothing to focus or expand.
-          if (name === 'list.focusFirst' && nativeVariables.treeHoldsStop)
-            nativeVariables.firstScopeFocused = true
-          if (name === 'list.expand' && nativeVariables.firstScopeFocused)
-            listNativeValues()
+            // Run and Debug opens in the side bar the summary shares with it and takes its place.
+            if (summarySharesSideBarWithRunAndDebug && summary.visible) {
+              summary.visible = false
+              for (const listener of summaryVisibilityListeners) listener()
+            }
+          }
+          // A list command acts on the rows the focused list holds at that moment; an empty tree gives it nothing to focus or expand.
+          if (name === 'list.focusFirst') {
+            if (focusedList === 'another-list')
+              anotherList.firstRowFocused = true
+            else if (nativeVariables.treeHoldsStop)
+              nativeVariables.firstScopeFocused = true
+          }
+          if (name === 'list.expand') {
+            if (focusedList === 'another-list')
+              anotherList.firstRowExpanded = anotherList.firstRowFocused
+            else if (nativeVariables.firstScopeFocused) listNativeValues()
+          }
           const held = nextCommand
           if (held?.name === name) {
             nextCommand = undefined
@@ -2108,7 +2159,12 @@ export async function workspaceHarness(
       },
       StatusBarAlignment: { Right: 2 },
       window: {
-        createStatusBarItem: () => saveStatus,
+        createStatusBarItem: (id: string) => {
+          createdStatusItemIds.push(id)
+          return createdStatusItemIds.length === 1
+            ? saveStatus
+            : createStatusItem()
+        },
         state: windowState,
         onDidChangeWindowState: (
           callback: (state: typeof windowState) => void,
@@ -2135,6 +2191,11 @@ export async function workspaceHarness(
         showInformationMessage: (message: string, ...items: string[]) => {
           informationMessages.push({ message, items })
           return answerInformationMessage(items)
+        },
+        // An error notification of the reader has no button; it stays until the learner dismisses it.
+        showErrorMessage: async (message: string): Promise<undefined> => {
+          errorMessages.push(message)
+          return undefined
         },
         createTextEditorDecorationType: disposable,
         createTreeView: (
@@ -2450,6 +2511,8 @@ export async function workspaceHarness(
     warningDialogs,
     /** Every native information message the reader showed, with its buttons. @example harness.informationMessages[0].message */
     informationMessages,
+    /** The text of every native error notification the reader showed. @example harness.errorMessages[0] */
+    errorMessages,
     /** Decides how the learner answers the reader's next information messages; unanswered ones are dismissed. @example harness.answerInformationMessages(async ([move]) => move) */
     answerInformationMessages(
       answer: (items: string[]) => Promise<string | undefined>,
@@ -2475,6 +2538,22 @@ export async function workspaceHarness(
       nativeVariables.treeHoldsStop = false
       nativeVariables.firstScopeFocused = false
       nativeVariables.valuesListed = false
+    },
+    /** Models the learner clicking into another list of the host (the Explorer) while Show Variables waits: that list holds the keyboard focus until a command focuses Variables again. @example harness.clickAnotherList() */
+    clickAnotherList(): void {
+      focusedList = 'another-list'
+    },
+    /** What the list commands did to the list the learner clicked. @example harness.anotherListView() // => { firstRowFocused: false, firstRowExpanded: false } */
+    anotherListView(): { firstRowFocused: boolean; firstRowExpanded: boolean } {
+      return { ...anotherList }
+    },
+    /** Models Cursor's side bar, which the Learning summary shares with Run and Debug: the Variables focus command then hides the summary. @example harness.shareSummarySideBarWithRunAndDebug() */
+    shareSummarySideBarWithRunAndDebug(): void {
+      summarySharesSideBarWithRunAndDebug = true
+    },
+    /** Reads a context key the reader set with the editor's `setContext` command. @example harness.contextKey('codebook.learningSummaryMovable') // => true */
+    contextKey(key: string): unknown {
+      return contextKeys.get(key)
     },
     /** What the fake host's Variables view shows of the presented stop. @example harness.nativeVariablesView() // => { firstScopeFocused: true, valuesListed: true } */
     nativeVariablesView(): {
@@ -2515,6 +2594,7 @@ export async function workspaceHarness(
       return { started, release }
     },
     saveStatus,
+    createdStatusItemIds,
     reader,
     createReader,
     groups,
@@ -2585,6 +2665,10 @@ export async function workspaceHarness(
     historicalDebugPresentations,
     historicalDebuggers,
     historicalDebugInvalidations: () => historicalDebugInvalidations,
+    /** What each invalidation told the historical debugger its emptied session reads in Run and Debug, in order. @example harness.historicalDebugInvalidationLabels().at(-1) // => 'Not recorded at this moment' */
+    historicalDebugInvalidationLabels: () => [
+      ...historicalDebugInvalidationLabels,
+    ],
     readCapturedSource: (uri: string) => {
       const parsed = new URL(uri)
       return sourceProvider(
@@ -3865,6 +3949,8 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
+    publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */
     selectNoStudy: (): void => reader['selectNoStudy'](),
     /** The reader's error lines, as its panes show them. */
@@ -3872,10 +3958,14 @@ export function readerSeams(harness: {
     /** Counts the study checkpoints that wait to be written. */
     queuedStudyWrites: (): number => reader['pendingArchives'].size,
     /** Says whether the reader holds an error line of one kind. */
-    hasErrorOfKind: (kind: string): boolean => reader['errors'].has(kind),
+    hasErrorOfKind: (kind: ReaderErrorKind): boolean =>
+      reader['errors'].has(kind),
     /** Drops the reader's error line of one kind, as the action that retires it does. */
-    dropErrorOfKind: (kind: string): boolean => reader['errors'].delete(kind),
+    dropErrorOfKind: (kind: ReaderErrorKind): boolean =>
+      reader['errors'].delete(kind),
     isLoading: (): boolean => reader['loading'],
+    /** Says whether the selected captured source reached an active native tab, as the reader requires before a control or a reveal succeeds. */
+    isSourceShown: (): boolean => reader['sourceReady'](),
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */

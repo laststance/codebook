@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import {
   AGENT_STORAGE_DIRECTORY,
+  APPLICATION_PANE_CLOSED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
@@ -18,12 +19,15 @@ import {
   NODE_TEST_PROFILE,
   MILLISECONDS_PER_SECOND,
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
+  OPEN_REPLAY_RESULT_WAIT_MS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
   PRESENTATION_SETTLE_CEILING_MS,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
+  type ReaderErrorKind,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
+  REPLAY_COVERED_LABEL,
   REPLAY_VIEWPORT_RECEIPT_LIMIT,
   REPOSITORY_BROWSER_PROFILE,
   REPOSITORY_MIN_EDITOR_GROUP_COUNT,
@@ -40,9 +44,11 @@ import {
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
   STUDY_SOURCE_SCHEME,
+  SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
+  SUMMARY_PLACEMENT_ANSWERED_KEY,
+  SUMMARY_PLACEMENT_CONTEXT_KEY,
   SUMMARY_PLACEMENT_OFFER,
-  SUMMARY_PLACEMENT_OFFER_KEY,
   UNRETRYABLE_READER_ERROR_KINDS,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
@@ -122,6 +128,8 @@ import {
 } from './ui/studyHtml'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { capturedAppHtml } from './utils/capturedAppHtml'
+import { capturedSourceDeclaredPath } from './utils/capturedSourceDeclaredPath'
+import { capturedSourceUriPath } from './utils/capturedSourceUriPath'
 import { captureStudy } from './utils/captureStudy'
 import { configuredObservationPosition } from './utils/configuredObservationPosition'
 import { coveredSourceObstacle } from './utils/coveredSourceObstacle'
@@ -197,6 +205,14 @@ const actionSchema = z.enum([
   'reload-recording',
   'show-variables',
 ])
+/** When {@link StudyWorkspace} offers Cursor's learner the Move View step for the Learning summary: after the summary was shown, or after Show Variables put Run and Debug in its place. */
+type SummaryPlacementOccasion = 'summary-shown' | 'summary-displaced'
+/** What the Move View offer says on each occasion. */
+const SUMMARY_PLACEMENT_OFFER_TEXTS: Record<SummaryPlacementOccasion, string> =
+  {
+    'summary-shown': SUMMARY_PLACEMENT_OFFER,
+    'summary-displaced': SUMMARY_DISPLACED_OFFER,
+  }
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
 const revisionShape = { revision: z.number().int().nonnegative() }
@@ -351,6 +367,8 @@ interface LeftoverTabClose {
 export class StudyWorkspace {
   private service?: StudyService
   private learningSaveItem?: vscode.StatusBarItem
+  /** The command and study of the object last assigned to {@link learningSaveItem}'s `command`; {@link publishLearningSave} assigns a new object only when they change, because the host disposes the previous object's internal command at every assignment. */
+  private learningSaveCommandKey?: string
   private learningSave?: {
     studyId: string
     status: 'saving' | 'saved' | 'partial' | 'failed'
@@ -391,6 +409,8 @@ export class StudyWorkspace {
   private readonly replayPaintWatchers = new Set<() => void>()
   private playbackPending?: PlaybackBundle
   private playbackPresentingReady = false
+  /** Whether another tab of the Application pane's group is in front of the recorded application; the moment is then recorded and only hidden, so Run and Debug and the summary say that it is covered instead of "Not recorded" and "Loading". */
+  private replayApplicationCovered = false
   /** The recorded stop committed before native Run and Debug loaded its values; every frame of that stop shows how to load them. */
   private replayUninspectedSnapshot?: ReplayDebugSnapshot
   private initializing?: Promise<void>
@@ -444,7 +464,7 @@ export class StudyWorkspace {
   private readonly removedStudyIds = new Set<string>()
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
   private answeredRunRefusalId?: string
-  private readonly errors = new Map<string, string>()
+  private readonly errors = new Map<ReaderErrorKind, string>()
   /** Codebook pane tabs an earlier extension host left in this window, as {@link rememberInheritedPanes} saw them; a tab drops out when the editor closes it. */
   private readonly inheritedPaneTabs = new WeakSet<vscode.Tab>()
   private readonly documents = new Map<string, string>()
@@ -460,6 +480,9 @@ export class StudyWorkspace {
   private summaryComposition = false
   private summaryView?: vscode.WebviewView
   private summaryDocumentActive = false
+  /** The Move View offers {@link offerSummaryPlacement} made in this editor session; each occasion is offered at most once per session. */
+  private readonly summaryPlacementOffersMade =
+    new Set<SummaryPlacementOccasion>()
   private liveEntryRunId?: string
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
@@ -471,8 +494,6 @@ export class StudyWorkspace {
   private readonly disposables: vscode.Disposable[] = []
   private highlight?: vscode.TextEditorDecorationType
   private sourceUri?: vscode.Uri
-  /** The repository path declared for the captured source that {@link sourceUri} shows; none for a source-derived placeholder. Captured tabs are named by base name only, so this tells an earlier capture of the same file from another file of that name. */
-  private sourceDeclaredPath?: string
   private sourceGroup?: vscode.TabGroup
   private opened = false
   private sourceEntryPending = false
@@ -569,6 +590,8 @@ export class StudyWorkspace {
     presentationMode?: PresentationMode
   }
   private lastSelectionKey?: string
+  /** The selection whose last source render failed; {@link renderSelection} lets the next refresh render it once more and, after a second failure in a row, leaves it to Retry or another selection. */
+  private failedSelectionKey?: string
   private lastApplicationKey?: string
   private lastPublished?: string
   private outlineRendering: Promise<void> = Promise.resolve()
@@ -4860,7 +4883,6 @@ export class StudyWorkspace {
       this.repositoryLayoutOrigin = undefined
       this.repositoryLayoutRestored = undefined
       this.sourceUri = undefined
-      this.sourceDeclaredPath = undefined
       this.sourceGroup = undefined
       this.sourceRevision = undefined
       this.lastSelectionKey = undefined
@@ -4962,7 +4984,9 @@ export class StudyWorkspace {
         presentable: () =>
           this.replayReaderOpen && this.replayDebugger?.available !== false,
         invalidate: (keepPixels) => {
-          this.replayDebugger?.invalidate()
+          this.replayDebugger?.invalidate(
+            this.replayApplicationCovered ? REPLAY_COVERED_LABEL : undefined,
+          )
           if (this.highlight)
             for (const editor of vscode.window.visibleTextEditors) {
               if (
@@ -5445,7 +5469,7 @@ export class StudyWorkspace {
     }
   }
 
-  /** Keeps capture/save reachable beside native chat; publish updates it without changing editor focus. @example this.publishLearningSave() */
+  /** Keeps capture/save reachable beside native chat: every {@link publish} calls it, and it updates the status bar item without changing editor focus and assigns the item's command only when the command or its study changed. @example this.publishLearningSave() */
   private publishLearningSave(): void {
     if (this.disposed) return
     const record = this.currentRecord(),
@@ -5489,20 +5513,25 @@ export class StudyWorkspace {
     item.tooltip =
       saved?.detail ??
       'Finish this Codebook recording and save learning replay. This stops only its owned runtime; missing history or summary is reported as partial.'
-    item.command =
+    const opensReplay = saved?.status === 'saved' || saved?.status === 'partial'
+    const command =
       saved?.status === 'saving'
         ? undefined
         : {
-            title:
-              saved?.status === 'saved' || saved?.status === 'partial'
-                ? 'Open learning replay'
-                : 'Save learning replay',
-            command:
-              saved?.status === 'saved' || saved?.status === 'partial'
-                ? 'codebook.openLearningReplay'
-                : 'codebook.saveLearningReplay',
+            title: opensReplay
+              ? 'Open learning replay'
+              : 'Save learning replay',
+            command: opensReplay
+              ? 'codebook.openLearningReplay'
+              : 'codebook.saveLearningReplay',
             arguments: [studyId],
           }
+    const commandKey = JSON.stringify([command?.command, studyId])
+    // The host makes a new internal command of every assigned object and disposes the one before, so an entry still drawn with the earlier one fails on a click ("Actual command not found"): assign only a changed command or study.
+    if (commandKey !== this.learningSaveCommandKey) {
+      this.learningSaveCommandKey = commandKey
+      item.command = command
+    }
     item.show()
   }
 
@@ -5542,6 +5571,41 @@ export class StudyWorkspace {
     })
     // The open was accepted, so an earlier refused replay control no longer describes the replay.
     if (this.errors.delete('replay-control')) this.publish()
+  }
+
+  /**
+   * Opens a saved recording for the status bar's Open replay entry and tells the learner when its load failed; the command `codebook.openLearningReplay` calls it.
+   *
+   * {@link openRecording} returns once the load is admitted, and a load that fails later leaves its reason only in the playback state,
+   * which no pane shows while the reader could not open (another window keeps the desktop focus). So this waits, bounded by
+   * {@link OPEN_REPLAY_RESULT_WAIT_MS}, for the load to end and shows a failed load's reason as an editor notification, which the
+   * editor keeps on screen until its window has the focus again.
+   *
+   * @param studyId - The saved study whose recording the entry names.
+   * @returns Once the recording is presented, its load failed and the notification was shown, another recording took its place, or the bound passed.
+   * @throws Whatever {@link openRecording} throws before the load is admitted.
+   * @example await workspace.openLearningReplay(studyId)
+   */
+  async openLearningReplay(studyId: string): Promise<void> {
+    await this.openRecording(studyId)
+    const playback = this.playback!
+    // A load that outlasts the bound is still running and has nothing to report yet.
+    await playback
+      .settle(undefined, OPEN_REPLAY_RESULT_WAIT_MS)
+      .catch(() => undefined)
+    const state = playback.state()
+    if (
+      state.studyId !== studyId ||
+      state.readiness !== 'failed' ||
+      !state.reason
+    )
+      return
+    // The controller keeps a failure as its string form, which starts with the error's name.
+    void showPlainNotice(
+      vscode.window,
+      'error',
+      `Codebook could not open the learning replay: ${state.reason.replace(/^[A-Za-z]*Error: /, '')}`,
+    )
   }
 
   /** Loads immutable film/context before arranging its reader, restoring only the separately saved paused position. @example await this.loadPlayback(id, signal) */
@@ -5889,6 +5953,7 @@ export class StudyWorkspace {
         )
       signal.throwIfAborted()
       this.playbackPresentingReady = true
+      this.replayApplicationCovered = false
       this.lastRendered = undefined
       this.lastPublished = undefined
       this.publish()
@@ -6048,6 +6113,7 @@ export class StudyWorkspace {
     this.recordingActive = false
     this.playbackPending = undefined
     this.playbackPresentingReady = false
+    this.replayApplicationCovered = false
     this.replayUninspectedSnapshot = undefined
     this.lastApplicationKey = undefined
     this.lastSelectionKey = undefined
@@ -6370,6 +6436,7 @@ export class StudyWorkspace {
         nativeValuesUninspected:
           bundle?.projection.debugger !== undefined &&
           bundle.projection.debugger === this.replayUninspectedSnapshot,
+        applicationCovered: this.replayApplicationCovered,
       },
       nodeHistoryCatalog: this.nodeHistoryCatalog,
       nodeHistory: this.selectedNodeHistory && {
@@ -6449,9 +6516,14 @@ export class StudyWorkspace {
       deadlineAt: live?.deadlineAt,
       busy: this.busy,
       saving: this.saving,
+      // A covered recording is not loading: its moment is retired until the pane is in front again, and the pane says so.
       loading:
         this.loading ||
-        Boolean(playbackState?.cleared && !this.playbackPresentingReady),
+        Boolean(
+          playbackState?.cleared &&
+          !this.playbackPresentingReady &&
+          !this.replayApplicationCovered,
+        ),
       errors: [
         ...this.errors.values(),
         ...this.catalog.flatMap((entry) =>
@@ -6574,7 +6646,21 @@ export class StudyWorkspace {
       })
   }
 
-  /** Serializes source opens and invalidates obsolete selection work before it can qualify context/app correspondence. @example await this.renderSelection() */
+  /**
+   * Shows the selected captured source in its native tab and commits source, application and context together; entry, selection, the reader's refresh, playback and the pane's Source and Retry controls call it.
+   *
+   * Source opens are serialized, and obsolete selection work is invalidated before it can qualify context/app correspondence. An unchanged
+   * selection is not rendered again unless `forceSource` is set or its last render failed once (see {@link failedSelectionKey}). Showing a
+   * source closes the unpinned captured tabs that earlier runs or studies left for the same declared file.
+   *
+   * @param preserveFocus - Whether the keyboard focus stays where it is; `false` moves it into the source.
+   * @param forceSource - Renders also when the selection did not change.
+   * @param signal - The caller's cancellation; an aborted render ends its loading state without an error line.
+   * @param placement - The column an arrangement gives the source, or the layout receipt a reentry may restore it into.
+   * @returns Once the source is shown, the render was superseded, or its failure was reported as the reader's `reader` line with the loading state ended.
+   * @throws The signal's reason when it aborted before the render was queued, or the lifetime error when the reader closed meanwhile.
+   * @example await this.renderSelection(true, !this.sourceReady(), signal)
+   */
   private async renderSelection(
     preserveFocus = true,
     forceSource = false,
@@ -6625,6 +6711,8 @@ export class StudyWorkspace {
     this.loading = true
     this.sourceRevision = undefined
     this.lastRendered = undefined
+    // The line of an earlier failed render describes an attempt this one replaces; the pane never reads "Loading…" beside it.
+    this.errors.delete('reader')
     this.publish()
     if (!initial.model.selection.follow)
       this.presentApplication({ ...initial, loading: true })
@@ -6645,9 +6733,6 @@ export class StudyWorkspace {
         const declaredSourcePosition =
           study &&
           configuredObservationPosition(study, message.model.observation?.id)
-        const filename = declaredSourcePosition
-          ? basename(declaredSourcePosition.path)
-          : `${itemId.split('/').at(-1)}.mts`
         // Pre-observation placeholders are transient; retaining them would pull replay back to an obsolete source pane.
         const retainedSource = study?.descriptor?.sources.some(
           (captured) =>
@@ -6657,7 +6742,16 @@ export class StudyWorkspace {
         const uri = vscode.Uri.from({
           scheme: STUDY_SOURCE_SCHEME,
           authority: this.library!.workspaceKey,
-          path: `/${message.model.observation || retainedSource ? study!.id : 'source-derived'}/${encodeURIComponent(itemId)}/${source.hash}/Captured-${filename}`,
+          path: capturedSourceUriPath({
+            owner:
+              message.model.observation || retainedSource
+                ? study!.id
+                : 'source-derived',
+            itemId,
+            hash: source.hash,
+            declaredPath: declaredSourcePosition?.path,
+            fallbackName: `${itemId.split('/').at(-1)}.mts`,
+          }),
         })
         this.documents.set(uri.toString(), source.text)
         // Native documents retain their own visible bytes; the provider cache must remain bounded across edits.
@@ -6771,10 +6865,8 @@ export class StudyWorkspace {
           throw new Error(
             'Displayed captured source does not match the selected observation.',
           )
-        const previousUri = this.sourceUri,
-          previousDeclaredPath = this.sourceDeclaredPath
+        const previousUri = this.sourceUri
         this.sourceUri = uri
-        this.sourceDeclaredPath = declaredSourcePosition?.path
         // Every visible copy of the same immutable source describes the same selected stop.
         if (this.highlight)
           for (const visibleEditor of vscode.window.visibleTextEditors) {
@@ -6786,20 +6878,38 @@ export class StudyWorkspace {
                   : [new vscode.Range(position, position)],
               )
           }
-        // Replace transient source-derived revisions and an earlier capture of the same file (another run or study), so each source keeps one captured tab. The file is the declared path: two routes' `page.tsx` share a tab name and keep a tab each.
-        if (
-          previousUri &&
+        // Replace the transient source-derived revision shown before and every earlier capture of the same file (another run or study, also one shown several studies ago), so each source keeps one captured tab. The file is the declared path: two routes' `page.tsx` share a tab name and keep a tab each. A tab the learner pinned stays.
+        const declaredPath = declaredSourcePosition?.path
+        const replacesPreviousPlaceholder =
+          previousUri !== undefined &&
           previousUri.toString() !== uri.toString() &&
-          (previousUri.path.startsWith('/source-derived/') ||
-            (previousDeclaredPath !== undefined &&
-              previousDeclaredPath === declaredSourcePosition?.path))
-        ) {
+          previousUri.path.startsWith('/source-derived/')
+        const obsoleteUris = new Set(
+          vscode.window.tabGroups.all
+            .flatMap((group) => group.tabs)
+            .flatMap((tab) =>
+              tab.input instanceof vscode.TabInputText &&
+              this.ownsCapturedSourceTab(tab) &&
+              tab.input.uri.toString() !== uri.toString() &&
+              ((replacesPreviousPlaceholder &&
+                tab.input.uri.toString() === previousUri.toString()) ||
+                (declaredPath !== undefined &&
+                  capturedSourceDeclaredPath(tab.input.uri.path) ===
+                    declaredPath))
+                ? [tab.input.uri.toString()]
+                : [],
+            ),
+        )
+        if (replacesPreviousPlaceholder)
+          obsoleteUris.add(previousUri.toString())
+        if (obsoleteUris.size) {
           const obsolete = vscode.window.tabGroups.all
             .flatMap((group) => group.tabs)
             .filter(
               (tab) =>
+                !tab.isPinned &&
                 tab.input instanceof vscode.TabInputText &&
-                tab.input.uri.toString() === previousUri.toString(),
+                obsoleteUris.has(tab.input.uri.toString()),
             )
           if (
             obsolete.length &&
@@ -6807,7 +6917,18 @@ export class StudyWorkspace {
           )
             throw new Error('Obsolete source-derived reader could not close.')
           signal?.throwIfAborted()
-          this.documents.delete(previousUri.toString())
+          // A pinned tab keeps showing its capture, so its bytes stay with the provider.
+          const stillShown = new Set(
+            vscode.window.tabGroups.all
+              .flatMap((group) => group.tabs)
+              .flatMap((tab) =>
+                tab.input instanceof vscode.TabInputText
+                  ? [tab.input.uri.toString()]
+                  : [],
+              ),
+          )
+          for (const obsoleteUri of obsoleteUris)
+            if (!stillShown.has(obsoleteUri)) this.documents.delete(obsoleteUri)
         }
         if (
           revision !== this.revision ||
@@ -6819,6 +6940,7 @@ export class StudyWorkspace {
         if (revision !== this.revision || this.closing) return
         this.sourceRevision = revision
         this.loading = false
+        this.failedSelectionKey = undefined
         this.errors.delete('reader')
         this.publish()
       })
@@ -6829,11 +6951,16 @@ export class StudyWorkspace {
         this.pendingHistory !== undefined
       )
         return
+      // A render that ended without its source also ends its loading state: the pane shows the reason with Retry, not "Loading the selected observation…".
+      this.loading = false
       if (signal?.aborted) {
         this.lastSelectionKey = undefined
-        this.loading = false
         return
       }
+      // The next refresh renders a selection that failed once again. One that failed twice in a row waits for Retry or another selection, so the reader's timer cannot keep revealing its tab.
+      if (this.failedSelectionKey !== selectionKey)
+        this.lastSelectionKey = undefined
+      this.failedSelectionKey = selectionKey
       this.report('reader', error)
     })
     return this.rendering
@@ -6911,7 +7038,16 @@ export class StudyWorkspace {
     )
   }
 
-  /** Updates the app only when selected phase bytes/mode change, preserving a historical panel across live ticks. @example this.presentApplication(message) */
+  /**
+   * Updates the Application pane only when the selected phase's bytes or mode change, preserving a historical panel across live ticks; {@link renderSelection} calls it for every render and refresh outside a recording.
+   *
+   * A followed live run is shown through its viewport lease, a selected capture as its page in the pane. When the learner closed the
+   * pane of the followed run, its lease is released for good and the run ended with it: nothing is asked of that lease, and the reader
+   * keeps one line that says so and what to do next until a pane exists again.
+   *
+   * @param message - The Study message of the selection to show.
+   * @example this.presentApplication(message)
+   */
   private presentApplication(message: StudyViewMessage): void {
     if (this.recordingActive) return
     const image = message.model.image
@@ -6932,6 +7068,11 @@ export class StudyWorkspace {
       !message.study?.terminal &&
       this.viewport
     ) {
+      // The run's Application pane was closed: its released lease can show nothing, and a refusal reported from it would vanish at the render's end.
+      if (!this.app) {
+        this.report('application', new Error(APPLICATION_PANE_CLOSED_MESSAGE))
+        return
+      }
       const leaseId = this.leaseId,
         revision = this.revision
       void this.viewport
@@ -7159,12 +7300,15 @@ export class StudyWorkspace {
   private bindApplicationPanel(panel: vscode.WebviewPanel): void {
     this.app = panel
     this.lastApplicationKey = undefined
+    // A pane exists again, so the line about the closed one no longer describes the reader.
+    if (this.errors.delete('application')) this.publish()
     panel.onDidDispose(() => {
       if (this.app !== panel) return
       this.presentationTransition?.cancellation.abort(
         new Error('The current application pane was closed.'),
       )
       this.app = undefined
+      this.replayApplicationCovered = false
       // A renderer created for the next pane performs its own first reveal, so a reveal owed to this pane is dropped with it.
       this.dropReplayViewport()
       if (this.recordingActive) this.playback?.hide()
@@ -7179,10 +7323,36 @@ export class StudyWorkspace {
       // Only visibility of the replay surface pauses playback; runtime/debugger exit is unrelated.
       if (this.recordingActive && !this.placingPresentation) {
         this.replayNeedsReveal = true
+        // A tab the learner opened over the pane hides a moment that is recorded; the retired moment is labelled as covered, not as missing.
+        this.replayApplicationCovered =
+          !visible && this.isApplicationCoveredByTab(panel)
         if (visible) this.playback?.reveal()
         else this.playback?.hide()
       }
     })
+  }
+
+  /**
+   * Tells whether another tab of the Application pane's group is in front of the pane; {@link bindApplicationPanel}'s view-state handler asks when a recording's pane stops being visible.
+   * A pane hidden together with its whole editor area (a maximized bottom panel) is still its group's active tab and is not covered.
+   * @param panel - The Application pane that reported the change.
+   * @returns `true` when the pane's group shows another tab, `false` when the pane is that group's active tab or the group is gone.
+   * @example this.isApplicationCoveredByTab(panel) // => true after the learner opened a workspace file in the Application group
+   */
+  private isApplicationCoveredByTab(panel: vscode.WebviewPanel): boolean {
+    const activeTab = vscode.window.tabGroups.all.find(
+      (group) => group.viewColumn === panel.viewColumn,
+    )?.activeTab
+    return Boolean(
+      activeTab &&
+      !(
+        activeTab.input instanceof vscode.TabInputWebview &&
+        isCodebookPaneViewType(
+          activeTab.input.viewType,
+          'codebook.scopedBrowser',
+        )
+      ),
+    )
   }
 
   /** Finishes the owned creation receipt on native events so later MCP-first learner moves remain manual. @example this.confirmInitialAppRegistration() */
@@ -7346,43 +7516,81 @@ export class StudyWorkspace {
       this.lastActiveRegion = 'context'
       this.lastPublished = undefined
       this.publish()
-      this.offerSummaryPlacement()
+      this.offerSummaryPlacement('summary-shown')
     } finally {
       focusSubscription.dispose()
     }
   }
 
   /**
-   * Offers Cursor's learner the editor's own Move View step once per workspace, after {@link showLearningSummary} showed the summary.
+   * Tells whether the editor is Cursor, where the Learning summary shares the primary side bar with Run and Debug; {@link installReaders} turns the Move Learning Summary… control on and {@link offerSummaryPlacement} acts only there.
+   * @returns `true` in Cursor, `false` in VS Code and in a host that does not name itself.
+   * @example this.isCursorHost() // => true in Cursor 3.23
+   */
+  private isCursorHost(): boolean {
+    return vscode.env?.appName?.toLowerCase().includes('cursor') ?? false
+  }
+
+  /**
+   * Offers Cursor's learner the editor's own Move View step in a notification; {@link showLearningSummary} and {@link showNativeVariables} call it.
    *
    * Cursor rejects the `secondarySidebar` container this extension contributes, so the summary lands in the primary side bar
    * there, and its own chat containers refuse added views: no command of this extension can place the summary on the right.
    * VS Code registers the container, so nothing is offered there.
    *
-   * @example this.offerSummaryPlacement()
+   * Each occasion is offered at most once per editor session. Only the pressed button is an answer: Cursor removes an unanswered
+   * notification by itself, so nothing is stored for it and the offer returns in the next editor session.
+   *
+   * @param occasion - `'summary-shown'` after the summary opened, offered until the learner took the step in this workspace; `'summary-displaced'` after Show Variables put Run and Debug in the summary's place, offered also when the step was taken before, because the summary then shares the side bar again.
+   * @example this.offerSummaryPlacement('summary-shown')
    */
-  private offerSummaryPlacement(): void {
-    if (!vscode.env?.appName?.toLowerCase().includes('cursor')) return
-    if (this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_OFFER_KEY))
-      return
+  private offerSummaryPlacement(occasion: SummaryPlacementOccasion): void {
+    if (!this.isSummaryPlacementOfferDue(occasion)) return
+    this.summaryPlacementOffersMade.add(occasion)
     void (async (): Promise<void> => {
-      await this.context.workspaceState.update(
-        SUMMARY_PLACEMENT_OFFER_KEY,
-        true,
-      )
       const choice = await showPlainNotice(
         vscode.window,
         'information',
-        SUMMARY_PLACEMENT_OFFER,
+        SUMMARY_PLACEMENT_OFFER_TEXTS[occasion],
         SUMMARY_PLACEMENT_ACTION,
       )
-      // The editor's Move View list opens for the summary itself; the learner picks its destination there.
-      if (choice === SUMMARY_PLACEMENT_ACTION)
-        await vscode.commands.executeCommand(
-          'workbench.action.moveFocusedView',
-          'codebook.learningSummary',
-        )
+      if (choice === SUMMARY_PLACEMENT_ACTION) await this.moveLearningSummary()
     })().catch((error: unknown) => this.report('layout', error))
+  }
+
+  /**
+   * Decides for {@link offerSummaryPlacement} whether an occasion's offer is still to be made in this editor session.
+   * @param occasion - The occasion the offer would be made for.
+   * @returns `false` outside Cursor, after the same occasion's offer in this session, and for a shown summary once the learner took the step in this workspace; otherwise `true`.
+   * @example this.isSummaryPlacementOfferDue('summary-displaced') // => true at the first Show Variables of a Cursor session that hid the summary
+   */
+  private isSummaryPlacementOfferDue(
+    occasion: SummaryPlacementOccasion,
+  ): boolean {
+    if (!this.isCursorHost() || this.summaryPlacementOffersMade.has(occasion))
+      return false
+    // A displaced summary shares the side bar again, whatever was answered before.
+    return (
+      occasion === 'summary-displaced' ||
+      !this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_ANSWERED_KEY)
+    )
+  }
+
+  /**
+   * Opens the editor's own Move View list for the Learning summary and remembers that the learner took the step; the command "Codebook: Move Learning Summary…" (the summary's title action in Cursor) and the button of {@link offerSummaryPlacement} call it.
+   * @throws Whatever the workspace state or the editor's Move View command rejects with.
+   * @example await workspace.moveLearningSummary()
+   */
+  async moveLearningSummary(): Promise<void> {
+    await this.context.workspaceState.update(
+      SUMMARY_PLACEMENT_ANSWERED_KEY,
+      true,
+    )
+    // The editor's Move View list opens for the summary itself; the learner picks its destination there.
+    await vscode.commands.executeCommand(
+      'workbench.action.moveFocusedView',
+      'codebook.learningSummary',
+    )
   }
 
   /**
@@ -7395,6 +7603,10 @@ export class StudyWorkspace {
    * a view that was hidden while the stop changed asks for the stop's scopes only in its deferred refresh (which then expands the first
    * scope itself), and a view opened for the first time needs a moment to fill its tree. So they run only after
    * {@link ReplayDebugger.awaitRetrieval} saw those scopes asked for and the values not arrive by themselves; every wait is bounded.
+   * Each attempt focuses Variables again directly before its list commands, so a list the learner clicked during a wait is left alone.
+   *
+   * In Cursor, where the summary shares its side bar with Run and Debug, a press that put Run and Debug in the summary's place makes
+   * the Move View offer of {@link offerSummaryPlacement}.
    *
    * @returns Resolves once Variables listed the recorded values or the list commands the host registers ran their bounded attempts, or its Run and Debug view opened, or the learner was told the manual step.
    * @throws Whatever a command the host does register throws.
@@ -7405,7 +7617,11 @@ export class StudyWorkspace {
     const [focusVariablesCommand, ...listCommands] =
       SHOW_NATIVE_VARIABLES_COMMANDS
     if (hostCommands.has(focusVariablesCommand)) {
+      const wasSummaryVisible = Boolean(this.summaryView?.visible)
       await vscode.commands.executeCommand(focusVariablesCommand)
+      // In Cursor the summary shares its side bar with Run and Debug, which the focus command just put in its place; the learner is told how to keep both.
+      if (wasSummaryVisible && !this.summaryView?.visible)
+        this.offerSummaryPlacement('summary-displaced')
       const debuggerView = this.replayDebugger
       // Until Variables asked for this stop's scopes its tree holds no row of it; the bound covers a view that never asks.
       await debuggerView?.awaitRetrieval(
@@ -7424,6 +7640,8 @@ export class StudyWorkspace {
         )
         // A reader closed during the wait must not move the focus of whatever list the learner went on to.
         if (valuesListed || this.closing || this.disposed) return
+        // The list commands act on whichever list holds the focus, and the learner may have clicked into another one during the waits: Variables gets the focus back first.
+        await vscode.commands.executeCommand(focusVariablesCommand)
         for (const command of listCommands)
           if (hostCommands.has(command))
             await vscode.commands.executeCommand(command)
@@ -7454,9 +7672,18 @@ export class StudyWorkspace {
         '<!DOCTYPE html><html><body><p>Open saved learning from Codebook to view its summary.</p></body></html>'
   }
 
-  /** Registers native readers once, keeping checkbox persistence under explicit learner control. @example this.installReaders() */
+  /**
+   * Registers native readers once, keeping checkbox persistence under explicit learner control; the constructor calls it at activation.
+   * In Cursor it also turns on the context key that shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette for the whole editor session, so the step stays reachable when the offer's notification is gone.
+   * @example this.installReaders()
+   */
   private installReaders(): void {
     if (this.outline) return
+    // Cursor removes an information notification with a button after about 15 s; the title action and the palette entry stay.
+    if (this.isCursorHost())
+      void vscode.commands
+        .executeCommand('setContext', SUMMARY_PLACEMENT_CONTEXT_KEY, true)
+        .then(undefined, (error: unknown) => this.report('layout', error))
     this.observeEditorGroups()
     this.disposables.push(
       vscode.window.tabGroups.onDidChangeTabGroups((event) =>
@@ -9267,7 +9494,10 @@ export class StudyWorkspace {
    */
   private panelFailureKind(
     value: unknown,
-  ): 'replay-control' | 'node-history-control' | 'control' {
+  ): Extract<
+    ReaderErrorKind,
+    'replay-control' | 'node-history-control' | 'control'
+  > {
     const parsed = messageSchema.safeParse(value)
     if (!parsed.success) return 'control'
     if (parsed.data.type === 'playback') return 'replay-control'
@@ -10900,8 +11130,13 @@ export class StudyWorkspace {
     }
   }
 
-  /** Keeps storage, control and renderer failures distinct in the learner-facing status. @example this.report('archive', error) */
-  private report(kind: string, error: unknown): void {
+  /**
+   * Keeps storage, control and renderer failures distinct in the learner-facing status: one line per kind, published at once; every failure path of the reader calls it.
+   * @param kind - The line the failure replaces; {@link READER_ERROR_KINDS} says whether Retry storage / refresh or the learner's next choice answers it.
+   * @param error - The failure, shown as its string form.
+   * @example this.report('archive', error)
+   */
+  private report(kind: ReaderErrorKind, error: unknown): void {
     if (CHOICE_RETIRED_ERROR_KINDS.has(kind)) this.controlRefusals++
     this.errors.set(kind, String(error))
     if (kind === 'presentation') this.clearReadyReplayWarning()

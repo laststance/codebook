@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import {
   PlaybackController,
   type PlaybackBundle,
   type PlaybackData,
   type PlaybackDependencies,
 } from '../playbackController'
+import type * as PlaybackSchemasModule from '../playbackSchemas'
 import type {
   RecordingContext,
   RecordingFrame,
@@ -16,6 +19,7 @@ import type {
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
 
 /** Supplies deterministic recorded identities to control-concurrency tests, without live browser/debugger effects. @example const data = playbackFixture() */
 function playbackFixture(): PlaybackData {
@@ -1302,4 +1306,83 @@ test('once the recording has arrived and before its first frame is presented, a 
   assert.equal(player.controller.state().readiness, 'ready')
   assert.equal(player.controller.state().presentedMs, 100)
   await player.controller.dispose()
+})
+
+// Value: protects=the recorded application image and the Run and Debug session staying on screen while Play passes the time an explanation was saved; fails_when=an explanation that becomes available for the stop on screen retires the displayed moment, so the image blanks and Run and Debug is emptied until the same stop is presented again; why_new=Cycle 0045 NF-13 (Cursor: the image blanked for about 0.6 s at 99.90 s of a Play); seam=none
+test('Play keeps the recorded image and the recorded session on screen when an explanation becomes available while the same stop stays selected', async () => {
+  // Arrange: the stop committed at 100 ms stays selected to the end of the recording, and its explanation was saved at 150 ms.
+  let invalidations = 0
+  let clearedWhilePresentingExplanation: boolean | undefined
+  const player = playbackHarness({
+    invalidate: () => {
+      invalidations++
+    },
+    present: async (bundle) => {
+      if (bundle.projection.positionMs === 150)
+        clearedWhilePresentingExplanation = player.controller.state().cleared
+    },
+  })
+  const explanationId = '44444444-4444-4444-8444-444444444444'
+  player.data.context!.study.observations[0]!.interpretations = [
+    {
+      id: explanationId,
+      text: 'The form state is still pending at this stop.',
+      createdAt: '2026-09-19T00:00:03.000Z',
+      facts: [],
+    },
+  ]
+  player.data.context!.interpretationAvailability = [
+    { id: explanationId, snapshotId: 'browser-session:1', elapsedMs: 150 },
+  ]
+  player.open()
+  await player.controller.settle()
+  player.seek(120)
+  await player.controller.settle()
+  const explanationsBeforePlay = player.controller
+    .bundle()
+    ?.projection.observation?.interpretations.map(
+      (interpretation) => interpretation.id,
+    )
+  const invalidationsBeforePlay = invalidations
+
+  // Act: Play reaches the time the explanation was saved.
+  player.play()
+  player.clock(30)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(explanationsBeforePlay, [])
+  assert.equal(player.controller.state().presentedMs, 150)
+  assert.deepEqual(
+    player.controller
+      .bundle()
+      ?.projection.observation?.interpretations.map(
+        (interpretation) => interpretation.id,
+      ),
+    ['44444444-4444-4444-8444-444444444444'],
+  )
+  assert.equal(clearedWhilePresentingExplanation, false)
+  assert.equal(invalidations - invalidationsBeforePlay, 0)
+  assert.equal(player.controller.state().cleared, false)
+  assert.equal(player.controller.state().mode, 'playing')
+  await player.controller.dispose()
+})
+
+// Value: protects=an agent reading in the seek description the snap distance the seek really applies; fails_when=the description states the distance as a literal beside PLAYBACK_SEEK_STOP_SNAP_MS, so a changed constant leaves the published sentence wrong; why_new=Cycle 0045 SM-5; seam=the schema module is loaded with a constants module whose snap distance is 5 ms
+test('the seek description names the snap distance the seek applies', async () => {
+  // Arrange
+  const schemas = await loadModule<typeof PlaybackSchemasModule>(
+    resolve(__dirname, '../playbackSchemas.js'),
+    { './constants': { ...constants, PLAYBACK_SEEK_STOP_SNAP_MS: 5 } },
+  )
+
+  // Act
+  const description = schemas.playbackToolSchema.shape.positionMs.description
+
+  // Assert
+  assert.equal(
+    description,
+    'Required only for seek; use a position within the returned recording range. A position less than 5 ms before a recorded stop presents that stop. Omit for open, play and pause.',
+  )
 })

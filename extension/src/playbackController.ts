@@ -466,7 +466,12 @@ export class PlaybackController {
             Boolean(request.restore) ||
             this.presentationKey(bundle) !==
               (this.presented && this.presentationKey(this.presented))
-          if (contextChanged && !this.cleared) {
+          // An explanation that becomes available for the stop on screen is presented with it; only another stop retires the image and the native values.
+          const stopChanged =
+            !this.presented ||
+            bundle.projection.observation?.id !==
+              this.presented.projection.observation?.id
+          if (stopChanged && !this.cleared) {
             this.cleared = true
             this.dependencies.invalidate()
             this.dependencies.changed()
@@ -531,7 +536,7 @@ export class PlaybackController {
     ])
   }
 
-  /** Identifies learning boundaries independently from moving pixels so source/value loads pause the playback clock. @example this.contextKey(bundle) */
+  /** Identifies learning boundaries (another stop, or another set of shown explanations) independently from moving pixels, so {@link pump} excludes their source/value loads from the playback clock; only another stop also retires the displayed moment. @example this.contextKey(bundle) */
   private contextKey(bundle: PlaybackBundle): string {
     return JSON.stringify([
       bundle.projection.observation?.id,

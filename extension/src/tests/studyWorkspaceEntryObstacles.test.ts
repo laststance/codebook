@@ -10,6 +10,7 @@ import {
 import {
   advanceClock,
   advanceClockUntil,
+  advanceClockUntilSettled,
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
@@ -110,6 +111,57 @@ test(
     }
   },
 )
+
+// Value: protects=the learner who clicked Open replay in the status bar while another window had the desktop focus learning why no replay opened; fails_when=the refusal stays in the playback state alone, which no pane shows because the reader could not open, so the click appears to do nothing; why_new=Cycle 0045 NF-12 (Cursor: the reason was readable only through the playback resource); seam=the harness records the editor's error notifications
+test(
+  'Open replay refused for the desktop focus tells the learner in an editor notification which window to click',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange: a closed reader with a saved recording, and another window that keeps the desktop focus.
+    const harness = await recordedReaderHarness()
+    try {
+      await harness.reader.close()
+      harness.changeWindowFocus(false)
+      enableFakeClock(context)
+
+      // Act: the status bar's Open replay command runs; the 10 s wait for the work window's focus passes on the faked clock.
+      const opening = harness.reader.openLearningReplay(harness.studyId).then(
+        () => 'completed',
+        (error: unknown) => String(error),
+      )
+      await advanceClockUntilSettled(context, opening, 40_000)
+      resetFakeClock(context)
+
+      // Assert: the command ends without rejecting and the editor shows the reason, which it keeps until its window has the focus again.
+      assert.equal(await opening, 'completed')
+      assert.deepEqual(harness.errorMessages, [
+        'Codebook could not open the learning replay: Focus the Codebook work window before reading the learning summary: another window kept the desktop focus for 10 s. Click in this editor window, then choose Open replay again.',
+      ])
+      assert.equal(harness.summary.visible, false)
+    } finally {
+      resetFakeClock(context)
+      harness.changeWindowFocus(true)
+      await harness.close()
+    }
+  },
+)
+
+// Value: protects=the status bar's Open replay staying silent when the recording opens; fails_when=the command that now reports a failed load also raises a notification for a load that succeeded; why_new=Cycle 0045 NF-12 (the command waits for the load's result); seam=the harness records the editor's error notifications
+test('Open replay that presents the recording shows no error notification', async () => {
+  // Arrange
+  const harness = await recordedReaderHarness()
+  try {
+    // Act
+    await harness.reader.openLearningReplay(harness.studyId)
+
+    // Assert
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.deepEqual(harness.errorMessages, [])
+    assert.equal(harness.summary.visible, true)
+  } finally {
+    await harness.close()
+  }
+})
 
 test('Open replay in Cursor beside a foreign preview tab that keeps the main editor from reporting focus names that tab and how to clear it', async () => {
   // Arrange

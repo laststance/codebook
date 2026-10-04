@@ -86,20 +86,51 @@ export const MAX_STUDY_OBSERVATIONS = 2
 export const MAX_STUDY_LINKS = 5
 export const DEFAULT_SAVED_STUDY_LIMIT = 64
 export const MAX_SAVED_STUDIES = 256
+/**
+ * Every kind of error line the Study reader keeps, one line per kind, with what answers it.
+ * `retryable`: Retry storage / refresh can answer the line, so the pane offers Retry only while one of these is shown.
+ * `choiceRetired`: the line reports a refused pane choice, which the learner's next handled choice retires.
+ * {@link ReaderErrorKind}, {@link UNRETRYABLE_READER_ERROR_KINDS} and {@link CHOICE_RETIRED_ERROR_KINDS} derive from this table, so a new kind is classified where it is declared.
+ */
+export const READER_ERROR_KINDS = [
+  { kind: 'application', retryable: false, choiceRetired: false },
+  { kind: 'archive', retryable: true, choiceRetired: false },
+  { kind: 'citations', retryable: true, choiceRetired: false },
+  { kind: 'control', retryable: false, choiceRetired: true },
+  { kind: 'history-learning', retryable: true, choiceRetired: false },
+  { kind: 'history-position', retryable: true, choiceRetired: false },
+  { kind: 'layout', retryable: false, choiceRetired: false },
+  { kind: 'node-history-control', retryable: false, choiceRetired: true },
+  { kind: 'outline', retryable: true, choiceRetired: false },
+  { kind: 'playback-context', retryable: true, choiceRetired: false },
+  { kind: 'playback-preference', retryable: true, choiceRetired: false },
+  { kind: 'presentation', retryable: false, choiceRetired: false },
+  { kind: 'progress', retryable: true, choiceRetired: false },
+  { kind: 'reader', retryable: true, choiceRetired: false },
+  { kind: 'reading', retryable: false, choiceRetired: false },
+  { kind: 'replay-control', retryable: false, choiceRetired: false },
+  { kind: 'replay-debugger', retryable: true, choiceRetired: false },
+  { kind: 'replay-debugger-disposal', retryable: false, choiceRetired: false },
+  { kind: 'source', retryable: true, choiceRetired: false },
+] as const
+/** The key of one reader error line; the reader's `report` and its error map accept only these. */
+export type ReaderErrorKind = (typeof READER_ERROR_KINDS)[number]['kind']
+/** What the reader says when the learner follows the current run after its Application pane was closed: the pane's closure released the run's viewport and ended the run, so nothing can be shown for it until a new run opens the pane again. */
+export const APPLICATION_PANE_CLOSED_MESSAGE =
+  'The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.'
 // The reader's error lines that Retry storage / refresh cannot answer: the pane offers Retry only for the others.
-export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<string> = new Set([
-  'layout',
-  'control',
-  'replay-control',
-  'node-history-control',
-  'reading',
-  'presentation',
-])
+export const UNRETRYABLE_READER_ERROR_KINDS: ReadonlySet<ReaderErrorKind> =
+  new Set(
+    READER_ERROR_KINDS.flatMap((entry) =>
+      entry.retryable ? [] : [entry.kind],
+    ),
+  )
 // The lines of a refused pane choice that the learner's next handled choice retires: the general one and the Node test history's own, which a Node history message accepted outside browser replay retires as well.
-export const CHOICE_RETIRED_ERROR_KINDS: ReadonlySet<string> = new Set([
-  'control',
-  'node-history-control',
-])
+export const CHOICE_RETIRED_ERROR_KINDS: ReadonlySet<ReaderErrorKind> = new Set(
+  READER_ERROR_KINDS.flatMap((entry) =>
+    entry.choiceRetired ? [entry.kind] : [],
+  ),
+)
 // The pane messages by which the learner chooses what the reader shows; one that is handled without an error retires the line of an earlier refused control.
 export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   'history',
@@ -126,6 +157,8 @@ export const AGENT_STORAGE_DIRECTORY = 'agent'
 export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
 export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
+/** What the file name of every captured-source document starts with, so its tab reads apart from the editable workspace file of the same name. */
+export const CAPTURED_SOURCE_NAME_PREFIX = 'Captured-'
 export const STUDY_REFRESH_INTERVAL_MS = 250
 export const STUDY_EDITOR_GROUP_COUNT = 3
 export const LIVE_EDITOR_GROUP_COUNT = 2
@@ -138,13 +171,19 @@ export const HORIZONTAL_EDITOR_ORIENTATION = 0
 export const PRESENTATION_PREFERENCE_KEY = 'codebook.presentation.v1'
 export const PRESENTATION_PREFERENCE_VERSION = 1
 export const PRESENTATION_READY_TIMEOUT_MS = 5_000
-/** Workspace-state key recording that Cursor's learner was offered the Move View step for the Learning summary, so the offer appears once. */
-export const SUMMARY_PLACEMENT_OFFER_KEY = 'codebook.summaryPlacementOffer.v1'
+/** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
+export const SUMMARY_PLACEMENT_ANSWERED_KEY =
+  'codebook.summaryPlacementAnswered.v1'
 /** Why the Learning summary opens on the left in Cursor and how to keep it on the right; Cursor rejects an extension's own secondary side bar container, so only the learner's Move View can place it there. */
 export const SUMMARY_PLACEMENT_OFFER =
   'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.'
-/** The button of {@link SUMMARY_PLACEMENT_OFFER}; it opens the editor's own Move View list for the focused Learning summary. */
+/** What Cursor's learner is told when Show Variables opened Run and Debug in the side bar the Learning summary shares with it, with the same button as {@link SUMMARY_PLACEMENT_OFFER}. */
+export const SUMMARY_DISPLACED_OFFER =
+  "Run and Debug took the Learning summary's place in Cursor's side bar. Move the summary to the right once to keep both in view."
+/** The button of {@link SUMMARY_PLACEMENT_OFFER} and {@link SUMMARY_DISPLACED_OFFER}; it opens the editor's own Move View list for the Learning summary. */
 export const SUMMARY_PLACEMENT_ACTION = 'Move Learning Summary…'
+/** The context key the reader turns on in Cursor; while it is on, the manifest shows "Codebook: Move Learning Summary…" in the Learning summary's title and in the Command Palette. */
+export const SUMMARY_PLACEMENT_CONTEXT_KEY = 'codebook.learningSummaryMovable'
 /** How long closing the reader waits for each pending storage write (saved replay position, archive writes, library queue); a write still pending then keeps running. */
 export const READER_CLOSE_STORAGE_TIMEOUT_MS = 5_000
 export const STUDY_LAYOUT_STABLE_MISMATCH_MS = 750
@@ -711,8 +750,13 @@ export const REPLAY_DEBUG_TEXT_LIMIT_CHARS = 4_096
 export const REPLAY_DEBUG_CAPTURE_TIMEOUT_MS = 5_000
 /** Native Call Stack name of the owned historical session; the Study hint names it for learners. */
 export const REPLAY_DEBUG_SESSION_NAME = 'Codebook · Recorded learning'
+/** What the recorded session's thread and stop description read in Run and Debug while another tab is in front of the recorded application: the moment is recorded and only hidden, so "Not recorded at this moment" would be wrong. The Study pane says the same with the remedy. */
+export const REPLAY_COVERED_LABEL =
+  'Recorded application is covered by another tab'
 /** How long a replay moment waits for native Run and Debug to load its recorded values (VS Code defers Variables ~400 ms) before committing without them. */
 export const REPLAY_DEBUG_INSPECTION_GRACE_MS = 1_000
+/** How long after the historical adapter served a stop's values the reader is told that Run and Debug loaded them. The adapter knows when it answered, not when native Variables drew the rows; a reader that drops its hint in the same instant repaints within a few milliseconds of that view, and the Linux editors under WSLg do not put a frame on the screen that follows another that closely until the window is repainted again (measured 2026-10-04: a change 4 ms after another stayed off the screen, one 30 ms after it was shown), which left the first scope open and empty and the hint in place. 100 ms is not enough: the Variables pane hides its scrollbar 500 ms after it is shown and loads a missed stop 400 ms after, so in Cursor 3.23 a reader told 100 ms later repainted on top of that scrollbar repaint and kept its hint on the screen. */
+export const REPLAY_DEBUG_VALUES_PAINT_ALLOWANCE_MS = 150
 /** Frames native Call Stack loads for a stop before the learner asks for more (VS Code: the top frame, then 19 more); it focuses the top frame when none of them has source. */
 export const REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES = 20
 /** What one owned replay settle allows for work that has no bound of its own before painting: reading the recording and the recording renderer's handshake. */
@@ -747,5 +791,8 @@ export const CHROME_LINUX_EXECUTABLE_NAMES = [
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
 export const RECORDING_WINDOW_FOCUS_WAIT_MS = 10_000
+/** How long the status bar's Open replay command waits for its load to end, so that it can show a failed load's reason as a notification: the wait for the window's focus and one owned replay settle. A load still running then is left to finish without a notice. */
+export const OPEN_REPLAY_RESULT_WAIT_MS =
+  RECORDING_WINDOW_FOCUS_WAIT_MS + PRESENTATION_SETTLE_CEILING_MS
 /** A seek less than this far before a recorded stop presents that stop: recorded stops sit at fractional receipt milliseconds (122,822.02), and a driver that rounds down must not land in the gap before it. */
 export const PLAYBACK_SEEK_STOP_SNAP_MS = 1

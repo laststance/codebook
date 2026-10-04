@@ -778,6 +778,77 @@ test('opening a recording restores its captured source after context focus cover
   }
 })
 
+// Value: protects=the learner who opened a workspace file in the Application group during a replay being told what happened; fails_when=the reader retires the covered moment like a missing one, so Run and Debug reads "Not recorded at this moment" and the Learning summary reads "Loading the selected observation…" for as long as the file stays in front; why_new=Cycle 0045 NF-31 as DR-19; seam=the harness's fake historical debugger keeps the label of each invalidation
+test('a workspace file opened over the recorded application is reported to Run and Debug and to the Learning summary as a covered recording, not as a missing or loading moment', async () => {
+  // Arrange: a recorded stop is shown in the Application pane.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const viewport = harness.viewportInstances.find(
+      (candidate) => candidate.mode === 'recording',
+    )
+    assert.ok(viewport)
+    const application = viewport.panel
+    const applicationGroup = harness.groups.find(
+      (group) => group.activeTab === application.nativeTab,
+    )
+    assert.ok(applicationGroup)
+
+    // Act: the learner opens a workspace file in the Application group, which comes in front of the pane.
+    applicationGroup.activeTab = harness.addTextPreview(
+      join(harness.directory, 'app', 'notes.ts'),
+      applicationGroup.viewColumn,
+    )
+    application.notifyViewState()
+    const whileCovered = harness.postedMessages().at(-1)!
+    const labelWhileCovered = harness.historicalDebugInvalidationLabels().at(-1)
+
+    // Act: the learner brings the pane to the front again.
+    applicationGroup.activeTab = application.nativeTab
+    application.notifyViewState()
+    await harness.controller.settle()
+    const afterReturn = harness.postedMessages().at(-1)!
+
+    // Assert
+    assert.equal(
+      labelWhileCovered,
+      'Recorded application is covered by another tab',
+    )
+    assert.deepEqual(
+      {
+        loading: whileCovered.loading,
+        applicationCovered: whileCovered.recording?.applicationCovered,
+        cleared: whileCovered.recording?.cleared,
+      },
+      { loading: false, applicationCovered: true, cleared: true },
+    )
+    assert.deepEqual(
+      {
+        loading: afterReturn.loading,
+        applicationCovered: afterReturn.recording?.applicationCovered,
+        cleared: afterReturn.recording?.cleared,
+        presentedMs: afterReturn.recording?.presentedMs,
+      },
+      {
+        loading: false,
+        applicationCovered: false,
+        cleared: false,
+        presentedMs: 100,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('one bottom playback seek from a hidden Application commits the requested recorded moment without another target action', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
@@ -1455,6 +1526,49 @@ test('configured recording-context failure remains visible beside independently 
   }
 })
 
+// Value: protects=the list the learner went on to while Show Variables waits for Run and Debug; fails_when=the list commands run on whichever list holds the focus after the wait, so a click into the Explorer during the wait gets the Explorer's first row focused and expanded and the recorded values stay collapsed; why_new=Cycle 0045 RT-4 (the commands ran after two waits without focusing Variables again); seam=the harness's fake host knows which list holds the focus
+test('Show Variables expands the first scope of Variables, never the first row of a list the learner clicked during its wait', async (context) => {
+  // Arrange: a recorded stop presented while Run and Debug was never opened, so the press waits 200 ms for Variables to list the values.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('never-opened')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    enableFakeClock(context)
+    const press = harness.reader.action('show-variables').then(
+      () => 'completed',
+      (error: unknown) => String(error),
+    )
+    await advanceClock(context, 100)
+
+    // Act: the learner clicks into the Explorer 100 ms into that wait.
+    harness.clickAnotherList()
+    await advanceClockUntilSettled(context, press, 10_000)
+
+    // Assert
+    assert.equal(await press, 'completed')
+    assert.deepEqual(harness.anotherListView(), {
+      firstRowFocused: false,
+      firstRowExpanded: false,
+    })
+    assert.deepEqual(harness.nativeVariablesView(), {
+      firstScopeFocused: true,
+      valuesListed: true,
+    })
+  } finally {
+    resetFakeClock(context)
+    await harness.close()
+  }
+})
+
 // Value: protects=one captured-source tab per source file across runs; fails_when=each run's observed stop opens another Captured-theme.ts tab beside the earlier run's; why_new=Cycle 0035 O4 (six Captured-auth.ts tabs piled up natively); seam=none
 test('a second run stopping in the same source file replaces the first run captured-source tab instead of adding another', async () => {
   // Arrange
@@ -1546,6 +1660,86 @@ test('a saved study that stops in another file of the same name keeps the earlie
     assert.deepEqual(capturedPageTabs, [
       '11111111-1111-4111-8111-111111111111_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       '11111111-1111-4111-8111-111111111111_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=one captured-source tab per source file while a learner goes through Saved studies; fails_when=only the capture shown immediately before is closed, so a capture of the same file from two studies back stays and each further study adds a tab (four studies left Captured-login-form.tsx and Captured-auth.ts twice each); why_new=Cycle 0045 NF-30; seam=none
+test('a saved study that stops in a file shown two studies earlier leaves one captured-source tab for that file', async () => {
+  // Arrange: three saved studies; the first and the third stop in app/a/page.tsx, the second in app/b/page.tsx.
+  const harness = await workspaceHarness(false)
+  try {
+    const library = await harness.reader.learningStorage()
+    const saveStudyDeclaredAt = async (path: string, runId: string) => {
+      const study = createConfiguredStudy(),
+        descriptor = study.descriptor!
+      for (const observation of study.observations)
+        observation.snapshotUri = observation.snapshotUri.replace(
+          study.runId,
+          runId,
+        )
+      study.workspaceKey = library.workspaceKey
+      study.runId = runId
+      study.id = `${study.instanceId}_${runId}`
+      study.configuration.source.path = path
+      study.configurationHash = sha256(JSON.stringify(study.configuration))
+      descriptor.anchors[0]!.path = path
+      descriptor.sources[0]!.path = path
+      descriptor.citationContext = citationContext(descriptor.anchors)
+      await library.saveStudy(study)
+      return study
+    }
+    const chooseStudy = async (studyId: string): Promise<void> => {
+      harness.receive({
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.model.selection.studyId === studyId &&
+          !harness.reader.inspect().view!.loading,
+        'the chosen saved study',
+        1_000,
+      )
+    }
+    const first = await saveStudyDeclaredAt(
+        'app/a/page.tsx',
+        'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      ),
+      second = await saveStudyDeclaredAt(
+        'app/b/page.tsx',
+        'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      ),
+      third = await saveStudyDeclaredAt(
+        'app/a/page.tsx',
+        'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      )
+    await harness.reader.open()
+    await chooseStudy(first.id)
+    await chooseStudy(second.id)
+
+    // Act
+    await chooseStudy(third.id)
+
+    // Assert: the first study's capture of app/a/page.tsx is gone, the other file's capture stays.
+    const capturedPageTabs = harness.groups
+      .flatMap((group) => group.tabs)
+      .flatMap((tab) => {
+        if (
+          !('uri' in tab.input) ||
+          !tab.input.uri.path.endsWith('/Captured-page.tsx')
+        )
+          return []
+        // The document path is the study, the item, the source hash and then the declared file.
+        const [, studyId, , , ...declaredFile] = tab.input.uri.path.split('/')
+        return [`${studyId}: ${declaredFile.join('/')}`]
+      })
+    assert.deepEqual(capturedPageTabs, [
+      '11111111-1111-4111-8111-111111111111_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb: app/b/Captured-page.tsx',
+      '11111111-1111-4111-8111-111111111111_cccccccc-cccc-4ccc-8ccc-cccccccccccc: app/a/Captured-page.tsx',
     ])
   } finally {
     await harness.close()
@@ -2318,6 +2512,35 @@ test('a historical debugger that failed to stop stays reported after native valu
       ),
       true,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane not offering Retry storage / refresh for a line that Retry cannot retire; fails_when=the line of a historical debugger that failed to stop counts as retryable, so the pane shows Retry and pressing it leaves the line; why_new=Cycle 0045 SM-9 (the kind was missing from the unretryable set, which was a list of free strings); seam=ReplayDebugger.dispose replaced on the live owner
+test('a historical debugger that failed to stop is reported without offering Retry storage', async () => {
+  // Arrange: an opened recording without another error line, whose historical debugger will fail to stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    readerSeams(harness).dropErrorOfKind('layout')
+    const owner = harness.reader['replayDebugger']
+    assert.ok(owner)
+    owner.dispose = async (): Promise<void> => {
+      throw new Error('The historical debugger did not stop.')
+    }
+
+    // Act
+    await harness.reader['retireReplayDebugger'](owner)
+
+    // Assert: the one line shown is one Retry cannot answer, which is what keeps the pane from offering Retry.
+    const posted = harness.postedMessages().at(-1)!
+    assert.deepEqual(
+      [...posted.errors],
+      ['Error: The historical debugger did not stop.'],
+    )
+    assert.equal(posted.unretryableErrorCount, 1)
   } finally {
     await harness.close()
   }
@@ -3322,14 +3545,30 @@ test('pressing Recording after the editor closed the Application panel of an att
   }
 })
 
-// Value: protects=a live run's held pause while the learner reads a replay; fails_when=presenting replay moments never renews the attached run's pause hold, so it is released after five minutes of reading; why_new=Cycle 0035 O3; seam=renewPauseHold spy on the attached runtime
-test('reading a recording while a live run is attached renews the live pause hold for each presented moment', async () => {
-  // Arrange
+// Value: protects=the held pause of a live run while the learner reads a replay; fails_when=presenting replay moments does not renew the pause hold of the run that is paused now, so that pause is released after five minutes of reading; why_new=Cycle 0035 O3, rewritten in Cycle 0045 (finding X7-E3.2: the count was taken on the stopped run of the recording itself, whose real renewal does nothing, so the test did not show that a paused run is held); seam=renewPauseHold spy on the paused run's runtime
+test('reading a recording while a live run is paused renews that run’s pause hold for each presented moment', async () => {
+  // Arrange: a saved recording of a stopped run, and a second run that is paused at its stop.
   const harness = await recordedReaderHarness(true, true)
   let renewals = 0
   try {
-    harness.record.runtime!.renewPauseHold = (): void => {
+    harness.service.environment.build.sourceHash = sha256('paused-live-build')
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'paused-live-run',
+    })
+    const pausedRun = [...harness.service.records.values()].at(-1)!
+    await pausedRun.preparation
+    harness.clock(1_100)
+    await harness.reader.action('click')
+    pausedRun.runtime!.renewPauseHold = (): void => {
       renewals++
+    }
+    const pausedRunBeforeReading = {
+      isAnotherRunThanTheRecording: pausedRun !== harness.record,
+      stopped: pausedRun.stopped,
+      status: pausedRun.runtime!.view().status,
     }
 
     // Act
@@ -3345,8 +3584,14 @@ test('reading a recording while a live run is attached renews the live pause hol
     await harness.controller.settle()
 
     // Assert
+    assert.deepEqual(pausedRunBeforeReading, {
+      isAnotherRunThanTheRecording: true,
+      stopped: false,
+      status: 'paused-browser',
+    })
     assert.equal(renewalsAfterOpen, 1)
     assert.equal(renewals, 2)
+    assert.equal(pausedRun.stopped, false)
   } finally {
     await harness.close()
   }

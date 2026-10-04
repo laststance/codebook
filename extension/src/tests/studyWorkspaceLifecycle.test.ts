@@ -7,12 +7,14 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import type { PresentationPoseCapture } from '../presentationSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
 
 import {
   workspaceHarness,
   openRetainedStudy,
+  readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 for (const stage of [
@@ -1482,14 +1484,14 @@ test('closing the reader finishes after the storage bound while a library write 
   }
 })
 
-// Value: protects=reader tests meeting the real viewport's refusal when the learner follows a run whose Application pane was closed; fails_when=the fake viewport accepts showLive on a released lease and writes its renderer into the closed pane, so a reader that follows a dead lease passes where the product reports "Viewport lease is released"; why_new=Cycle 0045 D-M3 (the fake's showLive had no released-lease check, its showHistory had); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
-test('following the current run after its viewport lease was released reports the released lease instead of rewriting the pane', async () => {
+// Value: protects=the learner who closed the Application pane of a live run and then follows the current run; fails_when=the reader asks the released lease to show the run, reports "Viewport lease is released" under a line the same render clears again, and leaves no pane and no word of what happened; why_new=Cycle 0045 H2-F1 (the harness's fake viewport accepted showLive on a released lease until D-M3, which hid this); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
+test('following the current run after its Application pane was closed says that the run ended and how to see the application again, in a line that stays', async () => {
   // Arrange: the Application pane of a live run shows the history of a selected item, and the learner closes that pane, which ends the run's lease on it.
   const harness = await workspaceHarness()
   const leaseFailures: string[] = []
   try {
     await harness.reader.open()
-    harness.reader.presentation.createViewport(
+    const lease = harness.reader.presentation.createViewport(
       'live-run',
       () => {},
       (reason) => leaseFailures.push(reason),
@@ -1501,10 +1503,11 @@ test('following the current run after its viewport lease was released reports th
     closedPane.dispose()
     const messagesBeforeReturn = harness.postedMessages().length
 
-    // Act
+    // Act: the learner follows the current run, and the reader's timer runs once more.
     await harness.reader.action('return-current')
+    await readerSeams(harness).refresh()
 
-    // Assert: the Study pane was shown the refusal while the reader returned, and the closed pane kept its page.
+    // Assert: one line was shown during the return and is still there; the released lease was not asked and the closed pane kept its page.
     const errorLinesShown = new Set(
       harness
         .postedMessages()
@@ -1514,9 +1517,58 @@ test('following the current run after its viewport lease was released reports th
     assert.deepEqual(leaseFailures, ['Owned viewport closed before cleanup'])
     assert.deepEqual(
       [...errorLinesShown],
-      ['Error: Viewport lease is released'],
+      [
+        'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+      ],
     )
+    assert.deepEqual(
+      [...harness.postedMessages().at(-1)!.errors],
+      [
+        'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+      ],
+    )
+    assert.equal(harness.postedMessages().at(-1)!.unretryableErrorCount, 1)
     assert.equal(closedPane.webview.html, historyPage)
+    // The fake lease still refuses like the real viewport (Cycle 0045 D-M3), which is what made the old behavior visible.
+    await assert.rejects(
+      lease.showLive(new AbortController().signal),
+      /Viewport lease is released/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the line about a closed Application pane leaving once a pane exists again; fails_when=the line stays through the next run, although that run's pane shows the application; why_new=Cycle 0045 H2-F1 (the line is kept under its own kind, which no render retires); seam=WorkspaceViewport
+test('a new run that opens the Application pane again retires the line about the closed one', async () => {
+  // Arrange: the learner closed the Application pane of a live run and followed the current run, which left the line.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.reader.presentation.createViewport(
+      'live-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    await harness.reader.select('repository/workspace/overview')
+    harness.reader['app']!.dispose()
+    await harness.reader.action('return-current')
+    const linesBeforeTheNewRun = [...harness.postedMessages().at(-1)!.errors]
+
+    // Act: a new run takes its viewport lease, which opens the pane again.
+    harness.reader.presentation.createViewport(
+      'next-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    // Assert
+    assert.deepEqual(linesBeforeTheNewRun, [
+      'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+    ])
+    assert.deepEqual([...harness.postedMessages().at(-1)!.errors], [])
   } finally {
     await harness.close()
   }
@@ -1602,6 +1654,98 @@ test('the workspace harness historical debugger ends a wait for native Variables
 
     // Assert
     assert.equal(answerAtTheClose, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a click on "Open replay" in the status bar opening the recording; fails_when=every publish of the reader assigns a new command object to the status entry, so the host disposes the command the entry was drawn with and a click between two publishes ends in the host's "Actual command not found"; why_new=Cycle 0045 NF-23 (Cursor showed that toast on one Open replay click); seam=the harness's status item counts the assignments of its command
+test('the Open replay entry keeps its command while the reader publishes again without a change, so a click between two publishes still opens the recording', async () => {
+  // Arrange: a saved recording, whose status bar entry offers Open replay.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.saveLearningReplay(harness.studyId)
+    const openReplayCommand = harness.saveStatus.command
+    const assignmentsAtSave = harness.saveStatus.commandAssignments
+
+    // Act: the reader publishes three more times while nothing about the entry changes.
+    for (let publishCount = 0; publishCount < 3; publishCount++)
+      readerSeams(harness).publish()
+
+    // Assert: the host was handed no new command object, so the entry drawn with the first one still runs it.
+    assert.deepEqual(structuredClone(openReplayCommand), {
+      title: 'Open learning replay',
+      command: 'codebook.openLearningReplay',
+      arguments: [harness.studyId],
+    })
+    assert.equal(harness.saveStatus.commandAssignments - assignmentsAtSave, 0)
+    assert.equal(harness.saveStatus.command, openReplayCommand)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=design decision 2A, one recording control in the status bar: Save learning replay during the run, Open replay after the save; fails_when=the reader offers the run's recording while it is unsaved, or creates a second status bar item for it, which would put a replay session beside a paused live session in Call Stack; why_new=Cycle 0045 NF-2 as DR-6 (closed as no defect, pinned); seam=the harness records every status bar item the reader creates
+test('while a run records the status bar offers Save learning replay and no second recording control, and after the save the same item offers Open replay', async () => {
+  // Arrange: a run that is paused at its first stop and still recording.
+  const harness = await workspaceHarness(true, true)
+  try {
+    harness.acknowledgeContext()
+    harness.service.environment.build.sourceHash = sha256(
+      'recording-control-pin-build',
+    )
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'recording-control-pin',
+    })
+    const record = [...harness.service.records.values()][0]!
+    await record.preparation
+    harness.clock(100)
+    await harness.reader.action('click')
+    const studyId = `${harness.service.instanceId}_${record.id}`
+    const whileRecording = {
+      runStopped: record.stopped,
+      text: harness.saveStatus.text,
+      command: structuredClone(harness.saveStatus.command),
+      visible: harness.saveStatus.visible,
+      statusItems: [...harness.createdStatusItemIds],
+    }
+
+    // Act
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Assert
+    assert.deepEqual(whileRecording, {
+      runStopped: false,
+      text: '$(record) Recording explanation · Save learning replay',
+      command: {
+        title: 'Save learning replay',
+        command: 'codebook.saveLearningReplay',
+        arguments: [studyId],
+      },
+      visible: true,
+      statusItems: ['codebook.learningSave'],
+    })
+    assert.deepEqual(
+      {
+        text: harness.saveStatus.text,
+        command: structuredClone(harness.saveStatus.command),
+        visible: harness.saveStatus.visible,
+        statusItems: [...harness.createdStatusItemIds],
+      },
+      {
+        text: '$(warning) Learning partially saved · Open replay',
+        command: {
+          title: 'Open learning replay',
+          command: 'codebook.openLearningReplay',
+          arguments: [studyId],
+        },
+        visible: true,
+        statusItems: ['codebook.learningSave'],
+      },
+    )
   } finally {
     await harness.close()
   }

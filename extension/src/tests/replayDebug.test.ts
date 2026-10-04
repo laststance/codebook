@@ -280,6 +280,102 @@ test('tampered history and disposed sessions cannot keep a confirmed native insp
   assert.equal(adapter.inspectionReady, false)
 })
 
+// Value: protects=Run and Debug showing no red "Canceled" when Next or Previous changes the recorded stop; fails_when=a closed adapter leaves a threads, stackTrace, scopes or variables request unanswered, which the editor cancels after 500 ms and shows as "Canceled" in Variables; why_new=Cycle 0045 NF-3 (candidate 13: in four of ten presses `scopes` and `threads` reached the retired session 0 to 1 ms after `disconnect` and were never answered); seam=none
+test('a request Run and Debug sends after it told the recorded session to disconnect is answered with no rows, not left for the editor to cancel', () => {
+  // Arrange: Run and Debug shows a recorded stop, and a stop change makes the editor disconnect the session.
+  const { adapter, messages, request } = harness()
+  adapter.select(recorded(), 'Recorded')
+  request('configurationDone')
+  const threadId = request('threads').body.threads[0].id
+  const frame = request('stackTrace', { threadId }).body.stackFrames[0]
+  const scope = request('scopes', { frameId: frame.id }).body.scopes[0]
+  request('disconnect')
+
+  // Act: the view requests the editor had already queued arrive after the disconnect.
+  const lateRequests = [
+    { seq: 101, command: 'threads' },
+    { seq: 102, command: 'stackTrace', arguments: { threadId } },
+    { seq: 103, command: 'scopes', arguments: { frameId: frame.id } },
+    {
+      seq: 104,
+      command: 'variables',
+      arguments: { variablesReference: scope.variablesReference },
+    },
+  ]
+  for (const lateRequest of lateRequests)
+    adapter.handleMessage({ type: 'request', ...lateRequest })
+
+  // Assert
+  assert.deepEqual(
+    messages.flatMap((message) =>
+      'request_seq' in message && message.request_seq > 100
+        ? [
+            {
+              request_seq: message.request_seq,
+              command: message.command,
+              success: message.success,
+              body: message.body,
+            },
+          ]
+        : [],
+    ),
+    [
+      {
+        request_seq: 101,
+        command: 'threads',
+        success: true,
+        body: { threads: [] },
+      },
+      {
+        request_seq: 102,
+        command: 'stackTrace',
+        success: true,
+        body: { stackFrames: [], totalFrames: 0 },
+      },
+      {
+        request_seq: 103,
+        command: 'scopes',
+        success: true,
+        body: { scopes: [] },
+      },
+      {
+        request_seq: 104,
+        command: 'variables',
+        success: true,
+        body: { variables: [] },
+      },
+    ],
+  )
+})
+
+// Value: protects=a retired historical session staying read-only and silent beyond the four view requests; fails_when=a closed adapter answers an execution request or a second disconnect, or serves source of the stop it no longer shows; why_new=Cycle 0045 NF-3 (the closed adapter now answers four requests, so what it leaves unanswered needs its own check); seam=none
+test('a closed recorded session answers nothing but the four view requests', () => {
+  // Arrange
+  const { adapter, messages, request } = harness()
+  adapter.select(recorded(), 'Recorded')
+  request('configurationDone')
+  request('disconnect')
+  const messagesAtClose = messages.length
+
+  // Act
+  for (const [index, command] of [
+    'source',
+    'loadedSources',
+    'evaluate',
+    'continue',
+    'disconnect',
+  ].entries())
+    adapter.handleMessage({
+      seq: 201 + index,
+      type: 'request',
+      command,
+      arguments: { sourceReference: 1 },
+    })
+
+  // Assert
+  assert.equal(messages.length, messagesAtClose)
+})
+
 test('historical stack, source and values remain inspectable without a live debugger', () => {
   // Arrange
   const { adapter, request } = harness()

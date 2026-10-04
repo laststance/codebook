@@ -1343,9 +1343,15 @@ test('an MCP source reveal rejects a host rendering failure instead of recording
     )
     await held.started
     held.reject(new Error('Injected host source open failure'))
-    // Assert
+    // Assert: the reveal is refused, and the pane shows the reason instead of a loading line that would never end.
     await assert.rejects(revealing, /captured source.*not displayed/)
-    assert.equal(harness.reader.inspect().view!.loading, true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+    assert.equal(
+      harness.reader
+        .inspect()
+        .view!.errors.includes('Error: Injected host source open failure'),
+      true,
+    )
   } finally {
     release()
     await harness.close()
