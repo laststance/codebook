@@ -2272,6 +2272,33 @@ test('a stop declared on a line the sealed map has no position on is requested a
   assert.equal(mouse.length, 2)
 })
 
+// Cycle 0045 (SP-7, SS-12, SS-13, PC-3.9): red while the place and the two checks of the preparation refusal each scanned the sealed map (three scans for this stop; a fourth by the binding rule when the requested line is not the citation's last).
+test('preparing a stop declared on an unmapped line scans its sealed map once', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both.
+  const { run, verifyBreakpointsOnlyOnLines, mapScans } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: ';AACA',
+      fixture: {
+        source: '// toggles the theme\nconst nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([2])
+  // Act: the whole preparation, then the pause, whose handler asks the stop's rule.
+  await run.prepare()
+  const scansOfPreparation = [...mapScans]
+  run.action('one', 'repository-click')
+  await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the first mapped position after its declared line')
+  await run.stop()
+  // Assert: one scan, from the declared line to the end of the citation, and no further one at the pause.
+  assert.deepEqual(scansOfPreparation, [{ startLine: 1, endLine: 2 }])
+  assert.deepEqual(mapScans, [{ startLine: 1, endLine: 2 }])
+})
+
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).
 test('a stop requested after its unmapped declared line that the debugger then binds on the next line commits there, as a stop declared on the requested line would', async (context) => {
   // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request on line 2 and verifies it at 3:1.

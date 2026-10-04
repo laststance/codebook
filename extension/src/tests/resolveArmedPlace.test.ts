@@ -3,29 +3,19 @@ import { test } from 'node:test'
 
 import { resolveArmedPlace } from '../utils/resolveArmedPlace'
 
-/** A sealed map whose mapped positions are given, with a scan that covered the whole map or stopped at its size limit. @example mapWith([{ line: 39, column: 9 }])(38, 52) */
-const mapWith =
-  (mapped: { line: number; column: number }[], complete = true) =>
-  (startLine: number, endLine: number) => ({
-    complete,
-    positions: mapped.filter(
-      (position) => position.line >= startLine && position.line <= endLine,
-    ),
-  })
+// Each case hands the stop's one scan of its sealed map, from its declared line to the end of its citation, as the run does.
 
 test('a stop declared on a blank line is requested at the first mapped position after it in its citation', () => {
   // Arrange: line 38 is blank; line 39 starts its statement at column 9.
   const declared = { line: 38, column: 1 }
   // Act
-  const armed = resolveArmedPlace(
-    declared,
-    52,
-    mapWith([
-      { line: 37, column: 9 },
+  const armed = resolveArmedPlace(declared, {
+    positions: [
       { line: 39, column: 9 },
       { line: 40, column: 9 },
-    ]),
-  )
+    ],
+    complete: true,
+  })
   // Assert
   assert.deepEqual(armed, { line: 39, column: 9 })
 })
@@ -34,27 +24,22 @@ test('a stop declared on a line with a mapped position is requested where it was
   // Arrange
   const declared = { line: 39, column: 31 }
   // Act
-  const armed = resolveArmedPlace(
-    declared,
-    52,
-    mapWith([
+  const armed = resolveArmedPlace(declared, {
+    positions: [
       { line: 39, column: 9 },
       { line: 40, column: 9 },
-    ]),
-  )
+    ],
+    complete: true,
+  })
   // Assert
   assert.equal(armed, declared)
 })
 
 test('a stop on an unmapped line whose only mapped lines lie after its citation is requested where it was declared', () => {
-  // Arrange: the citation ends on line 39; the next mapped line is 41.
+  // Arrange: the citation ends on line 39 and the next mapped line is 41, so the scan of lines 38 to 39 found nothing.
   const declared = { line: 38, column: 1 }
   // Act
-  const armed = resolveArmedPlace(
-    declared,
-    39,
-    mapWith([{ line: 41, column: 1 }]),
-  )
+  const armed = resolveArmedPlace(declared, { positions: [], complete: true })
   // Assert
   assert.equal(armed, declared)
 })
@@ -63,11 +48,10 @@ test('a map too large to scan completely leaves the stop requested where it was 
   // Arrange: the partial scan found line 41 only.
   const declared = { line: 38, column: 1 }
   // Act
-  const armed = resolveArmedPlace(
-    declared,
-    52,
-    mapWith([{ line: 41, column: 5 }], false),
-  )
+  const armed = resolveArmedPlace(declared, {
+    positions: [{ line: 41, column: 5 }],
+    complete: false,
+  })
   // Assert
   assert.equal(armed, declared)
 })

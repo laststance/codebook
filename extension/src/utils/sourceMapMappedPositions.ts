@@ -2,6 +2,12 @@ import { walkSourceMapSegments } from './walkSourceMapSegments'
 
 type MappedPosition = { line: number; column: number }
 
+/** One scan of a sealed map over a range of original lines: the first mapped column of each line the scan found, in line order, and whether the scan read the whole map. A position it found is a position; a line it did not find is unmapped only when the scan is complete. {@link ConfiguredBrowserRun} keeps one per stop and hands it to {@link resolveArmedPlace}, {@link createBindingLineRule} and {@link findUnmappedDeclaredStop}. */
+export interface MappedPositionsScan {
+  positions: readonly MappedPosition[]
+  complete: boolean
+}
+
 /**
  * Finds the first mapped column of each original line in a range, for the declared-line check before input, the binding rule and the hints of a binding failure; {@link createBundleVerifier} calls it only for a sealed map.
  * @param mappings - The map's VLQ `mappings` string.

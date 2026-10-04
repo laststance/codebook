@@ -16,6 +16,7 @@ import type { ViewportRecordingObserver } from '../../runtimeSupport/browserView
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { createBundleVerifier } from '../../utils/createBundleVerifier'
 
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
@@ -169,6 +170,8 @@ export async function configuredRuntimeHarness(
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
   // The generated places the adapter lists as break locations of the module; without them it cannot answer.
   let possibleBreakLocations: GeneratedPlace[] | undefined
+  // Every scan of a sealed map the run asked its verifiers for, in order.
+  const mapScans: { startLine: number; endLine: number }[] = []
   // Every range the run asked break locations for, in order, as it sent them.
   const breakLocationRequests: { start: ScriptPlace; end?: ScriptPlace }[] = []
   let rejectedCapture: string | undefined,
@@ -638,6 +641,19 @@ export async function configuredRuntimeHarness(
         },
       },
       './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
+      './utils/createBundleVerifier': {
+        // The real verifier, with every scan of its sealed map recorded.
+        createBundleVerifier: (sealed: BundleSource) => {
+          const verifier = createBundleVerifier(sealed)
+          return {
+            ...verifier,
+            mappedPositions: (startLine: number, endLine: number) => {
+              mapScans.push({ startLine, endLine })
+              return verifier.mappedPositions(startLine, endLine)
+            },
+          }
+        },
+      },
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async () => ({ bundle, discovery: {} }),
       },
@@ -784,6 +800,8 @@ export async function configuredRuntimeHarness(
     },
     /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
     breakLocationRequests,
+    /** Every scan of a sealed map the run made, by its line range, in order: preparation scans once per stop, and a binding failure scans the citation for its hints. */
+    mapScans,
     /** Reports every later stop's verified binding, and its pause, at this position instead of the requested one. */
     bindLaterStopsAt(line: number, column: number): void {
       laterStopBinding = { line, column }

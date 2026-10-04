@@ -99,6 +99,7 @@ import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
+import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import { thrownMessage } from './utils/thrownMessage'
 import {
   withUnannouncedPauses,
@@ -121,6 +122,8 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   verifier: ReturnType<typeof createBundleVerifier>
   script?: Protocol.Debugger.ScriptParsedEvent
   breakpoint?: OwnedRepositoryBreakpoint
+  /** The one scan of the stop's sealed map, from its declared line to the end of its citation; {@link resolveArmedPlace}, {@link createBindingLineRule} and the preparation refusal read it instead of the map. */
+  scan: MappedPositionsScan
   /** Where the stop's breakpoint is requested ({@link resolveArmedPlace}): the declared position, or the first mapped position after a declared line that has none. */
   armed: { line: number; column: number }
   /** The debugger's verified binding, on the declared line or on a later line {@link PreparedStop.acceptsBoundLine} accepts; every later check, the saved observation and the display use it instead of the requested position. */
@@ -414,25 +417,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.alive()
       const verifier = createBundleVerifier(acquired.bundle),
         citation = this.definition.descriptor.anchors[stop.anchorIndex]!
-      // The rule reads the sealed map once here; the pause handler only compares lines.
-      const mappedPositions = (startLine: number, endLine: number) =>
-          verifier.mappedPositions(startLine, endLine),
+      // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
+      const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
         // The debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it, and its rule is measured from there.
-        armed = resolveArmedPlace(
-          stop.source,
-          citation.endLine,
-          mappedPositions,
-        )
+        armed = resolveArmedPlace(stop.source, scan)
       const bindingRule = createBindingLineRule(
         stop.source.line,
         citation,
-        mappedPositions,
+        scan,
         armed.line,
       )
       const prepared: PreparedStop = {
         ...stop,
         bundle: acquired.bundle,
         verifier,
+        scan,
         armed: { line: armed.line, column: armed.column },
         acceptsBoundLine: bindingRule.accepts,
         bindingRefusal: bindingRule.refusal,
@@ -755,10 +754,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private canLaterLineBind(stop: PreparedStop, endLine: number): boolean {
-    if (stop.source.line >= endLine) return false
-    const later = stop.verifier.mappedPositions(stop.source.line + 1, endLine)
-    if (later.positions.length) return true
-    if (later.complete) return false
+    if (
+      stop.scan.positions.some((position) => position.line > stop.source.line)
+    )
+      return true
+    if (stop.scan.complete) return false
     // The scan stopped at its size limit before it found a later position: any remaining line that could hold code may be where the debugger binds.
     for (let line = stop.source.line + 1; line <= endLine; line++)
       if (!isBlankOrCommentLine(stop.bundle.source, line)) return true
