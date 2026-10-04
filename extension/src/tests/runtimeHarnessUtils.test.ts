@@ -245,6 +245,27 @@ test('clicking an element the fake Wiki page does not have fails the test instea
   })
 })
 
+// Value: protects=a page rule that compares the time it reads with an interval being tested at the time its timer fell due; fails_when=the page's `Date.now()` already stands at the end of the step that reaches a timer, so a timer due at 2,000 ms reads 2,200 ms; why_new=review of Cycle 0045, tests-1 #6 (D-L3 made the manual clock run a callback at its due time and D-L6 allowed steps shorter than a second; the page's own clock followed neither); seam=none
+test('a timer of the fake Wiki page reads the time it fell due at, not the end of the advance that reached it: one due after 2,000 ms reads 2,000 ms when two advances of 1,200 ms pass it', async () => {
+  // Arrange: the page script sets one timer that notes how long after the load it read the clock.
+  const page = await openFakeWikiPage(
+    [
+      'var loadedAtMs = Date.now()',
+      'window.setTimeout(function () {',
+      "  document.body.setAttribute('data-read-after-ms', String(Date.now() - loadedAtMs))",
+      '}, 2000)',
+    ].join('\n'),
+    'no-rail',
+  )
+
+  // Act: the second advance ends at 2,400 ms, 400 ms past the timer.
+  await page.advance(1_200)
+  await page.advance(1_200)
+
+  // Assert
+  assert.equal(page.body.getAttribute('data-read-after-ms'), '2000')
+})
+
 // Value: protects=a page test that holds an answer back and releases it stating an order that happened; fails_when=`release` succeeds although the page never made the held request, so the test's "answer arrives late" step delivers nothing and a request made afterwards is answered at once; why_new=review of Cycle 0045, tests-1 #5; seam=none
 test('releasing a held answer the fake Wiki page has not asked for fails the test, and the hold stays for the request that comes later', async () => {
   // Arrange: a page whose script asks for freshness only when the window gets focus; the test holds that answer back.

@@ -392,7 +392,6 @@ export async function openFakeWikiPage(
     )
   }
   for (const route of load.heldAtLoad ?? []) holdNext(route)
-  let elapsedMs = 0
   let reloads = 0
 
   const head = new PageElement('head')
@@ -513,8 +512,9 @@ export async function openFakeWikiPage(
     performance: { timeOrigin: loadedAtMs },
     // The page reads the clock and formats times through Date; both follow the manual clock and UTC.
     Date: class PageDate extends Date {
+      // The manual clock stands at a timer's own due time while its callback runs, so a callback reads the time it was due at.
       static override now(): number {
-        return loadedAtMs + elapsedMs
+        return loadedAtMs + clock.now()
       }
       override toLocaleTimeString(): string {
         return this.toISOString().slice(11, 16)
@@ -589,7 +589,6 @@ export async function openFakeWikiPage(
       // Each step may start a request whose answer sets the next timer, so the page settles between steps.
       for (let stepped = 0; stepped < milliseconds; stepped += CLOCK_STEP_MS) {
         const stepMs = Math.min(CLOCK_STEP_MS, milliseconds - stepped)
-        elapsedMs += stepMs
         clock.advance(stepMs)
         await settle()
       }
