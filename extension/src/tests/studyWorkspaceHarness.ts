@@ -1444,8 +1444,13 @@ export async function workspaceHarness(
       this.rendererAttached = true
       viewportEvents.push(`reveal:${this.mode}`)
     }
-    /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
+    /**
+     * Marks selected live presentation without starting another runtime.
+     * @throws "Viewport lease is released" once the lease was closed or its panel is gone, before the panel is touched, like the real viewport.
+     * @example await viewport.showLive()
+     */
     async showLive(signal?: AbortSignal): Promise<void> {
+      if (this.closed) throw new Error('Viewport lease is released')
       // Like the real viewport, a lease that is not pinned to history only restores a detached renderer, leaving an attached one's panel untouched.
       if (!this.historical) {
         if (!this.rendererAttached)

@@ -1481,3 +1481,43 @@ test('closing the reader finishes after the storage bound while a library write 
     await harness.close()
   }
 })
+
+// Value: protects=reader tests meeting the real viewport's refusal when the learner follows a run whose Application pane was closed; fails_when=the fake viewport accepts showLive on a released lease and writes its renderer into the closed pane, so a reader that follows a dead lease passes where the product reports "Viewport lease is released"; why_new=Cycle 0045 D-M3 (the fake's showLive had no released-lease check, its showHistory had); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
+test('following the current run after its viewport lease was released reports the released lease instead of rewriting the pane', async () => {
+  // Arrange: the Application pane of a live run shows the history of a selected item, and the learner closes that pane, which ends the run's lease on it.
+  const harness = await workspaceHarness()
+  const leaseFailures: string[] = []
+  try {
+    await harness.reader.open()
+    harness.reader.presentation.createViewport(
+      'live-run',
+      () => {},
+      (reason) => leaseFailures.push(reason),
+      'normal',
+    )
+    await harness.reader.select('repository/workspace/overview')
+    const closedPane = harness.reader['app']!,
+      historyPage = closedPane.webview.html
+    closedPane.dispose()
+    const messagesBeforeReturn = harness.postedMessages().length
+
+    // Act
+    await harness.reader.action('return-current')
+
+    // Assert: the Study pane was shown the refusal while the reader returned, and the closed pane kept its page.
+    const errorLinesShown = new Set(
+      harness
+        .postedMessages()
+        .slice(messagesBeforeReturn)
+        .flatMap((message) => message.errors),
+    )
+    assert.deepEqual(leaseFailures, ['Owned viewport closed before cleanup'])
+    assert.deepEqual(
+      [...errorLinesShown],
+      ['Error: Viewport lease is released'],
+    )
+    assert.equal(closedPane.webview.html, historyPage)
+  } finally {
+    await harness.close()
+  }
+})
