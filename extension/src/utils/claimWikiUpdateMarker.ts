@@ -1,4 +1,5 @@
-import { rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { rename, rm, writeFile } from 'node:fs/promises'
 
 import { WIKI_UPDATE_RUN_MARKER_SUFFIX } from '../constants'
 
@@ -54,6 +55,28 @@ function claimOfLiveHolder(
 }
 
 /**
+ * Puts a text into the marker file as one new file; called by `reserve` of {@link claimWikiUpdateMarker}.
+ *
+ * Why: a write in place empties the file first, so another window that reads at that moment finds no marker, and a write that fails half-way leaves neither the run's marker nor the reservation. The text is written beside the marker and moved over it.
+ *
+ * @param markerPath - `<output>.update-run.json`.
+ * @param text - The marker's new content.
+ * @throws The file system's error when the text cannot be written or moved; the marker file then still holds what it held.
+ * @example
+ * await replaceMarker('/repo/.codebook/wiki.update-run.json', '{"pid":4242,…,"watchEndedAtMs":1790000900000}')
+ */
+async function replaceMarker(markerPath: string, text: string): Promise<void> {
+  const besidePath = `${markerPath}.${randomUUID()}.tmp`
+  try {
+    await writeFile(besidePath, text, { flag: 'wx' })
+    await rename(besidePath, markerPath)
+  } catch (error) {
+    await rm(besidePath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}
+
+/**
  * Writes this window's marker beside the Wiki when a run begins, exclusively, so that of two windows that start at the same moment only one runs.
  *
  * Why: a look at the marker and the start of a run are two steps; only an exclusive write decides a race between two windows. A marker in the way that no live window's run owns (a killed editor's, this window's own from a run that already ended, or the reservation of a stopped watch, which the start check has let pass) is removed and the write is tried once more.
@@ -62,7 +85,7 @@ function claimOfLiveHolder(
  * @param outputDirectory - Resolved Wiki output folder; the marker is `<output>.update-run.json`.
  * @param marker - This window's process id, window id, host and the run's start.
  * @returns
- * - The marker was written: `release`, which removes it unless another window has written its own since, and `reserve`, which rewrites it as a stopped watch's reservation
+ * - The marker was written: `release`, which removes it unless another window has written its own since, and `reserve`, which replaces it by a stopped watch's reservation (a reservation that cannot be written leaves the run's marker, which `release` still removes)
  * - Another window's live run holds the Wiki: `heldBy` with its marker
  * @throws The file system's error when the marker cannot be written for another reason (for example a read-only folder).
  *
@@ -91,8 +114,10 @@ export async function claimWikiUpdateMarker(
             await rm(markerPath, { force: true })
         },
         async reserve(watchEndedAtMs: number): Promise<void> {
-          written = JSON.stringify({ ...marker, watchEndedAtMs })
-          await writeFile(markerPath, written)
+          const reservation = JSON.stringify({ ...marker, watchEndedAtMs })
+          await replaceMarker(markerPath, reservation)
+          // Only a reservation that is on disk is this claim's text; after a failed write the run's marker still is.
+          written = reservation
         },
       }
     } catch (error) {
