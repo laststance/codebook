@@ -1,4 +1,7 @@
-import { walkSourceMapSegments } from './walkSourceMapSegments'
+import {
+  walkSourceMapSegments,
+  type SourceMapSegment,
+} from './walkSourceMapSegments'
 
 /** A zero-based position in generated code, named as the debugger protocol names a location's line and column. */
 interface GeneratedPosition {
@@ -38,6 +41,11 @@ export function sourceMapGeneratedRange(
     if (!end || isBefore(end, spanEnd)) end = spanEnd
     openSpanLine = undefined
   }
+  /** Moves the range's start back to one of the line's mappings and opens that mapping's span. */
+  const openSpan = (position: GeneratedPosition): void => {
+    if (!start || isBefore(position, start)) start = position
+    openSpanLine = position.lineNumber
+  }
   const complete = walkSourceMapSegments(
     mappings,
     ({ generatedLine, generatedColumn, original }) => {
@@ -47,24 +55,53 @@ export function sourceMapGeneratedRange(
       }
       // The open span ends at this segment when both lie on one generated line, otherwise at the end of its own generated line.
       if (openSpanLine !== undefined)
-        closeSpan(
-          openSpanLine === generatedLine
-            ? position
-            : { lineNumber: openSpanLine + 1, columnNumber: 0 },
-        )
-      if (
-        original?.sourceIndex !== selectedSourceIndex ||
-        original.line + 1 !== line
-      )
-        return
-      if (!start || isBefore(position, start)) start = position
-      openSpanLine = generatedLine
+        closeSpan(openSpanEnd(openSpanLine, position))
+      if (!isMappingOfLine(original, selectedSourceIndex, line)) return
+      openSpan(position)
     },
   )
   // The line's mapping was the last segment read: it governs to the end of its generated line.
   if (openSpanLine !== undefined)
     closeSpan({ lineNumber: openSpanLine + 1, columnNumber: 0 })
   return { range: start && end ? { start, end } : undefined, complete }
+}
+
+/**
+ * Finds where the span of a mapping ends once the next segment is read; called by {@link sourceMapGeneratedRange} for each segment that follows one of the line's mappings.
+ * @param openSpanLine - The zero-based generated line of the mapping whose span is open.
+ * @param next - The generated position of the segment that follows it.
+ * @returns That segment's position when both lie on one generated line, otherwise the start of the generated line after the mapping's own (the end of its line, exclusive).
+ * @example
+ * openSpanEnd(0, { lineNumber: 0, columnNumber: 6 }) // => { lineNumber: 0, columnNumber: 6 }
+ * openSpanEnd(0, { lineNumber: 2, columnNumber: 4 }) // => { lineNumber: 1, columnNumber: 0 }
+ */
+function openSpanEnd(
+  openSpanLine: number,
+  next: GeneratedPosition,
+): GeneratedPosition {
+  return openSpanLine === next.lineNumber
+    ? next
+    : { lineNumber: openSpanLine + 1, columnNumber: 0 }
+}
+
+/**
+ * Says whether a segment maps its generated code to the asked original line; called by {@link sourceMapGeneratedRange} for every segment.
+ * @param original - The segment's original position, absent for a segment without an original.
+ * @param selectedSourceIndex - Index of the cited original in the map's `sources`.
+ * @param line - One-based original line.
+ * @returns Whether the segment has an original in that source on that line.
+ * @example
+ * isMappingOfLine({ sourceIndex: 0, line: 1, column: 0 }, 0, 2) // => true
+ * isMappingOfLine(undefined, 0, 2)                              // => false
+ */
+function isMappingOfLine(
+  original: SourceMapSegment['original'],
+  selectedSourceIndex: number,
+  line: number,
+): boolean {
+  return (
+    original?.sourceIndex === selectedSourceIndex && original.line + 1 === line
+  )
 }
 
 /** Tells {@link sourceMapGeneratedRange} whether one generated position lies before another. @example isBefore({ lineNumber: 0, columnNumber: 9 }, { lineNumber: 1, columnNumber: 0 }) // true */
