@@ -34,6 +34,7 @@ import {
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
   SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
   SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
+  STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
   STUDY_PRESENTATIONS,
@@ -559,6 +560,8 @@ export class StudyWorkspace {
     selectionRevision: number
     arrange: boolean
   }
+  /** The layout request {@link showStudyAwaitingEditorArea} sent and the editor has not answered yet, with the time it was sent: a later tick sends no second one, and none within {@link STUDY_EDITOR_AREA_LOOK_INTERVAL_MS}. */
+  private editorAreaLook?: { sentAtMs: number; answer?: Promise<boolean> }
   private refreshing?: Promise<void>
   private timer?: ReturnType<typeof setInterval>
   private lastActiveRegion: 'app' | 'context' | 'source' = 'context'
@@ -10876,12 +10879,28 @@ export class StudyWorkspace {
       this.studyAwaitingEditorArea = undefined
       return
     }
+    if (this.presentationTransition || this.repositoryNavigation !== undefined)
+      return
+    // The wait has no end, so only its polling is bounded: one layout request in flight, and at most one in {@link STUDY_EDITOR_AREA_LOOK_INTERVAL_MS}.
+    const nowMs = performance.now(),
+      lastLook = this.editorAreaLook
     if (
-      this.presentationTransition ||
-      this.repositoryNavigation !== undefined ||
-      (await this.editorAreaHidden())
+      lastLook &&
+      (lastLook.answer !== undefined ||
+        nowMs - lastLook.sentAtMs < STUDY_EDITOR_AREA_LOOK_INTERVAL_MS)
     )
       return
+    const answer = this.editorAreaHidden(),
+      look: NonNullable<StudyWorkspace['editorAreaLook']> = {
+        sentAtMs: nowMs,
+        answer,
+      }
+    this.editorAreaLook = look
+    const hidden = await answer.finally(() => {
+      look.answer = undefined
+    })
+    if (hidden) return
+    this.editorAreaLook = undefined
     // A newer choice or a close during the read owns the reader now.
     if (this.studyAwaitingEditorArea !== awaited || this.closing) return
     this.studyAwaitingEditorArea = undefined

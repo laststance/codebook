@@ -3672,6 +3672,108 @@ test('after a saved study was chosen with the bottom panel maximized, restoring 
   }
 })
 
+// Value: protects=the editor being asked for its layout once at a time while a saved study waits for the hidden editor area; fails_when=every 250 ms refresh sends another layout request while the one before it is still unanswered; why_new=Cycle 0045 SP-6 (read from code: `showStudyAwaitingEditorArea` asked on every tick, with no guard against a request in flight); seam=the workspace harness holding one editor command, the reader's refresh
+test('while a saved study waits for the hidden editor area, a refresh that finds a layout request unanswered sends no second one', async (context) => {
+  // Arrange: a saved study was chosen with the bottom panel maximized; the editor does not answer the next layout request.
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const layoutRequestsBefore = harness.commands.filter(
+      (command) => command === 'vscode.getEditorLayout',
+    ).length
+    const unanswered = harness.holdNextCommand('vscode.getEditorLayout')
+
+    // Act: the reader's timer runs again two seconds later, and the editor still has not answered the first request.
+    const startedAtMs = performance.now()
+    let waitedMs = 0
+    context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
+    const firstTick = readerSeams(harness).refresh()
+    await unanswered.started
+    waitedMs = 2_000
+    await readerSeams(harness).refresh()
+    const layoutRequestsWhileUnanswered =
+      harness.commands.filter((command) => command === 'vscode.getEditorLayout')
+        .length - layoutRequestsBefore
+    unanswered.release()
+    await firstTick
+
+    // Assert
+    assert.equal(layoutRequestsWhileUnanswered, 1)
+    assert.equal(harness.isPanelMaximized(), true)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen with the bottom panel maximized being shown whenever the learner brings the editor area back, however late, while the editor is asked for its layout at most once a second meanwhile; fails_when=the wait gets an end bound and the learner has to choose the study again, or every 250 ms refresh asks the editor; why_new=Cycle 0045 SP-6 as DR-10 (the wait has no end bound, only the polling is bounded); seam=the workspace harness, the reader's refresh, and performance.now() moved by the test
+test('a saved study chosen with the bottom panel maximized is shown when the panel is restored ten minutes later', async (context) => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const startedAtMs = performance.now()
+    let waitedMs = 0
+    context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
+    /** Runs the reader's timer once at a moment of the wait and counts the layout requests it sent. */
+    const layoutRequestsOfTickAt = async (atMs: number): Promise<number> => {
+      waitedMs = atMs
+      const before = harness.commands.filter(
+        (command) => command === 'vscode.getEditorLayout',
+      ).length
+      await readerSeams(harness).refresh()
+      return (
+        harness.commands.filter(
+          (command) => command === 'vscode.getEditorLayout',
+        ).length - before
+      )
+    }
+
+    // Act: four ticks of the first second, one a second later, and one ten minutes after the choice, when the learner has restored the panel.
+    const requestsInTheFirstSecond = [
+      await layoutRequestsOfTickAt(0),
+      await layoutRequestsOfTickAt(250),
+      await layoutRequestsOfTickAt(500),
+      await layoutRequestsOfTickAt(750),
+    ]
+    const requestsAfterOneSecond = await layoutRequestsOfTickAt(1_000)
+    const shownWhileMaximized = harness.reader
+      .inspect()
+      .sourceUri?.includes(second.id)
+    harness.restorePanel()
+    waitedMs = 600_000
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.deepEqual(requestsInTheFirstSecond, [1, 0, 0, 0])
+    assert.equal(requestsAfterOneSecond, 1)
+    assert.equal(shownWhileMaximized, false)
+    assert.equal(harness.reader.inspect().sourceUri!.includes(second.id), true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized (0039-N8-b / 0040-N9-img, second occurrence); fails_when=the seek reveals its source into the hidden editor area, the editor expands the source group and brings the area back, and nothing gives the Application group its height back: it stays a 70 px strip with the layout unconfirmed until Restore; why_new=native run of 2026-10-04 (u18-max-seek.png, repaired only by Restore, u25-restored.png); seam=workspace harness with a maximized bottom panel
 test('a recorded seek made while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
   // Arrange

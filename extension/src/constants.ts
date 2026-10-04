@@ -125,6 +125,8 @@ export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
 export const INVALID_SAVED_STUDY_LIMIT_MESSAGE = `Set Codebook: Saved Study Limit (codebook.savedStudyLimit) to an integer from 1 to ${MAX_SAVED_STUDIES}. Existing learning was kept.`
 export const MAX_SOURCE_DOCUMENTS = 34
 export const STUDY_REFRESH_INTERVAL_MS = 250
+/** The least time between two layout requests of a saved study that waits for the hidden editor area: the reader's timer ticks every {@link STUDY_REFRESH_INTERVAL_MS}, the wait has no end, and the editor is asked once a second at most. */
+export const STUDY_EDITOR_AREA_LOOK_INTERVAL_MS = 1_000
 export const STUDY_EDITOR_GROUP_COUNT = 3
 export const LIVE_EDITOR_GROUP_COUNT = 2
 export const LIVE_EDITOR_LAYOUT = {
