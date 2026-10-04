@@ -227,7 +227,8 @@ test('the Reader DOM job keeps the video encoder between runs under a key that n
   )
   const download = stepLines(workflow, 'Install the video encoder')
 
-  // Assert: the key carries the release the tool manifest pins, and the restore comes before the download it saves.
+  // Assert: the key carries the release the tool manifest pins, the kept path is the encoder's folder alone (the CLI
+  // writes session logs and its update check beside it), and the restore comes before the download it saves.
   assert.equal(restoreName, '- name: Restore the video encoder')
   assert.match(
     restoreAction ?? '',
@@ -235,7 +236,7 @@ test('the Reader DOM job keeps the video encoder between runs under a key that n
   )
   assert.deepEqual(restoreInputs, [
     'with:',
-    'path: ~/.cache/ms-playwright',
+    'path: ~/.cache/ms-playwright/ffmpeg-*',
     "key: playwright-cli-0.1.22-ffmpeg-${{ runner.os }}-${{ hashFiles('.github/reader-dom/package-lock.json') }}",
   ])
   assert.deepEqual(toolManifest.dependencies, { '@playwright/cli': '0.1.22' })
