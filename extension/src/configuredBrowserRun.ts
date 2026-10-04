@@ -2768,7 +2768,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     await this.persist()
   }
 
-  /** Reserves one exact tuple before source revalidation; only owned retired breakpoints can lead to an acknowledged continuation. @example await run.continue('browser', pause) */
+  /**
+   * Continues the committed pause of a declared stop, called by the service for `codebook_continue` and for the Study pane's Continue.
+   * Reserves the exact pause before source revalidation, then arms the next declared stop and reads the other participant's earlier pauses before it requests the resume; only an owned, retired breakpoint leads to an acknowledged continuation.
+   * @param name - The participant whose committed pause is continued.
+   * @param pause - The pause identity the caller copied from the run's view.
+   * @throws `conflict: stale, foreign or unverified pause` without ending the run; every later failure ends the run and is thrown on. The run's reason is "Next declared stop was not armed and no resume was sent: …" or "Next declared stop could not be continued to: … and no resume was sent. …" for the two steps that come before the resume, and "Continue uncertain: …" otherwise.
+   * @example
+   * ```ts
+   * await run.continue('browser', pause)
+   * ```
+   */
   async continue(name: Participant, pause: PauseIdentity): Promise<void> {
     const stop = this.stops[this.stopIndex],
       participant = this.participants[name]
@@ -2805,7 +2815,15 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.alive()
         // The other participant keeps running while its stop is armed: a pause it made before this point is read before the continuation exists, so it is never taken for that stop.
         if (nextStop.participant !== name) {
-          await this.deliverEarlierPauses(nextStop.participant)
+          try {
+            await this.deliverEarlierPauses(nextStop.participant)
+          } catch (error) {
+            // This read comes before the resume is requested as well, so its failure is recorded as that, not as an uncertain continuation.
+            this.fail(
+              `Next declared stop could not be continued to: the earlier pauses of the ${nextStop.participant} could not be read (${thrownMessage(error)}), and no resume was sent. Earlier observations stay.`,
+            )
+            throw error
+          }
           this.alive()
         }
       }

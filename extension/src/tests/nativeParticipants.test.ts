@@ -3632,6 +3632,36 @@ test('a debugger hook that pauses and resumes 130 times journals 100 of those pa
   )
 })
 
+// Cycle 0045 (B-L4, DX-18): red while a failed read of the other participant's earlier pauses, made before any resume was requested, ended the run as "Continue uncertain: …".
+test('a continuation that cannot read the other participant’s earlier pauses ends saying that no resume was sent, not as an uncertain continuation', async (context) => {
+  // Arrange: the server stop is captured; the browser stop is next, and the browser channel fails the read of its earlier pauses.
+  const harness = await nativeParticipantsHarness(context, [
+    'server',
+    'browser',
+  ])
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  harness.failEarlierPauseRead('browser', 'Inspector channel closed')
+  // Act
+  const cause = await harness.run.continue('server', server.pause).then(
+    () => 'continued',
+    (error: unknown) => String(error),
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(cause, 'Error: Inspector channel closed')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Next declared stop could not be continued to: the earlier pauses of the browser could not be read (Inspector channel closed), and no resume was sent. Earlier observations stay.',
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method === 'continue'),
+    false,
+  )
+  assert.equal(harness.run.view().snapshots.length, 1)
+})
+
 // Cycle 0045 (B-M2): red while instrumentation pauses were counted against the cap of the pauses the debugger makes for itself (the later pause was not journaled) and their resumes were journaled without a cap (130 instead of 100).
 test('130 instrumentation pauses of the runtime leave the journal room for a later pause the debugger makes for itself, and their resumes past the cap are counted, not journaled', async (context) => {
   // Arrange: the only declared stop is captured and continued, and the after conditions are still open.

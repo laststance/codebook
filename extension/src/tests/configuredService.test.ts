@@ -1029,7 +1029,8 @@ test('the extension README names no release other than the manifest version as i
   )
 })
 
-test('configured help tells an agent that a continuation whose next stop cannot be armed answers "Continue was not confirmed." and where the run’s reason is read', async (context) => {
+// Cycle 0045 (B-L4, DX-18): the sentence covers both causes of a continuation that sends no resume; red while it named the arming failure only.
+test('configured help tells an agent that a continuation that sends no resume, because its next stop cannot be armed or the other participant’s earlier pauses cannot be read, answers "Continue was not confirmed." and where the run’s reason is read', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -1039,9 +1040,11 @@ test('configured help tells an agent that a continuation whose next stop cannot 
   const contract = z
     .object({ additionalStops: z.string() })
     .parse(JSON.parse(help.text))
-  assert.match(
-    contract.additionalStops,
-    /If a later stop cannot be armed, that codebook_continue answers 'Continue was not confirmed\.' with the arming error as its cause and sends no resume; the run ends with the reason 'Next declared stop was not armed and no resume was sent' \(read the run resource\), and earlier observations stay\./,
+  assert.equal(
+    contract.additionalStops.includes(
+      " declare stops in the order the action executes them. If a later stop is not hit within 20 seconds of the preceding continuation, the run fails with 'Repository continuation reached no next declared pause' and names that stop. If a later stop cannot be armed, or that stop is the other participant's and that participant's earlier pauses cannot be read, that codebook_continue answers 'Continue was not confirmed.' with the error as its cause and sends no resume; the run ends with a reason that begins 'Next declared stop was not armed and no resume was sent' or 'Next declared stop could not be continued to' (read the run resource), and earlier observations stay. The second reason names no declaration to change: start a new run. Explain each committed pause",
+    ),
+    true,
   )
   // The tool never answered with the run's terminal reason; the help no longer says it does.
   assert.doesNotMatch(

@@ -216,6 +216,9 @@ export async function nativeParticipantsHarness(
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
+  // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
+  let earlierPauseReadFailure:
+    { participant: Participant; message: string } | undefined
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
@@ -467,6 +470,16 @@ export async function nativeParticipantsHarness(
         revokeDuringDom = false
         failedRegistration = true
         acknowledge(bundle('server').sourcePath)
+      }
+      // The round trip that reads a participant's earlier pauses fails once, as a channel that closed under it does.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'undefined' &&
+        earlierPauseReadFailure?.participant === name
+      ) {
+        const { message } = earlierPauseReadFailure
+        earlierPauseReadFailure = undefined
+        throw new Error(message)
       }
       // A round trip on the browser channel delivers the pause the page made before it.
       if (
@@ -878,6 +891,10 @@ export async function nativeParticipantsHarness(
     /** Lets the page pause on the browser stop's declared line before the server's continue is requested; the run reads that pause when it asks the browser channel for earlier events, or else with the continue request. */
     pauseBrowserBeforeContinueRequest(): void {
       earlyBrowserPause = 'pending'
+    },
+    /** Makes a participant's channel answer the run's next read of its earlier pauses (the round trip a continuation makes before it resumes) with this failure, once. @example harness.failEarlierPauseRead('browser', 'Inspector channel closed') */
+    failEarlierPauseRead(participant: Participant, message: string): void {
+      earlierPauseReadFailure = { participant, message }
     },
     failRegistration(): void {
       failedRegistration = true
