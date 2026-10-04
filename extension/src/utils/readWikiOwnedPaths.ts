@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readWikiRegularFile } from './readWikiRegularFile'
 
 /**
  * Reads the output-relative paths a Wiki manifest owns: the index, every page and every asset.
@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises'
  * @param manifestPath - Absolute path of a `codebook-wiki.json`.
  * @returns
  * - A readable manifest: its owned paths (always with `index.html`)
- * - A missing file or one that is not a JSON object: undefined
+ * - A missing file, one that is not a regular file ({@link readWikiRegularFile}) or one that is not a JSON object: undefined
  *
  * @example
  * ```ts
@@ -21,7 +21,9 @@ export async function readWikiOwnedPaths(
   manifestPath: string,
 ): Promise<Set<string> | undefined> {
   try {
-    const manifest: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const manifestFile = await readWikiRegularFile(manifestPath)
+    if (!manifestFile) return undefined
+    const manifest: unknown = JSON.parse(manifestFile.bytes.toString('utf8'))
     if (typeof manifest !== 'object' || manifest === null) return undefined
     const pages =
       'pages' in manifest && Array.isArray(manifest.pages) ? manifest.pages : []

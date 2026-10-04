@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 
 import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
@@ -8,20 +8,18 @@ import { readWikiOwnedPaths } from './readWikiOwnedPaths'
 import { systemErrorCode } from './systemErrorCode'
 
 /** Lists regular files below a directory as `/`-separated relative paths; links and special files are skipped like the publisher does. */
-async function listRegularFiles(
-  directory: string,
-  prefix = '',
-): Promise<string[]> {
-  const files: string[] = []
-  for (const entry of await readdir(join(directory, prefix), {
+async function listRegularFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, {
+    recursive: true,
     withFileTypes: true,
-  })) {
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.isDirectory())
-      files.push(...(await listRegularFiles(directory, path)))
-    else if (entry.isFile()) files.push(path)
-  }
-  return files
+  })
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      relative(directory, join(entry.parentPath, entry.name))
+        .split(sep)
+        .join('/'),
+    )
 }
 
 /**

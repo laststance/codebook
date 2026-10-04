@@ -5,6 +5,8 @@ import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
 import type { WikiFreshness } from '../../utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
+import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
+import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
@@ -17,8 +19,16 @@ export type CancellableProgress = {
 
 type UriHandler = (uri: { path: string; query: string }) => Promise<void>
 
-/** An awaited step of an update's start that a test can keep open: the freshness inspection among the start checks, or VS Code's chat command. */
-export type HeldUpdateStep = 'freshness-inspection' | 'chat-open'
+/** Names of the extension's numeric constants, the ones a test may replace by a shorter value. */
+type NumericConstantName = {
+  [Name in keyof typeof constants]: (typeof constants)[Name] extends number
+    ? Name
+    : never
+}[keyof typeof constants]
+
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command, or one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass). */
+export type HeldUpdateStep =
+  'freshness-inspection' | 'chat-open' | 'candidate-listing'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -30,13 +40,16 @@ export type HeldUpdateStep = 'freshness-inspection' | 'chat-open'
  * @param options.outputSetting - Value of `codebook.wikiOutputDirectory`; `.codebook/wiki` when omitted.
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
  * @param options.chatFails - Makes VS Code's chat command throw.
- * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt and the run's abort signal.
+ * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
  * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
  * @param options.watchClock - Clock and sleep handed to the watch, so a test can pass the 15 minute bound without waiting.
  * @param options.openReader - Whether to open the browser reader first, which the state snapshot needs; true when omitted.
- * @param options.constants - Replaces the grace a closing window gives the Cursor agent, or the Cursor run's two-second look interval, so a test need not wait for them.
- * @returns What the window showed (chat requests, notifications by severity, confirmations, progress titles), how often its looks listed the candidates, the two update entries, the state snapshot, `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
+ * @param options.constants - Replaces numeric constants of the extension (the grace a closing window gives the Cursor agent, the Cursor run's two-second look interval, a bound), so a test need not wait for them.
+ * @param options.chooseAction - Presses a button of a notification: it gets the notification's text and its button labels and returns the label to press; no button is pressed when omitted.
+ * @param options.workspaceState - The window's workspace state; two windows opened with the same map are one window before and after a reload.
+ * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
+ * @returns What the window showed (chat requests, notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) and `close`.
  *
  * @example
  * ```ts
@@ -55,6 +68,7 @@ export async function openWikiUpdateWindow(options: {
     root: string,
     prompt: string,
     signal?: AbortSignal,
+    timeoutMs?: number,
   ) => Promise<string>
   cancellable?: CancellableProgress[]
   declineConfirmation?: boolean
@@ -63,20 +77,21 @@ export async function openWikiUpdateWindow(options: {
     sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
   }
   openReader?: boolean
-  constants?: Partial<
-    Record<
-      'WIKI_CURSOR_TERMINATION_GRACE_MS' | 'WIKI_UPDATE_WATCH_POLL_MS',
-      number
-    >
-  >
+  constants?: Partial<Record<NumericConstantName, number>>
+  chooseAction?: (message: string, actions: string[]) => string | undefined
+  workspaceState?: Map<string, unknown>
+  publishTokenReadFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
   notices: string[]
   warnings: string[]
   errors: string[]
+  offeredActions: Array<{ message: string; actions: string[] }>
   confirmations: string[]
+  confirmationDetails: string[]
   progressTitles: string[]
-  looks: { candidateListings: number }
+  looks: { candidateListings: number; stampReads: number }
+  openWorkspace(nextProjectRoot: string): void
   clickUpdate(): Promise<void>
   runUpdateCommand(): Promise<void>
   status(): WikiUpdateStatus
@@ -98,9 +113,26 @@ export async function openWikiUpdateWindow(options: {
   const notices: string[] = []
   const warnings: string[] = []
   const errors: string[] = []
+  const offeredActions: Array<{ message: string; actions: string[] }> = []
+  // The folder the window answers as its opened project; a test can change it while a run works.
+  let openedWorkspace = projectRoot
+  const workspaceState = options.workspaceState ?? new Map<string, unknown>()
+  /** Records one notification with its buttons and answers with the button the test presses, if any. */
+  const showNotification = (
+    shown: string[],
+    message: string,
+    actions: string[],
+  ): Promise<string | undefined> => {
+    shown.push(message)
+    if (actions.length) offeredActions.push({ message, actions })
+    return Promise.resolve(
+      actions.length ? options.chooseAction?.(message, actions) : undefined,
+    )
+  }
   const confirmations: string[] = []
+  const confirmationDetails: string[] = []
   const progressTitles: string[] = []
-  const looks = { candidateListings: 0 }
+  const looks = { candidateListings: 0, stampReads: 0 }
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
     HeldUpdateStep,
@@ -173,42 +205,64 @@ export async function openWikiUpdateWindow(options: {
             handleUri = handler.handleUri
             return { dispose(): void {} }
           },
-          showInformationMessage: (message: string) => {
-            notices.push(message)
-            return Promise.resolve(undefined)
-          },
+          showInformationMessage: (message: string, ...actions: string[]) =>
+            showNotification(notices, message, actions),
           // A modal warning is the confirmation of the browser link; a plain one is a notification.
           showWarningMessage: (
             message: string,
-            messageOptions?: { modal?: boolean },
+            messageOptions?: { modal?: boolean; detail?: string } | string,
             ...choices: string[]
           ) => {
-            if (!messageOptions?.modal) {
-              warnings.push(message)
-              return Promise.resolve(undefined)
-            }
+            if (typeof messageOptions === 'string')
+              return showNotification(warnings, message, [
+                messageOptions,
+                ...choices,
+              ])
+            if (!messageOptions?.modal)
+              return showNotification(warnings, message, [])
             confirmations.push(message)
+            confirmationDetails.push(messageOptions.detail ?? '')
             return Promise.resolve(
               options.declineConfirmation ? undefined : choices[0],
             )
           },
-          showErrorMessage: (message: string) => {
-            errors.push(message)
-            return Promise.resolve(undefined)
-          },
+          showErrorMessage: (message: string, ...actions: string[]) =>
+            showNotification(errors, message, actions),
           // A real editor always has it, so every test runs the product's notification path; only collecting the Cancel buttons is optional.
           withProgress,
         },
       },
-      './environment': { requireWorkspace: () => projectRoot },
+      './environment': { requireWorkspace: () => openedWorkspace },
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
         : {}),
-      // The real listing runs; the window only counts how often a look parsed the candidates.
+      // The real listing runs; the window only counts how often a look parsed the candidates, and can keep one listing open after it has read the folder.
       './utils/listWikiCandidates': {
-        listWikiCandidates: (outputDirectory: string) => {
+        listWikiCandidates: async (outputDirectory: string) => {
           looks.candidateListings += 1
-          return listWikiCandidates(outputDirectory)
+          const candidates = await listWikiCandidates(outputDirectory)
+          const hold = holds.get('candidate-listing')
+          if (hold) {
+            // Only this one listing is kept open; the run's later looks pass.
+            holds.delete('candidate-listing')
+            hold.reached()
+            await hold.released
+          }
+          return candidates
+        },
+      },
+      // The real stamp is read; the window only counts the looks of a watch or of a Cursor run.
+      './utils/readWikiWatchStamp': {
+        readWikiWatchStamp: (outputDirectory: string) => {
+          looks.stampReads += 1
+          return readWikiWatchStamp(outputDirectory)
+        },
+      },
+      './utils/readWikiPublishToken': {
+        readWikiPublishToken: async (outputDirectory: string) => {
+          if (options.publishTokenReadFails !== undefined)
+            throw new Error(options.publishTokenReadFails)
+          return readWikiPublishToken(outputDirectory)
         },
       },
       './deepWikiReader': {
@@ -242,9 +296,10 @@ export async function openWikiUpdateWindow(options: {
           root: string,
           prompt: string,
           signal?: AbortSignal,
+          timeoutMs?: number,
         ) =>
           options.cursorAgent
-            ? options.cursorAgent(root, prompt, signal)
+            ? options.cursorAgent(root, prompt, signal, timeoutMs)
             : 'Updated',
       },
       './utils/inspectDeepWikiFreshness': {
@@ -270,7 +325,12 @@ export async function openWikiUpdateWindow(options: {
     extensionPath: resolve(__dirname, '../../..'),
     globalStorageUri: { fsPath: projectRoot },
     subscriptions: [],
-    workspaceState: { get: () => undefined, update: async () => {} },
+    workspaceState: {
+      get: (key: string) => workspaceState.get(key),
+      update: async (key: string, value: unknown) => {
+        workspaceState.set(key, value)
+      },
+    },
   })
   // The reader serves the update state, so the browser tab must be open first.
   if (options.openReader ?? true)
@@ -280,9 +340,14 @@ export async function openWikiUpdateWindow(options: {
     notices,
     warnings,
     errors,
+    offeredActions,
     confirmations,
+    confirmationDetails,
     progressTitles,
     looks,
+    openWorkspace(nextProjectRoot: string): void {
+      openedWorkspace = nextProjectRoot
+    },
     async clickUpdate(): Promise<void> {
       if (!handleUri) throw new Error('The window registered no URI handler.')
       await handleUri({

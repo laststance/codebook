@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import {
   chmod,
   mkdir,
@@ -15,14 +17,20 @@ import {
   AGENT_STORAGE_DIRECTORY,
   CONNECTION_DESCRIPTOR_SUFFIX,
   EXTENSION_VERSION,
+  MS_PER_SECOND,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
+  WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_MANIFEST_FILE,
+  WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
+  WIKI_UPDATE_LAST_RUN_STATE_KEY,
   WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
+  WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
   WIKI_UPDATE_WATCH_POLL_MS,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
+  WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
 } from './constants'
 import {
   deployCursorSkill,
@@ -49,17 +57,19 @@ import {
   answerDeepWikiQuestionWithPrompt,
 } from './utils/answerDeepWikiQuestion'
 import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
+import { claimWikiUpdateMarker } from './utils/claimWikiUpdateMarker'
 import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
 } from './utils/classifyWikiUpdateEnd'
 import { cursorRegistrationNotice } from './utils/cursorRegistrationNotice'
-import { describeUpdateFailure } from './utils/describeUpdateFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import { listWikiCandidates } from './utils/listWikiCandidates'
+import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
+import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
 import {
@@ -73,13 +83,23 @@ import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
-import { selectActiveWikiCandidate } from './utils/selectActiveWikiCandidate'
+import {
+  selectActiveWikiCandidate,
+  wikiLastRunSchema,
+  type WikiLastRun,
+} from './utils/selectActiveWikiCandidate'
+import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
+import { thrownMessage } from './utils/thrownMessage'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
-import { wikiUpdateNotice } from './utils/wikiUpdateNotice'
-import { WikiUpdateRun, type WikiUpdateHost } from './utils/wikiUpdateRun'
+import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
+import {
+  WikiUpdateRun,
+  type WikiUpdateHost,
+  type WikiUpdateOutput,
+} from './utils/wikiUpdateRun'
 
 let stopExtension: (() => Promise<void>) | undefined
 
@@ -141,8 +161,14 @@ export function activate(
   // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped.
   let activeWikiRun:
     { controller: AbortController; settled: Promise<void> } | undefined
-  // When this window's last run ended; a candidate written before it is this window's own leftover.
-  let lastWikiRunEndedAtMs: number | undefined
+  // How this window's last run ended, also across a reload: a candidate written while it lasted is this window's own leftover.
+  let lastWikiRun: WikiLastRun | undefined = wikiLastRunSchema.safeParse(
+    context.workspaceState.get(WIKI_UPDATE_LAST_RUN_STATE_KEY),
+  ).data
+  // This window's id in the marker of a running update; another window's live marker refuses a start here.
+  const wikiWindowId = randomUUID()
+  /** The button of a refusal that names an earlier chat's leftover: it starts the update with that leftover ignored. */
+  const UPDATE_ANYWAY_ACTION = 'Update anyway'
   // A window that is closing has nobody to notify of the run its shutdown stops, and starts no run.
   let isExtensionStopping = false
   /** What one Wiki update run carries from its start to its end. */
@@ -152,7 +178,17 @@ export function activate(
     host: WikiUpdateHost
     /** Publish token of the site the run started from; the end compares against it to say kept or replaced. */
     tokenAtStart: string | undefined
+    /** Publication identity the run started from; only another one at the end is a publish. */
+    publicationAtStart: string | undefined
+    /** Added source files that were neither indexed nor excluded when the run started; the end does not call them changed during the run. */
+    uncoveredAtStart: string[]
+    /** Whether the Wiki folder lies outside the opened project, where VS Code's chat asks to approve each step. */
+    isOutputOutsideProject: boolean
+    /** Removes this run's marker beside the Wiki, so another window may start. */
+    releaseMarker: () => Promise<void>
     startedAtMs: number
+    /** The bound the run announces on the page and in its request, and the one it is stopped at. */
+    timeoutMs: number
     /** Stops the run: the learner's Cancel and the closing window both abort it. */
     controller: AbortController
   }
@@ -566,7 +602,7 @@ export function activate(
     isExtensionStopping = true
     // A closing window must not leave a watch or an unattended agent behind.
     const stoppedWikiRun = activeWikiRun
-    stoppedWikiRun?.controller.abort()
+    stoppedWikiRun?.controller.abort(WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON)
     try {
       await stop()
       await repositoryReader?.dispose()
@@ -574,20 +610,12 @@ export function activate(
     } finally {
       try {
         // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer.
-        if (stoppedWikiRun) {
-          let graceTimer: NodeJS.Timeout | undefined
-          await Promise.race([
+        if (stoppedWikiRun)
+          await settledWithin(
             // How the run ended is recorded by the run itself; shutdown only waits for it.
             stoppedWikiRun.settled.catch(() => undefined),
-            new Promise<void>((resolveGrace) => {
-              graceTimer = setTimeout(
-                resolveGrace,
-                WIKI_CURSOR_TERMINATION_GRACE_MS,
-              )
-            }),
-          ])
-          clearTimeout(graceTimer)
-        }
+            WIKI_CURSOR_TERMINATION_GRACE_MS,
+          )
       } finally {
         await deepWikiReader?.close()
       }
@@ -607,9 +635,11 @@ export function activate(
       outputDirectory: resolveDeepWikiDirectory(projectRoot, setting),
     }
   }
-  /** Checks the generated Wiki's owner before browser or update entry uses it. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
-  const currentDeepWiki = async () => {
-    const { projectRoot, outputDirectory } = await wikiLocation()
+  /** Checks that the manifest of the Wiki folder names this opened project, before the browser entry or an update uses the folder. @throws When the manifest is no JSON object of this schema or names another checkout. @example await assertWikiOwner('/repo', '/repo/.codebook/wiki') */
+  const assertWikiOwner = async (
+    projectRoot: string,
+    outputDirectory: string,
+  ): Promise<void> => {
     const manifest: unknown = JSON.parse(
       await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
     )
@@ -625,11 +655,16 @@ export function activate(
       throw new Error(
         'The DeepWiki manifest does not identify this opened project.',
       )
+  }
+  /** Checks the generated Wiki's owner and its entry page before the browser entry opens it; an update checks the owner alone, so a deleted entry page reaches its start check. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
+  const currentDeepWiki = async () => {
+    const { projectRoot, outputDirectory } = await wikiLocation()
+    await assertWikiOwner(projectRoot, outputDirectory)
     const entry = join(outputDirectory, 'index.html')
     await readFile(entry)
     return { projectRoot, outputDirectory, entry }
   }
-  /** Reads the published manifest's displayed identity and its freshness against the project; undefined while it is missing, mid-replacement or invalid. @example await inspectPublishedWiki('/repo', '/repo/.codebook/wiki') // => { identity: 'a1b2c3d4e5f6+0f9e8d7c', freshness: { status: 'current', changedPaths: [], addedPaths: [] } } */
+  /** Reads the published manifest's identity and its freshness against the project; undefined while it is missing, mid-replacement or invalid. @example await inspectPublishedWiki('/repo', '/repo/.codebook/wiki') // => { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c', freshness: { status: 'current', changedPaths: [], addedPaths: [] } } */
   const inspectPublishedWiki = async (
     projectRoot: string,
     outputDirectory: string,
@@ -637,24 +672,34 @@ export function activate(
     try {
       const published = await readDeepWikiManifest(outputDirectory, projectRoot)
       return {
-        identity: wikiManifestIdentity(published.sources, published.revision),
+        ...wikiManifestIdentity(published.sources, published.revision),
         freshness: await inspectDeepWikiFreshness(
           projectRoot,
           published.sources,
           published.revision,
           published.excludedPaths,
+          { outputDirectory },
         ),
       }
     } catch {
       return undefined
     }
   }
-  /** Tells the learner in the editor how the update just ended, in the page's own sentence; called after every recorded ending, also a refused start and "already current". @example showWikiUpdateNotice() */
-  const showWikiUpdateNotice = (): void => {
+  /** Tells the learner in the editor how the update just ended, in the page's own sentence; called after every recorded ending, also a refused start and "already current". An ending that asks for a step offers to open the Wiki; `onUpdateAnyway` adds the button that starts the update although an earlier chat's leftover is in the way. @example showWikiUpdateNotice() */
+  const showWikiUpdateNotice = (onUpdateAnyway?: () => void): void => {
     if (isExtensionStopping) return
     const notice = wikiUpdateNotice(wikiUpdateRun.status())
     if (!notice) return
-    void showNotice(notice.severity, notice.message)
+    void showNotice(
+      notice.severity,
+      notice.message,
+      ...(onUpdateAnyway ? [UPDATE_ANYWAY_ACTION] : []),
+      ...notice.actions,
+    ).then((choice) => {
+      if (choice === UPDATE_ANYWAY_ACTION) onUpdateAnyway?.()
+      else if (choice === OPEN_WIKI_ACTION)
+        void vscode.commands.executeCommand('codebook.openDeepWiki')
+    })
   }
   /** Tells the learner that a second start was refused and where the first run's progress is. @example showWikiUpdateRunning() */
   const showWikiUpdateRunning = (): void => {
@@ -663,7 +708,7 @@ export function activate(
       'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
     )
   }
-  /** Records how a run of either host ended: reads the publish token again, lets {@link classifyWikiUpdateEnd} decide and stores its answer for the reader. @example await finishWikiUpdate(run, { cancelled: true }) */
+  /** Records how a run of either host ended: reads the publish token and the publication identity again, lets {@link classifyWikiUpdateEnd} decide, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. @example await finishWikiUpdate(run, { cancelled: true }) */
   const finishWikiUpdate = async (
     run: WikiRun,
     observed: Partial<
@@ -675,36 +720,50 @@ export function activate(
       publish?: { token: string; published: WikiUpdateEndFacts['published'] }
     },
   ): Promise<void> => {
-    const tokenAtEnd =
-      observed.publish?.token ??
-      (await readWikiPublishToken(run.outputDirectory))
+    const tokenAtEnd = await readWikiPublishToken(run.outputDirectory)
     const end = classifyWikiUpdateEnd({
       host: run.host,
       cancelled: observed.cancelled ?? false,
       timedOut: observed.timedOut ?? false,
       tokenAtStart: run.tokenAtStart,
       tokenAtEnd,
+      publicationAtStart: run.publicationAtStart,
+      publicationAtEnd:
+        observed.publish?.token ??
+        (await readWikiPublicationIdentity(run.outputDirectory)),
       // The manifest is read only when the site on disk is not the one the run started from.
       published:
         observed.publish?.published ??
         (tokenAtEnd === run.tokenAtStart
           ? undefined
           : await inspectPublishedWiki(run.projectRoot, run.outputDirectory)),
+      uncoveredAtStart: run.uncoveredAtStart,
       blockingPaths: observed.blockingPaths ?? [],
       failure: observed.failure,
     })
-    if (end.state === 'succeeded') wikiUpdateRun.succeed(end.identity)
-    else if (end.state === 'failed') wikiUpdateRun.fail(end.reason, end.site)
-    else if (end.state === 'cancelled') wikiUpdateRun.cancel(end.site)
-    else if (end.state === 'timed-out') wikiUpdateRun.timeOut(end.site)
-    else wikiUpdateRun.conflict(end.paths, end.cause, end.site)
-    lastWikiRunEndedAtMs = Date.now()
+    wikiUpdateRun.end(end)
+    await run.releaseMarker().catch(() => undefined)
+    lastWikiRun = {
+      outputDirectory: run.outputDirectory,
+      startedAtMs: run.startedAtMs,
+      endedAtMs: Date.now(),
+      // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
+      mayAgentStillWork:
+        run.host === 'vscode' &&
+        (end.state === 'cancelled' || end.state === 'timed-out'),
+    }
+    void context.workspaceState.update(
+      WIKI_UPDATE_LAST_RUN_STATE_KEY,
+      lastWikiRun,
+    )
     showWikiUpdateNotice()
   }
   /** Looks at this run's candidates: notes on the run state that the agent staged one, and names the learner files it would overwrite. @example await probeWikiCandidates(run) // => ['pages/notes.html'] */
   const probeWikiCandidates = async (run: WikiRun): Promise<string[]> => {
     const candidates = await listWikiCandidates(run.outputDirectory)
+    // A look that returns after its run ended must not mark the next run.
     if (
+      activeWikiRun?.controller === run.controller &&
       candidates.some((candidate) => candidate.writtenAtMs >= run.startedAtMs)
     )
       wikiUpdateRun.markCandidateStaged()
@@ -714,58 +773,62 @@ export function activate(
       candidates,
     )
   }
-  /** Watches for the editor agent's publish after VS Code's chat opened, then records the run's result for the reader; settles when the watch has stopped. @example await watchVsCodeWikiUpdate(run) */
-  const watchVsCodeWikiUpdate = async (run: WikiRun): Promise<void> => {
-    const watch = async (token?: vscode.CancellationToken): Promise<void> => {
-      token?.onCancellationRequested(() => run.controller.abort())
-      try {
-        const result = await waitForWikiPublish({
-          startToken: run.tokenAtStart,
-          readStamp: () => readWikiWatchStamp(run.outputDirectory),
-          readToken: () => readWikiPublishToken(run.outputDirectory),
-          readPublished: () =>
-            inspectPublishedWiki(run.projectRoot, run.outputDirectory),
-          findBlockingFiles: () => probeWikiCandidates(run),
-          signal: run.controller.signal,
-          timeoutMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
-          pollMs: WIKI_UPDATE_WATCH_POLL_MS,
-        })
-        await finishWikiUpdate(run, {
-          cancelled: result.outcome === 'cancelled',
-          timedOut: result.outcome === 'timed-out',
-          blockingPaths: result.outcome === 'blocked' ? result.paths : [],
-          publish: result.outcome === 'published' ? result : undefined,
-        })
-      } catch (error) {
-        await finishWikiUpdate(run, { failure: describeUpdateFailure(error) })
-      }
-    }
-    await (vscode.window.withProgress
-      ? vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title:
-              'Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat)',
-            cancellable: true,
-          },
-          async (_, token) => watch(token),
-        )
-      : watch())
+  /** Shows the one progress notification of a run and aborts the run when the learner presses its Cancel; both hosts' updates work inside it. @example await withCancellableProgress('Updating LLM Wiki with Cursor Agent', run, update) */
+  const withCancellableProgress = async (
+    title: string,
+    run: WikiRun,
+    work: () => Promise<void>,
+  ): Promise<void> => {
+    // An editor without the progress API still runs the update, without a Cancel.
+    if (!vscode.window.withProgress) return work()
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title,
+        cancellable: true,
+      },
+      async (_, token) => {
+        token.onCancellationRequested(() => run.controller.abort())
+        await work()
+      },
+    )
   }
+  /** Watches for the editor agent's publish after VS Code's chat opened, then records the run's result for the reader; settles when the watch has stopped. @example await watchVsCodeWikiUpdate(run) */
+  const watchVsCodeWikiUpdate = (run: WikiRun): Promise<void> =>
+    withCancellableProgress(
+      `Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat)${run.isOutputOutsideProject ? `. ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`,
+      run,
+      async () => {
+        try {
+          const result = await waitForWikiPublish({
+            // Only a new publication counts as the publish; a manifest rewritten by anything else does not.
+            startToken: run.publicationAtStart,
+            readStamp: () => readWikiWatchStamp(run.outputDirectory),
+            readToken: () => readWikiPublicationIdentity(run.outputDirectory),
+            readPublished: () =>
+              inspectPublishedWiki(run.projectRoot, run.outputDirectory),
+            unreadableGraceMs: WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
+            findBlockingFiles: () => probeWikiCandidates(run),
+            signal: run.controller.signal,
+            timeoutMs: run.timeoutMs,
+            pollMs: WIKI_UPDATE_WATCH_POLL_MS,
+          })
+          await finishWikiUpdate(run, {
+            cancelled: result.outcome === 'cancelled',
+            timedOut: result.outcome === 'timed-out',
+            blockingPaths: result.outcome === 'blocked' ? result.paths : [],
+            publish: result.outcome === 'published' ? result : undefined,
+          })
+        } catch (error) {
+          await finishWikiUpdate(run, { failure: thrownMessage(error) })
+        }
+      },
+    )
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
   const runCursorWikiAgent = async (
     run: WikiRun,
     query: string,
   ): Promise<void> => {
-    const update = async (token?: vscode.CancellationToken): Promise<void> => {
-      token?.onCancellationRequested(() => run.controller.abort())
-      await runCursorWikiUpdate(run.projectRoot, query, run.controller.signal)
-      // A successful CLI exit alone does not prove that the correct project's site is readable.
-      if ((await realpath(requireWorkspace())) !== run.projectRoot)
-        throw new Error(
-          'The opened repository changed during the Wiki update. Reopen its Wiki to see the result.',
-        )
-    }
     let agentError: unknown
     let didAgentFail = false
     // The CLI reports nothing until it exits, so the staged candidate is looked for beside it.
@@ -781,16 +844,23 @@ export function activate(
     }, WIKI_UPDATE_WATCH_POLL_MS)
     stagedLook.unref()
     try {
-      await (vscode.window.withProgress
-        ? vscode.window.withProgress(
-            {
-              location: vscode.ProgressLocation.Notification,
-              title: 'Updating LLM Wiki with Cursor Agent',
-              cancellable: true,
-            },
-            async (_, token) => update(token),
+      await withCancellableProgress(
+        'Updating LLM Wiki with Cursor Agent',
+        run,
+        async () => {
+          await runCursorWikiUpdate(
+            run.projectRoot,
+            query,
+            run.controller.signal,
+            run.timeoutMs,
           )
-        : update())
+          // A successful CLI exit alone does not prove that the correct project's site is readable.
+          if ((await realpath(requireWorkspace())) !== run.projectRoot)
+            throw new Error(
+              'The opened repository changed during the Wiki update. Reopen its Wiki to see the result.',
+            )
+        },
+      )
     } catch (error) {
       agentError = error
       didAgentFail = true
@@ -806,22 +876,82 @@ export function activate(
         agentError.name === WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
       // A refused candidate is the learner's file in the way, not a failed agent.
       blockingPaths: await probeWikiCandidates(run).catch(() => []),
-      failure: didAgentFail ? describeUpdateFailure(agentError) : undefined,
+      failure: didAgentFail ? thrownMessage(agentError) : undefined,
     })
   }
-  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @example await updateDeepWiki() */
-  const updateDeepWiki = async (): Promise<void> => {
-    if (wikiUpdate) return wikiUpdate
-    const attempt = (async () => {
-      // A run that outlives this call (the VS Code watch) still blocks a second start from any entry.
-      if (wikiUpdateRun.isRunning()) {
-        showWikiUpdateRunning()
-        return
-      }
-      const { projectRoot, outputDirectory } = await wikiLocation()
-      const wikiOutput = {
-        outputDirectory,
-        outputLabel: wikiOutputLabel(projectRoot, outputDirectory),
+  /** What the start checks of an update hand to the run they let begin. */
+  type WikiUpdateStart = Pick<
+    WikiRun,
+    | 'tokenAtStart'
+    | 'publicationAtStart'
+    | 'uncoveredAtStart'
+    | 'releaseMarker'
+    | 'startedAtMs'
+  > & {
+    /** Whether the opened folder is inside a Git repository; the request names only the conditions that can hold in it. */
+    hasGitRepository: boolean
+  }
+  /**
+   * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
+   *
+   * The order: what makes the publisher refuse (an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides; and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
+   *
+   * @param projectRoot - Canonical opened project.
+   * @param wikiOutput - Resolved Wiki folder and its label.
+   * @param host - Editor host that was asked.
+   * @param isLeftoverIgnored - Whether the learner chose "Update anyway": an earlier chat's candidate and a stopped watch's reservation do not refuse the start.
+   * @returns
+   * - The start may go ahead: what the run begins with; the Wiki's marker is claimed for it
+   * - The start was refused or nothing needs updating: undefined, after the state was recorded and the learner told
+   * @throws What a check threw (a manifest of another checkout, a file system error); the caller records it as a failed start.
+   * @example
+   * const start = await checkWikiUpdateStart('/repo', { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, 'vscode', false)
+   */
+  const checkWikiUpdateStart = async (
+    projectRoot: string,
+    wikiOutput: WikiUpdateOutput,
+    host: WikiUpdateHost,
+    isLeftoverIgnored: boolean,
+  ): Promise<WikiUpdateStart | undefined> => {
+    const { outputDirectory } = wikiOutput
+    /** Records a refusal in a sentence Codebook wrote and tells the learner; `onUpdateAnyway` offers the override. */
+    const refuse = (reason: string, onUpdateAnyway?: () => void): undefined => {
+      wikiUpdateRun.refuseStart(host, wikiOutput, {
+        kind: 'failed',
+        reason,
+        isCodebookSentence: true,
+      })
+      showWikiUpdateNotice(onUpdateAnyway)
+      return undefined
+    }
+    /** Starts the update again with the leftover ignored, when the learner presses "Update anyway". */
+    const updateAnyway = (): void => {
+      // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
+      Promise.resolve(wikiUpdate)
+        .catch(() => undefined)
+        .then(() => updateDeepWiki(UPDATE_ANYWAY_ACTION))
+        .catch((error: unknown) => {
+          void showNotice(
+            'error',
+            `Codebook could not start the Wiki update: ${thrownMessage(error)}`,
+          )
+        })
+    }
+    /** The sentence for another window's running update; nothing overrides it. */
+    const describeOtherWindow = (
+      marker: Awaited<ReturnType<typeof readLiveWikiUpdateMarker>> & object,
+    ): string =>
+      `Another editor window is updating this Wiki (${marker.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(marker.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
+    for (const isLastAttempt of [false, true]) {
+      // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
+      const startBlock = await findWikiUpdateStartBlock(outputDirectory)
+      if (startBlock) {
+        wikiUpdateRun.refuseStart(host, wikiOutput, {
+          kind: 'conflict',
+          ...startBlock,
+        })
+        showWikiUpdateNotice()
+        return undefined
       }
       const tokenAtStart = await readWikiPublishToken(outputDirectory)
       // Without a manifest there is nothing to update; the learner needs the generate step, not a file-system error.
@@ -830,52 +960,139 @@ export function activate(
           'error',
           `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`,
         )
-        return
+        return undefined
       }
-      // A manifest of another checkout throws here, before any state is recorded.
-      await currentDeepWiki()
+      const publicationAtStart =
+        await readWikiPublicationIdentity(outputDirectory)
+      // A manifest of another checkout throws here; the caller records the failed start.
+      await assertWikiOwner(projectRoot, outputDirectory)
       const before = await inspectPublishedWiki(projectRoot, outputDirectory)
       if (before?.freshness.status === 'current') {
-        wikiUpdateRun.alreadyCurrent(wikiOutput, before.identity)
-        showWikiUpdateNotice()
-        return
-      }
-      const host: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
-      // The publisher refuses both cases before it stages anything, so no agent could succeed: say why at once.
-      const startBlock = await findWikiUpdateStartBlock(outputDirectory)
-      if (startBlock) {
-        wikiUpdateRun.refuseStart(host, wikiOutput, {
-          kind: 'conflict',
-          ...startBlock,
+        wikiUpdateRun.alreadyCurrent(wikiOutput, {
+          identity: before.identity,
+          ...(before.revision === undefined
+            ? {}
+            : { revision: before.revision }),
+          index: before.index,
         })
         showWikiUpdateNotice()
+        return undefined
+      }
+      // Each window holds its own run state; the marker is the trace of another window's run before its agent has staged anything.
+      const otherWindow = await readLiveWikiUpdateMarker(
+        outputDirectory,
+        wikiWindowId,
+      )
+      if (otherWindow) return refuse(describeOtherWindow(otherWindow))
+      if (!isLeftoverIgnored) {
+        const nowMs = Date.now()
+        // The record of another output says nothing about this one's candidates.
+        const lastRun =
+          lastWikiRun?.outputDirectory === outputDirectory
+            ? lastWikiRun
+            : undefined
+        const activeCandidate = selectActiveWikiCandidate(
+          await listWikiCandidates(outputDirectory),
+          { nowMs, activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS, lastRun },
+        )
+        if (activeCandidate)
+          return refuse(
+            `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+            updateAnyway,
+          )
+        // A watch that stopped before the chat staged anything left no candidate, yet the chat may still work.
+        if (
+          lastRun?.mayAgentStillWork &&
+          nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+        )
+          return refuse(
+            `The VS Code chat this window asked at ${formatClockTime(lastRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(lastRun.endedAtMs, {})} and waits for it until ${formatClockTime(lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+            updateAnyway,
+          )
+      }
+      // A publish that landed while the checks ran made them about two generations: check the new one.
+      if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart) {
+        if (isLastAttempt)
+          return refuse(
+            'This Wiki was published again while Codebook checked it. Press Update LLM Wiki again.',
+          )
+        continue
+      }
+      const startedAtMs = Date.now()
+      const claim = await claimWikiUpdateMarker(outputDirectory, {
+        pid: process.pid,
+        windowId: wikiWindowId,
+        host,
+        startedAtMs,
+      })
+      // Another window began its run between the look at the marker and this write.
+      if ('heldBy' in claim) return refuse(describeOtherWindow(claim.heldBy))
+      return {
+        tokenAtStart,
+        publicationAtStart,
+        uncoveredAtStart: before?.freshness.addedPaths ?? [],
+        hasGitRepository: !before?.freshness.addedFilesUnchecked,
+        releaseMarker: claim.release,
+        startedAtMs,
+      }
+    }
+    return undefined
+  }
+  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param override - Given when the learner pressed "Update anyway" on a refusal that named an earlier chat's leftover; another window's running update still refuses the start. @example await updateDeepWiki() */
+  const updateDeepWiki = async (
+    override?: typeof UPDATE_ANYWAY_ACTION,
+  ): Promise<void> => {
+    if (wikiUpdate) {
+      // In Cursor the first call lasts the whole run, so a second command arrives here and must be told, as one from the browser link is.
+      if (wikiUpdateRun.isRunning()) showWikiUpdateRunning()
+      return wikiUpdate
+    }
+    const attempt = (async () => {
+      // A run that outlives this call (the VS Code watch) still blocks a second start from any entry.
+      if (wikiUpdateRun.isRunning()) {
+        showWikiUpdateRunning()
         return
       }
-      // Each window holds its own run state; a freshly written candidate is the trace of somebody else's update.
-      const activeCandidate = selectActiveWikiCandidate(
-        await listWikiCandidates(outputDirectory),
-        {
-          nowMs: Date.now(),
-          activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS,
-          lastRunEndedAtMs: lastWikiRunEndedAtMs,
-        },
-      )
-      if (activeCandidate) {
+      const { projectRoot, outputDirectory } = await wikiLocation()
+      const outputLabel = wikiOutputLabel(projectRoot, outputDirectory)
+      const wikiOutput = { outputDirectory, outputLabel }
+      const host: WikiUpdateHost = isCursorHost ? 'cursor' : 'vscode'
+      let start: WikiUpdateStart | undefined
+      try {
+        start = await checkWikiUpdateStart(
+          projectRoot,
+          wikiOutput,
+          host,
+          override === UPDATE_ANYWAY_ACTION,
+        )
+      } catch (error) {
+        // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence.
         wikiUpdateRun.refuseStart(host, wikiOutput, {
           kind: 'failed',
-          reason: `Another editor window or an earlier chat appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs)}). Wait for it to finish, or delete that folder, then press Update LLM Wiki again.`,
+          reason: thrownMessage(error),
         })
-        showWikiUpdateNotice()
+        throw error
+      }
+      if (!start) return
+      // The checks above take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
+      if (isExtensionStopping) {
+        await start.releaseMarker().catch(() => undefined)
         return
       }
-      // The checks above take time (the freshness inspection hashes every source). A window that began to close meanwhile has already looked for a run to stop, so it starts none: no watch and no unattended agent.
-      if (isExtensionStopping) return
       const run: WikiRun = {
         projectRoot,
         outputDirectory,
         host,
-        tokenAtStart,
-        startedAtMs: Date.now(),
+        tokenAtStart: start.tokenAtStart,
+        publicationAtStart: start.publicationAtStart,
+        uncoveredAtStart: start.uncoveredAtStart,
+        // The label is the absolute path exactly when the folder is not inside the project.
+        isOutputOutsideProject: outputLabel === outputDirectory,
+        releaseMarker: start.releaseMarker,
+        startedAtMs: start.startedAtMs,
+        timeoutMs: isCursorHost
+          ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
+          : WIKI_UPDATE_WATCH_TIMEOUT_MS,
         controller: new AbortController(),
       }
       /** Makes the run reachable for the closing window until its watch or agent has stopped. */
@@ -886,30 +1103,57 @@ export function activate(
           if (activeWikiRun === tracked) activeWikiRun = undefined
         })
       }
-      const timeoutMs = isCursorHost
-        ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
-        : WIKI_UPDATE_WATCH_TIMEOUT_MS
-      wikiUpdateRun.begin(run.host, wikiOutput, timeoutMs)
+      wikiUpdateRun.begin(
+        run.host,
+        wikiOutput,
+        run.timeoutMs,
+        // Only VS Code's chat asks for approvals; the Cursor agent runs without prompts.
+        !isCursorHost && run.isOutputOutsideProject,
+      )
       const query = buildWikiUpdatePrompt({
         manifestPath: join(outputDirectory, WIKI_MANIFEST_FILE),
-        timeoutMs,
+        timeoutMs: run.timeoutMs,
         // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
         isReplyRead: !isCursorHost,
+        hasGitRepository: start.hasGitRepository,
+        uncoveredPaths: run.uncoveredAtStart,
       })
       if (!isCursorHost) {
+        // While the chat opens, the closing window finds this run and aborts it.
+        const opening = {
+          controller: run.controller,
+          settled: Promise.resolve(),
+        }
+        activeWikiRun = opening
+        let didChatOpen: boolean
         try {
-          await vscode.commands.executeCommand('workbench.action.chat.open', {
-            query,
-            isPartialQuery: false,
-          })
+          // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
+          didChatOpen = await settledWithin(
+            Promise.race([
+              vscode.commands.executeCommand('workbench.action.chat.open', {
+                query,
+                isPartialQuery: false,
+              }),
+              once(run.controller.signal, 'abort'),
+            ]),
+            WIKI_CHAT_OPEN_TIMEOUT_MS,
+          )
         } catch (error) {
           await finishWikiUpdate(run, {
-            failure: `The editor chat could not be opened (${describeUpdateFailure(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
+            failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
+          })
+          return
+        } finally {
+          if (activeWikiRun === opening) activeWikiRun = undefined
+        }
+        if (!didChatOpen) {
+          await finishWikiUpdate(run, {
+            failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
           })
           return
         }
         // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
-        if (isExtensionStopping) {
+        if (isExtensionStopping || run.controller.signal.aborted) {
           await finishWikiUpdate(run, { cancelled: true })
           return
         }
@@ -959,9 +1203,14 @@ export function activate(
                 )
               // Any page can open this link and the project root is printed in the Wiki, so only an explicit in-editor choice starts the agent.
               const updateChoice = 'Update LLM Wiki'
+              const { outputDirectory } = await wikiLocation()
+              const isOutputOutsideProject =
+                wikiOutputLabel(projectRoot, outputDirectory) ===
+                outputDirectory
+              // The chat asks to approve every step outside the workspace; the learner should know before confirming.
               const agentAccess = isCursorHost
                 ? 'Cursor Agent runs without further prompts and can edit files and run commands in this project.'
-                : 'Copilot Chat receives the update request for this project.'
+                : `Copilot Chat receives the update request for this project.${isOutputOutsideProject ? ` ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`
               // A learner who confirms must not be told afterwards that nothing will start.
               if (wikiUpdateRun.isRunning()) {
                 showWikiUpdateRunning()
@@ -1014,7 +1263,7 @@ export function activate(
             // An update that failed before any state was recorded reads without the `Error:` prefix.
             void showNotice(
               'error',
-              `Codebook could not ${action}: ${incomingUri.path === '/update' ? describeUpdateFailure(error) : String(error)}`,
+              `Codebook could not ${action}: ${incomingUri.path === '/update' ? thrownMessage(error) : String(error)}`,
             )
           }
         },
@@ -1212,7 +1461,7 @@ export function activate(
       } catch (error) {
         void showNotice(
           'error',
-          `Codebook could not start the Wiki update: ${describeUpdateFailure(error)}`,
+          `Codebook could not start the Wiki update: ${thrownMessage(error)}`,
         )
         throw error
       }

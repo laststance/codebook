@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
@@ -70,9 +70,9 @@ test('a generated page the learner edited by hand stops the update before any ch
       { cause: 'edited-page', paths: ['index.html'], site: 'kept' },
     )
     assert.deepEqual(wiki.chatRequests, [])
-    assert.equal(wiki.warnings.length, 1)
+    assert.equal(wiki.errors.length, 1)
     assert.match(
-      wiki.warnings[0] ?? '',
+      wiki.errors[0] ?? '',
       /^Update not started \(\d{1,2}:\d{2}(?:\s?[AP]M)?\): a generated page was edited by hand \(index\.html\), and the publisher will not overwrite it\. Move your change aside or restore the page, then press Update LLM Wiki again\.$/,
     )
     assert.equal(
@@ -108,7 +108,7 @@ test('a manifest changed after its publish stops the update before any chat requ
       },
     )
     assert.deepEqual(wiki.chatRequests, [])
-    assert.equal(wiki.warnings.length, 1)
+    assert.equal(wiki.errors.length, 1)
     assert.equal(await readFile(manifestPath, 'utf8'), editedManifest)
   } finally {
     await wiki.close()
@@ -177,9 +177,9 @@ test('a candidate the agent staged in a folder of its own name ends the watched 
         : {},
       { cause: 'learner-file', paths: ['pages/notes.html'], site: 'kept' },
     )
-    assert.equal(wiki.warnings.length, 1)
+    assert.equal(wiki.errors.length, 1)
     assert.match(
-      wiki.warnings[0] ?? '',
+      wiki.errors[0] ?? '',
       /^Update stopped at \d{1,2}:\d{2}(?:\s?[AP]M)?: it would overwrite your own file in the Wiki folder \(pages\/notes\.html\)\. Nothing was replaced\. Move or rename the file, then press Update LLM Wiki again\.$/,
     )
     assert.equal(await wiki.hashOutput(), hashBefore)
@@ -202,13 +202,13 @@ test('a candidate that exists before the click refuses the start as somebody els
     assert.equal(status.state === 'failed' ? status.site : '', 'kept')
     assert.match(
       status.state === 'failed' ? status.reason : '',
-      /^Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written \d{1,2}:\d{2}[^)]*\)\. Wait for it to finish, or delete that folder, then press Update LLM Wiki again\.$/,
+      /^An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written \d{1,2}:\d{2}[^)]*\)\. Codebook waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
     )
     assert.deepEqual(wiki.chatRequests, [])
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
-      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Wait for it to finish, or delete that folder, then press Update LLM Wiki again\. The last usable site is kept\.$/,
+      /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. The last usable site is kept\.$/,
     )
   } finally {
     await wiki.close()
@@ -276,7 +276,7 @@ test('a candidate the earlier chat keeps writing after this window stopped watch
     assert.equal(retry.state, 'failed')
     assert.match(
       retry.state === 'failed' ? retry.reason : '',
-      /^Another editor window or an earlier chat appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
+      /^An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written /,
     )
     assert.equal(wiki.chatRequests.length, 1)
   } finally {
@@ -366,8 +366,12 @@ test('a watched VS Code run parses the candidates once while nothing is written,
     // Act: the watch looks every 20 ms in this window; nothing writes to the Wiki or beside it.
     await new Promise((resolveWait) => setTimeout(resolveWait, 400))
 
-    // Assert: one listing by the start guard before the run, one by the watch's first look.
+    // Assert: the watch looked many times, and still there is one listing by the start guard before the run and one by the watch's first look.
     assert.equal(wiki.status().state, 'running')
+    assert.ok(
+      wiki.looks.stampReads >= 5,
+      `the watch looked ${wiki.looks.stampReads} times in 400 ms`,
+    )
     assert.equal(wiki.looks.candidateListings, 2)
   } finally {
     await wiki.close()
@@ -377,6 +381,7 @@ test('a watched VS Code run parses the candidates once while nothing is written,
 test('a running Cursor update parses the candidates once while nothing is written, not at every look', async () => {
   // Arrange
   const listingsWhileRunning: number[] = []
+  const looksWhileRunning: number[] = []
   let idle: (() => Promise<void>) | undefined
   const wiki = await openPublishedWikiWindow({
     cursor: true,
@@ -389,12 +394,17 @@ test('a running Cursor update parses the candidates once while nothing is writte
   idle = async (): Promise<void> => {
     await new Promise((resolveWait) => setTimeout(resolveWait, 400))
     listingsWhileRunning.push(wiki.looks.candidateListings)
+    looksWhileRunning.push(wiki.looks.stampReads)
   }
   try {
     // Act
     await wiki.clickUpdate()
 
-    // Assert: one listing by the start guard, one by the first look beside the agent; the look at the run's end adds a third.
+    // Assert: the run looked many times, and still there is one listing by the start guard and one by the first look beside the agent; the look at the run's end adds a third.
+    assert.ok(
+      (looksWhileRunning[0] ?? 0) >= 5,
+      `the run looked ${looksWhileRunning[0]} times in 400 ms`,
+    )
     assert.deepEqual(listingsWhileRunning, [2])
     assert.equal(wiki.looks.candidateListings, 3)
   } finally {
@@ -495,9 +505,9 @@ test(
         [900_000, 'kept'],
       )
       assert.equal(nowMs, 900_000)
-      assert.equal(wiki.warnings.length, 1)
+      assert.equal(wiki.errors.length, 1)
       assert.match(
-        wiki.warnings[0] ?? '',
+        wiki.errors[0] ?? '',
         /^No new site appeared within 15 minutes, so Codebook stopped watching at \d{1,2}:\d{2}(?:\s?[AP]M)?\. Nothing has been replaced\. Check the VS Code chat: it may be waiting for you or have reported a problem\. Press Update LLM Wiki to start again\.$/,
       )
       assert.equal(await wiki.hashOutput(), hashBefore)
@@ -580,6 +590,178 @@ test('a real publish that keeps the sources and the revision and only excludes a
       'a1b2c3d4e5f6+0e819f59',
     )
   } finally {
+    await wiki.close()
+  }
+})
+
+test('after a start refused for a candidate an earlier chat left, choosing Update anyway starts the update without deleting the folder', async () => {
+  // Arrange
+  let isOverrideChosen = false
+  const wiki = await openPublishedWikiWindow({
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  try {
+    // A chat that was stopped left the candidate it had prepared.
+    const leftover = await wiki.prepare()
+    await wiki.clickUpdate()
+    const refused = wiki.status()
+    const offered = wiki.offeredActions.at(-1)
+
+    // Act
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    const started = await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(refused.state, 'failed')
+    assert.deepEqual(offered?.actions, ['Update anyway', 'Open LLM Wiki'])
+    assert.equal(started.state, 'running')
+    assert.equal(wiki.chatRequests.length, 1)
+    assert.equal((await stat(leftover)).isDirectory(), true)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('after a window reload the candidate this window’s own ended update left behind does not refuse the next start', async () => {
+  // Arrange
+  const workspaceState = new Map<string, unknown>()
+  let agentRuns = 0
+  const wiki = await openPublishedWikiWindow({
+    cursor: true,
+    workspaceState,
+    cursorAgent: async () => {
+      agentRuns += 1
+      await agentTakesAMoment()
+      // The agent stages a candidate and ends its turn without publishing it.
+      await wiki.prepare()
+      return 'I stopped before publishing.'
+    },
+  })
+  try {
+    await wiki.clickUpdate()
+    const firstEnd = wiki.status()
+
+    // Act: the window is reloaded; what it kept is its workspace state.
+    const reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      cursor: true,
+      workspaceState,
+      cursorAgent: async () => {
+        agentRuns += 1
+        return 'I stopped before publishing.'
+      },
+    })
+    await reloaded.clickUpdate()
+    const secondEnd = reloaded.status()
+    await reloaded.close()
+
+    // Assert
+    assert.equal(firstEnd.state, 'failed')
+    assert.equal(agentRuns, 2)
+    assert.equal(
+      secondEnd.state === 'failed' ? secondEnd.reason : '',
+      'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a learner file created after the candidate was staged ends the watch as blocked and names it', async () => {
+  // Arrange
+  const wiki = await openPublishedWikiWindow()
+  try {
+    await wiki.clickUpdate()
+    await agentTakesAMoment()
+    const stage = await wiki.prepare()
+    await wiki.writeCandidate(stage, {
+      heading: 'Second',
+      extraPages: ['pages/notes.html'],
+    })
+    await waitForStatus(
+      wiki.status,
+      (current) => current.state === 'running' && current.candidateStaged,
+    )
+    // The watch has looked at the candidate and found nothing in its way.
+    await agentTakesAMoment()
+
+    // Act: the learner now saves a file of their own where the candidate has a page.
+    await mkdir(join(wiki.outputDirectory, 'pages'), { recursive: true })
+    await writeFile(
+      join(wiki.outputDirectory, 'pages', 'notes.html'),
+      'my own page\n',
+    )
+    const ended = await waitForStatus(wiki.status, hasEnded, 3_000)
+
+    // Assert
+    assert.equal(ended.state, 'conflict')
+    assert.deepEqual(ended.state === 'conflict' ? ended.paths : [], [
+      'pages/notes.html',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a staged-candidate look that returns after its run ended does not show the next run as preparing a new site', async () => {
+  // Arrange
+  let agentRuns = 0
+  let letSecondAgentFinish = (): void => {}
+  const secondAgentMayFinish = new Promise<void>((resolveFinish) => {
+    letSecondAgentFinish = resolveFinish
+  })
+  let reportSecondAgentStart = (): void => {}
+  const secondAgentStarted = new Promise<void>((resolveStarted) => {
+    reportSecondAgentStart = resolveStarted
+  })
+  let lookInFlight: ReturnType<typeof wiki.hold> | undefined
+  const wiki = await openPublishedWikiWindow({
+    cursor: true,
+    constants: { WIKI_UPDATE_WATCH_POLL_MS: 20 },
+    cursorAgent: async () => {
+      agentRuns += 1
+      if (agentRuns === 1) {
+        // The first agent stages a candidate; the look that lists it is still in flight when the agent ends.
+        await agentTakesAMoment()
+        lookInFlight = wiki.hold('candidate-listing')
+        await wiki.prepare()
+        await lookInFlight.started
+        return 'I stopped before publishing.'
+      }
+      reportSecondAgentStart()
+      await secondAgentMayFinish
+      return 'I stopped before publishing.'
+    },
+  })
+  try {
+    await wiki.clickUpdate()
+
+    // Act: the second run is under way when the first run's look returns.
+    const secondPress = wiki.clickUpdate()
+    await secondAgentStarted
+    lookInFlight?.release()
+    await agentTakesAMoment()
+    const secondRun = wiki.status()
+    letSecondAgentFinish()
+    await secondPress
+
+    // Assert
+    assert.equal(secondRun.state, 'running')
+    assert.equal(
+      secondRun.state === 'running' ? secondRun.candidateStaged : undefined,
+      false,
+    )
+  } finally {
+    letSecondAgentFinish()
+    lookInFlight?.release()
     await wiki.close()
   }
 })

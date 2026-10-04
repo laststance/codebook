@@ -1,13 +1,19 @@
 import { createHash } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
-import { basename, isAbsolute, join } from 'node:path'
+import { lstat, readdir } from 'node:fs/promises'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import { setTimeout as sleepFor } from 'node:timers/promises'
 
 import {
   WIKI_MANIFEST_FILE,
   WIKI_PUBLICATION_RECEIPT_FILE,
+  WIKI_PUBLISH_JOURNAL_FRESH_MS,
   WIKI_PUBLISH_JOURNAL_SUFFIX,
+  WIKI_UPDATE_WATCH_POLL_MS,
 } from '../constants'
 
+import { hashFileSha256 } from './hashFileSha256'
+import { readWikiRegularFile } from './readWikiRegularFile'
+import { systemErrorCode } from './systemErrorCode'
 import type { WikiUpdateRefusal } from './wikiUpdateRun'
 
 /** What blocks an update before any agent runs: the cause and the paths named to the learner. */
@@ -16,104 +22,158 @@ export type WikiUpdateStartBlock = Pick<
   'cause' | 'paths'
 >
 
-/** Reads the `ownedFiles` hashes the publisher wrote into a manifest; empty for a missing manifest or one published before hashes were recorded. */
-async function readOwnedFileHashes(
-  manifestPath: string,
-): Promise<Array<[path: string, sha256: string]>> {
-  try {
-    const manifest: unknown = JSON.parse(await readFile(manifestPath, 'utf8'))
-    if (
-      typeof manifest !== 'object' ||
-      manifest === null ||
-      !('ownedFiles' in manifest) ||
-      typeof manifest.ownedFiles !== 'object' ||
-      manifest.ownedFiles === null
-    )
-      return []
-    const hashes: Array<[string, string]> = []
-    for (const [path, sha256] of Object.entries(manifest.ownedFiles))
-      // Only paths inside the output are read; a manifest cannot point the check elsewhere.
-      if (
-        typeof sha256 === 'string' &&
-        !isAbsolute(path) &&
-        !path.split('/').includes('..')
-      )
-        hashes.push([path, sha256])
-    return hashes
-  } catch {
-    return []
-  }
+/** The publisher's own rule for a path of the manifest: relative, without a backslash or control character, and without an empty, `.` or `..` part. */
+function isSafeOwnedPath(path: string): boolean {
+  return (
+    path !== '' &&
+    !isAbsolute(path) &&
+    // The publisher refuses exactly these characters: a backslash and every control character.
+    !/[\\\x00-\x1f]/.test(path) &&
+    path.split('/').every((part) => part && part !== '.' && part !== '..')
+  )
 }
 
-/** Reads the manifest hash the publisher recorded beside the Wiki at its publish; undefined for a Wiki without a publication receipt. */
-async function readReceiptManifestHash(
-  outputDirectory: string,
-): Promise<string | undefined> {
-  try {
-    const receipt: unknown = JSON.parse(
-      await readFile(
-        join(outputDirectory, WIKI_PUBLICATION_RECEIPT_FILE),
-        'utf8',
-      ),
+/** Reads the `ownedFiles` hashes the publisher wrote into a manifest; empty for a manifest published before hashes were recorded. */
+function readOwnedFileHashes(
+  manifest: object,
+): Array<[path: string, sha256: string]> {
+  if (
+    !('ownedFiles' in manifest) ||
+    typeof manifest.ownedFiles !== 'object' ||
+    manifest.ownedFiles === null
+  )
+    return []
+  const hashes: Array<[string, string]> = []
+  for (const [path, sha256] of Object.entries(manifest.ownedFiles))
+    // Only paths inside the output are read; a manifest cannot point the check elsewhere.
+    if (typeof sha256 === 'string' && isSafeOwnedPath(path))
+      hashes.push([path, sha256])
+  return hashes
+}
+
+/** Lists what lies under the Wiki folder that is neither a folder nor a regular file (a link, a named pipe, a socket, a device), as `/`-separated paths, sorted; empty when the folder cannot be listed. Entry types come from the folder itself, so nothing is followed or opened. */
+async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
+  const entries = await readdir(outputDirectory, {
+    recursive: true,
+    withFileTypes: true,
+  }).catch(() => [])
+  return entries
+    .filter((entry) => !entry.isDirectory() && !entry.isFile())
+    .map((entry) =>
+      relative(outputDirectory, join(entry.parentPath, entry.name))
+        .split(sep)
+        .join('/'),
     )
-    return typeof receipt === 'object' &&
-      receipt !== null &&
-      'manifestSha256' in receipt &&
-      typeof receipt.manifestSha256 === 'string'
-      ? receipt.manifestSha256
-      : undefined
-  } catch {
-    return undefined
-  }
+    .sort()
 }
 
 /**
- * Finds what makes the publisher refuse an update before it stages anything: an earlier publish that did not finish, a manifest changed after its publish, or a generated page that was edited by hand.
+ * Finds what makes the publisher refuse an update before it stages anything: an earlier publish that did not finish, a link or special file in the Wiki folder, a manifest that cannot be read or was changed after its publish, or a generated page that was edited by hand or is gone.
  *
- * Why: in each case the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out. Found before the start, the learner reads the reason at once and no agent is asked.
- * Trigger: the extension calls it when an update starts, after the already-current check and before the run begins; it sits next to {@link detectWikiPublishConflicts}, which covers the learner's own files.
+ * Why: in each case the publisher refuses at `--prepare`, so no candidate ever appears and the run would only time out. Found before the start, the learner reads the reason at once and no agent is asked. The check runs before the update's timeout and cancel exist, so it opens nothing but regular files and follows no link.
+ * Trigger: the extension calls it first when an update starts, before it looks for the manifest and before the already-current check; it sits next to {@link detectWikiPublishConflicts}, which covers the learner's own files.
  *
  * @param outputDirectory - Resolved Wiki output folder.
+ * @param options.now - Clock in epoch milliseconds; tests pass a fixed one.
+ * @param options.wait - Waits before the one second look at a journal that was written a moment ago; tests pass their own.
  * @returns
- * - `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name
+ * - `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name. A journal written within the last {@link WIKI_PUBLISH_JOURNAL_FRESH_MS} belongs to a publish that may be finishing right now, so it is looked at once more after {@link WIKI_UPDATE_WATCH_POLL_MS}; when it is gone then, the check goes on
+ * - A link, pipe, socket or device anywhere under the Wiki folder: cause `special-file` with the paths, sorted
+ * - A manifest that is there and is not a JSON object Codebook can read: cause `unreadable-manifest` with the manifest's file name
  * - The manifest's bytes differ from the hash in the publication receipt: cause `edited-manifest` with the manifest's file name
- * - Published files whose bytes differ from the manifest's `ownedFiles` hash, or that are gone: cause `edited-page` with their paths, sorted
- * - Otherwise: undefined
+ * - Published files whose bytes differ from the manifest's `ownedFiles` hash: cause `edited-page` with their paths, sorted
+ * - Published files that are gone: cause `missing-page` with their paths, sorted
+ * - Otherwise, also when there is no manifest at all: undefined
  *
  * @example
  * ```ts
  * await findWikiUpdateStartBlock('/repo/.codebook/wiki')
- * // => { cause: 'edited-page', paths: ['index.html'] }
+ * // => { cause: 'missing-page', paths: ['index.html'] }
  * ```
  */
 export async function findWikiUpdateStartBlock(
   outputDirectory: string,
+  options: {
+    now?: () => number
+    wait?: (delayMs: number) => Promise<unknown>
+  } = {},
 ): Promise<WikiUpdateStartBlock | undefined> {
+  const now = options.now ?? Date.now
+  const wait = options.wait ?? ((delayMs: number) => sleepFor(delayMs))
   // The publisher checks its journal first, so an unfinished publish is reported before any edited page.
   const journalPath = outputDirectory + WIKI_PUBLISH_JOURNAL_SUFFIX
-  if (await stat(journalPath).catch(() => undefined))
+  const readJournalStat = () => lstat(journalPath).catch(() => undefined)
+  let journalStat = await readJournalStat()
+  // A journal written a moment ago is a publish in progress, not an earlier one that failed: give it one look more.
+  if (
+    journalStat &&
+    now() - journalStat.mtimeMs < WIKI_PUBLISH_JOURNAL_FRESH_MS
+  ) {
+    await wait(WIKI_UPDATE_WATCH_POLL_MS)
+    journalStat = await readJournalStat()
+  }
+  if (journalStat)
     return { cause: 'unfinished-publish', paths: [basename(journalPath)] }
+  const specialEntries = await listSpecialEntries(outputDirectory)
+  if (specialEntries.length)
+    return { cause: 'special-file', paths: specialEntries }
   const manifestPath = join(outputDirectory, WIKI_MANIFEST_FILE)
-  const receiptManifestHash = await readReceiptManifestHash(outputDirectory)
-  const manifestBytes = await readFile(manifestPath).catch(() => undefined)
+  const manifestFile = await readWikiRegularFile(manifestPath)
+  if (!manifestFile) {
+    // No manifest at all is "no Wiki yet", which the caller words; one that is there and cannot be read blocks the publisher.
+    return (await lstat(manifestPath).catch(() => undefined))
+      ? { cause: 'unreadable-manifest', paths: [WIKI_MANIFEST_FILE] }
+      : undefined
+  }
+  let manifest: unknown
+  try {
+    manifest = JSON.parse(manifestFile.bytes.toString('utf8'))
+  } catch {
+    manifest = undefined
+  }
+  if (typeof manifest !== 'object' || manifest === null)
+    return { cause: 'unreadable-manifest', paths: [WIKI_MANIFEST_FILE] }
+  const receiptFile = await readWikiRegularFile(
+    join(outputDirectory, WIKI_PUBLICATION_RECEIPT_FILE),
+  )
+  let receiptManifestHash: unknown
+  try {
+    const receipt: unknown = receiptFile
+      ? JSON.parse(receiptFile.bytes.toString('utf8'))
+      : undefined
+    receiptManifestHash =
+      typeof receipt === 'object' &&
+      receipt !== null &&
+      'manifestSha256' in receipt
+        ? receipt.manifestSha256
+        : undefined
+  } catch {
+    receiptManifestHash = undefined
+  }
   // The publisher compares the manifest with its receipt before it looks at any page.
   if (
-    receiptManifestHash &&
-    manifestBytes &&
-    createHash('sha256').update(manifestBytes).digest('hex') !==
+    typeof receiptManifestHash === 'string' &&
+    createHash('sha256').update(manifestFile.bytes).digest('hex') !==
       receiptManifestHash
   )
     return { cause: 'edited-manifest', paths: [WIKI_MANIFEST_FILE] }
   const editedPaths: string[] = []
-  for (const [path, sha256] of await readOwnedFileHashes(manifestPath)) {
-    const bytes = await readFile(join(outputDirectory, path)).catch(
-      () => undefined,
-    )
-    // A deleted page blocks the publisher the same way an edited one does.
-    if (!bytes || createHash('sha256').update(bytes).digest('hex') !== sha256)
-      editedPaths.push(path)
+  const missingPaths: string[] = []
+  for (const [path, sha256] of readOwnedFileHashes(manifest)) {
+    try {
+      // Only a regular file is opened; its bytes are hashed as a stream.
+      if ((await hashFileSha256(join(outputDirectory, path))) !== sha256)
+        editedPaths.push(path)
+    } catch (error) {
+      if (systemErrorCode(error) === 'ENOENT') missingPaths.push(path)
+      // A page that is there and cannot be hashed is not the published one.
+      else editedPaths.push(path)
+    }
   }
-  return editedPaths.length
-    ? { cause: 'edited-page', paths: editedPaths.sort() }
+  // The learner's own change is named first: restoring a missing page must not cost them an edit they have not saved elsewhere.
+  if (editedPaths.length)
+    return { cause: 'edited-page', paths: editedPaths.sort() }
+  return missingPaths.length
+    ? { cause: 'missing-page', paths: missingPaths.sort() }
     : undefined
 }

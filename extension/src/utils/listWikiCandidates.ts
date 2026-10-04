@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
-import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
+import {
+  WIKI_MANIFEST_FILE,
+  WIKI_PUBLICATION_RECEIPT_FILE,
+  WIKI_PUBLISH_BACKUP_INFIX,
+} from '../constants'
 
 import { readWikiOwnedPaths } from './readWikiOwnedPaths'
+import { readWikiRegularFile } from './readWikiRegularFile'
 import { systemErrorCode } from './systemErrorCode'
 
 /** A prepared update of a Wiki that the publisher would still accept for it. */
@@ -17,12 +22,12 @@ export type WikiCandidate = {
   ownedPaths: string[]
 }
 
-/** Reads the output and baseline a candidate's receipt is bound to; undefined when the folder has no readable receipt. */
-async function readReceiptBinding(
-  receiptPath: string,
-): Promise<{ output: unknown; baselineSha256: unknown } | undefined> {
+/** Reads the output and baseline a candidate's receipt is bound to; undefined when the receipt is not a JSON object. */
+function readReceiptBinding(
+  receiptBytes: Buffer,
+): { output: unknown; baselineSha256: unknown } | undefined {
   try {
-    const receipt: unknown = JSON.parse(await readFile(receiptPath, 'utf8'))
+    const receipt: unknown = JSON.parse(receiptBytes.toString('utf8'))
     if (typeof receipt !== 'object' || receipt === null) return undefined
     const baseline = 'baseline' in receipt ? receipt.baseline : undefined
     return {
@@ -46,7 +51,7 @@ async function readReceiptBinding(
  * Trigger: the extension calls it before an update starts (is someone else updating?) and on each look of a run (did the agent stage something, does it collide with a learner file?).
  *
  * @param outputDirectory - Resolved Wiki output folder.
- * @returns Candidates bound to this output and prepared from the currently published manifest, in folder-name order; empty when the Wiki or its parent folder cannot be read.
+ * @returns Candidates bound to this output and prepared from the currently published manifest, in folder-name order; empty when the Wiki or its parent folder cannot be read. A backup the publisher kept (`<output>.previous-<uuid>`) is never one, and a receipt or manifest that is not a regular file ({@link readWikiRegularFile}) is not read.
  *
  * @example
  * ```ts
@@ -58,8 +63,12 @@ export async function listWikiCandidates(
   outputDirectory: string,
 ): Promise<WikiCandidate[]> {
   try {
+    const published = await readWikiRegularFile(
+      join(outputDirectory, WIKI_MANIFEST_FILE),
+    )
+    if (!published) return []
     const publishedSha256 = createHash('sha256')
-      .update(await readFile(join(outputDirectory, WIKI_MANIFEST_FILE)))
+      .update(published.bytes)
       .digest('hex')
     // The publisher records the output with its parent folder resolved, so the comparison uses the same form.
     const parent = await realpath(dirname(outputDirectory))
@@ -68,12 +77,15 @@ export async function listWikiCandidates(
     const candidates: WikiCandidate[] = []
     for (const sibling of await readdir(parent, { withFileTypes: true })) {
       if (!sibling.isDirectory() || sibling.name === outputName) continue
-      const receiptPath = join(
-        parent,
-        sibling.name,
-        WIKI_PUBLICATION_RECEIPT_FILE,
+      // A backup the publisher kept is never accepted as a stage; reading each one's receipt would grow with every update.
+      if (sibling.name.startsWith(outputName + WIKI_PUBLISH_BACKUP_INFIX))
+        continue
+      const receipt = await readWikiRegularFile(
+        join(parent, sibling.name, WIKI_PUBLICATION_RECEIPT_FILE),
       )
-      const binding = await readReceiptBinding(receiptPath)
+      // A folder without a regular receipt file was never prepared by the publisher, or vanished meanwhile.
+      if (!receipt) continue
+      const binding = readReceiptBinding(receipt.bytes)
       // A candidate prepared from an older generation is refused by the publisher, so it is nobody's update any more.
       if (
         binding?.output !== boundOutput ||
@@ -81,13 +93,10 @@ export async function listWikiCandidates(
       )
         continue
       const manifestPath = join(parent, sibling.name, WIKI_MANIFEST_FILE)
-      // A folder that vanished after its receipt was read is no candidate.
-      const receiptStat = await stat(receiptPath).catch(() => undefined)
-      if (!receiptStat) continue
-      const manifestStat = await stat(manifestPath).catch(() => undefined)
+      const manifestStat = await lstat(manifestPath).catch(() => undefined)
       candidates.push({
         name: sibling.name,
-        writtenAtMs: Math.max(receiptStat.mtimeMs, manifestStat?.mtimeMs ?? 0),
+        writtenAtMs: Math.max(receipt.modifiedAtMs, manifestStat?.mtimeMs ?? 0),
         ownedPaths: [...((await readWikiOwnedPaths(manifestPath)) ?? [])],
       })
     }

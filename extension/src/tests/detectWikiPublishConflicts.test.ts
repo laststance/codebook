@@ -6,7 +6,6 @@ import {
   readFile,
   realpath,
   rm,
-  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -265,18 +264,40 @@ test('a Wiki folder without a readable manifest reports no conflict', async () =
   }
 })
 
-test('a candidate folder that vanished before it could be read is no finding, not an error', async () => {
+test('a candidate folder whose manifest vanished after its receipt was read is no finding, not an error', async () => {
   // Arrange
   const wiki = await publishedWiki()
   await writeFile(join(wiki.output, 'pages', 'overview.html'), 'mine')
-  // The name is still listed, but nothing is behind it any more.
-  await symlink(join(wiki.parent, 'gone'), `${wiki.output}.stage-gone`)
+  // A real folder, bound to the Wiki by its receipt, whose manifest is gone again: the state between two reads of a folder that is being removed.
+  const stage = await candidate(
+    wiki.output,
+    ['pages/overview.html'],
+    new Date(),
+  )
+  await rm(join(stage, 'codebook-wiki.json'))
   try {
     // Act
-    const conflicts = await detectWikiPublishConflicts(wiki.output, Date.now())
+    const conflicts = await detectWikiPublishConflicts(wiki.output, 0)
 
     // Assert
     assert.deepEqual(conflicts, [])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a learner file two folders deep is named with its /-separated path', async () => {
+  // Arrange
+  const wiki = await publishedWiki()
+  await mkdir(join(wiki.output, 'pages', 'guides'), { recursive: true })
+  await writeFile(join(wiki.output, 'pages', 'guides', 'setup.html'), 'mine')
+  await candidate(wiki.output, ['pages/guides/setup.html'], new Date())
+  try {
+    // Act
+    const conflicts = await detectWikiPublishConflicts(wiki.output, 0)
+
+    // Assert
+    assert.deepEqual(conflicts, ['pages/guides/setup.html'])
   } finally {
     await wiki.cleanup()
   }
