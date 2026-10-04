@@ -1025,25 +1025,30 @@ test('a replaced or edited Cursor skill is refused at reconnect as missing or ch
   await writeFile(replacement, INITIAL_SKILL)
   await rename(replacement, replaced.targetPath)
 
-  // Act
-  const editedReconnect = verifyManagedCursorSkill(
-    edited.extensionPath,
-    edited.storageRoot,
-    edited.homeRoot,
-  )
-  const replacedReconnect = verifyManagedCursorSkill(
-    replaced.extensionPath,
-    replaced.storageRoot,
-    replaced.homeRoot,
-  )
+  // Act: both reconnects settle together, so the second refusal never waits without a handler while the first is asserted.
+  const reconnects = await Promise.allSettled([
+    verifyManagedCursorSkill(
+      edited.extensionPath,
+      edited.storageRoot,
+      edited.homeRoot,
+    ),
+    verifyManagedCursorSkill(
+      replaced.extensionPath,
+      replaced.storageRoot,
+      replaced.homeRoot,
+    ),
+  ])
 
   // Assert
-  await assert.rejects(editedReconnect, {
-    message:
+  assert.deepEqual(
+    reconnects.map((reconnect) =>
+      reconnect.status === 'rejected' && reconnect.reason instanceof Error
+        ? reconnect.reason.message
+        : reconnect.status,
+    ),
+    [
       'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
-  })
-  await assert.rejects(replacedReconnect, {
-    message:
       'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
-  })
+    ],
+  )
 })
