@@ -707,7 +707,8 @@ test('a live capture whose Application pane paints no frame within the bound end
       await shown,
       'Error: The capture was not shown: the Application pane painted no frame within 3 s. Make the editor window and the Application pane visible, then start a new run.',
     )
-    assert.equal(elapsedMs, 3_000)
+    // The faked clock moves in steps of 50 ms, and the rejection is seen one step after the bound at the latest.
+    assert.equal(elapsedMs >= 3_000 && elapsedMs <= 3_050, true)
     assert.equal(
       harness.events.some((event) => event.type === 'viewport.acknowledged'),
       false,
