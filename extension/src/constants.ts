@@ -797,6 +797,8 @@ export const CHROME_LINUX_EXECUTABLE_NAMES = [
   'chromium',
   'chromium-browser',
 ] as const
+/** How long "no Chrome found on PATH" is given again without a new search; a browser installed in that time is found by the first prerequisite check after it. */
+export const CHROME_NOT_FOUND_REUSE_MS = 10_000
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
