@@ -11,6 +11,7 @@ import {
   enableFakeClock,
   resetFakeClock,
 } from './utils/fakeClock'
+import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { loadModule } from './utils/loadModule'
 
 // Value: protects=deadline tests firing a run's timers as real time would; fails_when=a timer cleared by an earlier callback of the same advance still fires, or timers fire in the order they were set instead of the order they fall due; why_new=Cycle 0043 R15 (the clock fired a snapshot in insertion order); seam=none
@@ -164,4 +165,79 @@ test('a held wait that the test releases ends as a timeout although its run is n
   // Assert
   await assert.rejects(waiting, /Timed out waiting for source-bound CDP stop/)
   assert.equal(looks, 3)
+})
+
+// Value: protects=a page test that looks for an element by a selector the fake page cannot evaluate failing instead of passing on the wrong element; fails_when=a bracket group that is neither `[attribute]` nor `[attribute=value]` is dropped from the selector, so it matches every element and the first one is returned; why_new=Cycle 0045 D-L4 (the fake said such selectors throw and matched everything); seam=none
+test('the fake Wiki page refuses an attribute selector with an operator instead of matching every element', async () => {
+  // Arrange: a page whose update link has an href that starts with "vscode://".
+  const page = await openFakeWikiPage('', 'current-shell')
+  // Act
+  const finding = (): unknown => page.find('[href^="vscode://"]')
+  // Assert
+  assert.throws(finding, {
+    message: 'The fake page cannot match the selector [href^="vscode://"]',
+  })
+})
+
+// Value: protects=a page script that inserts beside a node it no longer owns failing in the page tests as it fails in a browser; fails_when=the fake page puts the node in front of the parent's last child when the reference is no child of that parent, so a wrong insert passes; why_new=Cycle 0045 D-L4; seam=none
+test('inserting before a node that is not a child fails as it does in a browser', async () => {
+  // Arrange: the update link sits inside the right rail's group, so it is no child of the body.
+  const page = await openFakeWikiPage('', 'current-shell')
+  const updateLink = page.find('.wiki-update')
+  assert.ok(updateLink)
+  // Act
+  const inserting = (): void =>
+    page.body.insertBefore('a text node', updateLink)
+  // Assert: the browser's error, and the body keeps its two children.
+  assert.throws(inserting, {
+    name: 'NotFoundError',
+    message:
+      "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.",
+  })
+  assert.deepEqual(
+    page.body.childNodes.map((child) =>
+      typeof child === 'string' ? child : child.tagName,
+    ),
+    ['header', 'aside'],
+  )
+})
+
+// Value: protects=a page test whose selector found nothing failing at its click; fails_when=a click on an undefined element dispatches nothing and answers "not swallowed", which is the answer of a link the page let through; why_new=Cycle 0045 D-L5; seam=none
+test('clicking an element the fake Wiki page does not have fails the test instead of reporting a click that was not swallowed', async () => {
+  // Arrange: a page without a right rail has no update link.
+  const page = await openFakeWikiPage('', 'no-rail')
+  // Act
+  const clicking = page.click(page.find('.wiki-update'))
+  // Assert
+  await assert.rejects(clicking, {
+    message:
+      'The fake page has no element to click: the selector found nothing in this layout.',
+  })
+})
+
+// Value: protects=a page test standing at the faked time it asked for, between two of the page's timers; fails_when=an advance is rounded up to whole seconds, so a test that advances 1,200 ms already sees what the page does at 2,000 ms; why_new=Cycle 0045 D-L6; seam=none
+test("the fake Wiki page's clock moves exactly the time asked for: a timer due after 1,500 ms has not fired after an advance of 1,200 ms", async () => {
+  // Arrange: the page script sets one timer that notes how long after the load it fired.
+  const page = await openFakeWikiPage(
+    [
+      'var loadedAtMs = Date.now()',
+      'window.setTimeout(function () {',
+      "  document.body.setAttribute('data-fired-after-ms', String(Date.now() - loadedAtMs))",
+      '}, 1500)',
+    ].join('\n'),
+    'no-rail',
+  )
+  // Act
+  await page.advance(1_200)
+  const afterTheShortAdvance = {
+    pendingTimers: page.pendingTimerCount(),
+    firedAfterMs: page.body.getAttribute('data-fired-after-ms'),
+  }
+  await page.advance(300)
+  // Assert
+  assert.deepEqual(afterTheShortAdvance, {
+    pendingTimers: 1,
+    firedAfterMs: null,
+  })
+  assert.equal(page.body.getAttribute('data-fired-after-ms'), '1500')
 })

@@ -9,8 +9,10 @@ type PageEvent = { defaultPrevented: boolean; preventDefault(): void }
 type PageListener = (event: PageEvent) => void
 type PageNode = PageElement | string
 
-/** How long one step of {@link FakeWikiPage.advance} is; every page timer is a multiple of it. */
+/** How long one step of {@link FakeWikiPage.advance} is at most; the last step of an advance is cut to what is left of it. */
 const CLOCK_STEP_MS = 1_000
+/** The two attribute forms {@link PageElement.matches} understands, `[attribute]` and `[attribute=value]` (the value with or without quotes); a bracket group of any other form, such as one with an operator, is refused. */
+const SUPPORTED_ATTRIBUTE_SELECTOR = /\[([\w-]+)(?:="?([^"\]]*)"?)?\]/g
 /** When a fake page is loaded unless the test says otherwise. */
 const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
 /** When the site a fake reader serves was published unless the test says otherwise. */
@@ -119,6 +121,12 @@ class PageElement {
     for (const node of nodes) this.#adopt(node)
   }
   insertBefore(node: PageNode, reference: PageNode | null): void {
+    // A browser refuses a reference that is not a child before it changes anything.
+    if (reference !== null && !this.childNodes.includes(reference))
+      throw new DOMException(
+        "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.",
+        'NotFoundError',
+      )
     this.contentWriteCount += 1
     this.#adopt(node)
     if (reference === null) return
@@ -143,10 +151,9 @@ class PageElement {
     return selectorList.split(',').some((selector) => {
       const compound = selector.trim()
       if (compound === '*') return true
-      const conditions = [
-        ...compound.matchAll(/\[([\w-]+)(?:="?([^"\]]*)"?)?\]/g),
-      ]
-      const simple = compound.replace(/\[[^\]]*\]/g, '')
+      const conditions = [...compound.matchAll(SUPPORTED_ATTRIBUTE_SELECTOR)]
+      // Only the supported attribute forms are taken out: any other bracket group stays and is refused below.
+      const simple = compound.replace(SUPPORTED_ATTRIBUTE_SELECTOR, '')
       if (!/^[\w-]*(?:[#.][\w-]+)*$/.test(simple))
         throw new Error(`The fake page cannot match the selector ${compound}`)
       const tagName = /^[\w-]+/.exec(simple)?.[0]
@@ -222,9 +229,9 @@ export type FakeWikiPage = {
   isShown(element: PageElement | undefined): boolean
   /** Text of every stylesheet the script injected. */
   injectedStyles(): string
-  /** Clicks an element the way a learner does. @returns Whether the page swallowed the click. */
+  /** Clicks an element the way a learner does. @returns Whether the page swallowed the click. @throws When the element is undefined, so a selector that found nothing fails the test. */
   click(element: PageElement | undefined): Promise<{ wasSwallowed: boolean }>
-  /** Moves the clock and lets every timer and request due by then finish. */
+  /** Moves the clock by exactly the time given and lets every timer and request due by then finish. */
   advance(milliseconds: number): Promise<void>
   /** Hides or shows the tab. */
   setTabHidden(isHidden: boolean): Promise<void>
@@ -441,14 +448,20 @@ export async function openFakeWikiPage(
         .map((style) => style.textContent)
         .join('\n'),
     async click(element) {
-      const event = await dispatch(element?.listeners.get('click'))
+      // A click on nothing dispatches nothing, which would read as a click the page did not swallow.
+      if (!element)
+        throw new Error(
+          'The fake page has no element to click: the selector found nothing in this layout.',
+        )
+      const event = await dispatch(element.listeners.get('click'))
       return { wasSwallowed: event.defaultPrevented }
     },
     async advance(milliseconds): Promise<void> {
       // Each step may start a request whose answer sets the next timer, so the page settles between steps.
       for (let stepped = 0; stepped < milliseconds; stepped += CLOCK_STEP_MS) {
-        elapsedMs += CLOCK_STEP_MS
-        clock.advance(CLOCK_STEP_MS)
+        const stepMs = Math.min(CLOCK_STEP_MS, milliseconds - stepped)
+        elapsedMs += stepMs
+        clock.advance(stepMs)
         await settle()
       }
     },
