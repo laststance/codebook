@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -9,13 +10,18 @@ import { z } from 'zod'
 
 import { ACTIVE_TIMEOUT_MS } from '../constants'
 import { StudyError } from '../errors'
+import type { LearningSummary } from '../learningSummarySchemas'
 import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { actionSchema } from '../schemas'
 import { startServer } from '../server'
 
-import { configuredServiceHarness } from './utils/configuredServiceHarness'
+import {
+  commitNextStop,
+  configuredServiceHarness,
+  observeResult,
+} from './utils/configuredServiceHarness'
 
 const receiptSchema = z.object({
   instanceId: z.string(),
@@ -1807,6 +1813,977 @@ test('the input schema of codebook_explain says that a fact path is taken with i
   assert.equal(
     schema.properties.valuePaths.items.description,
     'A captured fact key of this snapshot: value:<path> or type:<path>. The path alone is accepted when exactly one captured fact of the snapshot has that path, and the explanation is saved under that key.',
+  )
+})
+
+/** Where a test's hand-moved service clock starts: the real time of the file's load, because the harness's source and book stores read the real clock for the preparation deadline. A test moves its own copy forward, so a bound of seconds passes without waiting for it. */
+const CLOCK_START_MS = Date.now()
+
+/**
+ * Starts a run on the fixture with the service's clock in the test's hand, sends its click and returns the arguments the run resource gives for the first stop's continuation.
+ * @param context - The test that owns the harness.
+ * @param key - The start key of the run.
+ * @param clock - Reads the test's clock, which the service uses for every deadline and bound.
+ * @returns The service, the synthetic runtime, the run's receipt and record, and the first stop's continueArguments.
+ * @example const { service, runtime, continueArguments } = await runPausedAtFirstStop(context, 'next', () => nowMs)
+ */
+const runPausedAtFirstStop = async (
+  context: TestContext,
+  key: string,
+  clock: () => number,
+) => {
+  const { service, configuration, runtimes } = await configuredServiceHarness(
+    context,
+    clock,
+  )
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key,
+      configuration: {
+        ...configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 7,
+            inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+          },
+        ],
+      },
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    continueArguments =
+      service.state(record).participants.browser.continueArguments
+  assert.ok(continueArguments)
+  return { service, runtime, receipt, record, continueArguments }
+}
+
+/** Tells whether a pending answer is still waiting after three of the wait's turns (150 ms of real time). @example await isStillWaiting(continuing) // => true while the run shows no next state */
+const isStillWaiting = (pending: Promise<unknown>): Promise<boolean> =>
+  Promise.race([pending.then(() => false), delay(150).then(() => true)])
+
+// Value: protects=an agent that copies continueArguments learning the next stop from the continuation's own answer; fails_when=the arguments carry no answer, the tool's schema refuses it, or the call answers accepted before the next pause is committed, so the agent polls the run resource after every continuation (8 of 24 reads in the VS Code run of the baseline round); why_new=Cycle 0045 cause 3 (ER-7); seam=the synthetic runtime, which commits its next stop when the test says so
+test('a continuation sent with the arguments the run resource gave answers with the next committed observation and its inspectionUri, without a poll', async (context) => {
+  // Arrange: a two-stop run is paused at its first stop.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+      context,
+      'answer-next-observation',
+      () => nowMs,
+    ),
+    client = await connectMcpClient(context, service)
+  nowMs += 1_000
+
+  // Act
+  const continuing = client.callTool({
+    name: 'codebook_continue',
+    arguments: continueArguments,
+  })
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const next = commitNextStop(runtime)
+  const answered = await continuing
+
+  // Assert
+  assert.equal(continueArguments.answer, 'next')
+  assert.equal(answered.isError, undefined, JSON.stringify(answered.content))
+  const answer = z
+    .object({
+      data: z.object({
+        accepted: z.boolean(),
+        next: z.string(),
+        state: z.object({
+          runtimeState: z.string(),
+          observations: z.array(
+            z.object({ id: z.string(), inspectionUri: z.string() }),
+          ),
+          participants: z.object({
+            browser: z.object({
+              continueArguments: z.object({
+                generation: z.number(),
+                answer: z.string(),
+              }),
+            }),
+          }),
+        }),
+      }),
+    })
+    .parse(answered.structuredContent).data
+  assert.equal(answer.accepted, true)
+  assert.equal(answer.next, 'observation')
+  assert.equal(answer.state.runtimeState, 'paused-browser')
+  assert.equal(answer.state.observations.length, 2)
+  assert.equal(answer.state.observations[1]?.id, next.id)
+  assert.equal(
+    answer.state.observations[1]?.inspectionUri,
+    `codebook://${service.instanceId}/runs/${continueArguments.runId}/snapshots/browser-session%3A2/inspection`,
+  )
+  assert.equal(
+    JSON.stringify(answer.state.participants.browser.continueArguments),
+    '{"generation":2,"answer":"next"}',
+  )
+})
+
+// Value: protects=an agent learning the observed result from its last continuation; fails_when=the last continuation answers accepted only, so the agent polls for observed.afterVerified, or answers "stopped" because the service's own cleanup of the completed run came first; why_new=Cycle 0045 cause 3 (ER-7); seam=the synthetic runtime, which observes its result when the test says so
+test('after the last stop a continuation sent with those arguments answers the observed result', async (context) => {
+  // Arrange: a run is paused at its last stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-result',
+    () => nowMs,
+  )
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  observeResult(runtime)
+  // The maintenance turn that cleans a completed run up comes before the wait's next turn: that cleanup is no stop of the run.
+  service.maintain()
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.accepted, true)
+  assert.equal(answer.next, 'result')
+  assert.equal(answer.state.runtimeState, 'completed')
+  assert.equal(JSON.stringify(answer.state.observed), '{"afterVerified":true}')
+})
+
+// Value: protects=a caller that does not ask for the next state being answered as before; fails_when=every continuation waits, also the Study pane's Continue, which would then stay busy until the next pause; why_new=Cycle 0045 cause 3 (ER-7: without the argument nothing changes); seam=none
+test('a continuation without the answer argument answers accepted at once', async (context) => {
+  // Arrange: a run is paused at its first stop; the arguments are sent without their answer.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-as-before', () => nowMs)
+  const { answer: _answer, ...withoutAnswer } = continueArguments
+
+  // Act
+  const viaTool = await service.continueToNextState(withoutAnswer)
+
+  // Assert
+  assert.equal(
+    JSON.stringify(viaTool),
+    JSON.stringify({ accepted: true, runUri: receipt.runUri }),
+  )
+  assert.equal(runtime.status, 'running')
+  assert.equal(runtime.snapshots.length, 1)
+})
+
+// The Study pane's Continue sends the run resource's arguments as they are: it must return at the acknowledgement.
+test('the pane’s continuation with the run resource’s arguments answers at the acknowledgement, without waiting for the next state', async (context) => {
+  // Arrange: a run is paused at its first stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'pane-continue', () => nowMs)
+
+  // Act
+  const acknowledged = await service.continue(continueArguments)
+
+  // Assert
+  assert.equal(
+    JSON.stringify(acknowledged),
+    JSON.stringify({ accepted: true, runUri: receipt.runUri }),
+  )
+  assert.equal(runtime.status, 'running')
+})
+
+// Value: protects=an agent reading why the run ended from the continuation's answer; fails_when=the wait ends only on a next pause or a result, so a run that fails is answered at the bound with accepted, as if it were still running; why_new=Cycle 0045 cause 3 (PC-2.7, PC-4.12, PC-5.8: the wait ends on every terminal state); seam=the synthetic runtime, which fails when the test says so
+test('a run that fails while a continuation waits for its next state answers with the failure text, not with the bound', async (context) => {
+  // Arrange: a run is paused at its first stop; the clock does not move during the wait.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-failure',
+    () => nowMs,
+  )
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  runtime.failures.push(
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s of the preceding continuation',
+  )
+  runtime.status = 'failed'
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'failure')
+  assert.equal(
+    answer.state.error?.cause,
+    'Repository continuation reached no next declared pause: declared stop src/theme.ts:1 was not hit within 20 s of the preceding continuation',
+  )
+  assert.equal(answer.state.finalOutcome, 'not-demonstrated')
+})
+
+// Value: protects=the answer of a continuation whose next stop was committed and then failed its inspection; fails_when=the committed snapshot alone ends the wait as an observation the agent tries to continue, or the failure is left for a later poll; why_new=Cycle 0045 cause 3 (PC-2.7: a failure directly after the next pause); seam=the synthetic runtime, which commits a snapshot without a pause and fails
+test('a failure directly after the next pause was committed is in the continuation’s answer', async (context) => {
+  // Arrange: a run is paused at its first stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-failure-after-commit',
+    () => nowMs,
+  )
+
+  // Act: the next snapshot is committed, its required inspection fails and the run ends, as the coordinator does in one step.
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const firstStop = runtime.snapshots[0]!
+  runtime.snapshots.push({
+    ...firstStop,
+    id: 'browser-session:2',
+    pause: { ...firstStop.pause, generation: 2 },
+  })
+  runtime.failures.push(
+    'Required inspection value:nextTheme is unavailable; captured facts remain readable.',
+  )
+  runtime.status = 'failed'
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'failure')
+  assert.equal(answer.state.observations.length, 2)
+  assert.equal(
+    answer.state.error?.cause,
+    'Required inspection value:nextTheme is unavailable; captured facts remain readable.',
+  )
+  assert.equal(answer.state.participants.browser.continueArguments, undefined)
+})
+
+// Value: protects=a continuation that waits ending when the run is stopped from another call; fails_when=a cancelled run is none of "next pause, result, failure", so the request is held to its bound; why_new=Cycle 0045 cause 3 (PC-2.7: an explicit stop sets cancelled); seam=none
+test('a run stopped by another call while a continuation waits answers at once with the stopped run', async (context) => {
+  // Arrange: a run is paused at its first stop; the clock does not move during the wait.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-stopped', () => nowMs)
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const stopping = service.stop(receipt)
+  const answer = await continuing
+  await stopping
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'stopped')
+  assert.equal(['stopping', 'stopped'].includes(answer.state.state), true)
+  assert.equal(answer.state.participants.browser.resumable, false)
+})
+
+// Value: protects=the answer of a continuation that waits when the run's whole-run deadline passes; fails_when=the wait runs past the run's own deadline, or ends there with accepted as if the run went on; why_new=Cycle 0045 cause 3 (PC-2.7: one bound that never passes the run's remaining deadline); seam=the service's clock, moved by the test, and its maintenance turn, switched off
+test('a run whose whole-run deadline expires while a continuation waits answers with that end', async (context) => {
+  // Arrange: a run is paused at its first stop, five seconds before its whole-run deadline. The maintenance turn is switched off, so only the continuation's own wait can apply the deadline.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, record, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-deadline', () => nowMs)
+  service.maintain = (): void => {}
+  nowMs = record.deadlineAt - 5_000
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const waitingBeforeDeadline = await isStillWaiting(continuing)
+  nowMs = record.deadlineAt
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeDeadline, true)
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'failure')
+  assert.equal(
+    answer.state.terminalReason,
+    'Study wall deadline expired; history only.',
+  )
+})
+
+// Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20 second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
+test('a continuation whose run shows no next state within 22 seconds of its acknowledgement answers accepted with the latest state and no next state', async (context) => {
+  // Arrange: a run is paused at its first stop; after the continuation the synthetic runtime keeps running.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-bound', () => nowMs)
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  nowMs += 21_999
+  const waitingBeforeBound = await isStillWaiting(continuing)
+  nowMs += 1
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeBound, true)
+  assert.ok('state' in answer)
+  assert.equal(answer.accepted, true)
+  assert.equal(answer.runUri, receipt.runUri)
+  assert.equal('next' in answer, false)
+  assert.equal(answer.state.runtimeState, 'running')
+  assert.equal(answer.state.observations.length, 1)
+})
+
+// Value: protects=the whole call staying below an editor's request timeout when the runtime already took long to acknowledge the continuation; fails_when=the 22 second wait is added on top of a slow arming, so the call can pass a client's limit; why_new=Cycle 0045 cause 3 (the client-timeout rule: the whole call ends within 45 seconds of its start); seam=the synthetic runtime, whose acknowledgement takes 40 seconds of the test's clock
+test('a continuation acknowledged 40 seconds after the call began waits only five more seconds for the next state', async (context) => {
+  // Arrange: a run is paused at its first stop; arming the next stop and the acknowledgement take 40 seconds.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+    context,
+    'answer-call-budget',
+    () => nowMs,
+  )
+  const acknowledge = runtime.continue.bind(runtime)
+  runtime.continue = async (participant, pause): Promise<void> => {
+    nowMs += 40_000
+    await acknowledge(participant, pause)
+  }
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  nowMs += 4_999
+  const waitingBeforeBudget = await isStillWaiting(continuing)
+  nowMs += 1
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeBudget, true)
+  assert.ok('state' in answer)
+  assert.equal('next' in answer, false)
+  assert.equal(answer.state.runtimeState, 'running')
+})
+
+// Value: protects=the service's other calls answering while a continuation waits; fails_when=the wait blocks the service, so the run resource cannot be read until the next pause; why_new=Cycle 0045 cause 3 (PC-2.7); seam=none
+test('a continuation that waits for the next state does not hold other calls: the run resource is read meanwhile', async (context) => {
+  // Arrange: a run is paused at its first stop.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, receipt, continueArguments } =
+    await runPausedAtFirstStop(context, 'answer-not-blocking', () => nowMs)
+
+  // Act
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const readMeanwhile = await readResource(service, receipt.runUri)
+  const waitingAfterRead = await isStillWaiting(continuing)
+  commitNextStop(runtime)
+  const answer = await continuing
+
+  // Assert
+  assert.ok('text' in readMeanwhile)
+  assert.equal(JSON.parse(readMeanwhile.text).runtimeState, 'running')
+  assert.equal(waitingAfterRead, true)
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'observation')
+})
+
+// Value: protects=a request its client gave up releasing the wait; fails_when=the wait keeps polling until its bound although nobody reads the answer; why_new=Cycle 0045 cause 3 (the task: a request that the client abandons releases its wait); seam=none
+test('a continuation whose request is abandoned stops waiting at once', async (context) => {
+  // Arrange: a run is paused at its first stop; the clock does not move, so only the abandoned request can end the wait.
+  const nowMs = CLOCK_START_MS
+  const { service, runtime, continueArguments } = await runPausedAtFirstStop(
+      context,
+      'answer-abandoned',
+      () => nowMs,
+    ),
+    request = new AbortController()
+
+  // Act
+  const continuing = service.continueToNextState(
+    continueArguments,
+    request.signal,
+  )
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  const waitingBeforeAbandon = await isStillWaiting(continuing)
+  request.abort()
+  const answer = await continuing
+
+  // Assert
+  assert.equal(waitingBeforeAbandon, true)
+  assert.ok('state' in answer)
+  assert.equal('next' in answer, false)
+  assert.equal(answer.state.runtimeState, 'running')
+})
+
+// Value: protects=the help and the tool's own texts telling an agent that a continuation answers with the next state and when to poll; fails_when=the help still only says "After continuation, poll", or the tool's schema does not say what answer does; why_new=Cycle 0045 cause 3 (ER-7's help sentence); seam=none
+test('configured help and the continue tool tell an agent that a continuation sent with continueArguments answers with the next state, and to poll when it answers accepted only', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const help = await readResource(
+      service,
+      'codebook://help/repository-browser',
+    ),
+    tools = await client.listTools()
+
+  // Assert
+  assert.ok('text' in help)
+  const sequence = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text)).sequence
+  assert.equal(
+    (sequence[4] ?? '').startsWith(
+      "A continuation sent with the run resource's continueArguments answers with the next state: the next observation, the observed result or the failure. If it answers accepted only, poll. After continuation, poll for observed.afterVerified or explicit failure.",
+    ),
+    true,
+  )
+  const tool = tools.tools.find((tool) => tool.name === 'codebook_continue')
+  assert.equal(
+    tool?.description,
+    'Continue only the current inspected pause. Copy all continueArguments from the run resource; with their answer "next" the call answers with the run\'s next state (the next observation, the observed result or the failure) in state, and next names which. An answer without next means the run has not shown its next state yet: poll the run resource. A stale/reserved/historical pause is rejected; read state before recovery.',
+  )
+  assert.equal(
+    z
+      .object({
+        properties: z.object({
+          answer: z.object({ const: z.string(), description: z.string() }),
+        }),
+        required: z.array(z.string()),
+      })
+      .parse(tool?.inputSchema).properties.answer.description,
+    'Optional; the run resource\'s continueArguments carry it. With "next" the call answers when the run committed its next pause, observed its result or ended, and returns the run\'s state beside accepted; next names which. Without it the call answers as soon as the continuation is acknowledged.',
+  )
+})
+
+/** The text of a tool result an MCP client received, as an agent reads it. @example toolText(await client.callTool({ name: 'codebook_start', arguments })) */
+const toolText = (result: unknown): string =>
+  z
+    .object({ content: z.array(z.object({ text: z.string() })).min(1) })
+    .parse(result).content[0]!.text
+
+// Value: protects=an agent whose first stop declares an object by type only learning which stop is refused, what it declared and what to add; fails_when=the refusal is "At least one required value inspection is needed. at configuration.inspections", which the Cursor agent of the baseline round met twice in one start; why_new=Cycle 0045 cause 4 (DX-1 c, after PC-4.2 kept the rule); seam=none
+test('a start whose first stop declares only type inspections is refused naming that stop, the inspections it declares and what to add', async (context) => {
+  // Arrange: the first stop declares one inspection, of mode type.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'type-only-first-stop',
+      configuration: {
+        ...configuration,
+        inspections: [{ path: 'setTheme', mode: 'type', required: true }],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: configuration.inspections: this stop declares only type inspections (type:setTheme). Add one required value inspection of a primitive the stop can read, for example a member of one of these objects; type inspections may stay beside it. at configuration.inspections',
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
+// Value: protects=the refusal of a type-only later stop naming that stop's own configuration path and all its inspections; fails_when=a later stop is named by the first stop's path, or the list drops an inspection; why_new=Cycle 0045 cause 4 (the Cursor run's second refused stop was additionalStops[2]); seam=none
+test('a start whose later stop declares only type inspections is refused naming that later stop and every inspection it declares', async (context) => {
+  // Arrange: a cross-runtime configuration whose first stop is valid and whose later stop declares two inspections, both of mode type.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'type-only-later-stop',
+      configuration: {
+        ...configuration,
+        version: 2,
+        participant: 'browser',
+        additionalStops: [
+          {
+            participant: 'browser',
+            source: { ...configuration.source, column: 7 },
+            anchorIndex: 0,
+            inspections: [
+              { path: 'nextTheme', mode: 'type', required: true },
+              { path: 'setTheme', mode: 'type', required: false },
+            ],
+          },
+        ],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: configuration.additionalStops[0].inspections: this stop declares only type inspections (type:nextTheme, type:setTheme). Add one required value inspection of a primitive the stop can read, for example a member of one of these objects; type inspections may stay beside it. at configuration.additionalStops[0].inspections',
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
+// The other way to break the rule keeps its own sentence, with the stop's path: a value inspection is declared, but none is required.
+test('a start whose stop declares a value inspection but requires none is refused with the sentence that one required value inspection is needed', async (context) => {
+  // Arrange: the first stop declares one optional value inspection.
+  const { service, configuration } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'no-required-inspection',
+      configuration: {
+        ...configuration,
+        inspections: [{ path: 'nextTheme', mode: 'value', required: false }],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: At least one required value inspection is needed. at configuration.inspections',
+  )
+})
+
+// Value: protects=the Node test profile refusing a type-only stop with the same sentence; fails_when=the twin rule in the Node test configuration keeps the bare sentence; why_new=Cycle 0045 cause 4 (the twin at nodeTestConfigSchemas.ts); seam=none
+test('a Node test start whose stop declares only type inspections is refused naming that stop and what to add', async (context) => {
+  // Arrange: a Node test configuration whose one stop declares one inspection, of mode type.
+  const { service, configuration } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'node-test',
+      key: 'type-only-node-stop',
+      configuration: {
+        version: 1,
+        adapter: 'vitest-node',
+        book: configuration.book,
+        testFile: 'src/theme.test.ts',
+        testHash: 'a'.repeat(64),
+        testTitles: ['theme', 'selects dark'],
+        source: configuration.source,
+        inspections: [{ path: 'nextTheme', mode: 'type', required: true }],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_start: configuration.inspections: this stop declares only type inspections (type:nextTheme). Add one required value inspection of a primitive the stop can read, for example a member of one of these objects; type inspections may stay beside it. at configuration.inspections',
+  )
+})
+
+// Value: protects=the rule standing where the agent reads last before it declares a run: the tool's input schema; fails_when=the schema of inspections carries no description (the Cursor agent read it directly before its refused start); why_new=Cycle 0045 cause 4 (DX-1 b); seam=none
+test('the input schema of codebook_start states the inspection rule for the first stop and for later stops of both profiles', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const tools = await client.listTools()
+
+  // Assert
+  const variantSchema = z.object({
+    properties: z.object({
+      adapter: z.object({ const: z.string() }),
+      version: z.object({ const: z.number() }),
+      inspections: z.object({ description: z.string() }),
+      additionalStops: z.object({
+        items: z.object({
+          properties: z.object({
+            inspections: z.object({ description: z.string() }),
+          }),
+        }),
+      }),
+    }),
+  })
+  const [repositoryVariants, nodeTestVariant] = z
+    .object({
+      properties: z.object({
+        configuration: z.object({
+          anyOf: z.tuple([
+            z.object({ anyOf: z.array(variantSchema) }),
+            variantSchema,
+          ]),
+        }),
+      }),
+    })
+    .parse(
+      tools.tools.find((tool) => tool.name === 'codebook_start')?.inputSchema,
+    ).properties.configuration.anyOf
+  const described = [...repositoryVariants.anyOf, nodeTestVariant].map(
+    (variant) => [
+      `${variant.properties.adapter.const} ${variant.properties.version.const}`,
+      variant.properties.inspections.description,
+      variant.properties.additionalStops.items.properties.inspections
+        .description,
+    ],
+  )
+  const rule =
+    'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
+  assert.deepEqual(described, [
+    ['next-dev-webpack 1', rule, rule],
+    ['next-dev-webpack 2', rule, rule],
+    ['vitest-node 1', rule, rule],
+  ])
+})
+
+// Value: protects=the help an agent reads before its first start leading it to a primitive member for an object; fails_when=the help offers "declare type:<path>" as a way to capture an object, which the Cursor agent followed into a refused start; why_new=Cycle 0045 cause 4 (DX-1 b); seam=none
+test('configured help says that every stop needs a required value inspection of a primitive and, for an object, to declare a primitive member with type beside it', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+
+  // Assert
+  assert.ok('text' in help)
+  const inspections = z
+    .object({ inspections: z.string() })
+    .parse(JSON.parse(help.text)).inspections
+  assert.equal(
+    inspections.startsWith(
+      'Declare unique value:<path> or type:<path> inspections; every stop needs at least one required value inspection of a primitive it can read, and a stop cannot consist of type inspections only. Paths contain one to four ASCII identifier segments',
+    ),
+    true,
+  )
+  assert.equal(
+    inspections.includes(
+      'A value that is an object or a function is captured as the marker {type:"object"} or {type:"function"} and the run goes on: objects are not bounded, so its members are not captured facts; for an object declare a primitive member such as value:credentials.email as the stop\'s required value inspection, add type:<path> beside it when the object\'s type is what you want to show, and read the members in the native debugger state of the observation.',
+    ),
+    true,
+  )
+  assert.doesNotMatch(inspections, /declare type:<path> or a primitive member/)
+})
+
+// Value: protects=an agent that publishes an article under a book id an earlier question already took getting to a run on its own citations; fails_when=the conflict only says "read the current book", so the agent runs on the article it found, whose citations do not cover its stop (the Cursor run's second refused start); why_new=Cycle 0045 cause 5; seam=none
+test('after a publish with expectedRevision 0 is refused for an existing article, the same document published with the current revision is the next revision, and a start on that revision is admitted', async (context) => {
+  // Arrange: the library holds revision 1 of the book "interface"; the agent's own document cites the same sources.
+  const { service, configuration, books, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  const document = (await books.readDefinition('interface', 1)).revision
+      .document,
+    publication = {
+      instanceId: service.instanceId,
+      bookId: 'interface',
+      document: { ...document, summary: 'The agent’s own article.' },
+    }
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_publish_book',
+    arguments: { ...publication, key: 'create', expectedRevision: 0 },
+  })
+  const published = await client.callTool({
+    name: 'codebook_publish_book',
+    arguments: { ...publication, key: 'replace', expectedRevision: 1 },
+  })
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'own-article',
+      configuration: {
+        ...configuration,
+        book: { ...configuration.book, revision: 2 },
+      },
+    }),
+    record = service.record(receipt)
+  await record.preparation
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.deepEqual(
+    z
+      .object({
+        error: z.object({
+          code: z.string(),
+          message: z.string(),
+          recovery: z.string(),
+        }),
+      })
+      .parse(refused.structuredContent).error,
+    {
+      code: 'BOOK_CONFLICT',
+      message:
+        "Book interface exists at revision 1. To replace it, publish the complete document again with expectedRevision 1; to keep it, publish under another book id. A run stops only on lines its article's node cites, so publish your own citations before you start.",
+      recovery:
+        'The message names what conflicts. For a revision conflict, publish the complete document with the current revision as expectedRevision to replace the book, or under another book id to keep it; read the latest revision when you build on its content or its learning identities. Reuse a key only with identical content and expectedRevision.',
+    },
+  )
+  assert.equal(published.isError, undefined, JSON.stringify(published.content))
+  assert.equal(
+    z
+      .object({ data: z.object({ revision: z.number() }) })
+      .parse(published.structuredContent).data.revision,
+    2,
+  )
+  assert.equal(record.error, undefined)
+  assert.equal(record.prepared, true)
+  assert.equal(runtimes.length, 1)
+  assert.equal(service.state(record).nextActions[0], 'repository-click')
+})
+
+// Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none
+test('repository help says that a revision conflict names the current revision and gives the two ways on', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository')
+
+  // Assert
+  assert.ok('text' in help)
+  assert.equal(
+    z.object({ recovery: z.string() }).parse(JSON.parse(help.text)).recovery,
+    'Source mismatch: reread the exact path and update citations explicitly. Revision conflict: the answer names the current revision; publish the complete document again with that expectedRevision to replace the book, or under another book id to keep it. Lost response: reuse identical key/input to recover the original receipt even after source changes. Missing history: discover saved studies in the library; never run application input as recovery.',
+  )
+})
+
+/** A consistent learning summary for the fixture's one stop, which each test of a broken rule changes in one place. @example learningSummaryFor(snapshotUri, sourceHash).steps[0]?.id // 'select' */
+const learningSummaryFor = (
+  snapshotUri: string,
+  sourceHash: string,
+): LearningSummary => ({
+  question: 'How does the selected theme reach the interface?',
+  title: 'Theme selection',
+  summary: 'The recorded stop holds the selected dark theme.',
+  participants: [
+    { id: 'control', label: 'Theme control' },
+    { id: 'interface', label: 'Interface' },
+  ],
+  steps: [
+    {
+      id: 'select',
+      from: 'control',
+      to: 'interface',
+      label: 'Selected theme',
+      explanation: 'The stop records nextTheme as dark.',
+      evidence: 'observed',
+      reference: { snapshotUri, sourceHash },
+    },
+    {
+      id: 'later',
+      from: 'interface',
+      to: 'interface',
+      label: 'Later rendering',
+      explanation: 'No later stop was captured.',
+      evidence: 'unknown',
+    },
+  ],
+})
+
+// Value: protects=an agent whose learning summary breaks one rule learning which element breaks it and what that element needs; fails_when=all four rules answer one sentence at the path learningSummary ("Use unique participant/step IDs, declared participants and a verified reference for every observed or source-derived step."), after which the Cursor agent of the baseline round dropped the summary from every explanation; why_new=Cycle 0045 cause 6; seam=none
+for (const [brokenRule, breakRule, expectedRefusal] of [
+  [
+    'whose source-derived step has no reference is refused naming that step and what it needs',
+    (summary: LearningSummary): void => {
+      summary.steps[0]!.evidence = 'source-derived'
+      summary.steps[0]!.reference = undefined
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.steps[0] (select) is source-derived and has no reference. Give it the reference {snapshotUri, sourceHash} of a committed observation of this run, or label it unknown. at learningSummary.steps[0].reference',
+  ],
+  [
+    'that uses a participant id twice is refused naming the second use',
+    (summary: LearningSummary): void => {
+      summary.participants.push({ id: 'control', label: 'Second control' })
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.participants[2].id "control" is used twice; participant ids are unique. at learningSummary.participants[2].id',
+  ],
+  [
+    'that uses a step id twice is refused naming the second use',
+    (summary: LearningSummary): void => {
+      summary.steps[1]!.id = 'select'
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.steps[1].id "select" is used twice; step ids are unique. at learningSummary.steps[1].id',
+  ],
+  [
+    'whose step names a participant that is not declared is refused naming that step and that participant',
+    (summary: LearningSummary): void => {
+      summary.steps[0]!.to = 'renderer'
+    },
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain: learningSummary.steps[0] (select) names participant "renderer", which learningSummary.participants does not declare. at learningSummary.steps[0].to',
+  ],
+] as const)
+  test(`a learning summary ${brokenRule}`, async (context) => {
+    // Arrange: one stop is committed; the summary is consistent except for the one rule under test.
+    const { service, configuration, runtimes } =
+        await configuredServiceHarness(context),
+      client = await connectMcpClient(context, service)
+    const receipt = service.start({
+        instanceId: service.instanceId,
+        profile: 'repository-browser',
+        key: 'summary-rule',
+        configuration,
+      }),
+      record = service.record(receipt)
+    await record.preparation
+    service.action({ ...receipt, action: 'repository-click', key: 'one' })
+    const snapshotUri = service.state(record).observations[0]!.snapshotUri,
+      learningSummary = learningSummaryFor(
+        snapshotUri,
+        configuration.source.hash,
+      )
+    breakRule(learningSummary)
+
+    // Act
+    const refused = await client.callTool({
+      name: 'codebook_explain',
+      arguments: {
+        instanceId: receipt.instanceId,
+        runId: receipt.runId,
+        key: 'explain-with-summary',
+        snapshotUri,
+        sourceHash: configuration.source.hash,
+        valuePaths: ['value:nextTheme'],
+        interpretation: 'The next theme is dark.',
+        learningSummary,
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(toolText(refused), expectedRefusal)
+    assert.equal(savedExplanationEntries(runtimes[0]!).length, 0)
+  })
+
+// Value: protects=the Node test learning material answering a broken rule the same way, in its own reference kind; fails_when=the twin keeps one sentence for four rules; why_new=Cycle 0045 cause 6 (the twin at nodeTestHistorySchemas.ts); seam=none
+test('Node test learning material whose observed step has no reference is refused naming that step and the references a Node history offers', async (context) => {
+  // Arrange: learning material whose one step is observed and carries no reference.
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_explain_node_history',
+    arguments: {
+      studyId:
+        '11111111-1111-4111-8111-111111111111_22222222-2222-4222-8222-222222222222',
+      expectedRevision: 0,
+      content: {
+        question: 'Which value does the test read?',
+        title: 'Test value',
+        summary: 'The test reads the selected theme.',
+        participants: [{ id: 'test', label: 'Test' }],
+        steps: [
+          {
+            id: 'read',
+            from: 'test',
+            to: 'test',
+            label: 'Reads the theme',
+            explanation: 'The stop holds the theme.',
+            evidence: 'observed',
+          },
+        ],
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.equal(
+    toolText(refused),
+    'MCP error -32602: Input validation error: Invalid arguments for tool codebook_explain_node_history: content.steps[0] (read) is observed and has no reference. Give it the reference of a stop, an output or the result of this history ({type, sequence}, with sourceHash for a stop and channel for an output), or label it unknown. at content.steps[0].reference',
+  )
+})
+
+// Value: protects=an agent that reads the tool's input schema directly before it writes a summary learning when a step needs a reference; fails_when=the schema of reference carries no description (the Cursor agent read it and sent a source-derived step without one); why_new=Cycle 0045 cause 6 (DX-1 b); seam=none
+test('the input schemas of codebook_explain and codebook_explain_node_history say when a step needs a reference and what it holds', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const tools = await client.listTools()
+
+  // Assert
+  const summarySchema = z.object({
+    properties: z.object({
+      steps: z.object({
+        items: z.object({
+          properties: z.object({
+            reference: z.object({ description: z.string() }),
+          }),
+        }),
+      }),
+    }),
+  })
+  const referenceDescription = (
+    toolName: string,
+    summaryField: 'learningSummary' | 'content',
+  ): string =>
+    summarySchema.parse(
+      z
+        .object({ properties: z.record(z.string(), z.unknown()) })
+        .parse(tools.tools.find((tool) => tool.name === toolName)?.inputSchema)
+        .properties[summaryField],
+    ).properties.steps.items.properties.reference.description
+  assert.equal(
+    referenceDescription('codebook_explain', 'learningSummary'),
+    "Required for an observed or source-derived step: the snapshotUri and sourceHash of a committed observation of this run, or after the result the run's terminalReference; omit it only for an unknown step.",
+  )
+  assert.equal(
+    referenceDescription('codebook_explain_node_history', 'content'),
+    'Required for an observed or source-derived step: a stop, an output or the result of this history by its sequence number (a stop with its sourceHash, an output with its channel); omit it only for an unknown step.',
   )
 })
 

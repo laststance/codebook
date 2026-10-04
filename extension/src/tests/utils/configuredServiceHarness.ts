@@ -115,7 +115,8 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
           sessionId: 'browser-session',
           pause: this.gate.current,
           phase: this.gate.phase,
-          snapshot: this.snapshots[0],
+          // The stop a participant is at is the last one committed.
+          snapshot: this.snapshots.at(-1),
           continued: undefined,
           conflict: this.gate.conflict,
         },
@@ -126,7 +127,9 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
         this.status === 'ready' && !this.operation
           ? 'repository-click'
           : undefined,
-      observed: undefined,
+      observed: this.operation?.afterVerified
+        ? { afterVerified: true }
+        : undefined,
       links: [],
       captures: {},
       failures: [...this.failures],
@@ -162,6 +165,47 @@ export class ControlledConfiguredRuntime implements StudyRuntime {
   }
   /** Leaves native tab/reveal ownership to actual-host tests. @example await runtime.reveal(snapshot) */
   async reveal(): Promise<void> {}
+}
+
+/**
+ * Commits the next stop on a synthetic runtime as the coordinator does after a continuation: a new pause, its snapshot and the paused status.
+ * @param runtime - A runtime whose first stop {@link ControlledConfiguredRuntime.action} committed.
+ * @returns The committed snapshot, a copy of the stop before it under the new pause identity.
+ * @throws When no stop was committed before.
+ * @example const next = commitNextStop(runtime) // next.id === 'browser-session:2'
+ */
+export function commitNextStop(
+  runtime: ControlledConfiguredRuntime,
+): ConfiguredRuntimeSnapshot {
+  const previous = runtime.snapshots.at(-1)
+  if (!previous) throw new Error('No stop was committed before this one.')
+  const pause = runtime.gate.stop('browser-session', 1),
+    id = `${pause.sessionId}:${pause.generation}`
+  const receipt = runtime.evidence.record('snapshot.committed', {
+    snapshotId: id,
+  })
+  const snapshot = {
+    ...previous,
+    id,
+    pause,
+    capturedAt: receipt.wallTime,
+    elapsedMs: receipt.elapsedMs,
+  }
+  runtime.snapshots.push(snapshot)
+  runtime.status = 'paused-browser'
+  return snapshot
+}
+
+/**
+ * Ends a synthetic runtime's operation as the coordinator does once the after conditions held after the last continuation.
+ * @param runtime - A runtime whose input was dispatched.
+ * @throws When no input was dispatched.
+ * @example observeResult(runtime) // runtime.view().status === 'completed'
+ */
+export function observeResult(runtime: ControlledConfiguredRuntime): void {
+  if (!runtime.operation) throw new Error('No input was dispatched.')
+  runtime.operation.afterVerified = true
+  runtime.status = 'completed'
 }
 
 /** Combines real Git/book/storage/service boundaries with synthetic editor effects and an optional test clock. @example const { service } = await configuredServiceHarness(context, () => 1000) */

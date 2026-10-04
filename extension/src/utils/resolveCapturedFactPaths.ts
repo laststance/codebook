@@ -1,7 +1,7 @@
 import { StudyError } from '../errors'
 
 /** A path an agent sent without its `value:` or `type:` prefix, and the captured key it was saved under. */
-export interface RewrittenFactPath {
+interface RewrittenFactPath {
   from: string
   to: string
 }

@@ -5,14 +5,14 @@ import {
   CONFIGURED_OBSERVATION_LIMIT,
   NODE_TEST_TITLE_PATH_LIMIT,
   REPOSITORY_CONFIG_LIMIT_BYTES,
-  REPOSITORY_INSPECTION_LIMIT,
 } from './constants'
 import {
   repositoryBookSelectionSchema,
-  repositoryInspectionSchema,
   repositorySourceStopSchema,
+  stopInspectionsSchema,
 } from './repositoryConfigSchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
+import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 
 const testFileSchema = repositoryPathSchema
   .refine(
@@ -31,10 +31,7 @@ const testTitleSchema = z
   .regex(/^[^\x00-\x1f\x7f]+$/)
 const nodeTestStopSchema = repositorySourceStopSchema.extend({
   anchorIndex: repositoryBookSelectionSchema.shape.anchorIndex,
-  inspections: z
-    .array(repositoryInspectionSchema)
-    .min(1)
-    .max(REPOSITORY_INSPECTION_LIMIT),
+  inspections: stopInspectionsSchema,
 })
 
 /** Bounds the intended repository-local Vitest test and its debugger observations before a Node runtime is acquired. @example nodeTestConfigSchema.parse({ version: 1, adapter: 'vitest-node', book, testFile: 'src/a.test.ts', testTitles: ['subscription', 'notifies once'], source, inspections }) */
@@ -59,10 +56,7 @@ export const nodeTestConfigSchema = z
         'Required for a new run: every enclosing describe title, outermost first, then the test title, exactly as Vitest reports them. Example: ["invoice data queries", "converts stored invoice cents to dollars for the edit form"].',
       ),
     source: repositorySourceStopSchema,
-    inspections: z
-      .array(repositoryInspectionSchema)
-      .min(1)
-      .max(REPOSITORY_INSPECTION_LIMIT),
+    inspections: stopInspectionsSchema,
     additionalStops: z
       .array(nodeTestStopSchema)
       .max(CONFIGURED_OBSERVATION_LIMIT - 1)
@@ -79,23 +73,24 @@ export const nodeTestConfigSchema = z
         path: ['testName'],
         message: 'Cite the test with testTitles only.',
       })
-    // Every requested stop needs a concrete value; type-only output cannot prove the test's runtime state.
+    // Every requested stop needs a concrete value; type-only output cannot prove the test's runtime state. The refusal names the stop and what it declares.
     for (const [index, inspections] of [
       configuration.inspections,
       ...(configuration.additionalStops ?? []).map((stop) => stop.inspections),
     ].entries()) {
-      if (
-        inspections.some(
-          (inspection) => inspection.required && inspection.mode === 'value',
-        )
+      const missingValueInspection = missingValueInspectionMessage(
+        inspections,
+        index
+          ? `configuration.additionalStops[${index - 1}].inspections`
+          : 'configuration.inspections',
       )
-        continue
+      if (!missingValueInspection) continue
       context.addIssue({
         code: 'custom',
         path: index
           ? ['additionalStops', index - 1, 'inspections']
           : ['inspections'],
-        message: 'At least one required value inspection is needed.',
+        message: missingValueInspection,
       })
     }
     if (

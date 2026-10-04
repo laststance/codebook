@@ -57,6 +57,12 @@ export const continueSchema = z.strictObject({
   sessionId: z.string().min(1).max(KEY_LENGTH_LIMIT),
   threadId: z.number().int().nonnegative(),
   generation: z.number().int().positive(),
+  answer: z
+    .literal('next')
+    .optional()
+    .describe(
+      'Optional; the run resource\'s continueArguments carry it. With "next" the call answers when the run committed its next pause, observed its result or ended, and returns the run\'s state beside accepted; next names which. Without it the call answers as soon as the continuation is acknowledged.',
+    ),
 })
 export const revealSchema = z.strictObject({
   ...runShape,

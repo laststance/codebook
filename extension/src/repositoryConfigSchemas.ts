@@ -25,6 +25,7 @@ import {
 } from './constants'
 import { bookIdSchema } from './identitySchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
+import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 
 const selectorSchema = z
   .string()
@@ -74,11 +75,20 @@ export const inspectionPathSchema = z
       segments.every((segment) => !forbiddenSegments.has(segment))
     )
   }, `Use up to ${REPOSITORY_INSPECTION_SEGMENT_LIMIT} identifier segments without reserved roots or prototype access.`)
-export const repositoryInspectionSchema = z.strictObject({
+const repositoryInspectionSchema = z.strictObject({
   path: inspectionPathSchema,
   mode: z.enum(['value', 'type']),
   required: z.boolean(),
 })
+/** The rule every stop's inspections follow, said where an agent reads last before it declares a run: the description of each `inspections` field in the input schema of `codebook_start`, for both profiles. */
+const INSPECTIONS_RULE_DESCRIPTION =
+  'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
+/** The inspections of one declared stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of both profiles is this schema. */
+export const stopInspectionsSchema = z
+  .array(repositoryInspectionSchema)
+  .min(1)
+  .max(REPOSITORY_INSPECTION_LIMIT)
+  .describe(INSPECTIONS_RULE_DESCRIPTION)
 export const repositoryConditionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('visible'), selector: selectorSchema }),
   z.strictObject({
@@ -193,19 +203,13 @@ const repositoryConfigurationShape = z.strictObject({
     before: conditionsSchema,
     after: conditionsSchema,
   }),
-  inspections: z
-    .array(repositoryInspectionSchema)
-    .min(1)
-    .max(REPOSITORY_INSPECTION_LIMIT),
+  inspections: stopInspectionsSchema,
   additionalStops: z
     .array(
       z.strictObject({
         line: z.number().int().positive(),
         column: z.number().int().positive(),
-        inspections: z
-          .array(repositoryInspectionSchema)
-          .min(1)
-          .max(REPOSITORY_INSPECTION_LIMIT),
+        inspections: stopInspectionsSchema,
       }),
     )
     .max(CONFIGURED_OBSERVATION_LIMIT - 1)
@@ -254,16 +258,18 @@ function validateInspections(
     const path = index
       ? ['additionalStops', index - 1, 'inspections']
       : ['inspections']
-    // A type-only stop cannot supply the useful actual value required by the configured learning contract.
-    if (
-      !inspections.some(
-        (inspection) => inspection.required && inspection.mode === 'value',
-      )
+    // A type-only stop cannot supply the useful actual value required by the configured learning contract; the refusal names the stop and what it declares.
+    const missingValueInspection = missingValueInspectionMessage(
+      inspections,
+      index
+        ? `configuration.additionalStops[${index - 1}].inspections`
+        : 'configuration.inspections',
     )
+    if (missingValueInspection)
       context.addIssue({
         code: 'custom',
         path,
-        message: 'At least one required value inspection is needed.',
+        message: missingValueInspection,
       })
     if (
       new Set(

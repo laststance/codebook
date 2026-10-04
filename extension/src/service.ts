@@ -19,6 +19,8 @@ import {
   REPOSITORY_SOURCE_LIMIT_BYTES,
   ACTIVE_TIMEOUT_MS,
   API_VERSION,
+  CONTINUE_ANSWER_CALL_BUDGET_MS,
+  CONTINUE_ANSWER_GRACE_MS,
   MAINTENANCE_INTERVAL_MS,
   MAX_EXPLANATIONS,
   MAX_RUNS,
@@ -104,6 +106,11 @@ import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { thrownMessage } from './utils/thrownMessage'
+import { waitForNextRunState } from './utils/waitForNextRunState'
+
+/** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
+const SAVE_LEARNING_SUMMARY_ADVICE =
+  "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it."
 
 export interface Explanation {
   id: string
@@ -120,7 +127,7 @@ export interface Explanation {
   learnerUnderstandingChanged: false
 }
 /** What `codebook_explain` answers: where the committed explanation is read, and the captured keys it was saved under (a path sent without its prefix appears here with it). */
-export interface ExplanationReceipt {
+interface ExplanationReceipt {
   explanationUri: string
   valuePaths: string[]
 }
@@ -795,7 +802,95 @@ export class StudyService {
     return receipt
   }
 
-  /** Uses the existing atomic pause reservation, never a focused debug session. @example await service.continue(runState.participants.server.continueArguments) */
+  /**
+   * Continues the current pause for the `codebook_continue` tool and, when the arguments carry `answer: "next"` as the run resource's continueArguments do, answers with the run's next state, so an agent needs no poll after a continuation.
+   * The wait is one promise ({@link waitForNextRunState}) that settles on the run's next state change after the continuation was acknowledged. Its one bound is the earlier of the acknowledgement plus {@link ACTIVE_TIMEOUT_MS} and {@link CONTINUE_ANSWER_GRACE_MS}, and the call's start plus {@link CONTINUE_ANSWER_CALL_BUDGET_MS}. It never passes the run's own deadline: that deadline is one of the state changes that end it ({@link StudyService.nextRunState}).
+   * @param input - The current pause's continuation arguments, as the run resource gave them.
+   * @param signal - The request's cancellation; an abandoned request releases its wait.
+   * @returns
+   * - Without `answer` and for a Node test run: what {@link StudyService.continue} answers
+   * - With `answer: "next"`: `accepted`, `runUri`, the run's `state` (the run resource) and `next`, which names what ended the wait: `observation` (the next pause is committed and can be continued), `result` (the result was observed), `failure` (the run failed, also at its deadlines) or `stopped` (the run was stopped or the service is shutting down)
+   * - At the bound, and for an abandoned request: the same without `next`, with the latest state; the agent then polls
+   * @throws What {@link StudyService.continue} throws; nothing is awaited after a refused continuation.
+   * @example
+   * const answer = await service.continueToNextState(runState.participants.browser.continueArguments)
+   * // => { accepted: true, runUri, next: 'observation', state: { observations: [..., { inspectionUri }], ... } }
+   */
+  async continueToNextState(input: ContinueInput, signal?: AbortSignal) {
+    const startedAtMs = this.now()
+    // The snapshots committed before the continuation tell the next observation from the one being continued.
+    const committedBefore = new Set(
+      this.records
+        .get(input.runId)
+        ?.runtime?.view()
+        .snapshots.map((snapshot) => snapshot.id),
+    )
+    const receipt = await this.continue(input)
+    const record = this.record(input)
+    // A Node test continuation already answers at its next stop or its result.
+    if (input.answer !== 'next' || record.profile === NODE_TEST_PROFILE)
+      return receipt
+    const waitEndsAtMs = Math.min(
+      this.now() + ACTIVE_TIMEOUT_MS + CONTINUE_ANSWER_GRACE_MS,
+      startedAtMs + CONTINUE_ANSWER_CALL_BUDGET_MS,
+    )
+    const next = await waitForNextRunState(
+      () => this.nextRunState(record, committedBefore),
+      () => this.now() >= waitEndsAtMs,
+      signal,
+    )
+    return { ...receipt, ...(next && { next }), state: this.state(record) }
+  }
+
+  /**
+   * Names what ended the step a continuation began, read by {@link StudyService.continueToNextState} at every turn of its wait.
+   * @param record - The run that was continued.
+   * @param committedBefore - The ids of the snapshots committed before the continuation.
+   * @returns
+   * - `'failure'` once the run has an error, a runtime or evidence failure, or passed its whole-run deadline ({@link StudyService.expireAtDeadline} applies it at once instead of at the next maintenance turn)
+   * - `'result'` once the runtime completed, also while the service already cleans the completed run up
+   * - `'stopped'` once a run that did not complete is being stopped or was cancelled, or the service is shutting down
+   * - `'observation'` once a participant is paused at a snapshot committed after the continuation
+   * - `undefined` while the run is still on its way; a snapshot that was committed and then failed its inspection is no observation to continue, and the failure that follows it is what ends the wait
+   * @example this.nextRunState(record, new Set(['browser-session:1'])) // => 'observation' once browser-session:2 is committed and paused
+   */
+  private nextRunState(
+    record: StudyRecord,
+    committedBefore: ReadonlySet<string>,
+  ): 'failure' | 'stopped' | 'result' | 'observation' | undefined {
+    // The whole-run deadline is the run's own end: apply it now, so the answer carries it.
+    this.expireAtDeadline(record)
+    const runtime = record.runtime?.view()
+    if (
+      record.error ||
+      runtime?.failures.length ||
+      record.runtime?.evidence.failure ||
+      runtime?.status === 'failed'
+    )
+      return 'failure'
+    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run.
+    if (runtime?.status === 'completed') return 'result'
+    if (
+      this.stopping ||
+      record.stopping ||
+      record.stopped ||
+      runtime?.status === 'cancelled'
+    )
+      return 'stopped'
+    const isAtNextObservation = Object.values(runtime?.participants ?? {}).some(
+      (participant) =>
+        participant.snapshot !== undefined &&
+        !committedBefore.has(participant.snapshot.id) &&
+        isPausedAtSnapshot(participant, participant.snapshot),
+    )
+    return isAtNextObservation ? 'observation' : undefined
+  }
+
+  /**
+   * Continues the current pause through the runtime's atomic pause reservation, never a focused debug session, and answers once the continuation is acknowledged; called by {@link StudyService.continueToNextState} for the tool and by the Study pane's Continue.
+   * `answer` in the arguments is not read here: the pane sends the run resource's arguments as they are and needs the acknowledgement only.
+   * @example await service.continue(runState.participants.server.continueArguments)
+   */
   async continue(input: ContinueInput) {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
@@ -1471,6 +1566,17 @@ export class StudyService {
       const resumable = Boolean(
         canControl && snapshot && isPausedAtSnapshot(participant, snapshot),
       )
+      const continueArguments: ContinueInput | undefined =
+        resumable && snapshot
+          ? {
+              instanceId: this.instanceId,
+              runId: record.id,
+              participant: name,
+              ...snapshot.pause,
+              // Sent back to codebook_continue, it makes the call answer with the run's next state.
+              answer: 'next',
+            }
+          : undefined
       return {
         snapshotUri,
         sourceUri: snapshotUri && `${snapshotUri}/source/typescript`,
@@ -1478,15 +1584,7 @@ export class StudyService {
         actionId: snapshot?.actionId,
         phase: participant?.phase,
         resumable,
-        continueArguments:
-          resumable && snapshot
-            ? {
-                instanceId: this.instanceId,
-                runId: record.id,
-                participant: name,
-                ...snapshot.pause,
-              }
-            : undefined,
+        continueArguments,
       }
     }
     const participants = {
@@ -1496,6 +1594,22 @@ export class StudyService {
       ...(nodeParticipants ?? {}),
       browser: participantView('browser'),
     }
+    const finalOutcome =
+      nodeOutcome ??
+      (terminalReason
+        ? 'not-demonstrated'
+        : (runtime?.finalOutcome ?? 'pending-teardown'))
+    // A refused or removed run has no history to read or to add to.
+    const holdsHistory =
+      historyExclusionState(record.historyExcluded) !== 'ended'
+    // A run that reached its result and saved no learning summary would be saved without a summary and a sequence: say so where the agent reads after the result.
+    const lacksLearningSummary =
+      holdsHistory &&
+      runtime?.status === 'completed' &&
+      finalOutcome === 'demonstrated' &&
+      ![...record.explanations.values()].some(
+        (explanation) => explanation.learningSummary,
+      )
     const nextActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
@@ -1503,10 +1617,8 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      // A refused or removed run has no history to read.
-      historyExclusionState(record.historyExcluded) === 'ended'
-        ? undefined
-        : 'read-history',
+      lacksLearningSummary ? 'save-learning-summary' : undefined,
+      holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     const material = {
       instanceId: this.instanceId,
@@ -1627,11 +1739,7 @@ export class StudyService {
         })) ?? [],
       runtimeOutcome: runtime?.runtimeOutcome,
       captureOutcome: runtime?.captureOutcome,
-      finalOutcome:
-        nodeOutcome ??
-        (terminalReason
-          ? 'not-demonstrated'
-          : (runtime?.finalOutcome ?? 'pending-teardown')),
+      finalOutcome,
       terminalReason,
       // A failure inside the runtime has no tool error of its own; its text becomes the cause an agent can quote.
       error:
@@ -1798,6 +1906,10 @@ export class StudyService {
           )
     return {
       ...material,
+      // Present only while nextActions names save-learning-summary; gone once an explanation with a learning summary is saved.
+      saveLearningSummary: lacksLearningSummary
+        ? SAVE_LEARNING_SUMMARY_ADVICE
+        : undefined,
       observedAt:
         observedAtMs === undefined
           ? undefined
@@ -1855,15 +1967,7 @@ export class StudyService {
         )
         record.runtime?.fail(record.error.message)
       }
-      if (this.now() >= record.deadlineAt) {
-        record.error ??= new StudyError(
-          'RUNTIME_FAILED',
-          'Study wall deadline expired; history only.',
-        )
-        record.runtime?.fail(record.error.message)
-        if (record.nodePhase && record.nodePhase !== 'completed')
-          record.nodePhase = 'failed'
-      }
+      this.expireAtDeadline(record)
       const runtimeState = record.runtime?.view().status
       if (
         record.error ||
@@ -1876,6 +1980,23 @@ export class StudyService {
           record.error = domainError(error)
         })
     }
+  }
+
+  /**
+   * Ends a run whose whole-run deadline has passed with the deadline's error, so every reader names the same end; called by {@link StudyService.maintain} at each maintenance turn and by {@link StudyService.nextRunState} while a continuation waits, which must not answer past the run's own deadline.
+   * It releases nothing itself: the next maintenance turn stops the run it marked.
+   * @param record - A run that is not stopped.
+   * @example this.expireAtDeadline(record) // record.error?.message === 'Study wall deadline expired; history only.' once now() >= record.deadlineAt
+   */
+  private expireAtDeadline(record: StudyRecord): void {
+    if (this.now() < record.deadlineAt) return
+    record.error ??= new StudyError(
+      'RUNTIME_FAILED',
+      'Study wall deadline expired; history only.',
+    )
+    record.runtime?.fail(record.error.message)
+    if (record.nodePhase && record.nodePhase !== 'completed')
+      record.nodePhase = 'failed'
   }
 
   /** Acquires the adapter once; cancellation after an await drains rather than abandons it. @example await this.prepare(record) */
