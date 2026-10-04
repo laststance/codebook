@@ -79,6 +79,11 @@ export async function workspaceHarness(
   ]
   /** Commands this host does not register; see `removeHostCommands`. */
   const absentHostCommands = new Set<string>()
+  /** The commands the reader runs to give an editor group the keyboard focus; each activates its group, which brings a hidden editor area back. */
+  const focusGroupCommands = [
+    'workbench.action.focusFirstEditorGroup',
+    'workbench.action.focusActiveEditorGroup',
+  ]
   /** The fake host's own Variables view for the presented stop, which the native commands of Show Variables act on; a view no test hides already lists the values. See `hideNativeVariables`. */
   const nativeVariables: {
     hiding?: NativeVariablesHiding
@@ -713,7 +718,51 @@ export async function workspaceHarness(
   ): void {
     if (!panelMaximized) return
     expandGroup(column)
-    if (changesVisibleEditors) panelMaximized = false
+    if (changesVisibleEditors) returnHiddenEditorArea()
+  }
+  /**
+   * Brings the hidden editor area back, as VS Code 1.140 does while the bottom panel is maximized whenever a group shows another editor or is activated: the panel leaves its maximized state.
+   * The area was laid out without height, so every stacked group comes back at its minimum height and the last group of each stack takes the height that is left, whichever group the trigger acted on: of two stacked groups the first is a 70 px strip.
+   * Called by {@link revealIntoHiddenEditorArea} (a reveal, a shown text document), a panel's registration, the focus-group commands, the tab closes and `vscode.setEditorLayout`, whose own layout then replaces these sizes.
+   * @example returnHiddenEditorArea() // groupHeightPx(1) => 70 and groupHeightPx(2) => 770 for two stacked groups
+   */
+  function returnHiddenEditorArea(): void {
+    if (!panelMaximized) return
+    panelMaximized = false
+    const returned = (
+      node: unknown,
+      isStack: boolean,
+      heightPx: number,
+    ): unknown => {
+      const children = layoutChildren(node)
+      if (!children) return node
+      // Groups side by side, and a group alone in its stack, keep their sizes and the whole height.
+      if (!isStack || children.length === 1)
+        return {
+          ...Object(node),
+          groups: children.map((child) => returned(child, !isStack, heightPx)),
+        }
+      const lastHeightPx =
+        heightPx - GROUP_MINIMUM_PX.height * (children.length - 1)
+      return {
+        ...Object(node),
+        groups: children.map((child, index) => {
+          const childHeightPx =
+            index === children.length - 1
+              ? lastHeightPx
+              : GROUP_MINIMUM_PX.height
+          return {
+            ...Object(returned(child, false, childHeightPx)),
+            size: childHeightPx,
+          }
+        }),
+      }
+    }
+    editorLayout = returned(
+      editorLayout,
+      Reflect.get(Object(editorLayout), 'orientation') === 1,
+      EDITOR_AREA_PX.height,
+    )
   }
   /** Measures one group of the fake editor area in pixels, from the proportions or pixels of the measured layout. @example groupHeightPx(1) // 420 for the Application group of the Study layout */
   function groupHeightPx(column: number): number | undefined {
@@ -760,6 +809,70 @@ export async function workspaceHarness(
       )?.viewColumn
     if (activeTabGroup === emptied) activeTabGroup = groups[0]!
     changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
+  }
+  /**
+   * Closes tabs as the editor does, group by group, for the reader's `tabGroups.close` requests and for the Close Editor command.
+   * A group that loses the tab it shows brings a hidden editor area back, and a native group a dead pane leaves empty is removed by {@link removeEmptiedGroup}.
+   * @param tabs - The tabs to close; a tab the editor will not release keeps every requested tab of its own group.
+   * @returns
+   * - `true` when every requested tab closed
+   * - `false` when a group kept its tabs because one of them refuses to close
+   * @example closeTabs([leftover]) // => true, and the tab beside the leftover is the one its group shows
+   */
+  function closeTabs(tabs: Tab[]): boolean {
+    let accepted = true,
+      closedActiveLeftover = false
+    const emptiedByDeadPane: typeof groups = []
+    for (const group of groups) {
+      const requested = group.tabs.filter((tab) => tabs.includes(tab))
+      if (!requested.length) continue
+      // One tab the editor will not release keeps every requested tab of its group and fails the answer; the other groups still close.
+      if (requested.some((tab) => closeRefusingTabs.has(tab))) {
+        accepted = false
+        continue
+      }
+      const active = group.activeTab,
+        heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
+      group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
+      // The group shows another editor, or none, once the tab it showed is closed.
+      if (active && tabs.includes(active)) returnHiddenEditorArea()
+      // The editor activates the neighbouring tab when the active one closes.
+      if (
+        active &&
+        tabs.includes(active) &&
+        (leftoverCapturedTabs.has(active) || deadPaneTabs.has(active))
+      ) {
+        group.activeTab = group.tabs.at(-1)
+        closedActiveLeftover = true
+      }
+      if (heldDeadPane && !group.tabs.length) emptiedByDeadPane.push(group)
+    }
+    // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
+    for (const emptied of emptiedByDeadPane) {
+      const mainGroups = groups.filter(
+        (candidate) => candidate !== separateEditorPart?.group,
+      )
+      if (!nativeLayout || mainGroups.length === 1) break
+      // The keyboard focus of the removed group goes to the group before it, or to the next one when it was the first.
+      if (activeTabGroup === emptied) {
+        const index = groups.indexOf(emptied)
+        activeTabGroup = groups[index > 0 ? index - 1 : 1]!
+        closedActiveLeftover = true
+      }
+      removeEmptiedGroup(emptied)
+    }
+    if (closedActiveLeftover) {
+      if (lateEditorAfterLeftoverClose || staleEditorAfterLeftoverClose) {
+        // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
+        partialFocusEditor = { value: staleEditorAfterLeftoverClose }
+        staleEditorAfterLeftoverClose = undefined
+        setTimeout(() => {
+          partialFocusEditor = undefined
+          activeTextEditorChanged(focusedSourceEditor())
+        }, 60)
+      } else activeTextEditorChanged(focusedSourceEditor())
+    }
+    return accepted
   }
   /** Models Cursor's refusal to place a normal reader in its separate chat part; panel and text opens share this boundary. @example nativeReaderColumn(2) // 1 when only main column one and chat column two exist */
   function nativeReaderColumn(requested: number): number {
@@ -1055,25 +1168,7 @@ export async function workspaceHarness(
             emptied
           ) {
             automaticallyClosedColumns.push(emptied.viewColumn)
-            groups.splice(groups.indexOf(emptied), 1)
-            for (const remaining of groups)
-              if (remaining.viewColumn > emptied.viewColumn)
-                remaining.viewColumn--
-            for (const retained of panels)
-              retained.viewColumn = groups.find((candidate) =>
-                candidate.tabs.includes(retained.nativeTab),
-              )?.viewColumn
-            editorLayout = {
-              orientation: 0,
-              groups: groups
-                .filter((candidate) => candidate !== separateEditorPart?.group)
-                .map(() => ({})),
-            }
-            changedGroups({
-              opened: [],
-              closed: [emptied],
-              changed: [...groups],
-            })
+            removeEmptiedGroup(emptied)
           }
           if (!preserveFocus) {
             retainDelayedTextFocus(kind)
@@ -1223,6 +1318,8 @@ export async function workspaceHarness(
       const group = nativeGroup(value.viewColumn ?? 1)
       if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab)
       group.activeTab = nativeTab
+      // The new pane is the editor its group shows now, with or without the keyboard focus.
+      returnHiddenEditorArea()
     }
     if (registered) register()
     else {
@@ -1663,6 +1760,12 @@ export async function workspaceHarness(
             activeTabGroup.activeTab
           )
             activeTabGroup.activeTab.isPreview = false
+          // The learner's Close Editor closes the tab the focused group shows, as a close request for that tab does.
+          if (
+            name === 'workbench.action.closeActiveEditor' &&
+            activeTabGroup.activeTab
+          )
+            closeTabs([activeTabGroup.activeTab])
           if (name === 'workbench.action.minimizeOtherEditors') {
             maximizedEditorGroup = false
             // Native Expand also changes group proportions while exiting maximization.
@@ -1685,6 +1788,8 @@ export async function workspaceHarness(
             maximizedEditorGroup = !maximizedEditorGroup
           if (name === 'workbench.action.maximizeEditorHideSidebar')
             maximizedEditorGroup = true
+          // The activated group is in view before the command answers.
+          if (focusGroupCommands.includes(name)) returnHiddenEditorArea()
           if (name === 'workbench.action.focusFirstEditorGroup') {
             const previousEditor = focusedSourceEditor(),
               previousGroup = activeTabGroup,
@@ -1757,6 +1862,8 @@ export async function workspaceHarness(
               separateEditorPart.layout = structuredClone(layout)
               return
             }
+            // A layout given to the main grid brings a hidden editor area back; the given layout replaces the sizes of that return.
+            returnHiddenEditorArea()
             settledLayout =
               constrainStudyGrid && nativeGroupCount(layout) === 3
                 ? {
@@ -2083,76 +2190,7 @@ export async function workspaceHarness(
               rejectNextTabClose = false
               throw new Error('Canceled')
             }
-            let accepted = true,
-              closedActiveLeftover = false
-            const emptiedByDeadPane: typeof groups = []
-            for (const group of groups) {
-              const requested = group.tabs.filter((tab) => tabs.includes(tab))
-              if (!requested.length) continue
-              // One tab the editor will not release keeps every requested tab of its group and fails the answer; the other groups still close.
-              if (requested.some((tab) => closeRefusingTabs.has(tab))) {
-                accepted = false
-                continue
-              }
-              const active = group.activeTab,
-                heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
-              group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
-              // The editor activates the neighbouring tab when the active one closes.
-              if (
-                active &&
-                tabs.includes(active) &&
-                (leftoverCapturedTabs.has(active) || deadPaneTabs.has(active))
-              ) {
-                group.activeTab = group.tabs.at(-1)
-                closedActiveLeftover = true
-              }
-              if (heldDeadPane && !group.tabs.length)
-                emptiedByDeadPane.push(group)
-            }
-            // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
-            for (const emptied of emptiedByDeadPane) {
-              const mainGroups = groups.filter(
-                (candidate) => candidate !== separateEditorPart?.group,
-              )
-              if (!nativeLayout || mainGroups.length === 1) break
-              const index = groups.indexOf(emptied)
-              groups.splice(index, 1)
-              for (const remaining of groups)
-                if (remaining.viewColumn > emptied.viewColumn)
-                  remaining.viewColumn--
-              if (activeTabGroup === emptied) {
-                activeTabGroup = groups[Math.max(0, index - 1)]!
-                closedActiveLeftover = true
-              }
-              editorLayout = {
-                orientation: 0,
-                groups: groups
-                  .filter(
-                    (candidate) => candidate !== separateEditorPart?.group,
-                  )
-                  .map(() => ({})),
-              }
-              changedGroups({
-                opened: [],
-                closed: [emptied],
-                changed: [...groups],
-              })
-            }
-            if (closedActiveLeftover) {
-              if (
-                lateEditorAfterLeftoverClose ||
-                staleEditorAfterLeftoverClose
-              ) {
-                // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
-                partialFocusEditor = { value: staleEditorAfterLeftoverClose }
-                staleEditorAfterLeftoverClose = undefined
-                setTimeout(() => {
-                  partialFocusEditor = undefined
-                  activeTextEditorChanged(focusedSourceEditor())
-                }, 60)
-              } else activeTextEditorChanged(focusedSourceEditor())
-            }
-            return accepted
+            return closeTabs(tabs)
           },
         },
       },
@@ -2723,9 +2761,11 @@ export async function workspaceHarness(
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
     },
+    /** The fake editor the reader runs in, so a test can act on it as the learner or another extension does: run a native command, create a panel, show a document or close a tab. @example await harness.editor.commands.executeCommand('workbench.action.focusFirstEditorGroup') */
+    editor: editorDependencies.vscode,
     /**
-     * Maximizes the bottom panel as its title bar's "Maximize Panel Size" does: the editor area is hidden until the learner restores the panel or an editor is opened or revealed.
-     * While hidden, the fake editor reports every stacked group at its minimum height (70 px), expands a group an editor is revealed in, and brings the area back when that reveal changes a group's visible editor.
+     * Maximizes the bottom panel as its title bar's "Maximize Panel Size" does: the editor area is hidden until the learner restores the panel or the editor brings the area back itself.
+     * While hidden, the fake editor reports every stacked group at its minimum height (70 px) and expands a group an editor is revealed in. It brings the area back, as VS Code 1.140 does, for a reveal or a shown document that changes a group's visible editor, a created webview panel, a focus-group command, `vscode.setEditorLayout`, a close of the tab a group shows and the Close Editor command; without a layout of its own the area returns with the first of two stacked groups 70 px high.
      * @example harness.maximizePanel()
      */
     maximizePanel(): void {
