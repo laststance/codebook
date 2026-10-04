@@ -3,7 +3,58 @@ import { join } from 'node:path'
 
 import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
-import { readWikiRegularFile } from './readWikiRegularFile'
+import {
+  readWikiRegularFile,
+  type WikiRegularFile,
+} from './readWikiRegularFile'
+
+/**
+ * Says whether a parsed publication receipt vouches for a manifest; called by {@link publicationIdentityOf}.
+ * @param receipt - The parsed receipt, whatever JSON it is.
+ * @param manifestSha256 - The hash of the manifest now on disk.
+ * @returns Whether the receipt is an object whose `manifestSha256` is that hash.
+ * @example
+ * isReceiptOfManifest({ manifestSha256: 'dc9d3160…' }, 'dc9d3160…') // => true
+ * isReceiptOfManifest(null, 'dc9d3160…')                          // => false
+ */
+function isReceiptOfManifest(
+  receipt: unknown,
+  manifestSha256: string,
+): boolean {
+  return (
+    typeof receipt === 'object' &&
+    receipt !== null &&
+    'manifestSha256' in receipt &&
+    receipt.manifestSha256 === manifestSha256
+  )
+}
+
+/**
+ * Builds the publication identity from a receipt file and a manifest file that are both there; called by {@link readWikiPublicationIdentity}.
+ * @param receiptFile - The publisher's receipt file.
+ * @param manifestFile - The manifest file.
+ * @returns
+ * - The receipt names the manifest's hash: `<that hash>@<inode of the receipt file>`
+ * - A receipt that is no JSON, or that does not name this manifest (edited, or mid-replacement): `undefined`
+ * @example
+ * publicationIdentityOf(receiptFile, manifestFile) // => 'dc9d3160…@1837466'
+ */
+function publicationIdentityOf(
+  receiptFile: WikiRegularFile,
+  manifestFile: WikiRegularFile,
+): string | undefined {
+  try {
+    const receipt: unknown = JSON.parse(receiptFile.bytes.toString('utf8'))
+    const manifestSha256 = createHash('sha256')
+      .update(manifestFile.bytes)
+      .digest('hex')
+    return isReceiptOfManifest(receipt, manifestSha256)
+      ? `${manifestSha256}@${receiptFile.inode}`
+      : undefined
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Reads the identity of the publication a Wiki folder holds: which manifest the publisher's receipt vouches for, and which receipt file says so.
@@ -32,18 +83,5 @@ export async function readWikiPublicationIdentity(
     join(outputDirectory, WIKI_MANIFEST_FILE),
   )
   if (!receiptFile || !manifestFile) return undefined
-  try {
-    const receipt: unknown = JSON.parse(receiptFile.bytes.toString('utf8'))
-    const manifestSha256 = createHash('sha256')
-      .update(manifestFile.bytes)
-      .digest('hex')
-    return typeof receipt === 'object' &&
-      receipt !== null &&
-      'manifestSha256' in receipt &&
-      receipt.manifestSha256 === manifestSha256
-      ? `${manifestSha256}@${receiptFile.inode}`
-      : undefined
-  } catch {
-    return undefined
-  }
+  return publicationIdentityOf(receiptFile, manifestFile)
 }

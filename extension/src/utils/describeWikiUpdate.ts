@@ -30,6 +30,12 @@ export type WikiUpdateWording = {
   isPageOlderThanSite?: boolean
 }
 
+/** One update state of {@link WikiUpdateStatus} by its name, as the helpers nested in {@link describeWikiUpdate} take it; a type only, so the embedded function stays free of outer variables. */
+type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
+  WikiUpdateStatus,
+  { state: State }
+>
+
 /**
  * Writes what the browser Wiki and the editor notification say for one update state.
  *
@@ -73,28 +79,50 @@ export function describeWikiUpdate(
     'sk the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.'
   const freshnessStep =
     'check the freshness label ' + wording.freshnessLabelPlace + '.'
-  if (status.state === 'running') {
-    const since = wording.formatTime(status.startedAt)
-    const bound = minutes(status.timeoutMs)
-    if (status.host === 'cursor')
-      return describe(
-        'Updating LLM Wiki…',
-        (status.candidateStaged
-          ? ' Cursor Agent is preparing a new site (started ' +
-            since +
-            ', up to ' +
-            bound +
-            ').'
-          : ' Cursor Agent started at ' +
-            since +
-            ' and may take up to ' +
-            bound +
-            '.') +
-          ' Cancel it from the notification in Cursor. This site stays readable.',
-      )
-    return describe(
+  /**
+   * Words the running line of a Cursor update; called by {@link describeRunning}.
+   * @param running - The running state.
+   * @param since - When the run started, as the learner's local time.
+   * @param bound - The run's bound in whole minutes, for example "15 minutes".
+   * @returns The description: preparing a new site once a candidate is staged, started and bounded before that.
+   * @example describeRunningInCursor(running, '21:00', '15 minutes').lead // => 'Updating LLM Wiki…'
+   */
+  const describeRunningInCursor = (
+    running: WikiUpdateStatusOf<'running'>,
+    since: string,
+    bound: string,
+  ): WikiUpdateDescription =>
+    describe(
       'Updating LLM Wiki…',
-      (status.candidateStaged
+      (running.candidateStaged
+        ? ' Cursor Agent is preparing a new site (started ' +
+          since +
+          ', up to ' +
+          bound +
+          ').'
+        : ' Cursor Agent started at ' +
+          since +
+          ' and may take up to ' +
+          bound +
+          '.') +
+        ' Cancel it from the notification in Cursor. This site stays readable.',
+    )
+  /**
+   * Words the running line of a VS Code update, whose request went to the chat; called by {@link describeRunning}.
+   * @param running - The running state.
+   * @param since - When the request was sent, as the learner's local time.
+   * @param bound - The watch's bound in whole minutes, for example "15 minutes".
+   * @returns The description: the chat is preparing a new site once a candidate is staged, the request and where to follow it before that; an output outside the project adds why the chat asks to approve each step.
+   * @example describeRunningInVsCode(running, '21:00', '15 minutes').lead // => 'Updating LLM Wiki…'
+   */
+  const describeRunningInVsCode = (
+    running: WikiUpdateStatusOf<'running'>,
+    since: string,
+    bound: string,
+  ): WikiUpdateDescription =>
+    describe(
+      'Updating LLM Wiki…',
+      (running.candidateStaged
         ? ' The VS Code chat is preparing a new site (request sent ' +
           since +
           '). Approve the steps it asks for. Codebook watches for the publish for up to '
@@ -104,23 +132,46 @@ export function describeWikiUpdate(
         bound +
         '. This site stays readable.' +
         // The chat asks for each step outside the workspace; the learner should know why and how to avoid it.
-        (status.isOutputOutsideProject
+        (running.isOutputOutsideProject
           ? ' This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
           : ''),
     )
+  /**
+   * Words a run that is still under way, by its host; called by {@link describeWikiUpdate} for the state `running`.
+   * @param running - The running state.
+   * @returns The description of {@link describeRunningInCursor} for Cursor, of {@link describeRunningInVsCode} otherwise.
+   * @example describeRunning(running).lead // => 'Updating LLM Wiki…'
+   */
+  const describeRunning = (
+    running: WikiUpdateStatusOf<'running'>,
+  ): WikiUpdateDescription => {
+    const since = wording.formatTime(running.startedAt)
+    const bound = minutes(running.timeoutMs)
+    if (running.host === 'cursor')
+      return describeRunningInCursor(running, since, bound)
+    return describeRunningInVsCode(running, since, bound)
   }
-  const at = wording.formatTime(status.finishedAt)
-  if (status.state === 'succeeded') {
+  /**
+   * Words a successful update with what it was checked against; called by {@link describeEnded} for the state `succeeded`.
+   * @param succeeded - The succeeded state.
+   * @param at - When the run ended, as the learner's local time.
+   * @returns The description, with the revision when one was recorded and with the reload offer when the reading page is older than the site.
+   * @example describeSucceeded(succeeded, '21:10').rest // => ' at 21:10 to revision a1b2c3d4e5f6 (index 0f9e8d7c).'
+   */
+  const describeSucceeded = (
+    succeeded: WikiUpdateStatusOf<'succeeded'>,
+    at: string,
+  ): WikiUpdateDescription => {
     // The page compares the publication it was served from with the one on disk, never two clocks.
     const offerReload = wording.isPageOlderThanSite === true
     // Without a Git repository no revision was checked, and neither were added files.
-    if (status.revision === undefined)
+    if (succeeded.revision === undefined)
       return describe(
         'Updated',
         ' at ' +
           at +
           ' (index ' +
-          status.index +
+          succeeded.index +
           '; no Git revision recorded, so added files are not checked).',
         [],
         offerReload,
@@ -130,37 +181,63 @@ export function describeWikiUpdate(
       ' at ' +
         at +
         ' to revision ' +
-        status.revision +
+        succeeded.revision +
         ' (index ' +
-        status.index +
+        succeeded.index +
         ').',
       [],
       offerReload,
     )
   }
-  if (status.state === 'already-current')
-    return describe(
-      'Already current',
-      ' (checked ' +
-        at +
-        '): this Wiki matches the source, so no update started.',
-    )
-  const replaced = status.site === 'replaced'
-  if (status.state === 'failed') {
-    const trimmed = status.reason.trim()
-    // A sentence Codebook wrote ends with its next step, so it is shown whole; only an agent's, the CLI's or a thrown error's text is cut.
-    const isShortened =
-      !status.isCodebookSentence && trimmed.length > wording.reasonLimitChars
+  /**
+   * Cuts a failure reason at the limit without breaking a word; called by {@link shownReason} for a reason that is too long.
+   * @param trimmed - The reason without surrounding white space.
+   * @returns The start of the reason up to the last space before the limit (up to the limit when it has none), ended with "…".
+   * @example cutBeforeLimit('The agent stopped because of an error') // => 'The agent stopped…' with a limit of 20
+   */
+  const cutBeforeLimit = (trimmed: string): string => {
     // The cut falls on the last space before the limit, so no word is broken; a reason without one is cut at the limit.
     const lastSpace = trimmed.lastIndexOf(' ', wording.reasonLimitChars)
-    const shown = isShortened
-      ? trimmed
-          .slice(0, lastSpace > 0 ? lastSpace : wording.reasonLimitChars)
-          .trimEnd() + '…'
-      : trimmed
+    return (
+      trimmed
+        .slice(0, lastSpace > 0 ? lastSpace : wording.reasonLimitChars)
+        .trimEnd() + '…'
+    )
+  }
+  /**
+   * Bounds a failure reason; called by {@link describeFailed}.
+   * @param failed - The failed state.
+   * @returns `shown`: the reason as the sentence shows it, whole for a sentence Codebook wrote and cut for a longer text of an agent, the CLI or a thrown error; `detail`: the whole reason when it was cut, empty otherwise.
+   * @example shownReason(failed) // => { shown: 'Cursor Agent exited with code 1', detail: [] }
+   */
+  const shownReason = (
+    failed: WikiUpdateStatusOf<'failed'>,
+  ): { shown: string; detail: string[] } => {
+    const trimmed = failed.reason.trim()
+    // A sentence Codebook wrote ends with its next step, so it is shown whole; only an agent's, the CLI's or a thrown error's text is cut.
+    const isShortened =
+      !failed.isCodebookSentence && trimmed.length > wording.reasonLimitChars
+    return {
+      shown: isShortened ? cutBeforeLimit(trimmed) : trimmed,
+      detail: isShortened ? [trimmed] : [],
+    }
+  }
+  /**
+   * Words a failed update with its reason and what became of the site; called by {@link describeEnded} for the state `failed`.
+   * @param failed - The failed state.
+   * @param at - When the run ended, as the learner's local time.
+   * @param replaced - Whether the run replaced the site on disk.
+   * @returns The description: "Update needs another run" for a replaced site, "Update failed" for a missing or a kept one.
+   * @example describeFailed(failed, '21:10', false).rest // => ' at 21:10: Cursor Agent exited with code 1. The last usable site is kept.'
+   */
+  const describeFailed = (
+    failed: WikiUpdateStatusOf<'failed'>,
+    at: string,
+    replaced: boolean,
+  ): WikiUpdateDescription => {
+    const { shown, detail } = shownReason(failed)
     // A reason from a thrown error often has no full stop; it must not run into the next sentence.
     const sentence = /[.!?…]$/.test(shown) ? shown : shown + '.'
-    const detail = isShortened ? [trimmed] : []
     if (replaced)
       return describe(
         'Update needs another run',
@@ -168,7 +245,7 @@ export function describeWikiUpdate(
         detail,
       )
     // A Wiki that is gone was neither kept nor replaced; the reason says what to do.
-    if (status.site === 'missing')
+    if (failed.site === 'missing')
       return describe('Update failed', ' at ' + at + ': ' + sentence, detail)
     return describe(
       'Update failed',
@@ -176,8 +253,20 @@ export function describeWikiUpdate(
       detail,
     )
   }
-  if (status.state === 'cancelled') {
-    if (status.host === 'cursor')
+  /**
+   * Words a stopped update by its host; called by {@link describeStoppedRun} for the state `cancelled`.
+   * @param cancelled - The cancelled state.
+   * @param at - When the run was stopped, as the learner's local time.
+   * @param replaced - Whether the site on disk was replaced before the stop.
+   * @returns The description: "Update cancelled" for Cursor, whose agent was stopped; "Stopped watching" for VS Code, whose chat may still publish.
+   * @example describeCancelled(cancelled, '21:10', false).rest // => ' at 21:10. Cursor Agent was stopped. The last usable site is kept.'
+   */
+  const describeCancelled = (
+    cancelled: WikiUpdateStatusOf<'cancelled'>,
+    at: string,
+    replaced: boolean,
+  ): WikiUpdateDescription => {
+    if (cancelled.host === 'cursor')
       return describe(
         'Update cancelled',
         ' at ' +
@@ -196,9 +285,21 @@ export function describeWikiUpdate(
           : '. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself. Nothing has been replaced so far.'),
     )
   }
-  if (status.state === 'timed-out') {
-    const bound = minutes(status.timeoutMs)
-    if (status.host === 'cursor')
+  /**
+   * Words an update that passed its bound, by its host; called by {@link describeStoppedRun} for the state `timed-out`.
+   * @param timedOut - The timed-out state.
+   * @param at - When the run was stopped, as the learner's local time.
+   * @param replaced - Whether the site on disk was replaced before the stop.
+   * @returns The description: "Update timed out" for Cursor, "No new site appeared" for VS Code, each with the bound in minutes and the next step.
+   * @example describeTimedOut(timedOut, '21:15', false).lead // => 'Update timed out'
+   */
+  const describeTimedOut = (
+    timedOut: WikiUpdateStatusOf<'timed-out'>,
+    at: string,
+    replaced: boolean,
+  ): WikiUpdateDescription => {
+    const bound = minutes(timedOut.timeoutMs)
+    if (timedOut.host === 'cursor')
       return describe(
         'Update timed out',
         ': Cursor Agent did not finish within ' +
@@ -220,103 +321,216 @@ export function describeWikiUpdate(
           : '. Nothing has been replaced. Check the VS Code chat: it may be waiting for you or have reported a problem. Press Update LLM Wiki to start again.'),
     )
   }
-  if (status.state === 'conflict') {
-    const isShortened = status.paths.length > wording.pathLimit
-    const named =
-      status.paths.slice(0, wording.pathLimit).join(', ') +
-      (isShortened
-        ? ' and ' + (status.paths.length - wording.pathLimit) + ' more'
-        : '')
-    const detail = isShortened ? status.paths.slice() : []
-    const many = status.paths.length > 1
-    const notStarted = ' (' + at + '): '
-    if (status.cause === 'edited-page')
-      return describe(
-        'Update not started',
-        notStarted +
-          (many ? 'generated pages were' : 'a generated page was') +
-          ' edited by hand (' +
-          named +
-          '), and the publisher will not overwrite ' +
-          (many ? 'them' : 'it') +
-          '. Move your change aside or restore the ' +
-          (many ? 'pages' : 'page') +
-          ', then press Update LLM Wiki again.',
-        detail,
+  /**
+   * Bounds the conflict paths a sentence names; called by {@link describeConflict}.
+   * @param paths - The paths of the conflict.
+   * @returns `named`: the first paths up to the limit, joined, with "and N more" for the rest; `detail`: a copy of all paths when some were left out, empty otherwise.
+   * @example shownPaths(['a.md', 'b.md', 'c.md', 'd.md']) // => { named: 'a.md, b.md, c.md and 1 more', detail: ['a.md', 'b.md', 'c.md', 'd.md'] } with a limit of 3
+   */
+  const shownPaths = (paths: string[]): { named: string; detail: string[] } => {
+    const isShortened = paths.length > wording.pathLimit
+    return {
+      named:
+        paths.slice(0, wording.pathLimit).join(', ') +
+        (isShortened
+          ? ' and ' + (paths.length - wording.pathLimit) + ' more'
+          : ''),
+      detail: isShortened ? paths.slice() : [],
+    }
+  }
+  /**
+   * Words why generated pages edited by hand keep an update from starting; called by {@link describePageRefusal}.
+   * @param named - The paths as the sentence names them.
+   * @param many - Whether more than one path is in the way.
+   * @returns The sentence after the time, with the next step.
+   * @example describeEditedPages('index.md', false) // => 'a generated page was edited by hand (index.md), and the publisher will not overwrite it. Move your change aside or restore the page, then press Update LLM Wiki again.'
+   */
+  const describeEditedPages = (named: string, many: boolean): string =>
+    (many ? 'generated pages were' : 'a generated page was') +
+    ' edited by hand (' +
+    named +
+    '), and the publisher will not overwrite ' +
+    (many ? 'them' : 'it') +
+    '. Move your change aside or restore the ' +
+    (many ? 'pages' : 'page') +
+    ', then press Update LLM Wiki again.'
+  /**
+   * Words why missing generated pages keep an update from starting; called by {@link describePageRefusal}.
+   * @param named - The paths as the sentence names them.
+   * @param many - Whether more than one path is missing.
+   * @returns The sentence after the time, with the next step.
+   * @example describeMissingPages('index.md', false).slice(0, 44) // => 'a generated page is missing (index.md). Resto'
+   */
+  const describeMissingPages = (named: string, many: boolean): string =>
+    (many ? 'generated pages are' : 'a generated page is') +
+    ' missing (' +
+    named +
+    '). Restore ' +
+    (many ? 'them' : 'it') +
+    ' from Git or the editor’s local history; if you cannot, move the Wiki folder aside and ask the editor chat "/codebook Generate the LLM Wiki for this project".'
+  /**
+   * Words why links or special files in the Wiki folder keep an update from starting; called by {@link describePageRefusal}.
+   * @param named - The paths as the sentence names them.
+   * @param many - Whether more than one path is in the way.
+   * @returns The sentence after the time, with the next step.
+   * @example describeSpecialFiles('link.md', false) // => 'the Wiki folder holds a link or special file (link.md), which the publisher refuses. Move it out of the Wiki folder, then press Update LLM Wiki again.'
+   */
+  const describeSpecialFiles = (named: string, many: boolean): string =>
+    'the Wiki folder holds ' +
+    (many ? 'links or special files' : 'a link or special file') +
+    ' (' +
+    named +
+    '), which the publisher refuses. Move ' +
+    (many ? 'them' : 'it') +
+    ' out of the Wiki folder, then press Update LLM Wiki again.'
+  /**
+   * Words a start refused because of the Wiki's own pages or files; called by {@link describeConflict} before {@link describeRecoveryRefusal}.
+   * @param cause - The cause of the conflict.
+   * @param named - The paths as the sentence names them.
+   * @param many - Whether more than one path is in the way.
+   * @returns The sentence after the time for `edited-page`, `missing-page` and `special-file`; undefined for every other cause.
+   * @example describePageRefusal('learner-file', 'notes.md', false) // => undefined
+   */
+  const describePageRefusal = (
+    cause: WikiUpdateStatusOf<'conflict'>['cause'],
+    named: string,
+    many: boolean,
+  ): string | undefined => {
+    if (cause === 'edited-page') return describeEditedPages(named, many)
+    if (cause === 'missing-page') return describeMissingPages(named, many)
+    if (cause === 'special-file') return describeSpecialFiles(named, many)
+    return undefined
+  }
+  /**
+   * Words a start refused because of the Wiki's manifest or an unfinished publish, each ending with the recovery request for the editor chat; called by {@link describeConflict} after {@link describePageRefusal}.
+   * @param cause - The cause of the conflict.
+   * @param named - The paths as the sentence names them.
+   * @returns The sentence after the time for `edited-manifest`, `unreadable-manifest` and `unfinished-publish`; undefined for every other cause.
+   * @example describeRecoveryRefusal('unfinished-publish', '.codebook/wiki.staging').slice(0, 60) // => 'an earlier publish did not finish (.codebook/wiki.staging). A'
+   */
+  const describeRecoveryRefusal = (
+    cause: WikiUpdateStatusOf<'conflict'>['cause'],
+    named: string,
+  ): string | undefined => {
+    if (cause === 'edited-manifest')
+      return (
+        'the Wiki’s manifest (' +
+        named +
+        ') was changed after it was published, and the publisher will not replace it. Keep a copy of your change, a' +
+        recoveryStep
       )
-    if (status.cause === 'missing-page')
-      return describe(
-        'Update not started',
-        notStarted +
-          (many ? 'generated pages are' : 'a generated page is') +
-          ' missing (' +
-          named +
-          '). Restore ' +
-          (many ? 'them' : 'it') +
-          ' from Git or the editor’s local history; if you cannot, move the Wiki folder aside and ask the editor chat "/codebook Generate the LLM Wiki for this project".',
-        detail,
+    if (cause === 'unreadable-manifest')
+      return (
+        'Codebook cannot read the Wiki’s manifest (' +
+        named +
+        '). A' +
+        recoveryStep
       )
-    if (status.cause === 'special-file')
-      return describe(
-        'Update not started',
-        notStarted +
-          'the Wiki folder holds ' +
-          (many ? 'links or special files' : 'a link or special file') +
-          ' (' +
-          named +
-          '), which the publisher refuses. Move ' +
-          (many ? 'them' : 'it') +
-          ' out of the Wiki folder, then press Update LLM Wiki again.',
-        detail,
+    if (cause === 'unfinished-publish')
+      return (
+        'an earlier publish did not finish (' + named + '). A' + recoveryStep
       )
-    if (status.cause === 'edited-manifest')
-      return describe(
-        'Update not started',
-        notStarted +
-          'the Wiki’s manifest (' +
-          named +
-          ') was changed after it was published, and the publisher will not replace it. Keep a copy of your change, a' +
-          recoveryStep,
-        detail,
-      )
-    if (status.cause === 'unreadable-manifest')
-      return describe(
-        'Update not started',
-        notStarted +
-          'Codebook cannot read the Wiki’s manifest (' +
-          named +
-          '). A' +
-          recoveryStep,
-        detail,
-      )
-    if (status.cause === 'unfinished-publish')
-      return describe(
-        'Update not started',
-        notStarted +
-          'an earlier publish did not finish (' +
-          named +
-          '). A' +
-          recoveryStep,
-        detail,
-      )
+    return undefined
+  }
+  /**
+   * Words a run that stopped before it would overwrite the learner's own files; called by {@link describeConflict} for a cause that did not refuse the start.
+   * @param at - When the run stopped, as the learner's local time.
+   * @param replaced - Whether the site on disk changed during the run.
+   * @param named - The paths as the sentence names them.
+   * @param many - Whether more than one file is in the way.
+   * @returns The rest of the sentence after "Update stopped", with the next step.
+   * @example describeOverwriteStop('21:10', false, 'notes.md', false) // => ' at 21:10: it would overwrite your own file in the Wiki folder (notes.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.'
+   */
+  const describeOverwriteStop = (
+    at: string,
+    replaced: boolean,
+    named: string,
+    many: boolean,
+  ): string =>
+    ' at ' +
+    at +
+    ': it would overwrite your own ' +
+    (many ? 'files' : 'file') +
+    ' in the Wiki folder (' +
+    named +
+    '). ' +
+    (replaced
+      ? 'The site on disk changed during the run; ' + freshnessStep
+      : 'Nothing was replaced.') +
+    ' Move or rename ' +
+    (many ? 'them' : 'the file') +
+    ', then press Update LLM Wiki again.'
+  /**
+   * Words an update that paths in the Wiki folder kept from starting or from finishing; called by {@link describeStoppedRun} for the state `conflict`.
+   * @param conflict - The conflict state.
+   * @param at - When the conflict was found, as the learner's local time.
+   * @param replaced - Whether the site on disk changed during the run.
+   * @returns The description: "Update not started" for a cause that refused the start, "Update stopped" otherwise (also for a cause this version does not know); `detail` holds all paths when the sentence names only the first.
+   * @example describeConflict(conflict, '21:10', false).lead // => 'Update not started'
+   */
+  const describeConflict = (
+    conflict: WikiUpdateStatusOf<'conflict'>,
+    at: string,
+    replaced: boolean,
+  ): WikiUpdateDescription => {
+    const { named, detail } = shownPaths(conflict.paths)
+    const many = conflict.paths.length > 1
+    const refusal =
+      describePageRefusal(conflict.cause, named, many) ??
+      describeRecoveryRefusal(conflict.cause, named)
+    if (refusal !== undefined)
+      return describe('Update not started', ' (' + at + '): ' + refusal, detail)
     return describe(
       'Update stopped',
-      ' at ' +
-        at +
-        ': it would overwrite your own ' +
-        (many ? 'files' : 'file') +
-        ' in the Wiki folder (' +
-        named +
-        '). ' +
-        (replaced
-          ? 'The site on disk changed during the run; ' + freshnessStep
-          : 'Nothing was replaced.') +
-        ' Move or rename ' +
-        (many ? 'them' : 'the file') +
-        ', then press Update LLM Wiki again.',
+      describeOverwriteStop(at, replaced, named, many),
       detail,
     )
   }
-  // A newer extension may answer a state this page does not know.
-  return describe('Update status unknown', '.')
+  /**
+   * Words a run that was stopped before it gave a result; called by {@link describeEnded} for every state that is neither a success nor a failure.
+   * @param stopped - The cancelled, timed-out or conflict state.
+   * @param at - When the run ended, as the learner's local time.
+   * @param replaced - Whether the site on disk was replaced meanwhile.
+   * @returns The description of the state; "Update status unknown." for a state this version does not know.
+   * @example describeStoppedRun(cancelled, '21:10', false).lead // => 'Update cancelled'
+   */
+  const describeStoppedRun = (
+    stopped: WikiUpdateStatusOf<'cancelled' | 'timed-out' | 'conflict'>,
+    at: string,
+    replaced: boolean,
+  ): WikiUpdateDescription => {
+    if (stopped.state === 'cancelled')
+      return describeCancelled(stopped, at, replaced)
+    if (stopped.state === 'timed-out')
+      return describeTimedOut(stopped, at, replaced)
+    if (stopped.state === 'conflict')
+      return describeConflict(stopped, at, replaced)
+    // A newer extension may answer a state this page does not know.
+    return describe('Update status unknown', '.')
+  }
+  /**
+   * Words a run that is over; called by {@link describeWikiUpdate} for every state after `running`.
+   * @param ended - The state of the ended run.
+   * @param at - When the run ended, as the learner's local time.
+   * @returns The description of the state.
+   * @example describeEnded(alreadyCurrent, '21:10').lead // => 'Already current'
+   */
+  const describeEnded = (
+    ended: Exclude<WikiUpdateStatus, { state: 'idle' | 'running' }>,
+    at: string,
+  ): WikiUpdateDescription => {
+    if (ended.state === 'succeeded') return describeSucceeded(ended, at)
+    if (ended.state === 'already-current')
+      return describe(
+        'Already current',
+        ' (checked ' +
+          at +
+          '): this Wiki matches the source, so no update started.',
+      )
+    const replaced = ended.site === 'replaced'
+    if (ended.state === 'failed') return describeFailed(ended, at, replaced)
+    return describeStoppedRun(ended, at, replaced)
+  }
+  if (status.state === 'running') return describeRunning(status)
+  return describeEnded(status, wording.formatTime(status.finishedAt))
 }

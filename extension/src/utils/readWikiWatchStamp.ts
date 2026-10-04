@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
@@ -36,6 +37,20 @@ async function folderTreeStamp(outputDirectory: string): Promise<string> {
 }
 
 /**
+ * Says whether a sibling of the Wiki folder may be a prepared folder whose receipt is worth a look; called by {@link readWikiWatchStamp} for each entry beside the Wiki.
+ * @param sibling - One entry of the Wiki folder's parent.
+ * @param outputName - The Wiki folder's own name.
+ * @returns `false` for what is no folder, for the Wiki folder itself and for a backup the publisher kept; `true` otherwise.
+ * @example
+ * isWatchedSibling(stageFolderEntry, 'wiki') // => true for a folder named 'wiki.stage-3f6c'
+ */
+function isWatchedSibling(sibling: Dirent, outputName: string): boolean {
+  if (!sibling.isDirectory() || sibling.name === outputName) return false
+  // A backup the publisher kept is no candidate; every update adds one.
+  return !sibling.name.startsWith(outputName + WIKI_PUBLISH_BACKUP_INFIX)
+}
+
+/**
  * Reads a cheap stamp of everything a Wiki update watch looks at: the published manifest, the folders of the Wiki, and the receipt and manifest of every prepared folder beside the Wiki.
  *
  * Why: a look parses the manifest (which carries every page's HTML), parses each candidate and walks the output folder; doing that every two seconds for fifteen minutes is wasted when nothing was written. A few `stat` calls tell whether anything was.
@@ -62,10 +77,7 @@ export async function readWikiWatchStamp(
     () => [],
   )
   for (const sibling of siblings) {
-    if (!sibling.isDirectory() || sibling.name === outputName) continue
-    // A backup the publisher kept is no candidate; every update adds one.
-    if (sibling.name.startsWith(outputName + WIKI_PUBLISH_BACKUP_INFIX))
-      continue
+    if (!isWatchedSibling(sibling, outputName)) continue
     const receiptStamp = await fileStamp(
       join(parent, sibling.name, WIKI_PUBLICATION_RECEIPT_FILE),
     )

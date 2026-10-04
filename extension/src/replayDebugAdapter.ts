@@ -181,15 +181,24 @@ export class ReplayDebugAdapter {
     let index = 0
     for (const [frameId, frame] of this.frames) {
       // A source frame native Call Stack has not loaded yet cannot be focused once its first page is complete.
-      if (
-        index >= this.servedFrameCount &&
-        this.servedFrameCount >= REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES
-      )
-        return topFrameId
+      if (this.isBeyondLoadedFirstPage(index)) return topFrameId
       if (frame.source) return frameId
       index++
     }
     return topFrameId
+  }
+
+  /**
+   * Tells {@link inspectionFrameId} whether a frame lies outside what native Call Stack loaded, once its first page is complete.
+   * @param index - Zero-based position of the frame in the recorded stack.
+   * @returns `true` when the frame was not served yet and the first page ({@link REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES}) was served in full; `false` for a served frame, and while the first page is still incomplete.
+   * @example this.isBeyondLoadedFirstPage(20) // => true once the first 20 frames were served
+   */
+  private isBeyondLoadedFirstPage(index: number): boolean {
+    return (
+      index >= this.servedFrameCount &&
+      this.servedFrameCount >= REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES
+    )
   }
 
   /**

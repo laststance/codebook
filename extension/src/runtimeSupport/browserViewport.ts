@@ -46,6 +46,32 @@ export interface ViewportRecordingObserver {
   closed(input: { elapsedMs: number; expected: boolean }): void
 }
 
+/**
+ * Tells {@link BrowserViewport.coversEditorFocusedByPause} whether a tab group shows the text editor that is the editor's active one.
+ * @param group - The editor's active tab group.
+ * @returns `true` when the group's active tab is a text editor and the active text editor sits in the group's view column.
+ * @example showsActiveTextEditor(vscode.window.tabGroups.activeTabGroup) // => false while the group's active tab is the Application pane
+ */
+function showsActiveTextEditor(group: vscode.TabGroup): boolean {
+  return (
+    group.activeTab?.input instanceof vscode.TabInputText &&
+    vscode.window.activeTextEditor?.viewColumn === group.viewColumn
+  )
+}
+
+/**
+ * Tells {@link BrowserViewport.coversEditorFocusedByPause} whether the editor gives the paused file the keyboard focus at a breakpoint.
+ * @returns `true` unless the learner turned `debug.focusEditorOnBreak` off.
+ * @example isFocusEditorOnBreakOn() // => true with the editor's default settings
+ */
+function isFocusEditorOnBreakOn(): boolean {
+  return (
+    vscode.workspace
+      .getConfiguration('debug')
+      .get<boolean>('focusEditorOnBreak') !== false
+  )
+}
+
 /** Displays actual selected-page pixels for {@link HostBrowser}; it cannot select targets or resume the debugger. @example await viewport.attach(cdp, signal) */
 export class BrowserViewport {
   private panel: vscode.WebviewPanel
@@ -440,13 +466,21 @@ export class BrowserViewport {
     if (vscode.debug.activeStackItem === undefined) return false
     const group = vscode.window.tabGroups.activeTabGroup
     return (
-      vscode.window.state.focused &&
-      group.viewColumn === this.panel.viewColumn &&
-      group.activeTab?.input instanceof vscode.TabInputText &&
-      vscode.window.activeTextEditor?.viewColumn === group.viewColumn &&
-      vscode.workspace
-        .getConfiguration('debug')
-        .get<boolean>('focusEditorOnBreak') !== false
+      this.isFocusedPaneGroup(group) &&
+      showsActiveTextEditor(group) &&
+      isFocusEditorOnBreakOn()
+    )
+  }
+
+  /**
+   * Tells {@link coversEditorFocusedByPause} whether the active editor group is the leased pane's own, in a window that has the focus.
+   * @param group - The editor's active tab group.
+   * @returns `true` when the window is focused and the group sits in the pane's view column.
+   * @example this.isFocusedPaneGroup(vscode.window.tabGroups.activeTabGroup) // => false while another window has the focus
+   */
+  private isFocusedPaneGroup(group: vscode.TabGroup): boolean {
+    return (
+      vscode.window.state.focused && group.viewColumn === this.panel.viewColumn
     )
   }
 

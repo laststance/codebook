@@ -1,4 +1,7 @@
-import { walkSourceMapSegments } from './walkSourceMapSegments'
+import {
+  walkSourceMapSegments,
+  type SourceMapSegment,
+} from './walkSourceMapSegments'
 
 type MappedPosition = { line: number; column: number }
 
@@ -32,20 +35,58 @@ export function sourceMapMappedPositions(
   const complete = walkSourceMapSegments(
     mappings,
     ({ generatedLine, generatedColumn, original }) => {
-      if (original?.sourceIndex !== selectedSourceIndex) return
-      const line = original.line + 1,
-        column = original.column + 1
+      const position = mappedPositionOf(original, selectedSourceIndex)
       // Mappings are hints, not proof that the debugger can bind or that the user's action reaches this line.
       if (
-        line >= startLine &&
-        line <= endLine &&
-        (columns.get(line) ?? Infinity) > column &&
+        position &&
+        isEarlierColumnInRange(columns, position, startLine, endLine) &&
         isCodeAt(generatedLine, generatedColumn)
       )
-        columns.set(line, column)
+        columns.set(position.line, position.column)
     },
   )
   return { positions: orderedPositions(columns), complete }
+}
+
+/**
+ * Reads the one-based original position a segment maps to in the cited source; called by {@link sourceMapMappedPositions} for every segment.
+ * @param original - The segment's zero-based original position, absent for a segment without an original.
+ * @param selectedSourceIndex - Index of the cited original in the map's `sources`.
+ * @returns The position, or `undefined` for a segment without an original and for one of another source.
+ * @example
+ * mappedPositionOf({ sourceIndex: 0, line: 1, column: 0 }, 0) // => { line: 2, column: 1 }
+ * mappedPositionOf({ sourceIndex: 1, line: 1, column: 0 }, 0) // => undefined
+ */
+function mappedPositionOf(
+  original: SourceMapSegment['original'],
+  selectedSourceIndex: number,
+): MappedPosition | undefined {
+  if (original?.sourceIndex !== selectedSourceIndex) return undefined
+  return { line: original.line + 1, column: original.column + 1 }
+}
+
+/**
+ * Says whether a mapped position lies in the asked lines and before the column found for its line so far; called by {@link sourceMapMappedPositions} before it asks whether the generated text there can run.
+ * @param columns - The first mapped column found so far, by one-based original line.
+ * @param position - The one-based original position of a segment.
+ * @param startLine - First one-based original line to report.
+ * @param endLine - Last one-based original line to report.
+ * @returns Whether the line is in the range and has no column yet or a later one.
+ * @example
+ * isEarlierColumnInRange(new Map([[1, 5]]), { line: 1, column: 3 }, 1, 2) // => true
+ * isEarlierColumnInRange(new Map([[1, 5]]), { line: 3, column: 1 }, 1, 2) // => false
+ */
+function isEarlierColumnInRange(
+  columns: ReadonlyMap<number, number>,
+  position: MappedPosition,
+  startLine: number,
+  endLine: number,
+): boolean {
+  return (
+    position.line >= startLine &&
+    position.line <= endLine &&
+    (columns.get(position.line) ?? Infinity) > position.column
+  )
 }
 
 /** Orders bounded line hints for {@link sourceMapMappedPositions} before a failed run reports them. @example orderedPositions(new Map([[2, 3], [1, 1]])) // [{ line: 1, column: 1 }, { line: 2, column: 3 }] */

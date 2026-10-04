@@ -38,23 +38,61 @@ export function createBindingLineRule(
       requestedLine === declaredLine
         ? `the declared line ${declaredLine}`
         : `line ${requestedLine}, where the stop declared on line ${declaredLine} was requested,`
-  const refusal = (line: number): string | undefined => {
-    if (!Number.isInteger(line)) return `${line} is not a whole line number`
-    if (line === declaredLine) return undefined
+  /**
+   * Refuses a later line that lies outside the stop; called by {@link refusal} for a line that is whole and not the declared one.
+   * @param line - The line the debugger chose.
+   * @returns The condition for a line before the declared one or after the citation's last line; `undefined` for a line between them.
+   * @example
+   * outsideStopRefusal(21) // => 'line 21 is before the declared line 22'
+   */
+  const outsideStopRefusal = (line: number): string | undefined => {
     if (line < declaredLine)
       return `line ${line} is before the declared line ${declaredLine}`
     if (line > citation.endLine)
       return `line ${line} is after the last line ${citation.endLine} of the citation`
-    // No line from the declared one up to the requested one has a mapped position before the requested line itself.
-    if (line <= requestedLine) return undefined
-    // The next line has nothing between, whatever the scan could cover.
-    if (line === requestedLine + 1) return undefined
+    return undefined
+  }
+  /**
+   * Refuses a line when code may lie between it and the requested line; called by {@link gapRefusal} for a line more than one after the requested line.
+   * @param line - The line the debugger chose.
+   * @returns The mapped line between the two, or that the scan stopped at its size limit before it could prove there is none; `undefined` when the scan found none.
+   * @example
+   * unprovenGapRefusal(30) // => 'line 25 between the declared line 22 and line 30 has a mapped position'
+   */
+  const unprovenGapRefusal = (line: number): string | undefined => {
     if (firstMappedLine !== undefined && firstMappedLine < line)
       return `line ${firstMappedLine} between ${requestedAt} and line ${line} has a mapped position`
     // A scan that stopped at its size limit proves nothing about the lines it did not reach.
     if (!scan.complete)
       return `the sealed map was too large to scan completely, so lines ${requestedLine + 1} to ${line - 1} between ${requestedAt} and line ${line} may hold code; declare the stop on line ${line}, where the debugger bound it`
     return undefined
+  }
+  /**
+   * Measures a line within the stop from the requested line; called by {@link refusal} once the line lies between the declared line and the citation's end.
+   * @param line - The line the debugger chose.
+   * @returns `undefined` up to the line after the requested one; for a later line what {@link unprovenGapRefusal} finds.
+   * @example
+   * gapRefusal(23) // => undefined: the line after the requested line 22
+   */
+  const gapRefusal = (line: number): string | undefined => {
+    // No line from the declared one up to the requested one has a mapped position before the requested line itself.
+    if (line <= requestedLine) return undefined
+    // The next line has nothing between, whatever the scan could cover.
+    if (line === requestedLine + 1) return undefined
+    return unprovenGapRefusal(line)
+  }
+  /**
+   * Names the condition that refuses a line the debugger chose; it is the rule's `refusal`, and `accepts` asks it too.
+   * @param line - The line the debugger chose.
+   * @returns The first condition that refuses the line, in this order: no whole number, before the declared line, after the citation, a mapped line between, an incomplete scan; `undefined` for an accepted line.
+   * @example
+   * refusal(21) // => 'line 21 is before the declared line 22'
+   * refusal(22) // => undefined
+   */
+  const refusal = (line: number): string | undefined => {
+    if (!Number.isInteger(line)) return `${line} is not a whole line number`
+    if (line === declaredLine) return undefined
+    return outsideStopRefusal(line) ?? gapRefusal(line)
   }
   return {
     accepts: (line) => refusal(line) === undefined,

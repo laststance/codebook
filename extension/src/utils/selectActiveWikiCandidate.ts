@@ -17,6 +17,66 @@ export const wikiLastRunSchema = z.object({
 /** The record {@link wikiLastRunSchema} describes. */
 export type WikiLastRun = z.infer<typeof wikiLastRunSchema>
 
+/** What {@link selectActiveWikiCandidate} is told besides the candidates: the clock, the bound of "recent" and this window's last run. */
+type ActiveCandidateOptions = {
+  nowMs: number
+  activeWithinMs: number
+  lastRun: WikiLastRun | undefined
+}
+
+/**
+ * Says whether a candidate is what this window's own finished run left behind; called by {@link blocksStart} for a recent candidate.
+ * @param candidate - A candidate bound to this Wiki.
+ * @param lastRun - How this window's last run of this output ended; undefined when it has had none.
+ * @returns `true` only for a candidate written while that run lasted, by an agent that has stopped; `false` without a run, when the agent may still work, and for a candidate written before the run began or after it ended.
+ * @example
+ * isOwnLeftover({ name: 'wiki.stage-1', writtenAtMs: 1_500, ownedPaths: [] }, { outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: false }) // => true
+ */
+function isOwnLeftover(
+  candidate: WikiCandidate,
+  lastRun: WikiLastRun | undefined,
+): boolean {
+  // Only a candidate written while this window's run lasted, by an agent that has stopped, is known to be nobody's work in progress.
+  return (
+    lastRun !== undefined &&
+    !lastRun.mayAgentStillWork &&
+    candidate.writtenAtMs >= lastRun.startedAtMs &&
+    candidate.writtenAtMs <= lastRun.endedAtMs
+  )
+}
+
+/**
+ * Says whether a candidate shows work in progress that is not this window's own; called by {@link selectActiveWikiCandidate} for each candidate.
+ * @param candidate - A candidate bound to this Wiki.
+ * @param options - The clock, the bound of "recent" and this window's last run.
+ * @returns `true` for a candidate written within `activeWithinMs` that is no leftover of this window's finished run ({@link isOwnLeftover}).
+ * @example
+ * blocksStart({ name: 'wiki.stage-1', writtenAtMs: 1_000_000, ownedPaths: [] }, { nowMs: 1_060_000, activeWithinMs: 900_000, lastRun: undefined }) // => true
+ */
+function blocksStart(
+  candidate: WikiCandidate,
+  options: ActiveCandidateOptions,
+): boolean {
+  const isRecent =
+    candidate.writtenAtMs >= options.nowMs - options.activeWithinMs
+  return isRecent && !isOwnLeftover(candidate, options.lastRun)
+}
+
+/**
+ * Says whether a candidate was written after the latest one found so far; called by {@link selectActiveWikiCandidate} for each candidate that blocks the start.
+ * @param candidate - A candidate that blocks the start.
+ * @param latest - The latest blocking candidate found so far; undefined before the first.
+ * @returns `true` for the first blocking candidate and for one written later than `latest`; a candidate written at the same time does not replace it.
+ * @example
+ * isWrittenAfter({ name: 'wiki.stage-2', writtenAtMs: 2_000, ownedPaths: [] }, { name: 'wiki.stage-1', writtenAtMs: 1_000, ownedPaths: [] }) // => true
+ */
+function isWrittenAfter(
+  candidate: WikiCandidate,
+  latest: WikiCandidate | undefined,
+): boolean {
+  return !latest || candidate.writtenAtMs > latest.writtenAtMs
+}
+
 /**
  * Picks the candidate that shows someone is still updating this Wiki: another editor window, an earlier chat, or the chat this window stopped watching.
  *
@@ -42,29 +102,11 @@ export type WikiLastRun = z.infer<typeof wikiLastRunSchema>
  */
 export function selectActiveWikiCandidate(
   candidates: WikiCandidate[],
-  options: {
-    nowMs: number
-    activeWithinMs: number
-    lastRun: WikiLastRun | undefined
-  },
+  options: ActiveCandidateOptions,
 ): WikiCandidate | undefined {
-  const { lastRun } = options
   let latest: WikiCandidate | undefined
-  for (const candidate of candidates) {
-    const isRecent =
-      candidate.writtenAtMs >= options.nowMs - options.activeWithinMs
-    // Only a candidate written while this window's run lasted, by an agent that has stopped, is known to be nobody's work in progress.
-    const isOwnLeftover =
-      lastRun !== undefined &&
-      !lastRun.mayAgentStillWork &&
-      candidate.writtenAtMs >= lastRun.startedAtMs &&
-      candidate.writtenAtMs <= lastRun.endedAtMs
-    if (
-      isRecent &&
-      !isOwnLeftover &&
-      (!latest || candidate.writtenAtMs > latest.writtenAtMs)
-    )
+  for (const candidate of candidates)
+    if (blocksStart(candidate, options) && isWrittenAfter(candidate, latest))
       latest = candidate
-  }
   return latest
 }

@@ -1,6 +1,7 @@
 import {
   configuredDefinitionSchema,
   type ConfiguredDefinition,
+  type ConfiguredDescriptor,
 } from '../configuredStudySchemas'
 import { StudyError } from '../errors'
 import type { RepositoryBookStore } from '../repositoryBook'
@@ -15,6 +16,31 @@ import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
 import { describeCitationMismatch } from './describeCitationMismatch'
 import { describeColumnPastLineEnd } from './describeColumnPastLineEnd'
+
+/**
+ * Words why a start's declared stops were refused, so an agent can correct the one field that is wrong; called by {@link prepareRepositoryStudy} when {@link assertConfiguredDescriptor} refuses a start.
+ * @param configuration - The start's configuration.
+ * @param anchors - The selected node's citations, in the order `anchorIndex` counts them.
+ * @param sources - The selected node's retained sources.
+ * @returns
+ * - An index that selects the wrong citation: the sentence of {@link describeCitationMismatch}, with the valid range and the covering index
+ * - Otherwise a column past its line's end: the sentence of {@link describeColumnPastLineEnd}, with the line's length
+ * - Any other refusal: the rule text
+ * @example
+ * describeDescriptorRefusal(configuration, anchors, sources)
+ * // => 'configuration.source.column 100 lies past the end of its line: src/theme.ts:1 has a length of 25, so the highest column accepted is 26. Declare a column from 1 to 26.'
+ */
+function describeDescriptorRefusal(
+  configuration: RetainedRepositoryConfiguration,
+  anchors: ConfiguredDescriptor['anchors'],
+  sources: ConfiguredDescriptor['sources'],
+): string {
+  return (
+    describeCitationMismatch(configuration, anchors) ??
+    describeColumnPastLineEnd(configuration, sources) ??
+    'configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation.'
+  )
+}
 
 /** Binds an already reserved start to immutable article/source identity before a runtime can acquire or dispatch input. @example await prepareRepositoryStudy(configuration, books, { signal, deadlineAt }) */
 export async function prepareRepositoryStudy(
@@ -73,12 +99,11 @@ export async function prepareRepositoryStudy(
     // An index that selects the wrong citation is named with the valid range and the covering index, and a column past its line's end with the line's length; other refusals keep the rule text.
     throw new StudyError(
       'INVALID_CONFIGURATION',
-      describeCitationMismatch(configuration, node.anchors) ??
-        describeColumnPastLineEnd(
-          configuration,
-          definition.descriptor.sources,
-        ) ??
-        'configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation.',
+      describeDescriptorRefusal(
+        configuration,
+        node.anchors,
+        definition.descriptor.sources,
+      ),
       String(error),
     )
   }

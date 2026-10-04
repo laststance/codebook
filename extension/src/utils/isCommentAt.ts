@@ -1,4 +1,24 @@
 /**
+ * Tells whether what is left of a line is a block comment with nothing but a comment after it; called by {@link isCommentAt} for a remainder that is no `//` comment.
+ * @param rest - The rest of the line from the asked column on, without leading whitespace.
+ * @returns
+ * - `true` for a block comment that runs past the line, or is followed only by whitespace or another comment
+ * - `false` when the remainder does not begin with a block comment, and when code follows the comment
+ * @example
+ * isBlockCommentToLineEnd('/* why *\/ // and more') // => true
+ * isBlockCommentToLineEnd('/* why *\/ return user') // => false
+ * isBlockCommentToLineEnd('return user')            // => false
+ */
+function isBlockCommentToLineEnd(rest: string): boolean {
+  if (!rest.startsWith('/*')) return false
+  const end = rest.indexOf('*/', 2)
+  // A block comment that does not end on this line covers the rest of it.
+  if (end < 0) return true
+  const after = rest.slice(end + 2).trimStart()
+  return after === '' || isCommentAt(after, 0)
+}
+
+/**
  * Tells whether the text of one line, from a column on, is only a comment, so that a source map position there marks nothing that could run.
  * {@link createBundleVerifier} asks this of the generated module for every mapping it scans: a development build keeps comments and maps them (Next's webpack maps `// Auth.js error messages…` to its original line), and the binding rule must not count such a line as code. Preparation also asks it of the original source when the map was too large to scan.
  * @param lineText - One line of text without its line break; `undefined` for a line the text does not have.
@@ -17,10 +37,5 @@ export function isCommentAt(
 ): boolean {
   const rest = lineText?.slice(column).trimStart() ?? ''
   if (rest.startsWith('//')) return true
-  if (!rest.startsWith('/*')) return false
-  const end = rest.indexOf('*/', 2)
-  // A block comment that does not end on this line covers the rest of it.
-  if (end < 0) return true
-  const after = rest.slice(end + 2).trimStart()
-  return after === '' || isCommentAt(after, 0)
+  return isBlockCommentToLineEnd(rest)
 }

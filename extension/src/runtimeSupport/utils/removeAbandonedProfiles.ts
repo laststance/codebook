@@ -9,6 +9,7 @@ import {
 import { isRecordedOwnerGone } from '../../utils/isRecordedOwnerGone'
 import {
   readRecordedOwner,
+  type RecordedOwner,
   type StorageOwnerIdentity,
 } from '../../utils/readRecordedOwner'
 import { withoutBootTime } from '../../utils/withoutBootTime'
@@ -32,6 +33,24 @@ async function removeUnusedProfile(profile: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * Says whether a profile folder's owner marker proves that its owner is gone from this machine; called by {@link removeAbandonedProfiles} with the marker it has just read, before anything is removed.
+ * @param owner - What {@link readRecordedOwner} read from the folder's marker; `undefined` when there is no readable marker.
+ * @param judgedBy - The identity of this process without its boot time ({@link withoutBootTime}), by which the marker's owner is judged.
+ * @returns
+ * - `true` when the marker is readable and its process is gone ({@link isRecordedOwnerGone})
+ * - `false` when there is no readable marker, or when its owner may still run: the folder is not known to be abandoned
+ * @example
+ * isProfileOwnerGone(undefined, { hostname: 'workstation' })                                                          // => false
+ * isProfileOwnerGone({ pid: 4242, hostname: 'workstation', boot: { id: 'boot-1' } }, { hostname: 'workstation', boot: { id: 'boot-2' } }) // => true
+ */
+function isProfileOwnerGone(
+  owner: RecordedOwner | undefined,
+  judgedBy: StorageOwnerIdentity,
+): boolean {
+  return owner !== undefined && isRecordedOwnerGone(owner, judgedBy)
 }
 
 /**
@@ -68,7 +87,7 @@ export async function removeAbandonedProfiles(
       join(profile, MANAGED_PROFILE_OWNER_FILE),
     )
     // No marker, or an owner that may still run: the folder is not known to be abandoned.
-    if (!owner || !isRecordedOwnerGone(owner, judgedBy)) continue
+    if (!isProfileOwnerGone(owner, judgedBy)) continue
     if (await removeUnusedProfile(profile)) removed.push(profile)
   }
   return removed

@@ -1,9 +1,38 @@
+import type { z } from 'zod'
+
 import {
   EDITOR_GROUP_MINIMUM_HEIGHT_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
 } from '../constants'
 
 import { editorLayoutSchema } from './isProportionalEditorLayout'
+
+/** The groups of one level of a measured editor layout, in view-column order. */
+type EditorLayoutGroups = z.infer<typeof editorLayoutSchema>['groups']
+
+/**
+ * Says whether one group is a strip of its tab row among taller groups of its stack; called by {@link isCollapsedEditorGroup} for the group at the asked view column.
+ * @param group - The group at the view column.
+ * @param groups - The groups of its level, itself included.
+ * @param isStack - Whether the sizes of that level are heights (the groups lie above one another).
+ * @returns
+ * - `true` when the level is a stack, the group measures exactly {@link EDITOR_GROUP_MINIMUM_HEIGHT_PX} pixels and a group of the level is taller
+ * - `false` for groups side by side, a taller group, and a stack that is at the minimum as a whole
+ * @example
+ * isStripAmongTallerGroups({ size: 70 }, [{ size: 70 }, { size: 587 }], true) // => true
+ * isStripAmongTallerGroups({ size: 70 }, [{ size: 70 }, { size: 70 }], true)  // => false
+ */
+function isStripAmongTallerGroups(
+  group: EditorLayoutGroups[number],
+  groups: EditorLayoutGroups,
+  isStack: boolean,
+): boolean {
+  return (
+    isStack &&
+    group.size === EDITOR_GROUP_MINIMUM_HEIGHT_PX &&
+    groups.some((sibling) => sibling.size > EDITOR_GROUP_MINIMUM_HEIGHT_PX)
+  )
+}
 
 /**
  * Tells {@link StudyWorkspace} that one stacked editor group is a strip of its tab row: it sits at the editor's minimum height while a group of the same stack is taller.
@@ -31,7 +60,7 @@ export function isCollapsedEditorGroup(
   let visitedGroups = 0
   /** Walks one level of the grid in view-column order; sizes alternate between widths and heights from one level to the next. */
   const isCollapsedIn = (
-    groups: typeof parsed.data.groups,
+    groups: EditorLayoutGroups,
     isStack: boolean,
   ): boolean =>
     groups.some((group) => {
@@ -39,9 +68,7 @@ export function isCollapsedEditorGroup(
       visitedGroups++
       return (
         visitedGroups === viewColumn &&
-        isStack &&
-        group.size === EDITOR_GROUP_MINIMUM_HEIGHT_PX &&
-        groups.some((sibling) => sibling.size > EDITOR_GROUP_MINIMUM_HEIGHT_PX)
+        isStripAmongTallerGroups(group, groups, isStack)
       )
     })
   return isCollapsedIn(
