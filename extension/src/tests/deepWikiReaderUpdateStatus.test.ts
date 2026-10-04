@@ -188,7 +188,7 @@ test('the update state is served while a publish has left the manifest unreadabl
   }
 })
 
-test('a page the last update removed sends the browser to the overview of the same reader', async () => {
+test('a page the last update removed sends the browser to the overview and names the missing page', async () => {
   // Arrange
   const wiki = await serveMinimalWiki()
   try {
@@ -203,10 +203,13 @@ test('a page the last update removed sends the browser to the overview of the sa
     assert.equal(redirect.status, 302)
     assert.equal(
       redirect.headers.get('location'),
-      new URL(wiki.reader.url).pathname,
+      `${new URL(wiki.reader.url).pathname}?missing=pages%2Fremoved.html`,
     )
     assert.equal(followed.status, 200)
-    assert.equal(followed.url, wiki.reader.url)
+    assert.equal(
+      followed.url,
+      `${wiki.reader.url}?missing=pages%2Fremoved.html`,
+    )
     assert.match(await followed.text(), /Wiki/)
     assert.equal(otherFile.status, 404)
   } finally {

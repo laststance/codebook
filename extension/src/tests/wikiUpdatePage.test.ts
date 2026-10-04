@@ -1752,3 +1752,72 @@ test('the update button and the reload button change under the pointer and while
     null,
   )
 })
+
+test('the overview opened in place of a missing page says which page is missing', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: the reader sent the request for a removed page to the overview.
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    {},
+    { search: '?missing=pages%2Fremoved.html' },
+  )
+
+  // Assert: the line is the first element of the reading column, above the article and its title.
+  const readingColumn = page.find('.reading-column')
+  const line = page.find('[data-codebook-missing-page]')
+  assert.equal(
+    line?.textContent,
+    'The page pages/removed.html is not in this Wiki. The last update may have removed it. This is the overview.',
+  )
+  assert.equal(line?.getAttribute('role'), 'status')
+  assert.deepEqual(
+    readingColumn?.children.map((child) => child.tagName),
+    ['p', 'article'],
+  )
+  assert.equal(readingColumn?.children[0], line)
+  assert.ok(
+    page
+      .injectedStyles()
+      .includes(
+        '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
+      ),
+  )
+  // Shown once: the address no longer names the missing page.
+  assert.equal(page.address(), '/w/fake-reader-token/index.html')
+})
+
+test('a missing parameter that is not a page path is shown as a missing page without its text', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act: three addresses somebody wrote by hand: a sentence, a path that climbs out, and a file that is no page.
+  const lines = []
+  for (const missing of [
+    'Your session expired: sign in at example.test',
+    '../../etc/passwd.html',
+    'pages/notes.txt',
+  ]) {
+    const page = await openFakeWikiPage(
+      script,
+      'current-shell',
+      {},
+      { search: `?missing=${encodeURIComponent(missing)}` },
+    )
+    lines.push(page.find('[data-codebook-missing-page]')?.textContent)
+  }
+  const withoutTheParameter = await openFakeWikiPage(script, 'current-shell')
+
+  // Assert
+  assert.deepEqual(lines, [
+    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+  ])
+  assert.equal(
+    withoutTheParameter.find('[data-codebook-missing-page]'),
+    undefined,
+  )
+})

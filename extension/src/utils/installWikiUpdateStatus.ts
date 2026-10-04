@@ -110,8 +110,46 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-status]~[data-codebook-update-detail] p{margin:.3rem 0 0}',
     '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--link,LinkText);color:var(--bg,Canvas)}',
     '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
+    // The line that says the overview stands in for a missing page sits above the article's title.
+    '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
   ].join('')
   document.head.append(styles)
+
+  // The reader sends a request for a page the Wiki does not have to the overview and names that page in the address.
+  const addressQuery = new URLSearchParams(location.search)
+  const missingPage = addressQuery.get('missing')
+  if (missingPage !== null) {
+    // The address can be written by anyone: its text is shown only when it is a page path as the publisher allows them.
+    const isPagePath =
+      missingPage.endsWith('.html') &&
+      !missingPage.startsWith('/') &&
+      !/[\\\x00-\x1f?#:]/.test(missingPage) &&
+      missingPage
+        .split('/')
+        .every((part) => part !== '' && part !== '.' && part !== '..')
+    const missingLine = document.createElement('p')
+    missingLine.setAttribute('data-codebook-missing-page', '')
+    missingLine.setAttribute('role', 'status')
+    missingLine.textContent =
+      (isPagePath
+        ? 'The page ' + missingPage + ' is not in this Wiki.'
+        : 'The page you asked for is not in this Wiki.') +
+      ' The last update may have removed it. This is the overview.'
+    // The learner's eye lands on the article, so the line is the first element of the reading column, above the title.
+    const readingColumn =
+      document.querySelector<HTMLElement>('.reading-column') ?? document.body
+    readingColumn.insertBefore(missingLine, readingColumn.firstChild)
+    // Shown once: a reload or a copied address no longer names the missing page.
+    addressQuery.delete('missing')
+    const remainingQuery = addressQuery.toString()
+    history.replaceState(
+      null,
+      '',
+      location.pathname +
+        (remainingQuery ? '?' + remainingQuery : '') +
+        location.hash,
+    )
+  }
 
   const freshnessLabel = document.querySelector<HTMLElement>(
     '[data-codebook-freshness]',

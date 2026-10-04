@@ -370,9 +370,11 @@ export async function startDeepWikiReader(
       return
     }
     if (!files.has(relativePath)) {
-      // A page the last update removed or renamed sends the learner to the overview instead of a JSON error.
+      // A page the last update removed or renamed sends the learner to the overview instead of a JSON error, and the overview is told which page was asked for, so it can say so.
       if (relativePath.endsWith('.html')) {
-        response.writeHead(302, { Location: `${prefix}${WIKI_ENTRY_FILE}` })
+        response.writeHead(302, {
+          Location: `${prefix}${WIKI_ENTRY_FILE}?missing=${encodeURIComponent(relativePath)}`,
+        })
         response.end()
         return
       }

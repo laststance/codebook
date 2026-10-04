@@ -88,6 +88,9 @@ class PageElement {
   set textContent(value: string) {
     this.replaceChildren(...(value ? [value] : []))
   }
+  get firstChild(): PageNode | null {
+    return this.childNodes[0] ?? null
+  }
   get nextSibling(): PageNode | null {
     const siblings = this.parentNode?.childNodes ?? []
     return siblings[siblings.indexOf(this) + 1] ?? null
@@ -257,6 +260,8 @@ export type FakeWikiPageLoad = {
   publication?: string | null
   /** Routes whose first answer is kept back from the load on, until `release(route)`. */
   heldAtLoad?: string[]
+  /** The query of the address the page was opened at, with its question mark; none when omitted. */
+  search?: string
 }
 
 /** A loaded fake page: its elements, its reader and the test's hands on time and input. */
@@ -281,6 +286,8 @@ export type FakeWikiPage = {
   setTabHidden(isHidden: boolean): Promise<void>
   /** Gives the browser window focus. */
   focusWindow(): Promise<void>
+  /** The page's address as it stands now: path and query. */
+  address(): string
   /** Timers the page is waiting on. */
   pendingTimerCount(): number
   /** How often the page reloaded itself. */
@@ -393,6 +400,11 @@ export async function openFakeWikiPage(
     new PageElement('header', { class: 'site-header' }, [
       new PageElement('div', { class: 'repo-meta' }),
     ]),
+    new PageElement('main', { class: 'reading-column' }, [
+      new PageElement('article', { class: 'wiki-article' }, [
+        new PageElement('h1', { id: 'article-title' }, ['Overview']),
+      ]),
+    ]),
     ...buildRail(layout),
   ])
   const root = new PageElement('html', {}, [head, body])
@@ -422,8 +434,18 @@ export async function openFakeWikiPage(
   }
   const location = {
     pathname: `${readerPrefix}index.html`,
+    search: load.search ?? '',
+    hash: '',
     reload: (): void => {
       reloads += 1
+    },
+  }
+  const history = {
+    // The page rewrites its own address; only path and query are kept.
+    replaceState(_state: unknown, _title: string, address: string): void {
+      const [pathname = '', query] = address.split('?')
+      location.pathname = pathname
+      location.search = query === undefined ? '' : `?${query}`
     },
   }
   /** Lets every request and promise the page started run to its end. */
@@ -470,6 +492,8 @@ export async function openFakeWikiPage(
   runInNewContext(script, {
     document,
     location,
+    history,
+    URLSearchParams,
     window: {
       location,
       setTimeout: (callback: () => void, delayMs: number): number => {
@@ -572,6 +596,7 @@ export async function openFakeWikiPage(
     async focusWindow(): Promise<void> {
       await dispatch(windowListeners.get('focus'))
     },
+    address: () => location.pathname + location.search,
     pendingTimerCount: () => pendingTimers.size,
     reloadCount: () => reloads,
   }
