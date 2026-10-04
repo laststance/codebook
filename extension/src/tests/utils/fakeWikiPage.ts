@@ -13,10 +13,27 @@ type PageNode = PageElement | string
 const CLOCK_STEP_MS = 1_000
 /** The two attribute forms {@link PageElement.matches} understands, `[attribute]` and `[attribute=value]` (the value with or without quotes); a bracket group of any other form, such as one with an operator, is refused. */
 const SUPPORTED_ATTRIBUTE_SELECTOR = /\[([\w-]+)(?:="?([^"\]]*)"?)?\]/g
+/** The month names the fake page prints, so a printed date does not depend on the locale data of the Node that runs the test. */
+const SHORT_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+]
 /** When a fake page is loaded unless the test says otherwise. */
 const PAGE_LOADED_AT = '2026-10-03T12:00:00.000Z'
 /** When the site a fake reader serves was published unless the test says otherwise. */
 const SITE_PUBLISHED_AT = '2026-10-03T11:30:00.000Z'
+/** The publication a fake page is served from and its reader answers unless the test says otherwise. */
+const PUBLICATION_AT_LOAD = 'publication-at-load'
 
 /**
  * One element of the hand-written page the served Wiki script runs against in tests; it has only what that script uses.
@@ -70,6 +87,9 @@ class PageElement {
   }
   set textContent(value: string) {
     this.replaceChildren(...(value ? [value] : []))
+  }
+  get firstChild(): PageNode | null {
+    return this.childNodes[0] ?? null
   }
   get nextSibling(): PageNode | null {
     const siblings = this.parentNode?.childNodes ?? []
@@ -213,16 +233,44 @@ export type FakeWikiReader = {
   updateStatus: WikiUpdateStatus
   /** When the site on disk was published (ISO timestamp); undefined answers like a reader whose manifest is missing. */
   sitePublishedAt: string | undefined
+  /** Which publication is on disk; undefined answers like a folder without a publisher's receipt. */
+  publication: string | undefined
+  /** The reader's source-change stamp; a test raises it when a file of the project changed. */
+  sourceChangeStamp: number
   freshness: WikiFreshness['status']
+  /** What the freshness answer carries beside its status: the reason of an undecided check, or that added files were not checked. */
+  freshnessDetail: Partial<
+    Pick<WikiFreshness, 'reason' | 'addedFilesUnchecked'>
+  >
+  /** When true the freshness route answers an error while the update state is still answered. */
+  isFreshnessFailing: boolean
   /** When true every request fails the way a closed reader does. */
   isDown: boolean
   /** Paths requested so far, relative to the reader prefix. */
   requests: string[]
 }
 
+/** How a fake page itself was loaded, as opposed to what its reader answers. */
+export type FakeWikiPageLoad = {
+  /** When the page was loaded by the host's clock (ISO timestamp); the page clock starts there. */
+  loadedAt?: string
+  /** How far the browser's clock runs ahead of the host's (ms); none when omitted. */
+  browserClockAheadMs?: number
+  /** The publication the reader wrote into the page's HTML; `null` for a site that had none. The one the fake reader answers at load when omitted. */
+  publication?: string | null
+  /** Routes whose first answer is kept back from the load on, until `release(route)`. */
+  heldAtLoad?: string[]
+  /** The query of the address the page was opened at, with its question mark; none when omitted. */
+  search?: string
+}
+
 /** A loaded fake page: its elements, its reader and the test's hands on time and input. */
 export type FakeWikiPage = {
   reader: FakeWikiReader
+  /** Keeps the answer to the next request of one route back until `release(route)`; the answer is what the reader knew when the request arrived. */
+  holdNext(route: string): void
+  /** Delivers the held answer of one route and lets the page take it in. */
+  release(route: string): Promise<void>
   body: PageElement
   /** First element matching the selector, or undefined. */
   find(selector: string): PageElement | undefined
@@ -238,6 +286,8 @@ export type FakeWikiPage = {
   setTabHidden(isHidden: boolean): Promise<void>
   /** Gives the browser window focus. */
   focusWindow(): Promise<void>
+  /** The page's address as it stands now: path and query. */
+  address(): string
   /** Timers the page is waiting on. */
   pendingTimerCount(): number
   /** How often the page reloaded itself. */
@@ -287,12 +337,12 @@ function buildRail(layout: FakeWikiPageLayout): PageElement[] {
  * Why: the page script is served text, so its behaviour (polling, the held-back link, the status line) is only proven by running what the browser gets.
  * Trigger: page tests call it with the script from {@link readServedWikiScript}.
  *
- * Times the page prints are the UTC hour and minute, so expected sentences can be hard-coded.
+ * Times the page prints are the UTC hour and minute, and dates the UTC day and short month ("2 Oct"), so expected sentences can be hard-coded.
  *
  * @param script - The served `codebook-qa.js`.
  * @param layout - Which right rail the page starts with.
  * @param reader - What the fake reader answers at load; idle, current, reachable and a site published half an hour before the page was loaded unless given.
- * @param loadedAt - When the page was loaded (ISO timestamp); the page clock starts there.
+ * @param load - How the page itself was loaded: when, with which browser clock and from which publication.
  * @returns The page after its first reads finished.
  *
  * @example
@@ -307,20 +357,41 @@ export async function openFakeWikiPage(
   script: string,
   layout: FakeWikiPageLayout,
   reader: Partial<Omit<FakeWikiReader, 'requests'>> = {},
-  loadedAt: string = PAGE_LOADED_AT,
+  load: FakeWikiPageLoad = {},
 ): Promise<FakeWikiPage> {
   const readerPrefix = '/w/fake-reader-token/'
   const pageReader: FakeWikiReader = {
     updateStatus: { state: 'idle' },
     sitePublishedAt: SITE_PUBLISHED_AT,
+    publication: PUBLICATION_AT_LOAD,
+    sourceChangeStamp: 0,
     freshness: 'current',
+    freshnessDetail: {},
+    isFreshnessFailing: false,
     isDown: false,
     ...reader,
     requests: [],
   }
   const clock = createManualClock()
   const pendingTimers = new Set<number>()
-  const loadedAtMs = Date.parse(loadedAt)
+  // The browser's clock: the host's time of the load plus what the browser runs ahead.
+  const loadedAtMs =
+    Date.parse(load.loadedAt ?? PAGE_LOADED_AT) +
+    (load.browserClockAheadMs ?? 0)
+  const pagePublication =
+    load.publication === undefined ? PUBLICATION_AT_LOAD : load.publication
+  /** The routes whose next answer a test keeps back, each with the promise its request waits on and the function that settles it. */
+  const heldRequests = new Map<string, Promise<void>>()
+  const heldReleases = new Map<string, () => void>()
+  const holdNext = (route: string): void => {
+    heldRequests.set(
+      route,
+      new Promise<void>((resolveHold) => {
+        heldReleases.set(route, resolveHold)
+      }),
+    )
+  }
+  for (const route of load.heldAtLoad ?? []) holdNext(route)
   let elapsedMs = 0
   let reloads = 0
 
@@ -328,6 +399,11 @@ export async function openFakeWikiPage(
   const body = new PageElement('body', {}, [
     new PageElement('header', { class: 'site-header' }, [
       new PageElement('div', { class: 'repo-meta' }),
+    ]),
+    new PageElement('main', { class: 'reading-column' }, [
+      new PageElement('article', { class: 'wiki-article' }, [
+        new PageElement('h1', { id: 'article-title' }, ['Overview']),
+      ]),
     ]),
     ...buildRail(layout),
   ])
@@ -345,6 +421,11 @@ export async function openFakeWikiPage(
     body,
     createElement: (tagName: string): PageElement => new PageElement(tagName),
     createTextNode: (text: string): string => text,
+    // The script tag the reader added to the page; it carries the publication the page was served from.
+    currentScript: {
+      getAttribute: (name: string): string | null =>
+        name === 'data-codebook-publication' ? pagePublication : null,
+    },
     querySelector: (selector: string): PageElement | null =>
       root.querySelector(selector),
     querySelectorAll: (selector: string): PageElement[] =>
@@ -353,13 +434,47 @@ export async function openFakeWikiPage(
   }
   const location = {
     pathname: `${readerPrefix}index.html`,
+    search: load.search ?? '',
+    hash: '',
     reload: (): void => {
       reloads += 1
+    },
+  }
+  const history = {
+    // The page rewrites its own address; only path and query are kept.
+    replaceState(_state: unknown, _title: string, address: string): void {
+      const [pathname = '', query] = address.split('?')
+      location.pathname = pathname
+      location.search = query === undefined ? '' : `?${query}`
     },
   }
   /** Lets every request and promise the page started run to its end. */
   const settle = (): Promise<void> =>
     new Promise((resolve) => setImmediate(resolve))
+  /** What the fake reader answers at one route right now. */
+  const answerRoute = (
+    route: string,
+  ): { ok: boolean; json(): Promise<unknown> } => {
+    if (route === 'api/update-status') {
+      const answer = {
+        ...structuredClone(pageReader.updateStatus),
+        sitePublishedAt: pageReader.sitePublishedAt,
+        publication: pageReader.publication,
+        sourceChangeStamp: pageReader.sourceChangeStamp,
+      }
+      return { ok: true, json: async () => answer }
+    }
+    if (route === 'api/freshness' && !pageReader.isFreshnessFailing) {
+      const answer = {
+        status: pageReader.freshness,
+        changedPaths: [],
+        addedPaths: [],
+        ...pageReader.freshnessDetail,
+      }
+      return { ok: true, json: async () => answer }
+    }
+    return { ok: false, json: async () => ({ error: 'Unknown route.' }) }
+  }
   const dispatch = async (
     listeners: PageListener[] | undefined,
   ): Promise<PageEvent> => {
@@ -377,6 +492,8 @@ export async function openFakeWikiPage(
   runInNewContext(script, {
     document,
     location,
+    history,
+    URLSearchParams,
     window: {
       location,
       setTimeout: (callback: () => void, delayMs: number): number => {
@@ -402,6 +519,13 @@ export async function openFakeWikiPage(
       override toLocaleTimeString(): string {
         return this.toISOString().slice(11, 16)
       }
+      // Day and month, and the whole date for comparing two days, follow UTC like the time.
+      override toLocaleDateString(): string {
+        return `${this.getUTCDate()} ${SHORT_MONTHS[this.getUTCMonth()]}`
+      }
+      override toDateString(): string {
+        return this.toISOString().slice(0, 10)
+      }
     },
     MutationObserver: class {
       observe(): void {}
@@ -412,30 +536,29 @@ export async function openFakeWikiPage(
       const route = url.slice(readerPrefix.length)
       pageReader.requests.push(route)
       if (pageReader.isDown) throw new TypeError('fetch failed')
-      if (route === 'api/update-status')
-        return {
-          ok: true,
-          json: async () => ({
-            ...structuredClone(pageReader.updateStatus),
-            sitePublishedAt: pageReader.sitePublishedAt,
-          }),
-        }
-      if (route === 'api/freshness')
-        return {
-          ok: true,
-          json: async () => ({
-            status: pageReader.freshness,
-            changedPaths: [],
-            addedPaths: [],
-          }),
-        }
-      return { ok: false, json: async () => ({ error: 'Unknown route.' }) }
+      // The answer is what the reader knows when the request arrives; a held request delivers it later.
+      const answer = answerRoute(route)
+      const hold = heldRequests.get(route)
+      if (hold) {
+        heldRequests.delete(route)
+        await hold
+      }
+      return answer
     },
   })
   await settle()
 
   return {
     reader: pageReader,
+    holdNext,
+    async release(route): Promise<void> {
+      const release = heldReleases.get(route)
+      if (!release)
+        throw new Error(`The fake page holds no answer of ${route} back.`)
+      heldReleases.delete(route)
+      release()
+      await settle()
+    },
     body,
     find: (selector) => root.querySelector(selector) ?? undefined,
     isShown(element) {
@@ -473,6 +596,7 @@ export async function openFakeWikiPage(
     async focusWindow(): Promise<void> {
       await dispatch(windowListeners.get('focus'))
     },
+    address: () => location.pathname + location.search,
     pendingTimerCount: () => pendingTimers.size,
     reloadCount: () => reloads,
   }

@@ -7,17 +7,12 @@ import {
   WIKI_FRESHNESS_HASH_CONCURRENCY,
   WIKI_GIT_OUTPUT_LIMIT_BYTES,
   WIKI_GIT_TIMEOUT_MS,
-  WIKI_PUBLISH_BACKUP_INFIX,
-  WIKI_PUBLISH_JOURNAL_SUFFIX,
-  WIKI_PUBLISH_STAGE_INFIX,
-  WIKI_UPDATE_RUN_MARKER_SUFFIX,
 } from '../constants'
 
 import type { WikiIncludedSource } from './answerDeepWikiQuestion'
 import { hashFileSha256 } from './hashFileSha256'
+import { isWikiSourceCandidate } from './isWikiSourceCandidate'
 import { mapWithConcurrencyLimit } from './mapWithConcurrencyLimit'
-import { matchesWikiExclusion } from './matchesWikiExclusion'
-import { sourceExclusion } from './sourceExclusion'
 
 const runGit = promisify(execFile)
 
@@ -138,16 +133,6 @@ async function findAddedSources(
       outputDirectory === undefined
         ? ''
         : relative(projectRoot, outputDirectory).split(sep).join('/')
-    /** The Wiki folder, the backups the publisher keeps beside it, its candidates, its journal and a running update's marker are generated, never added source. */
-    const isWikiOutput = (path: string): boolean =>
-      outputPath !== '' &&
-      !outputPath.startsWith('..') &&
-      (path === outputPath ||
-        path.startsWith(`${outputPath}/`) ||
-        path.startsWith(outputPath + WIKI_PUBLISH_BACKUP_INFIX) ||
-        path.startsWith(outputPath + WIKI_PUBLISH_STAGE_INFIX) ||
-        path === outputPath + WIKI_PUBLISH_JOURNAL_SUFFIX ||
-        path === outputPath + WIKI_UPDATE_RUN_MARKER_SUFFIX)
     return {
       kind: 'checked',
       addedPaths: [
@@ -160,11 +145,7 @@ async function findAddedSources(
           (path) =>
             path &&
             !indexedPaths.has(path) &&
-            !sourceExclusion(path) &&
-            !isWikiOutput(path) &&
-            !excludedPaths.some((exclusion) =>
-              matchesWikiExclusion(path, exclusion),
-            ),
+            isWikiSourceCandidate(path, outputPath, excludedPaths),
         )
         .sort(),
     }

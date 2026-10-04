@@ -14,9 +14,11 @@ const wikiUpdateMarkerSchema = z.object({
   host: z.enum(['vscode', 'cursor']),
   /** When the run started (epoch milliseconds). */
   startedAtMs: z.number(),
+  /** Set on the reservation a stopped VS Code watch leaves in place of its run's marker: when the watch ended (epoch milliseconds). The chat may still publish until the watch bound after it; absent while the run lasts. */
+  watchEndedAtMs: z.number().optional(),
 })
 
-/** The marker of a Wiki update that is running in some editor window. */
+/** The marker of a Wiki update that is running in some editor window, or the reservation its stopped watch left. */
 export type WikiUpdateMarker = z.infer<typeof wikiUpdateMarkerSchema>
 
 /**
@@ -28,7 +30,7 @@ export type WikiUpdateMarker = z.infer<typeof wikiUpdateMarkerSchema>
  * @param outputDirectory - Resolved Wiki output folder; the marker is `<output>.update-run.json`.
  * @param ownWindowId - The asking window's own id; its own marker is a leftover of a run that already ended and is not reported.
  * @returns
- * - A marker of another window whose process still runs: that marker
+ * - A marker of another window whose process still runs: that marker (with `watchEndedAtMs` when it is the reservation of a stopped watch, which the caller weighs against the watch bound)
  * - No marker, one that cannot be read, one of a process that is gone, or this window's own: undefined
  *
  * @example

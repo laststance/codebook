@@ -10,6 +10,8 @@ import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
+import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
+import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
 import { loadModule } from './loadModule'
 
 /** The Cancel button of one progress notification the window showed. */
@@ -171,6 +173,7 @@ export async function openWikiUpdateWindow(options: {
     {
       vscode: {
         ProgressLocation: { Notification: 15 },
+        RelativePattern: FakeRelativePattern,
         commands: {
           registerCommand(name: string, action: () => Promise<void>) {
             commands.set(name, action)
@@ -194,12 +197,16 @@ export async function openWikiUpdateWindow(options: {
         workspace: {
           getConfiguration: () => ({ get: () => outputSetting }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          // The opened Wiki watches the project's files; these tests report no file event.
+          createFileSystemWatcher:
+            createFakeFileWatching().createFileSystemWatcher,
         },
         env: {
           ...(options.cursor ? { appName: 'Cursor' } : {}),
+          asExternalUri: keepLocalAddress,
           openExternal: async () => true,
         },
-        Uri: { parse: (value: string) => ({ value }) },
+        Uri: { parse: parseFakeUri },
         window: {
           registerUriHandler: (handler: { handleUri: UriHandler }) => {
             handleUri = handler.handleUri
@@ -277,6 +284,8 @@ export async function openWikiUpdateWindow(options: {
           readUpdateStatus = statusProvider
           return {
             url: 'http://127.0.0.1:9/index.html',
+            acceptForwardedOrigin(): void {},
+            noteSourceChange(): void {},
             close: async (): Promise<void> => {},
           }
         },

@@ -8,13 +8,14 @@ import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 /**
  * Publishes a one-page Wiki in a temporary project and serves it, for tests of the reader's routes and of its served page script.
  *
- * @param readUpdateStatus - Update state the reader answers at `api/update-status`; idle when omitted.
- * @returns The started reader, the path of its manifest and a `close` that stops the reader and removes the project.
+ * @param readUpdateStatus - Update state of the reader's window, built from the Wiki folder this fixture serves (the reader answers a run of another folder as idle); idle when omitted.
+ * @param startReader - The reader's start function; a test that loads the reader module with replaced parts hands its own, the real one serves when omitted.
+ * @returns The started reader, the Wiki folder it serves, the path of its manifest and a `close` that stops the reader and removes the project.
  * @throws When the Wiki cannot be written or its reader does not start; the temporary project is removed before the error is passed on.
  *
  * @example
  * ```ts
- * const wiki = await serveMinimalWiki(() => ({ state: 'idle' }))
+ * const wiki = await serveMinimalWiki((outputDirectory) => ({ state: 'already-current', finishedAt: '2026-10-03T12:10:00.000Z', outputDirectory, outputLabel: '.codebook/wiki' }))
  * try {
  *   await fetch(new URL('api/update-status', wiki.reader.url))
  * } finally {
@@ -23,9 +24,11 @@ import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
  * ```
  */
 export async function serveMinimalWiki(
-  readUpdateStatus?: () => WikiUpdateStatus,
+  readUpdateStatus?: (outputDirectory: string) => WikiUpdateStatus,
+  startReader: typeof startDeepWikiReader = startDeepWikiReader,
 ): Promise<{
   reader: DeepWikiReader
+  outputDirectory: string
   manifestPath: string
   close(): Promise<void>
 }> {
@@ -53,15 +56,16 @@ export async function serveMinimalWiki(
         includedSources: [],
       }),
     )
-    const reader = await startDeepWikiReader(
+    const reader = await startReader(
       output,
       projectRoot,
       async () => ({ handoff: 'unused' }),
       'vscode',
-      readUpdateStatus,
+      readUpdateStatus && (() => readUpdateStatus(output)),
     )
     return {
       reader,
+      outputDirectory: output,
       manifestPath,
       async close(): Promise<void> {
         await reader.close()

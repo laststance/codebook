@@ -1,28 +1,42 @@
-import type { describeWikiUpdate } from './describeWikiUpdate'
+import type {
+  describeWikiUpdate,
+  WikiUpdateDescription,
+} from './describeWikiUpdate'
 import type { WikiUpdateStatus } from './wikiUpdateRun'
 
-/** What the reader answers at `api/update-status`: the run state and when the site on disk was published (absent while no manifest is readable). */
+/** What the reader answers at `api/update-status`: the run state, when the site on disk was published (absent while no manifest is readable), which publication it is (absent while the folder holds no publisher's receipt for its manifest) and the reader's source-change stamp. */
 export type WikiUpdateStatusAnswer = WikiUpdateStatus & {
   sitePublishedAt?: string
+  publication?: string
+  /** Rises when a project file that can change freshness was changed; the page reads freshness again when it differs from the one its last check was made for. */
+  sourceChangeStamp?: number
 }
 
 /** What the served page script hands to {@link installWikiUpdateStatus}: where its reader answers, the shared wording and the page's bounds. */
 export type WikiUpdatePageSettings = {
   /** Path prefix of the reader that served the page, for example "/w/<token>/". */
   readerPrefix: string
+  /** Route under the prefix that answers the update state; the reader names it, so the page asks where the reader listens. */
+  updateStatusRoute: string
+  /** Route under the prefix that answers the freshness of the Wiki. */
+  freshnessRoute: string
+  /** The publication the page's HTML was read from, as the reader wrote it into the page; undefined when that site had no publisher's receipt. The page offers a reload when the reader answers another one. */
+  pagePublication: string | undefined
   /** The one wording shared with the editor notification, embedded next to this function. */
   describeUpdate: typeof describeWikiUpdate
   /** How often the page asks for the update state while a run is active or awaited (ms). */
   statusPollMs: number
   /** How often the page asks while nothing is running and the tab is visible (ms). */
   idlePollMs: number
+  /** How long after an answered freshness check a mere return to the page asks for no other one (ms). */
+  freshnessMinIntervalMs: number
   /** How long after a press of the update link the page waits for the run the learner confirms in the editor (ms). */
   startWaitMs: number
   /** How many failed reads in a row a running update survives before the page says it lost contact. */
   statusRetryLimit: number
   /** How many conflict paths the sentence names before "and N more". */
   pathLimit: number
-  /** How many characters of a failure reason the sentence shows. */
+  /** How many characters of a reported failure reason the sentence shows, and of a freshness reason the label. */
   reasonLimitChars: number
   /** Milliseconds in one minute, handed to the embedded sentence writer, which cannot import the constant. */
   msPerMinute: number
@@ -41,13 +55,17 @@ export type WikiUpdatePageSettings = {
  * ```ts
  * installWikiUpdateStatus({
  *   readerPrefix: '/w/3f9a/',
+ *   updateStatusRoute: 'api/update-status',
+ *   freshnessRoute: 'api/freshness',
+ *   pagePublication: 'dc9d3160…@1837466',
  *   describeUpdate: describeWikiUpdate,
  *   statusPollMs: 2_000,
  *   idlePollMs: 15_000,
+ *   freshnessMinIntervalMs: 5_000,
  *   startWaitMs: 120_000,
  *   statusRetryLimit: 3,
  *   pathLimit: 3,
- *   reasonLimitChars: 400,
+ *   reasonLimitChars: 160,
  *   msPerMinute: 60_000,
  * })
  * ```
@@ -56,14 +74,7 @@ export function installWikiUpdateStatus(
   settings: WikiUpdatePageSettings,
 ): void {
   /** What the status line says now; `lead + rest` is the sentence. */
-  type Shown = {
-    state: string
-    lead: string
-    rest: string
-    detail: string[]
-    output: string
-    offerReload: boolean
-  }
+  type Shown = { state: string } & WikiUpdateDescription
 
   // Sites published earlier carry their own older stylesheet, so every rule of the update group comes from here.
   const styles = document.createElement('style')
@@ -71,8 +82,13 @@ export function installWikiUpdateStatus(
     // The label, the button and the status read as one callout, with the button as its filled primary control.
     '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
     '[data-codebook-update-group=bare]{background:none;border:0;padding:0}',
-    '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem}',
+    '[data-codebook-update-group]>[data-codebook-freshness]{margin:0 0 .5rem;overflow-wrap:anywhere}',
     '[data-codebook-update-group] .wiki-update{background:var(--link,LinkText);color:var(--bg,Canvas);border-color:var(--link,LinkText);font-weight:600}',
+    // While a reload is offered it is the one action that changes what the learner reads: Reload is the filled button and the update button is outlined.
+    '[data-codebook-update-group][data-codebook-reload-offered] .wiki-update:not([aria-disabled=true]){background:var(--panel,Canvas);color:var(--link,LinkText)}',
+    // Both buttons answer the pointer and a press at once, without a transition; a held-back button does not.
+    '.wiki-update:not([aria-disabled=true]):hover,[data-codebook-reload]:hover{filter:brightness(.9)}',
+    '.wiki-update:not([aria-disabled=true]):active,[data-codebook-reload]:active{filter:brightness(.8)}',
     // In the narrow layout the rail is a short scrolling row; the group keeps a bounded column of it and its own height, so the panel encloses its text.
     '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
@@ -82,6 +98,8 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-status]:empty{margin:0;padding:0;border:0}',
     // State is carried by the lead words, their weight and their colour together, never by colour alone.
     '[data-codebook-update-status] strong{font-weight:650}',
+    // The clause that names the control below the region is announced with the sentence and not printed above that control.
+    '[data-codebook-update-status] [data-codebook-update-note]{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}',
     '[data-codebook-update-status][data-state=succeeded] strong,[data-codebook-update-status][data-state=already-current] strong,[data-codebook-update-status][data-state=late-publish] strong{color:var(--current,#236b55)}',
     '[data-codebook-update-status][data-state=failed] strong,[data-codebook-update-status][data-state=conflict] strong{color:var(--changed,#8a3a1c)}',
     '[data-codebook-update-status][data-state=timed-out] strong,[data-codebook-update-status][data-state=unreachable] strong{color:var(--unknown,#6b4d00)}',
@@ -90,10 +108,48 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-status]~[data-codebook-update-detail] summary{cursor:pointer}',
     '[data-codebook-update-status]~[data-codebook-update-detail] ul{margin:.3rem 0 0;padding-left:1.1rem}',
     '[data-codebook-update-status]~[data-codebook-update-detail] p{margin:.3rem 0 0}',
-    '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--panel,Canvas);color:var(--link,LinkText)}',
+    '[data-codebook-update-status]~[data-codebook-reload]{display:block;margin:.5rem 0 0;font:inherit;font-size:.75rem;font-weight:600;cursor:pointer;border:1px solid var(--link,LinkText);border-radius:5px;padding:.3rem .6rem;background:var(--link,LinkText);color:var(--bg,Canvas)}',
     '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
+    // The line that says the overview stands in for a missing page sits above the article's title.
+    '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
   ].join('')
   document.head.append(styles)
+
+  // The reader sends a request for a page the Wiki does not have to the overview and names that page in the address.
+  const addressQuery = new URLSearchParams(location.search)
+  const missingPage = addressQuery.get('missing')
+  if (missingPage !== null) {
+    // The address can be written by anyone: its text is shown only when it is a page path as the publisher allows them.
+    const isPagePath =
+      missingPage.endsWith('.html') &&
+      !missingPage.startsWith('/') &&
+      !/[\\\x00-\x1f?#:]/.test(missingPage) &&
+      missingPage
+        .split('/')
+        .every((part) => part !== '' && part !== '.' && part !== '..')
+    const missingLine = document.createElement('p')
+    missingLine.setAttribute('data-codebook-missing-page', '')
+    missingLine.setAttribute('role', 'status')
+    missingLine.textContent =
+      (isPagePath
+        ? 'The page ' + missingPage + ' is not in this Wiki.'
+        : 'The page you asked for is not in this Wiki.') +
+      ' The last update may have removed it. This is the overview.'
+    // The learner's eye lands on the article, so the line is the first element of the reading column, above the title.
+    const readingColumn =
+      document.querySelector<HTMLElement>('.reading-column') ?? document.body
+    readingColumn.insertBefore(missingLine, readingColumn.firstChild)
+    // Shown once: a reload or a copied address no longer names the missing page.
+    addressQuery.delete('missing')
+    const remainingQuery = addressQuery.toString()
+    history.replaceState(
+      null,
+      '',
+      location.pathname +
+        (remainingQuery ? '?' + remainingQuery : '') +
+        location.hash,
+    )
+  }
 
   const freshnessLabel = document.querySelector<HTMLElement>(
     '[data-codebook-freshness]',
@@ -141,13 +197,27 @@ export function installWikiUpdateStatus(
     location.reload()
   })
 
+  // A page this script runs in is served by Codebook: the offline text of the published page gives way to what happens until the first answer.
+  if (freshnessLabel) freshnessLabel.textContent = 'Checking freshness…'
+
   /** The last state the reader answered, and its serialized form for comparing two answers. */
   let lastAnswer: WikiUpdateStatus | undefined
   let lastAnswerText = ''
   /** The last freshness the reader answered; undefined before the first answer and after a read that failed. */
   let freshness: string | undefined
+  /** The freshness read in flight and the generation of site and source it reads; a look that needs the same generation joins it. */
+  let freshnessRead: { generation: string; done: Promise<void> } | undefined
+  /** Freshness reads started so far; an answer counts only while its read is the latest. */
+  let freshnessReadCount = 0
+  /** The generation the last answered freshness read was made for, and when it was answered (browser clock); undefined until one was answered. */
+  let freshnessGeneration: string | undefined
+  let freshnessAnsweredAtMs: number | undefined
+  /** The generation of site and source the reader last answered; empty before its first answer. */
+  let answeredGeneration = ''
   /** When the site on disk was published, as the reader last answered it (epoch ms); undefined while no manifest is readable. */
   let sitePublishedAtMs: number | undefined
+  /** Which publication is on disk, as the reader last answered it; the pages on screen are older when it is not the one they were served from. */
+  let sitePublication: string | undefined
   /** After a press of the link: the answer at that moment, and until when the page waits for a different one. */
   let isAwaitingStart = false
   let answerAtPress: string | undefined
@@ -174,11 +244,19 @@ export function installWikiUpdateStatus(
     answer !== null &&
     'state' in answer &&
     typeof answer.state === 'string'
-  const formatTime = (isoTimestamp: string): string =>
-    new Date(isoTimestamp).toLocaleTimeString([], {
+  /** Words a timestamp as the learner's local hour and minute, with day and month in front when it is not of today, so a result of an earlier day does not read as today's. @example formatTime('2026-10-03T12:10:00.000Z') // => '21:10' today, '3 Oct, 21:10' on a later day */
+  const formatTime = (isoTimestamp: string): string => {
+    const moment = new Date(isoTimestamp)
+    const time = moment.toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
     })
+    return moment.toDateString() === new Date(Date.now()).toDateString()
+      ? time
+      : moment.toLocaleDateString([], { day: 'numeric', month: 'short' }) +
+          ', ' +
+          time
+  }
 
   const isEndedWithoutSuccess = (state: string): boolean =>
     state === 'failed' ||
@@ -186,38 +264,85 @@ export function installWikiUpdateStatus(
     state === 'timed-out' ||
     state === 'conflict'
 
-  /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. */
-  const noteFreshness = (status: string | undefined, reason: string): void => {
+  /** Takes in what `api/freshness` answered and writes it into the freshness label. @param status - The answered status, or undefined when the reader did not answer. @param reason - Why a check could not decide; empty when the answer gave none. @param isAdditionUnchecked - Whether the project has no Git repository, so added files were not looked for. */
+  const noteFreshness = (
+    status: string | undefined,
+    reason: string,
+    isAdditionUnchecked: boolean,
+  ): void => {
     freshness = status
     if (!freshnessLabel) return
-    freshnessLabel.textContent =
-      status === 'current'
-        ? 'Wiki source current'
-        : status === 'changed'
-          ? 'Source changed · Update available'
-          : 'Wiki freshness unknown'
+    // The label sits above the outline in a narrow rail: a long reason is cut at the last space before the rail's limit and stays whole in the tooltip.
+    const lastSpace = reason.lastIndexOf(' ', settings.reasonLimitChars)
+    const shownReason =
+      reason.length > settings.reasonLimitChars
+        ? reason
+            .slice(0, lastSpace > 0 ? lastSpace : settings.reasonLimitChars)
+            .trimEnd() + '…'
+        : reason
+    // A check that could not decide says why in the label itself: a tooltip needs a pointer, and a paragraph cannot take the focus.
+    let label = reason
+      ? 'Wiki freshness unknown: ' + shownReason
+      : 'Wiki freshness unknown'
+    if (status === 'changed') label = 'Source changed · Update available'
+    else if (status === 'current')
+      label = isAdditionUnchecked
+        ? 'Wiki source current (no Git revision recorded, so added files are not checked)'
+        : 'Wiki source current'
+    freshnessLabel.textContent = label
     freshnessLabel.setAttribute('data-status', status ?? 'unknown')
-    if (reason) freshnessLabel.title = reason
+    // The reason of an earlier look must not outlive it.
+    if (reason) freshnessLabel.setAttribute('title', reason)
+    else freshnessLabel.removeAttribute('title')
   }
-  const readFreshness = async (): Promise<void> => {
-    try {
-      const answer = await readFromReader('api/freshness')
-      if (
-        typeof answer !== 'object' ||
-        answer === null ||
-        !('status' in answer) ||
-        typeof answer.status !== 'string'
-      )
-        throw new Error('The freshness answer has no status.')
+  /** Asks the reader how the Wiki stands against the source and writes the answer into the label. @param generation - The generation of site and source the check is for; a check already in flight for it is joined instead of asked twice. @returns A promise that settles when the answer was taken in, or dropped because a newer check was started meanwhile. */
+  const readFreshness = (generation: string): Promise<void> => {
+    if (freshnessRead?.generation === generation) return freshnessRead.done
+    freshnessReadCount += 1
+    const readNumber = freshnessReadCount
+    const done = (async (): Promise<void> => {
+      let answered:
+        | { status: string; reason: string; isAdditionUnchecked: boolean }
+        | undefined
+      try {
+        const answer = await readFromReader(settings.freshnessRoute)
+        if (
+          typeof answer !== 'object' ||
+          answer === null ||
+          !('status' in answer) ||
+          typeof answer.status !== 'string'
+        )
+          throw new Error('The freshness answer has no status.')
+        answered = {
+          status: answer.status,
+          reason:
+            'reason' in answer && typeof answer.reason === 'string'
+              ? answer.reason
+              : '',
+          isAdditionUnchecked:
+            'addedFilesUnchecked' in answer &&
+            answer.addedFilesUnchecked === true,
+        }
+      } catch {
+        answered = undefined
+      }
+      // A newer check was started for a newer site or source; this late answer must not put its label back over that one's.
+      if (readNumber !== freshnessReadCount) return
+      freshnessRead = undefined
+      if (!answered) {
+        noteFreshness(undefined, '', false)
+        return
+      }
+      freshnessGeneration = generation
+      freshnessAnsweredAtMs = Date.now()
       noteFreshness(
-        answer.status,
-        'reason' in answer && typeof answer.reason === 'string'
-          ? answer.reason
-          : '',
+        answered.status,
+        answered.reason,
+        answered.isAdditionUnchecked,
       )
-    } catch {
-      noteFreshness(undefined, '')
-    }
+    })()
+    freshnessRead = { generation, done }
+    return done
   }
 
   /** Takes in one answer of `api/update-status`. @returns Whether the run it describes just ended. */
@@ -230,7 +355,9 @@ export function installWikiUpdateStatus(
     if (isAwaitingStart) {
       // A press before the first answer takes that answer as its starting point.
       answerAtPress ??= answerText
-      if (answerText !== answerAtPress) isAwaitingStart = false
+      // A run that is active is what the press waits for, also when it is the very answer the press started from: after lost contact the link was free during a run.
+      if (answerText !== answerAtPress || answer.state === 'running')
+        isAwaitingStart = false
       else if (Date.now() >= awaitingStartUntilMs) {
         isAwaitingStart = false
         didStartWaitPass = true
@@ -289,7 +416,8 @@ export function installWikiUpdateStatus(
       msPerMinute: settings.msPerMinute,
       // The page shows the freshness label above the update line.
       freshnessLabelPlace: 'above',
-      pageLoadedAtMs: performance.timeOrigin,
+      // The host names both publications, so the browser's clock decides nothing.
+      isPageOlderThanSite: sitePublication !== settings.pagePublication,
     })
     if (!described) return undefined
     const state = lastAnswer.state
@@ -315,8 +443,8 @@ export function installWikiUpdateStatus(
           rest: ' after this run ended and matches the source.',
           detail: [],
           output: described.output,
-          // Only a page loaded before that publish still shows the older pages.
-          offerReload: sitePublishedAtMs > performance.timeOrigin,
+          // Only a page served before that publish still shows the older pages.
+          offerReload: sitePublication !== settings.pagePublication,
         }
       // Nothing was published since, so the source itself went back to what the site describes: "needs another run" no longer holds.
       if (state === 'failed' && lastAnswer.site === 'replaced') return undefined
@@ -347,6 +475,10 @@ export function installWikiUpdateStatus(
     detailBox.remove()
     reloadButton.remove()
     outputLine.remove()
+    // The mark swaps the two buttons' looks for as long as the reload is offered.
+    if (shown?.offerReload)
+      group.setAttribute('data-codebook-reload-offered', '')
+    else group.removeAttribute('data-codebook-reload-offered')
     if (!shown) {
       statusRegion.replaceChildren()
       statusRegion.removeAttribute('data-state')
@@ -354,7 +486,23 @@ export function installWikiUpdateStatus(
     }
     const lead = document.createElement('strong')
     lead.textContent = shown.lead
-    statusRegion.replaceChildren(lead, shown.rest)
+    // The controls after the region are not announced with it, so the announced sentence ends with a clause that names them.
+    let followClause = ''
+    if (shown.offerReload) followClause = ' Reload is offered below.'
+    else if (shown.detail.length > 0)
+      followClause =
+        shown.state === 'conflict'
+          ? ' The full list is below.'
+          : ' The full message is below.'
+    // The clause's element is made anew and goes in with the sentence, so the region changes once per sentence.
+    const followNote = document.createElement('span')
+    followNote.setAttribute('data-codebook-update-note', '')
+    followNote.textContent = followClause
+    statusRegion.replaceChildren(
+      lead,
+      shown.rest,
+      ...(followClause ? [followNote] : []),
+    )
     statusRegion.setAttribute('data-state', shown.state)
     const besideTheRegion: HTMLElement[] = []
     if (shown.detail.length > 0) {
@@ -411,22 +559,30 @@ export function installWikiUpdateStatus(
     window.clearTimeout(pollTimer)
     lookCount += 1
     const lookNumber = lookCount
-    let isFreshnessDue = isReturn
+    // A return to the page asks for freshness again, unless a check was answered a moment ago.
+    let isFreshnessDue =
+      isReturn &&
+      (freshnessAnsweredAtMs === undefined ||
+        Date.now() - freshnessAnsweredAtMs >= settings.freshnessMinIntervalMs)
     try {
-      const answer = await readFromReader('api/update-status')
+      const answer = await readFromReader(settings.updateStatusRoute)
       // A newer look is under way; its answer is the one to show.
       if (lookNumber !== lookCount) return
       if (!isUpdateStatus(answer))
         throw new Error('The update answer has no state.')
-      const { sitePublishedAt, ...status } = answer
+      const { sitePublishedAt, publication, sourceChangeStamp, ...status } =
+        answer
+      sitePublication =
+        typeof publication === 'string' ? publication : undefined
       const answeredPublishMs =
         typeof sitePublishedAt === 'string'
           ? Date.parse(sitePublishedAt)
           : undefined
-      const didSiteChange = answeredPublishMs !== sitePublishedAtMs
       sitePublishedAtMs = answeredPublishMs
-      // A finished run changes freshness, and so does a publish: the chat may publish after its run was given up. Hashing the sources at every idle look would cost more than it tells.
-      if (noteAnswer(status) || didSiteChange) isFreshnessDue = true
+      answeredGeneration = answeredPublishMs + '|' + sourceChangeStamp
+      // A finished run changes freshness, and so do a publish (the chat may publish after its run was given up) and a changed source file, which the reader's stamp tells without hashing anything. The generation of the last answered check is compared, so a check that failed stays owed.
+      if (noteAnswer(status) || answeredGeneration !== freshnessGeneration)
+        isFreshnessDue = true
     } catch {
       if (lookNumber !== lookCount) return
       noteFailedRead()
@@ -434,7 +590,7 @@ export function installWikiUpdateStatus(
     if (isFreshnessDue) {
       // A result is weighed against freshness before it is shown; a run in progress shows at once.
       if (lastAnswer?.state === 'running' || isUnreachable) show()
-      await readFreshness()
+      await readFreshness(answeredGeneration)
       if (lookNumber !== lookCount) return
     }
     show()

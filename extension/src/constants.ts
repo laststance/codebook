@@ -430,6 +430,20 @@ export const WIKI_CURSOR_SHUTDOWN_GRACE_MS = 2_000
 export const WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON = 'WikiUpdateWindowClosing'
 /** File name of the manifest the Wiki publisher writes into an output or candidate folder. */
 export const WIKI_MANIFEST_FILE = 'codebook-wiki.json'
+/** File name of a generated Wiki's overview page: the page the browser entry opens, the one every Wiki owns and the one a request without a page falls back to. */
+export const WIKI_ENTRY_FILE = 'index.html'
+/** Route of the Wiki reader that answers the update run's state; the reader hands it to its page script, so both sides take the name from here. */
+export const WIKI_UPDATE_STATUS_ROUTE = 'api/update-status'
+/** Route of the Wiki reader that answers how the Wiki stands against the source; handed to the page script like {@link WIKI_UPDATE_STATUS_ROUTE}. */
+export const WIKI_FRESHNESS_ROUTE = 'api/freshness'
+/** Route of the Wiki reader that takes a repository question from its own page. */
+export const WIKI_QUESTION_ROUTE = 'api/ask'
+/** The host names of an address on this machine; an address the editor forwards the Wiki reader to is accepted as the reader's own page only under one of them. */
+export const WIKI_LOOPBACK_HOSTS: readonly string[] = [
+  '127.0.0.1',
+  'localhost',
+  '[::1]',
+]
 /** File name of the Wiki publisher's receipt in an output or candidate folder. */
 export const WIKI_PUBLICATION_RECEIPT_FILE = 'codebook-publication.json'
 /** What the Wiki publisher appends to the output folder's path for the journal of a publish in progress or left unfinished. */
@@ -472,12 +486,16 @@ export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
 /** How many conflict paths an update sentence names before "and N more". */
 export const WIKI_UPDATE_SHOWN_PATH_LIMIT = 3
-/** How many characters of a failure reason an update sentence shows before the full text moves to its disclosure; the longest sentences Codebook writes itself (another window is updating, a publish it cannot check) end with their next step and stay whole. */
-export const WIKI_UPDATE_REASON_LIMIT_CHARS = 400
+/** How many characters of a reason an agent, the CLI or a thrown error supplied an update sentence shows before the full text moves to its disclosure, and how many of a freshness reason the label shows; the Wiki's rail is 170 to 210 px wide and "On this page" sits below. A sentence Codebook writes itself ends with its next step and stays whole. */
+export const WIKI_UPDATE_REASON_LIMIT_CHARS = 160
 /** How long after a press of Update LLM Wiki the reader page keeps asking quickly for the run the learner still has to confirm in the editor. */
 export const WIKI_UPDATE_START_WAIT_MS = 120_000
 /** How often the reader page asks for the update state while no run is active and its tab is visible. */
 export const WIKI_UPDATE_IDLE_POLL_MS = 15_000
+/** How long the Wiki reader gathers reported file changes before its source-change stamp rises once: a checkout or an agent writes many files in one burst. */
+export const WIKI_SOURCE_CHANGE_DEBOUNCE_MS = 1_000
+/** How long after a freshness check the reader page does not ask for another one when the learner only comes back to it; a finished run, a publish or a changed source still asks at once. A check hashes every indexed source and runs Git. */
+export const WIKI_FRESHNESS_MIN_INTERVAL_MS = 5_000
 /** How many failed status reads in a row the reader page lets a running update survive before it says it lost contact with the editor. */
 export const WIKI_UPDATE_STATUS_RETRY_LIMIT = 3
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536

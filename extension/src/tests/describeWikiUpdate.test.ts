@@ -121,16 +121,15 @@ test('a published update names its time, revision and index, and offers a reload
     index: '0f9e8d7c',
     ...place,
   } as const
-  const finishedAtMs = Date.parse(finishedAt)
 
   // Act
   const onOlderPage = describeWikiUpdate(status, {
     ...wording,
-    pageLoadedAtMs: finishedAtMs - 60_000,
+    isPageOlderThanSite: true,
   })
   const onReloadedPage = describeWikiUpdate(status, {
     ...wording,
-    pageLoadedAtMs: finishedAtMs + 1_000,
+    isPageOlderThanSite: false,
   })
   const inEditor = describeWikiUpdate(status, wording)
 
@@ -258,13 +257,14 @@ test('a long failure reason is cut in the sentence and kept whole for the disclo
   // Act
   const described = describeWikiUpdate(status, {
     ...wording,
-    reasonLimitChars: 34,
+    // The limit falls inside "explanation"; the cut is made at the space before that word.
+    reasonLimitChars: 30,
   })
 
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update failed at 21:10: The agent wrote a long explanation… The last usable site is kept.',
+    'Update failed at 21:10: The agent wrote a long… The last usable site is kept.',
   )
   assert.deepEqual(described?.detail, [reason])
 })

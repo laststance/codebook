@@ -214,7 +214,7 @@ test('inserting before a node that is not a child fails as it does in a browser'
   // Act
   const inserting = (): void =>
     page.body.insertBefore('a text node', updateLink)
-  // Assert: the browser's error, and the body keeps its two children.
+  // Assert: the browser's error, and the body keeps its three children.
   assert.throws(inserting, {
     name: 'NotFoundError',
     message:
@@ -224,7 +224,7 @@ test('inserting before a node that is not a child fails as it does in a browser'
     page.body.childNodes.map((child) =>
       typeof child === 'string' ? child : child.tagName,
     ),
-    ['header', 'aside'],
+    ['header', 'main', 'aside'],
   )
 })
 

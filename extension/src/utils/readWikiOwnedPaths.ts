@@ -1,3 +1,5 @@
+import { WIKI_ENTRY_FILE } from '../constants'
+
 import { readWikiRegularFile } from './readWikiRegularFile'
 
 /**
@@ -31,7 +33,7 @@ export async function readWikiOwnedPaths(
       'assets' in manifest && Array.isArray(manifest.assets)
         ? manifest.assets
         : []
-    const paths = new Set<string>(['index.html'])
+    const paths = new Set<string>([WIKI_ENTRY_FILE])
     for (const page of pages)
       if (
         typeof page === 'object' &&

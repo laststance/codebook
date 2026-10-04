@@ -23,6 +23,7 @@ import {
   WIKI_CHAT_OPEN_TIMEOUT_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_ENTRY_FILE,
   WIKI_MANIFEST_FILE,
   WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_UPDATE_LAST_RUN_STATE_KEY,
@@ -71,6 +72,7 @@ import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
@@ -173,6 +175,17 @@ export function activate(
   ).data
   // This window's id in the marker of a running update; another window's live marker refuses a start here.
   const wikiWindowId = randomUUID()
+  // The reservation this window's stopped VS Code watch left on disk for other windows, with the timer that removes it at the watch bound.
+  let wikiReservation:
+    { release: () => Promise<void>; timer: NodeJS.Timeout } | undefined
+  /** Removes this window's reservation from the disk: at the watch bound and when the window closes, where the chat it stood for is gone. A marker another window wrote since is left alone. @example await dropWikiReservation() */
+  const dropWikiReservation = async (): Promise<void> => {
+    const reservation = wikiReservation
+    wikiReservation = undefined
+    if (!reservation) return
+    clearTimeout(reservation.timer)
+    await reservation.release().catch(() => undefined)
+  }
   /** The button of a refusal that names an earlier chat's leftover: it starts the update with that leftover ignored. */
   const UPDATE_ANYWAY_ACTION = 'Update anyway'
   // A window that is closing has nobody to notify of the run its shutdown stops, and starts no run.
@@ -192,6 +205,8 @@ export function activate(
     isOutputOutsideProject: boolean
     /** Removes this run's marker beside the Wiki, so another window may start. */
     releaseMarker: () => Promise<void>
+    /** Leaves the marker as the reservation of a watch that was stopped while its chat may still work, for other windows to read. */
+    reserveMarker: (watchEndedAtMs: number) => Promise<void>
     startedAtMs: number
     /** The bound the run announces on the page and in its request, and the one it is stopped at. */
     timeoutMs: number
@@ -627,7 +642,11 @@ export function activate(
             WIKI_CURSOR_TERMINATION_GRACE_MS,
           )
       } finally {
-        await deepWikiReader?.close()
+        try {
+          await dropWikiReservation()
+        } finally {
+          await deepWikiReader?.close()
+        }
       }
     }
   }
@@ -670,7 +689,7 @@ export function activate(
   const currentDeepWiki = async () => {
     const { projectRoot, outputDirectory } = await wikiLocation()
     await assertWikiOwner(projectRoot, outputDirectory)
-    const entry = join(outputDirectory, 'index.html')
+    const entry = join(outputDirectory, WIKI_ENTRY_FILE)
     await readFile(entry)
     return { projectRoot, outputDirectory, entry }
   }
@@ -752,22 +771,33 @@ export function activate(
       failure: observed.failure,
     })
     wikiUpdateRun.end(end)
+    const endedAtMs = Date.now()
+    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
+    const mayAgentStillWork =
+      run.host === 'vscode' &&
+      (end.state === 'cancelled' || end.state === 'timed-out')
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
-      endedAtMs: Date.now(),
-      // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
-      mayAgentStillWork:
-        run.host === 'vscode' &&
-        (end.state === 'cancelled' || end.state === 'timed-out'),
+      endedAtMs,
+      mayAgentStillWork,
     }
     void context.workspaceState.update(
       WIKI_UPDATE_LAST_RUN_STATE_KEY,
       lastWikiRun,
     )
-    // The editor tells the learner in the same turn the page's status changes; the marker's removal is file work and would put the notice a turn or more behind the page.
+    // The editor tells the learner in the same turn the page's status changes; the marker's file work below would put the notice a turn or more behind the page.
     showWikiUpdateNotice()
-    await run.releaseMarker().catch(() => undefined)
+    if (mayAgentStillWork) {
+      // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
+      await run.reserveMarker(endedAtMs).catch(() => undefined)
+      wikiReservation = {
+        release: run.releaseMarker,
+        timer: setTimeout(() => {
+          void dropWikiReservation()
+        }, WIKI_UPDATE_WATCH_TIMEOUT_MS).unref(),
+      }
+    } else await run.releaseMarker().catch(() => undefined)
   }
   /** Looks at this run's candidates: notes on the run state that the agent staged one, and names the learner files it would overwrite. @example await probeWikiCandidates(run) // => ['pages/notes.html'] */
   const probeWikiCandidates = async (run: WikiRun): Promise<string[]> => {
@@ -897,6 +927,7 @@ export function activate(
     | 'publicationAtStart'
     | 'uncoveredAtStart'
     | 'releaseMarker'
+    | 'reserveMarker'
     | 'startedAtMs'
   > & {
     /** Whether the opened folder is inside a Git repository; the request names only the conditions that can hold in it. */
@@ -994,7 +1025,21 @@ export function activate(
         outputDirectory,
         wikiWindowId,
       )
-      if (otherWindow) return refuse(describeOtherWindow(otherWindow))
+      if (otherWindow) {
+        const { watchEndedAtMs } = otherWindow
+        // A run that is active in another window refuses the start, and nothing overrides it.
+        if (watchEndedAtMs === undefined)
+          return refuse(describeOtherWindow(otherWindow))
+        // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on.
+        if (
+          !isLeftoverIgnored &&
+          Date.now() < watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+        )
+          return refuse(
+            `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+            updateAnyway,
+          )
+      }
       if (!isLeftoverIgnored) {
         const nowMs = Date.now()
         // The record of another output says nothing about this one's candidates.
@@ -1038,12 +1083,16 @@ export function activate(
       })
       // Another window began its run between the look at the marker and this write.
       if ('heldBy' in claim) return refuse(describeOtherWindow(claim.heldBy))
+      // This window's own reservation, if it left one, is now this run's marker; its timer must not remove it.
+      clearTimeout(wikiReservation?.timer)
+      wikiReservation = undefined
       return {
         tokenAtStart,
         publicationAtStart,
         uncoveredAtStart: before?.freshness.addedPaths ?? [],
         hasGitRepository: !before?.freshness.addedFilesUnchecked,
         releaseMarker: claim.release,
+        reserveMarker: claim.reserve,
         startedAtMs,
       }
     }
@@ -1100,6 +1149,7 @@ export function activate(
         // The label is the absolute path exactly when the folder is not inside the project.
         isOutputOutsideProject: outputLabel === outputDirectory,
         releaseMarker: start.releaseMarker,
+        reserveMarker: start.reserveMarker,
         startedAtMs: start.startedAtMs,
         timeoutMs: isCursorHost
           ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
@@ -1366,106 +1416,138 @@ export function activate(
         throw error
       }
     }),
-    registerCommand('codebook.openDeepWiki', async () => {
-      try {
-        const { projectRoot, outputDirectory } = await currentDeepWiki()
-        await deepWikiReader?.close()
-        deepWikiReader = undefined
-        const openedReader = await startDeepWikiReader(
-          outputDirectory,
-          projectRoot,
-          async (question, sources, signal) => {
-            if ((await realpath(requireWorkspace())) !== projectRoot)
-              throw new Error('The opened repository changed. Reopen its Wiki.')
-            const models = vscode.lm?.selectChatModels
-              ? await vscode.lm.selectChatModels()
-              : []
-            if (!models.length) {
-              if (isCursorHost) {
-                const cancellation = new vscode.CancellationTokenSource()
-                signal.addEventListener('abort', () => cancellation.cancel(), {
-                  once: true,
-                })
-                try {
-                  return await answerDeepWikiQuestionWithPrompt(
-                    (prompt) =>
-                      requestCursorWikiText(prompt, cancellation.token),
-                    projectRoot,
-                    sources,
-                    question,
-                    'cursor',
+    // A second command while the first is still opening joins it: two opens in flight would each start a reader, and the failure of one would close the other's.
+    registerCommand(
+      'codebook.openDeepWiki',
+      joinInFlight(async () => {
+        try {
+          const { projectRoot, outputDirectory } = await currentDeepWiki()
+          await deepWikiReader?.close()
+          deepWikiReader = undefined
+          const openedReader = await startDeepWikiReader(
+            outputDirectory,
+            projectRoot,
+            async (question, sources, signal) => {
+              if ((await realpath(requireWorkspace())) !== projectRoot)
+                throw new Error(
+                  'The opened repository changed. Reopen its Wiki.',
+                )
+              const models = vscode.lm?.selectChatModels
+                ? await vscode.lm.selectChatModels()
+                : []
+              // The browser tab may have been closed while the editor listed its models: a question nobody waits for is not sent.
+              signal.throwIfAborted()
+              if (!models.length) {
+                if (isCursorHost) {
+                  const cancellation = new vscode.CancellationTokenSource()
+                  signal.addEventListener(
+                    'abort',
+                    () => cancellation.cancel(),
+                    {
+                      once: true,
+                    },
                   )
-                } finally {
-                  cancellation.dispose()
+                  try {
+                    return await answerDeepWikiQuestionWithPrompt(
+                      (prompt) =>
+                        requestCursorWikiText(prompt, cancellation.token),
+                      projectRoot,
+                      sources,
+                      question,
+                      'cursor',
+                    )
+                  } finally {
+                    cancellation.dispose()
+                  }
+                }
+                const { outputDirectory } = await currentDeepWiki()
+                const query = `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(outputDirectory, WIKI_MANIFEST_FILE))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: ${JSON.stringify(question)}`
+                await vscode.commands.executeCommand(
+                  'workbench.action.chat.open',
+                  { query, isPartialQuery: true },
+                )
+                return {
+                  handoff:
+                    'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.',
                 }
               }
-              const { outputDirectory } = await currentDeepWiki()
-              const query = `/codebook Answer this repository question using the opened project's source and the Wiki at ${JSON.stringify(join(outputDirectory, WIKI_MANIFEST_FILE))}. Cite the supporting file and line for each claim. Do not edit files, start the application or use a debugger. Question: ${JSON.stringify(question)}`
-              await vscode.commands.executeCommand(
-                'workbench.action.chat.open',
-                { query, isPartialQuery: true },
+              const automatic = models.find((model) =>
+                /auto/i.test(`${model.id} ${model.name}`),
               )
-              return {
-                handoff:
-                  'This editor exposes no model to the Wiki reader. Your question is ready in the editor chat. Send it there for a source-cited answer.',
-              }
-            }
-            const automatic = models.find((model) =>
-              /auto/i.test(`${model.id} ${model.name}`),
-            )
-            const chosen = automatic
-              ? undefined
-              : await vscode.window.showQuickPick(
-                  models.map((model) => ({
-                    label: model.name,
-                    description: model.vendor,
-                    model,
-                  })),
-                  {
-                    placeHolder:
-                      'Choose the editor model for this Wiki question',
-                  },
+              const chosen = automatic
+                ? undefined
+                : await vscode.window.showQuickPick(
+                    models.map((model) => ({
+                      label: model.name,
+                      description: model.vendor,
+                      model,
+                    })),
+                    {
+                      placeHolder:
+                        'Choose the editor model for this Wiki question',
+                    },
+                  )
+              // The same holds for a tab closed while the learner chose a model.
+              signal.throwIfAborted()
+              const model = automatic ?? chosen?.model
+              if (!model)
+                throw new Error(
+                  'No editor model was selected for this Wiki question.',
                 )
-            const model = automatic ?? chosen?.model
-            if (!model)
-              throw new Error(
-                'No editor model was selected for this Wiki question.',
-              )
-            const cancellation = new vscode.CancellationTokenSource()
-            signal.addEventListener('abort', () => cancellation.cancel(), {
-              once: true,
-            })
-            try {
-              return await answerDeepWikiQuestion(
-                model,
-                projectRoot,
-                sources,
-                question,
-                isCursorHost ? 'cursor' : 'vscode',
-                cancellation.token,
-              )
-            } finally {
-              cancellation.dispose()
-            }
-          },
-          isCursorHost ? 'cursor' : 'vscode',
-          () => wikiUpdateRun.status(),
-        )
-        deepWikiReader = openedReader
-        if (
-          !(await vscode.env.openExternal(vscode.Uri.parse(openedReader.url)))
-        )
-          throw new Error('The browser did not open the generated DeepWiki.')
-      } catch (error) {
-        await deepWikiReader?.close()
-        deepWikiReader = undefined
-        void showNotice(
-          'error',
-          `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
-        )
-        throw error
-      }
-    }),
+              const cancellation = new vscode.CancellationTokenSource()
+              signal.addEventListener('abort', () => cancellation.cancel(), {
+                once: true,
+              })
+              try {
+                return await answerDeepWikiQuestion(
+                  model,
+                  projectRoot,
+                  sources,
+                  question,
+                  isCursorHost ? 'cursor' : 'vscode',
+                  cancellation.token,
+                )
+              } finally {
+                cancellation.dispose()
+              }
+            },
+            isCursorHost ? 'cursor' : 'vscode',
+            () => wikiUpdateRun.status(),
+          )
+          // A source also changes without a save in this editor (an agent's CLI and Git write files directly), so the project's files are watched for as long as the reader serves.
+          const sourceWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(projectRoot, '**'),
+          )
+          const noteSourceChange = (file: vscode.Uri): void =>
+            openedReader.noteSourceChange(file.fsPath)
+          sourceWatcher.onDidChange(noteSourceChange)
+          sourceWatcher.onDidCreate(noteSourceChange)
+          sourceWatcher.onDidDelete(noteSourceChange)
+          deepWikiReader = {
+            ...openedReader,
+            close: async (): Promise<void> => {
+              sourceWatcher.dispose()
+              await openedReader.close()
+            },
+          }
+          const readerAddress = vscode.Uri.parse(openedReader.url)
+          // In a remote window the editor forwards the reader's port, often to another one, and the page then asks its questions from that address. The browser is still sent to the reader's own address: the editor resolves what it opens by itself.
+          openedReader.acceptForwardedOrigin(
+            (await vscode.env.asExternalUri(readerAddress)).toString(),
+          )
+          if (!(await vscode.env.openExternal(readerAddress)))
+            throw new Error('The browser did not open the generated DeepWiki.')
+        } catch (error) {
+          await deepWikiReader?.close()
+          deepWikiReader = undefined
+          void showNotice(
+            'error',
+            `Codebook could not open DeepWiki: ${String(error)}. Generate it through /codebook in this project, then retry.`,
+          )
+          throw error
+        }
+      }),
+    ),
     registerCommand('codebook.updateDeepWiki', async () => {
       try {
         await updateDeepWiki()
