@@ -59,6 +59,7 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { fullLibraryMessage } from './utils/fullLibraryMessage'
+import { isProcessGone } from './utils/isProcessGone'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingPhases } from './utils/recordingPhases'
@@ -869,7 +870,7 @@ export class RecordingStore {
       : undefined
   }
 
-  /** Keeps uncertain live/PID-reused owners unfinalized; only an absent local process establishes interruption. @example this.ownerState(header) // 'interrupted' */
+  /** Keeps uncertain live/PID-reused owners unfinalized; only a local process that {@link isProcessGone} finds absent establishes interruption. @example this.ownerState(header) // 'interrupted' */
   private ownerState(
     header: RecordingHeader,
     writer?: RecordingWriter,
@@ -877,17 +878,7 @@ export class RecordingStore {
     if (writer && header.owner.sessionId === this.sessionId)
       return writer.state().status === 'recording' ? 'recording' : 'partial'
     if (header.owner.hostname !== hostname()) return 'unfinalized'
-    try {
-      process.kill(header.owner.pid, 0)
-      return 'unfinalized'
-    } catch (error) {
-      return error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'ESRCH'
-        ? 'interrupted'
-        : 'unfinalized'
-    }
+    return isProcessGone(header.owner.pid) ? 'interrupted' : 'unfinalized'
   }
 
   /** Selects the highest existing recording directory and pins multi-file reads to that format. @example await this.location(studyId, 2) */
