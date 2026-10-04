@@ -207,6 +207,12 @@ const actionSchema = z.enum([
 ])
 /** When {@link StudyWorkspace} offers Cursor's learner the Move View step for the Learning summary: after the summary was shown, or after Show Variables put Run and Debug in its place. */
 type SummaryPlacementOccasion = 'summary-shown' | 'summary-displaced'
+/** What the Move View offer says on each occasion. */
+const SUMMARY_PLACEMENT_OFFER_TEXTS: Record<SummaryPlacementOccasion, string> =
+  {
+    'summary-shown': SUMMARY_PLACEMENT_OFFER,
+    'summary-displaced': SUMMARY_DISPLACED_OFFER,
+  }
 const FIRST_REPLAY_POSITION_WARNING =
   'Wait for the first confirmed replay position before selecting a presentation.'
 const revisionShape = { revision: z.number().int().nonnegative() }
@@ -7558,25 +7564,35 @@ export class StudyWorkspace {
    * @example this.offerSummaryPlacement('summary-shown')
    */
   private offerSummaryPlacement(occasion: SummaryPlacementOccasion): void {
-    if (!this.isCursorHost() || this.summaryPlacementOffersMade.has(occasion))
-      return
-    if (
-      occasion === 'summary-shown' &&
-      this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_ANSWERED_KEY)
-    )
-      return
+    if (!this.isSummaryPlacementOfferDue(occasion)) return
     this.summaryPlacementOffersMade.add(occasion)
     void (async (): Promise<void> => {
       const choice = await showPlainNotice(
         vscode.window,
         'information',
-        occasion === 'summary-shown'
-          ? SUMMARY_PLACEMENT_OFFER
-          : SUMMARY_DISPLACED_OFFER,
+        SUMMARY_PLACEMENT_OFFER_TEXTS[occasion],
         SUMMARY_PLACEMENT_ACTION,
       )
       if (choice === SUMMARY_PLACEMENT_ACTION) await this.moveLearningSummary()
     })().catch((error: unknown) => this.report('layout', error))
+  }
+
+  /**
+   * Decides for {@link offerSummaryPlacement} whether an occasion's offer is still to be made in this editor session.
+   * @param occasion - The occasion the offer would be made for.
+   * @returns `false` outside Cursor, after the same occasion's offer in this session, and for a shown summary once the learner took the step in this workspace; otherwise `true`.
+   * @example this.isSummaryPlacementOfferDue('summary-displaced') // => true at the first Show Variables of a Cursor session that hid the summary
+   */
+  private isSummaryPlacementOfferDue(
+    occasion: SummaryPlacementOccasion,
+  ): boolean {
+    if (!this.isCursorHost() || this.summaryPlacementOffersMade.has(occasion))
+      return false
+    // A displaced summary shares the side bar again, whatever was answered before.
+    return (
+      occasion === 'summary-displaced' ||
+      !this.context.workspaceState.get<boolean>(SUMMARY_PLACEMENT_ANSWERED_KEY)
+    )
   }
 
   /**
