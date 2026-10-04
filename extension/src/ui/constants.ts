@@ -110,6 +110,9 @@ export const STUDY_UI_OPTIONS = {
     description: STUDY_PRESENTATIONS[mode].description,
   })),
   studyRemovalRefusals: STUDY_REMOVAL_REFUSALS,
+  // Stands where "Choose a saved study to delete." stands in a window with a Trash: a window without one lists the chosen study's files instead of deleting it.
+  studyFilesNothingChosen:
+    'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study to list its files for removal by hand.',
   playbackFailureRecovery:
     'Reload the saved recording to try again. If it still fails, ask your agent for a new recording.',
   nativeValuesHint: `Recorded values for this moment load in Run and Debug: open it, expand Variables, then expand its first scope if it stays closed. If Call Stack lists several sessions, select “${REPLAY_DEBUG_SESSION_NAME}” first.`,
@@ -136,7 +139,7 @@ body.moments-only[data-replay=true] #recording-transport{order:-1;position:stick
 .timeline-track{position:relative;flex:1;min-width:100px;display:flex;flex-direction:column;align-items:stretch}.timeline-track #playhead{width:100%;flex:none}.timeline-track #history-coverage{position:relative;height:6px;margin:0 8px;overflow:hidden;background:var(--vscode-panel-border,#555)}.timeline-track .history-gap{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--vscode-editorWarning-foreground,#d7ba7d) 0 3px,transparent 3px 6px)}.timeline-track .history-stop{position:absolute;top:0;bottom:0;width:3px;background:var(--vscode-focusBorder,#007fd4)}#history-coverage-label{font-size:11px;line-height:1.2}
 .playback-status-row{display:flex;justify-content:space-between;gap:12px;align-items:start;font-size:12px}.playback-status-row summary{min-height:0;padding:0}.playback-status-row p{margin:8px 0}#playback-pending:empty,#playback-reason:empty,#playback-hint:empty,#node-history-hint:empty{display:none}#playback-pending,#playback-reason,#playback-hint,#node-history-hint{margin:6px 0 0;font-size:12px}
 
-#saved-studies select{width:100%}#delete-study-row,#study-unopenable,#delete-study-reason,#delete-study-status{margin:8px 0 0}#delete-study-reason:empty,#delete-study-status:empty{display:none}
+#saved-studies select{width:100%}#delete-study-row,#study-unopenable,#study-newer,#study-repairable,#delete-study-reason,#delete-study-status,#study-files{margin:8px 0 0}#delete-study-reason:empty,#delete-study-status:empty{display:none}#study-files-list{margin:0 0 8px;padding-left:20px}
 #learning-summary,.sequence-steps p{white-space:pre-wrap}.sequence-diagram{overflow:auto;max-height:420px;border:1px solid var(--vscode-panel-border,#444);padding:8px}.sequence-diagram svg{display:block;max-width:none;font-size:12px}.sequence-diagram text{fill:var(--vscode-foreground,#ddd)}.sequence-lifeline{stroke:var(--vscode-descriptionForeground,#aaa);stroke-dasharray:4 4}.sequence-arrow{fill:none;stroke:var(--vscode-textLink-foreground,#4daafc);stroke-width:2}.sequence-arrow.source-derived{stroke-dasharray:6 4}.sequence-arrow.unknown{stroke-dasharray:2 5;stroke:var(--vscode-descriptionForeground,#aaa)}.sequence-steps{padding-left:24px}.sequence-steps li{padding:10px 0}.sequence-steps p{margin:6px 0}.sequence-steps [aria-current=true]{font-weight:bold}
 /* Long recorded test output wraps inside the reader, and scrolls there if a line still cannot, instead of widening the page (Cycle 0044, 0031-W1 and 0038-W). */
 #node-history-output{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;overflow:auto}

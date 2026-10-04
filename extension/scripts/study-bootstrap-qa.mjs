@@ -1517,8 +1517,18 @@ async function check(page, options) {
         ariaDisabled: control.getAttribute('aria-disabled'),
         disabledAttribute: control.hasAttribute('disabled'),
         describedBy: control.getAttribute('aria-describedby'),
+        listDescribedBy: list.getAttribute('aria-describedby'),
         reason: shownText('delete-study-reason'),
         note: shownText('study-unopenable'),
+        repairNote: shownText('study-repairable'),
+        newerNote: shownText('study-newer'),
+        repairVisible: visible('repair-study'),
+        // The files a window without a Trash lists for removal by hand; null while the list is hidden.
+        files: visible('study-files')
+          ? [...document.querySelectorAll('#study-files-list li')].map(
+              (item) => item.textContent,
+            )
+          : null,
         status: status.textContent,
         statusIsError: status.classList.contains('error'),
         statusRole: `${status.getAttribute('role')}/${status.getAttribute('aria-live')}`,
@@ -1528,8 +1538,26 @@ async function check(page, options) {
           message.revision,
         ]),
         histories: sent('history').length,
+        removalRequests: sent('delete-study').map(
+          (message) => message.removalRequest,
+        ),
+        copies: sent('copy-study-files').map((message) => message.studyId),
+        retries: sent('action').filter((message) => message.action === 'retry')
+          .length,
       }
     })
+  /** Reads the number the pane gave its last delete request. */
+  const lastRemovalRequest = () =>
+    page.evaluate(
+      () =>
+        window.sent.findLast((message) => message.type === 'delete-study')
+          ?.removalRequest,
+    )
+  /** Gives a removal state the number of the pane's last delete request, as the host does in every state of the removal that request started or was refused with. */
+  const answering = async (removal) => ({
+    ...removal,
+    request: await lastRemovalRequest(),
+  })
   const deleteButton = page.getByRole('button', {
     name: 'Delete saved study…',
     exact: true,
@@ -1684,6 +1712,7 @@ async function check(page, options) {
     passed:
       JSON.stringify(choseUnopenable.options) ===
         JSON.stringify([
+          ['', true],
           [shownStudy.id, false],
           [staleStudy.id, false],
           [legacyStudy.id, false],
@@ -1761,12 +1790,14 @@ async function check(page, options) {
   await library([shownStudy, otherStudy], shownStudy.id)
   await deleteButton.click()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: confirming,
+    studyRemoval: await answering(confirming),
   })
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: movingShown,
+    studyRemoval: await answering(movingShown),
   })
-  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
   const afterOwnRemoval = await removalControl()
   await page
     .locator('#saved-studies')
@@ -1775,7 +1806,7 @@ async function check(page, options) {
   await library([shownStudy, otherStudy], shownStudy.id)
   await deleteButton.click()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: confirming,
+    studyRemoval: await answering(confirming),
   })
   await library([shownStudy, otherStudy], shownStudy.id)
   const afterCancel = await removalControl()
@@ -1783,11 +1814,11 @@ async function check(page, options) {
   await deleteButton.click()
   await page.evaluate(() => document.activeElement.blur())
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: {
+    studyRemoval: await answering({
       status: 'refused',
       studyId: shownStudy.id,
       text: 'Stop the run before deleting its study.',
-    },
+    }),
   })
   const afterRefusal = await removalControl()
   // Another pane asked: this pane shows the outcome and moves no focus.
@@ -1806,9 +1837,11 @@ async function check(page, options) {
   await deleteButton.click()
   await page.locator('#overview-tab').focus()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: confirming,
+    studyRemoval: await answering(confirming),
   })
-  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
   const afterMovingOn = await removalControl()
   cases.push({
     name: 'after its own delete request a pane moves focus once: to the list after a removal, to the button after Cancel or a refusal, and nowhere when the learner moved on or another pane asked',
@@ -2057,9 +2090,11 @@ async function check(page, options) {
   })
   const whileNewRequestWaits = await removalControl()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: movingShown,
+    studyRemoval: await answering(movingShown),
   })
-  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
   const afterNewRequestWasAnswered = await removalControl()
   cases.push({
     name: 'a refusal that was already shown does not answer a new delete request: focus moves to the list only when the new removal has ended',
@@ -2070,7 +2105,7 @@ async function check(page, options) {
       afterNewRequestWasAnswered.chosen === otherStudy.id,
   })
 
-  // A current-format entry whose catalog checkpoint is stale can be repaired by Retry storage; the delete-only note is for files no Retry can repair.
+  // Arrange: a current-format entry whose catalog checkpoint is stale can be repaired; the delete-only note is for files no repair reaches (CX-D1, DR-25).
   const repairableReason =
       'Catalog unavailable; retry storage. Error: Archive changed after its catalog checkpoint.',
     repairableStudy = savedStudy('window_run-repair7', {
@@ -2078,46 +2113,333 @@ async function check(page, options) {
       outcome: 'unverified',
       metadata: 'unavailable',
       reason: repairableReason,
+    }),
+    repairButton = page.getByRole('button', {
+      name: 'Repair saved study',
+      exact: true,
     })
   await library([shownStudy, repairableStudy, legacyStudy], shownStudy.id, {
     errors: [repairableReason],
   })
   await page.selectOption('#studies', repairableStudy.id)
-  const repairableChosen = await page.evaluate(() => {
-    const shownText = (id) =>
-      document.getElementById(id)?.getClientRects().length
-        ? document.getElementById(id).textContent
-        : null
+  const repairableChosen = await removalControl(),
+    repairButtons = await repairButton.count()
+  const repairLayout = await page.evaluate(() => {
+    const box = (id) => document.getElementById(id).getBoundingClientRect()
     return {
-      deleteOnlyNote: shownText('study-unopenable'),
-      repairNote: shownText('study-repairable'),
-      retryVisible:
-        document.querySelector('[data-action="retry"]').getClientRects()
-          .length > 0,
+      // The repair button stands in the row directly under its note, before the delete button.
+      noteToRowGap: Math.round(
+        box('delete-study-row').top - box('study-repairable').bottom,
+      ),
+      repairBeforeDelete: box('repair-study').left < box('delete-study').left,
+      sameRow: box('repair-study').top === box('delete-study').top,
+      repairDescribedBy: document
+        .getElementById('repair-study')
+        .getAttribute('aria-describedby'),
     }
   })
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-repair.png` })
+  // Act: the learner presses the repair button by keyboard, and the host answers with the repaired entry.
+  // Focused by its id, so a button that is not offered is a failed case instead of a harness timeout.
+  await page.locator('#repair-study').focus()
+  await page.keyboard.press('Enter')
+  const afterRepairPress = await removalControl()
+  await library(
+    [
+      shownStudy,
+      { ...repairableStudy, metadata: 'validated', reason: undefined },
+      legacyStudy,
+    ],
+    shownStudy.id,
+  )
+  const afterRepair = await removalControl()
   await page.selectOption('#studies', legacyStudy.id)
-  const legacyChosen = await page.evaluate(() => {
-    const shownText = (id) =>
-      document.getElementById(id)?.getClientRects().length
-        ? document.getElementById(id).textContent
-        : null
-    return {
-      deleteOnlyNote: shownText('study-unopenable'),
-      repairNote: shownText('study-repairable'),
-    }
-  })
+  const legacyChosen = await removalControl()
+  // Assert
   cases.push({
-    name: 'a saved study whose catalog checkpoint is stale names Retry storage as its repair, and only a file no Retry can repair gets the delete-only note',
-    actual: { repairableChosen, legacyChosen },
+    name: 'a saved study whose checkpoint can be repaired offers Repair saved study under its note, and pressing it asks the host to retry',
+    actual: {
+      repairableChosen,
+      repairButtons,
+      repairLayout,
+      afterRepairPress,
+      afterRepair,
+      legacyChosen,
+    },
     passed:
-      repairableChosen.deleteOnlyNote === null &&
+      repairButtons === 1 &&
+      repairableChosen.note === null &&
       repairableChosen.repairNote ===
-        "This saved study's catalog checkpoint is missing or out of date. Use Retry storage / refresh to repair it; it can also be deleted." &&
-      repairableChosen.retryVisible &&
-      legacyChosen.deleteOnlyNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study." &&
+      repairableChosen.repairVisible &&
+      repairLayout.repairBeforeDelete &&
+      repairLayout.sameRow &&
+      repairLayout.repairDescribedBy === 'study-repairable' &&
+      afterRepairPress.retries === repairableChosen.retries + 1 &&
+      afterRepairPress.focus === 'repair-study' &&
+      // The button left with its note: the keyboard focus is on the list, not on the document body (PC-3.10).
+      afterRepair.repairNote === null &&
+      !afterRepair.repairVisible &&
+      afterRepair.focus === 'studies' &&
+      legacyChosen.note ===
         'This saved study cannot be opened. It can still be deleted.' &&
-      legacyChosen.repairNote === null,
+      legacyChosen.repairNote === null &&
+      !legacyChosen.repairVisible,
+  })
+
+  // Arrange: the same three entries, to measure the notes above the delete row (SD-3).
+  await library([shownStudy, repairableStudy, legacyStudy], shownStudy.id)
+  const gapAboveDeleteRow = (noteId) =>
+    page.evaluate(
+      (id) =>
+        Math.round(
+          document.getElementById('delete-study-row').getBoundingClientRect()
+            .top - document.getElementById(id).getBoundingClientRect().bottom,
+        ),
+      noteId,
+    )
+  // Act
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairNoteGap = await gapAboveDeleteRow('study-repairable')
+  await page.selectOption('#studies', legacyStudy.id)
+  const deleteOnlyNoteGap = await gapAboveDeleteRow('study-unopenable')
+  // Assert
+  cases.push({
+    name: 'the repair note of a saved study sits 8 px above the delete row, like the delete-only note',
+    actual: { repairNoteGap, deleteOnlyNoteGap },
+    passed: repairNoteGap === 8 && deleteOnlyNoteGap === 8,
+  })
+
+  // Act: each kind of chosen entry, read for what describes the list and the delete button (SD-7).
+  await page.selectOption('#studies', repairableStudy.id)
+  const describedWhileRepairable = await removalControl()
+  await page.selectOption('#studies', legacyStudy.id)
+  const describedWhileUnopenable = await removalControl()
+  await library([shownStudy, repairableStudy], shownStudy.id)
+  const describedWhileOpenable = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a saved study that can be repaired or cannot be opened is described to the list and to the delete button by its note',
+    actual: {
+      describedWhileRepairable,
+      describedWhileUnopenable,
+      describedWhileOpenable,
+    },
+    passed:
+      describedWhileRepairable.listDescribedBy === 'study-repairable' &&
+      describedWhileRepairable.describedBy ===
+        'study-repairable delete-study-reason delete-study-status' &&
+      describedWhileUnopenable.listDescribedBy === 'study-unopenable' &&
+      describedWhileUnopenable.describedBy ===
+        'study-unopenable delete-study-reason delete-study-status' &&
+      describedWhileOpenable.chosen === shownStudy.id &&
+      describedWhileOpenable.listDescribedBy === null &&
+      describedWhileOpenable.describedBy ===
+        'delete-study-reason delete-study-status',
+  })
+
+  // Arrange: a study a newer Codebook saved, listed with the catalog's sentence as its reason (RT-1, DX-15).
+  const newerSentence =
+      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+    newerStudy = savedStudy('window_run-newer08', {
+      profile: undefined,
+      format: 'newer',
+      outcome: 'Saved by a newer Codebook; kept as it is',
+      metadata: 'unavailable',
+      reason: newerSentence,
+    })
+  await library([shownStudy, newerStudy], shownStudy.id)
+  const deletesBeforeNewer = (await removalControl()).deletes.length
+  // Act
+  await page.selectOption('#studies', newerStudy.id)
+  await deleteButton.click({ force: true })
+  const newerChosen = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a saved study of a newer format is listed with the sentence that names both formats as its note, offers no repair and says why it cannot be deleted here',
+    actual: newerChosen,
+    passed:
+      newerChosen.chosen === newerStudy.id &&
+      newerChosen.newerNote === newerSentence &&
+      newerChosen.note === null &&
+      newerChosen.repairNote === null &&
+      !newerChosen.repairVisible &&
+      newerChosen.listDescribedBy === 'study-newer' &&
+      newerChosen.describedBy ===
+        'study-newer delete-study-reason delete-study-status' &&
+      newerChosen.ariaDisabled === 'true' &&
+      newerChosen.reason ===
+        'This study was saved by a newer Codebook and is kept as it is. Update the extension, then delete it there.' &&
+      newerChosen.deletes.length === deletesBeforeNewer,
+  })
+
+  // Arrange: a removal that leaves other studies while the host shows none of them (SD-6).
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: await answering(movingShown),
+  })
+  // Act
+  await library([otherStudy], undefined, {
+    studyRemoval: await answering(movedShown),
+  })
+  const noneChosenAfterRemoval = await removalControl()
+  const promptOption = await page
+    .locator('#studies option')
+    .first()
+    .evaluate((option) => ({
+      value: option.value,
+      disabled: option.disabled,
+      // Left out of the open list.
+      rendered: getComputedStyle(option).display !== 'none',
+    }))
+  // Assert
+  cases.push({
+    name: 'after a removal that leaves other studies and none chosen, the list reads Choose a saved study instead of a blank',
+    actual: { noneChosenAfterRemoval, promptOption },
+    passed:
+      noneChosenAfterRemoval.chosen === '' &&
+      noneChosenAfterRemoval.shownText === 'Choose a saved study' &&
+      noneChosenAfterRemoval.focus === 'studies' &&
+      JSON.stringify(noneChosenAfterRemoval.options) ===
+        JSON.stringify([
+          ['', true],
+          [otherStudy.id, false],
+        ]) &&
+      promptOption.value === '' &&
+      promptOption.disabled &&
+      !promptOption.rendered,
+  })
+
+  // Arrange: a delete request the host refuses, shown under the button (A-L5, AD-14, DR-26).
+  const sameRefusal = {
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: 'Stop the run before deleting its study.',
+  }
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  const firstRemovalRequest = await lastRemovalRequest()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: firstRemovalRequest },
+  })
+  // Act: the learner asks again and leaves the button; the host refuses with the same sentence under the new number.
+  await page.keyboard.press('Enter')
+  const secondRemovalRequest = await lastRemovalRequest()
+  await page.evaluate(() => document.activeElement.blur())
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: firstRemovalRequest },
+    busy: true,
+  })
+  const whileSecondRequestWaits = await removalControl()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: secondRemovalRequest },
+  })
+  const afterSecondRefusal = await removalControl()
+  // A refusal for that study that answers another pane's request arrives later.
+  await page.evaluate(() => document.activeElement.blur())
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: secondRemovalRequest + 1 },
+  })
+  const afterLaterRefusal = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a second refusal with the same sentence answers the new delete request: a later refusal for that study moves no focus',
+    actual: {
+      firstRemovalRequest,
+      secondRemovalRequest,
+      whileSecondRequestWaits,
+      afterSecondRefusal,
+      afterLaterRefusal,
+    },
+    passed:
+      Number.isInteger(firstRemovalRequest) &&
+      secondRemovalRequest === firstRemovalRequest + 1 &&
+      whileSecondRequestWaits.focus === '' &&
+      afterSecondRefusal.focus === 'delete-study' &&
+      afterSecondRefusal.status === 'Stop the run before deleting its study.' &&
+      afterLaterRefusal.focus === '' &&
+      afterLaterRefusal.status === 'Stop the run before deleting its study.',
+  })
+
+  // Arrange: a window without a Trash (a WSL remote window); the host names a study's files only in its answer to a delete request (RT-7, DR-14).
+  const withoutTrash = { removalWithoutTrash: true },
+    withoutTrashSentence =
+      "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh.",
+    studyFiles = [
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/recordings/window_run-shown01',
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.json',
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.meta.json',
+    ]
+  await library([otherStudy], undefined, withoutTrash)
+  const withoutTrashNothingChosen = await removalControl()
+  // Act: the host shows a study; the pane asks once for its files, and the host answers.
+  await library([shownStudy, otherStudy], shownStudy.id, withoutTrash)
+  const askedForFiles = await removalControl()
+  const filesAnswer = await answering({
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: withoutTrashSentence,
+    files: studyFiles,
+  })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    studyRemoval: filesAnswer,
+  })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    studyRemoval: filesAnswer,
+    busy: true,
+  })
+  const filesListed = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-without-trash.png` })
+  await page.getByRole('button', { name: 'Copy path', exact: true }).click()
+  await page.locator('#study-files [data-action="retry"]').click()
+  const afterCopyAndRetry = await removalControl()
+  const retryBesideFiles = await page
+    .locator('#study-files [data-action="retry"]')
+    .evaluate((control) => ({
+      label: control.textContent,
+      visible: control.getClientRects().length > 0,
+    }))
+  // Assert
+  cases.push({
+    name: "in a window without a Trash, Saved studies names the chosen study's files, offers Copy path and shows no delete button",
+    actual: {
+      withoutTrashNothingChosen,
+      askedForFiles,
+      filesListed,
+      afterCopyAndRetry,
+      retryBesideFiles,
+    },
+    passed:
+      !withoutTrashNothingChosen.buttonVisible &&
+      withoutTrashNothingChosen.reason ===
+        'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study to list its files for removal by hand.' &&
+      withoutTrashNothingChosen.files === null &&
+      withoutTrashNothingChosen.deletes.length ===
+        afterLaterRefusal.deletes.length &&
+      // One numbered request for the shown study's files, sent by the pane itself.
+      askedForFiles.deletes.length === afterLaterRefusal.deletes.length + 1 &&
+      askedForFiles.deletes.at(-1)[0] === shownStudy.id &&
+      Number.isInteger(askedForFiles.removalRequests?.at(-1)) &&
+      !filesListed.buttonVisible &&
+      filesListed.reason === null &&
+      filesListed.status === withoutTrashSentence &&
+      !filesListed.statusIsError &&
+      JSON.stringify(filesListed.files) === JSON.stringify(studyFiles) &&
+      // A later Study message with the answer asks nothing again.
+      filesListed.deletes.length === askedForFiles.deletes.length &&
+      JSON.stringify(afterCopyAndRetry.copies) ===
+        JSON.stringify([shownStudy.id]) &&
+      afterCopyAndRetry.retries === filesListed.retries + 1 &&
+      retryBesideFiles.label === 'Retry storage / refresh' &&
+      retryBesideFiles.visible,
   })
 
   // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
