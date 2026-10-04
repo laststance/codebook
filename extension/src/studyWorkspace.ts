@@ -4642,6 +4642,9 @@ export class StudyWorkspace {
       if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
         throw new Error('Some captured source readers could not close.')
       this.opened = false
+      // A closed reader has no live or replay arrangement: the next selection opens it instead of arranging panes that no longer exist.
+      this.liveComposition = false
+      this.summaryComposition = false
       this.contextPanel?.dispose()
       this.contextPanel = undefined
       this.app?.dispose()

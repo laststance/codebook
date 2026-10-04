@@ -17,6 +17,7 @@ import { startServer } from '../server'
 import {
   workspaceHarness,
   openRetainedStudy,
+  readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
 for (const kind of ['codebook.scopedBrowser', 'codebook.studyContext'])
@@ -3762,4 +3763,56 @@ test('the extension README gives the refusal for a dead pane that stays open and
   ].map((text) => readme.includes(text))
   // Assert
   assert.deepEqual(documented, [true, true, true])
+})
+
+/** Starts a run of the harness's configured study and follows it to its first pause, as an agent's start and input do; the reader is left as it was. @example const record = await pauseLiveRun(harness) */
+const pauseLiveRun = async (
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) => {
+  const receipt = harness.service.start({
+    instanceId: harness.service.instanceId,
+    profile: PROFILE_ID,
+    configuration: harness.configuration,
+    key: randomUUID(),
+  })
+  const record = harness.service.record(receipt)
+  await record.preparation
+  harness.service.action({
+    instanceId: harness.service.instanceId,
+    runId: record.id,
+    key: randomUUID(),
+    action: 'repository-click',
+  })
+  return record
+}
+
+// Value: protects=a presentation select answering with the opened reader after the learner closed the Study workspace during a paused run; fails_when=Close keeps the live or replay arrangement flag, so the next select arranges panes of a closed reader and is refused until Open Study Workspace is run; why_new=Cycle 0045 NF-21: no test selected a presentation after a close that ended a live arrangement; seam=workspace harness with the controlled runtime
+test('a selection after Close Study Workspace during a paused run opens the reader instead of refusing the live layout', async () => {
+  // Arrange: the learner followed a run to its pause in the live arrangement, then closed the Study workspace, which stops the run.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await pauseLiveRun(harness)
+    await harness.reader.open()
+    const liveBeforeClose = readerSeams(harness).isLiveArrangement()
+    await harness.reader.close()
+    const state = harness.reader.presentationState()
+    // Act
+    const selected = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'select',
+    })
+    // Assert
+    assert.equal(liveBeforeClose, true)
+    assert.equal(selected.state, 'open')
+    assert.equal(selected.layoutConfirmed, true)
+    assert.equal(selected.reason, undefined)
+    assert.equal(selected.panes.appColumn, 1)
+    assert.equal(selected.panes.sourceColumn, 2)
+    assert.equal(selected.panes.contextColumn, 3)
+  } finally {
+    await harness.close()
+  }
 })
