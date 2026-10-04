@@ -13,6 +13,7 @@ import type { BundleSource } from '../../repositoryBundle'
 import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
 import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
+import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
@@ -70,6 +71,8 @@ export async function configuredRuntimeHarness(
     }
     /** Replaces runtime bounds in the run and in the constants it reads ({@link loadConstantsWith}), so a test can make two bounds equal and see what depends on their values. */
     runtimeConstants?: RuntimeConstantOverrides
+    /** The stand-in browser closes without a failure and then names this profile folder as one it could not remove, as the real adapter does. */
+    browserProfileLeft?: ProfileLeft
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -615,6 +618,7 @@ export async function configuredRuntimeHarness(
       './ownedRepositoryBreakpoint': breakpointModule,
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
+          profileLeft?: ProfileLeft
           async launch(
             configuration: DebugSession['configuration'],
           ): Promise<void> {
@@ -656,6 +660,7 @@ export async function configuredRuntimeHarness(
           }
           async close(): Promise<void> {
             releases.push('browser')
+            this.profileLeft = options.browserProfileLeft
           }
         },
       },

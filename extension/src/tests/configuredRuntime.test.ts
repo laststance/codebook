@@ -39,6 +39,45 @@ test('internal browser setup stops do not consume the configured learning pause 
   assert.equal(commands.filter((command) => command === 'continue').length, 1)
 })
 
+// Cycle 0045 (NF-14 as ER-11): a profile folder that stays is shown beside the run's cleanup fields and changes nothing else about the run.
+test("a profile folder that cannot be removed is named in the run's cleanup record and leaves a demonstrated run demonstrated", async (context) => {
+  // Arrange: the browser's cleanup completes and then names the profile folder it could not remove.
+  const { run } = await configuredRuntimeHarness(context, undefined, [], {
+    browserProfileLeft: {
+      profile: '/tmp/codebook-browser-left',
+      reason:
+        "Error: EACCES: permission denied, rmdir '/tmp/codebook-browser-left'",
+    },
+  })
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'configured learning pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(
+    () => run.view().status === 'completed',
+    'configured completion',
+  )
+  const leftBeforeCleanup = run.view().browserProfileLeft
+  // Act
+  await run.stop()
+  // Assert
+  const view = run.view()
+  assert.equal(leftBeforeCleanup, undefined)
+  assert.deepEqual(view.browserProfileLeft, {
+    profile: '/tmp/codebook-browser-left',
+    reason:
+      "Error: EACCES: permission denied, rmdir '/tmp/codebook-browser-left'",
+  })
+  assert.equal(view.finalOutcome, 'demonstrated')
+  assert.equal(view.status, 'completed')
+  assert.equal(view.cleaned, true)
+  assert.equal(view.resourcesReleased, true)
+  assert.deepEqual([...view.failures], [])
+})
+
 test('a required value inspection of an object commits the stop with an object marker and the run continues to completion', async (context) => {
   // Arrange: the agent asked for value:nextTheme, which is an application object at the pause.
   const { run, useObjectValue, commands } =

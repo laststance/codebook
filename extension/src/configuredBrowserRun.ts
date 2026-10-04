@@ -3344,6 +3344,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       status: this.status,
       cleaned: this.cleaned,
       resourcesReleased: this.resourcesReleased,
+      browserProfileLeft: this.browser.profileLeft,
       runtimeOutcome,
       captureOutcome,
       finalOutcome: !this.cleaned

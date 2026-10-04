@@ -1,9 +1,25 @@
 import { constants as filesystemConstants } from 'node:fs'
-import { access, mkdtemp, readFile, realpath } from 'node:fs/promises'
+import {
+  access,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import * as vscode from 'vscode'
+
+import {
+  MANAGED_PROFILE_OWNER_FILE,
+  MANAGED_PROFILE_PREFIX,
+  MANAGED_PROFILE_REMOVAL_RETRIES,
+  MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
+  MANAGED_PROFILE_ROOT,
+} from '../constants'
+import { currentStorageOwner } from '../utils/currentStorageOwner'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
 import type { Cdp } from './cdp'
@@ -16,6 +32,7 @@ import {
 import { CursorCdpBridge } from './cursorCdpBridge'
 import { awaitResponse } from './utils/awaitResponse'
 import { profileProcesses } from './utils/profileProcesses'
+import { removeAbandonedProfiles } from './utils/removeAbandonedProfiles'
 import type { selectHost } from './utils/selectHost'
 import { selectPageTarget } from './utils/selectPageTarget'
 import { settleCleanup } from './utils/settleCleanup'
@@ -39,6 +56,8 @@ interface CursorTabs {
   tabs: string[]
 }
 type RecordEvent = (type: string, detail?: unknown) => unknown
+/** A managed run's own profile folder that its close could not remove, with the removal's error as text; the run shows it in its cleanup record. */
+export type ProfileLeft = { profile: string; reason: string }
 
 /** Owns host-specific browser acquisition/reveal/cleanup for {@link ExperimentRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
 export class HostBrowser {
@@ -49,8 +68,14 @@ export class HostBrowser {
   private readonly acquisitions = new Set<Promise<unknown>>()
   private closing = false
   private managedProfile?: string
+  /** Set once this run's profile folder is gone, so that a repeated {@link close} neither looks for its processes nor removes it again. */
+  private managedProfileRemoved = false
+  private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
 
+  /**
+   * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own.
+   */
   constructor(
     private readonly host: HostConfiguration,
     private readonly runId: string,
@@ -59,8 +84,22 @@ export class HostBrowser {
     private readonly scenario: Scenario,
     private readonly fail: (reason: string) => void = () => undefined,
     private readonly createViewport?: BrowserViewportFactory,
+    private readonly profileRoot: string = MANAGED_PROFILE_ROOT,
   ) {
     this.ownerOptions = { ownerAgentId: `codebook-${runId}` }
+  }
+
+  /**
+   * Names the managed profile folder the last {@link close} could not remove, for the run's cleanup record; read by {@link ConfiguredBrowserRun} in its view.
+   * A folder that stays is no failed release: the browser's processes are gone, and a later run removes the folder once this editor has ended.
+   * @returns
+   * - `undefined` when the run has no managed profile, has not closed yet, or its folder was removed
+   * - The folder and the removal's error when the folder is still there
+   * @example
+   * browser.profileLeft // => { profile: '/tmp/codebook-browser-a1b2c3', reason: 'Error: EACCES: permission denied, rmdir …' }
+   */
+  get profileLeft(): ProfileLeft | undefined {
+    return this.leftProfile
   }
 
   /** Starts a real debugger using the selected host route, invoked once during run preparation. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
@@ -89,8 +128,25 @@ export class HostBrowser {
         },
       )
       signal.throwIfAborted()
+      const owner = await currentStorageOwner()
+      // What a killed editor left behind goes before this run adds a folder of its own; the sweep never fails the launch.
+      const abandoned = await removeAbandonedProfiles(this.profileRoot, owner)
+      if (abandoned.length)
+        this.record('browser.abandoned-profiles-removed', {
+          profiles: abandoned,
+        })
+      signal.throwIfAborted()
       this.managedProfile = await realpath(
-        await mkdtemp('/tmp/codebook-browser-'),
+        await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
+      )
+      // The marker is the proof by which a later run may remove this folder, should this editor be killed before the run closes.
+      await writeFile(
+        join(this.managedProfile, MANAGED_PROFILE_OWNER_FILE),
+        JSON.stringify({
+          pid: process.pid,
+          ...owner,
+          createdAt: new Date().toISOString(),
+        }),
       )
       this.record('browser.managed-profile', {
         profile: this.managedProfile,
@@ -460,7 +516,7 @@ export class HostBrowser {
     this.record('browser.revealed', { title: browser.tab.label, index })
   }
 
-  /** Releases known handles even if acquisition is unresolved; {@link ExperimentRun} can retry incomplete teardown. @example await browser.close() */
+  /** Releases known handles even if acquisition is unresolved, then removes a managed run's own profile folder; {@link ExperimentRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
   async close(): Promise<void> {
     this.closing = true
     const failures = await settleCleanup([
@@ -492,7 +548,8 @@ export class HostBrowser {
       {
         description: 'owned Chrome process exit',
         release: async (): Promise<void> => {
-          if (!this.managedProfile) return
+          // A folder an earlier close removed has no processes to look for, and looking would fail on the missing path.
+          if (!this.managedProfile || this.managedProfileRemoved) return
           const profile = this.managedProfile
           await waitUntil(
             async () => (await profileProcesses(profile)).length === 0,
@@ -507,10 +564,37 @@ export class HostBrowser {
     ])
     if (failures.length)
       throw new Error(`Browser cleanup incomplete: ${failures.join('; ')}`)
+    // Only here every acquisition has ended and no profile process is left: a browser that starts late never loses its folder.
+    await this.removeManagedProfile()
     this.record('browser.cleanup-verified', {
       host: this.host.id,
       remainingOwnedTabs: 0,
     })
+  }
+
+  /**
+   * Removes this run's own profile folder once its browser is verified gone, so that a run leaves nothing in the profile root; called by {@link close} after every release succeeded, outside the release list.
+   * A folder that cannot be removed is journaled as `browser.managed-profile-left` and kept for {@link profileLeft}; it is never a failed release, so the run's outcome and the next start are not affected. A removed folder is remembered, which makes a repeated close a no-op here.
+   * @example
+   * await this.removeManagedProfile() // journal: browser.managed-profile-removed { profile: '/tmp/codebook-browser-a1b2c3' }
+   */
+  private async removeManagedProfile(): Promise<void> {
+    if (!this.managedProfile || this.managedProfileRemoved) return
+    const profile = this.managedProfile
+    try {
+      await rm(profile, {
+        recursive: true,
+        force: true,
+        maxRetries: MANAGED_PROFILE_REMOVAL_RETRIES,
+        retryDelay: MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS,
+      })
+      this.managedProfileRemoved = true
+      this.leftProfile = undefined
+      this.record('browser.managed-profile-removed', { profile })
+    } catch (error) {
+      this.leftProfile = { profile, reason: String(error) }
+      this.record('browser.managed-profile-left', this.leftProfile)
+    }
   }
 
   /** Closes and observes only recorded/uniquely named tabs before and after acquisition draining in {@link close}. @example await this.closeTabs() */

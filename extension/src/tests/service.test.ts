@@ -546,6 +546,58 @@ test('a failed explanation write never appears as committed history or a success
   }
 })
 
+// Cycle 0045 (NF-14 as ER-11): the folder is named beside the run's cleanup fields; it is no cleanup error, so the run is released and the next start admitted.
+test('a run whose browser profile folder could not be removed names the folder in its run resource without a cleanup error, and the next start is admitted', async () => {
+  // Arrange: the runtime's cleanup completes and its view then names the profile folder that stayed.
+  const harness = await createHarness(),
+    service = harness.service
+  const receipt = service.start({
+    instanceId: service.instanceId,
+    profile: PROFILE_ID,
+    configuration: harness.configuration,
+    key: 'first',
+  })
+  try {
+    await service.record(receipt).preparation
+    const runtime = harness.runtimes[0]!
+    const view = runtime.view.bind(runtime)
+    runtime.view = () => ({
+      ...view(),
+      browserProfileLeft: runtime.stopped
+        ? {
+            profile: '/tmp/codebook-browser-left',
+            reason:
+              "Error: EACCES: permission denied, rmdir '/tmp/codebook-browser-left'",
+          }
+        : undefined,
+    })
+    // Act
+    await service.stop(receipt)
+    const state = service.state(service.record(receipt))
+    const next = service.start({
+      instanceId: service.instanceId,
+      profile: PROFILE_ID,
+      configuration: harness.configuration,
+      key: 'second',
+    })
+    // Assert
+    assert.deepEqual(state.browserProfileLeft, {
+      profile: '/tmp/codebook-browser-left',
+      reason:
+        "Error: EACCES: permission denied, rmdir '/tmp/codebook-browser-left'",
+      advice:
+        'The run is released and its outcome is unchanged; only the folder of its own browser profile could not be removed. Do nothing: Codebook removes the folder at the start of a later run, after this editor window was closed or reloaded.',
+    })
+    assert.equal(state.cleanupError, undefined)
+    assert.equal(state.state, 'stopped')
+    assert.equal(state.cleaned, true)
+    assert.equal(state.resourcesReleased, true)
+    assert.notEqual(next.runId, receipt.runId)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('completed runtime resources are released without a further client request', async () => {
   // Arrange
   const harness = await createHarness(),
