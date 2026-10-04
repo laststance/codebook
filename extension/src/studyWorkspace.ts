@@ -2973,8 +2973,7 @@ export class StudyWorkspace {
               input = group.activeTab?.input
             return (
               group.viewColumn === panel.viewColumn &&
-              input instanceof vscode.TabInputWebview &&
-              isCodebookPaneViewType(input.viewType, kind) &&
+              this.isCodebookPaneInput(input, kind) &&
               panel.visible
             )
           },
@@ -3526,13 +3525,10 @@ export class StudyWorkspace {
       .find(
         ({ tab }) =>
           tab.isPreview &&
-          !(
-            tab.input instanceof vscode.TabInputWebview &&
-            isCodebookPaneViewType(
-              tab.input.viewType,
-              'codebook.scopedBrowser',
-              'codebook.studyContext',
-            )
+          !this.isCodebookPaneInput(
+            tab.input,
+            'codebook.scopedBrowser',
+            'codebook.studyContext',
           ) &&
           !(tab.input instanceof vscode.TabInputText && !tab.isDirty),
       )
@@ -4484,24 +4480,22 @@ export class StudyWorkspace {
           const grid = await this.readMainEditorGrid(signal, assertCurrent)
           // A feature switch cannot treat a resize since the article measurement as permission to overwrite it.
           if (
-            compositionChanged &&
-            !firstOpen &&
-            !reentry &&
-            this.repositoryLayoutOrigin &&
-            JSON.stringify(grid.layout) !==
-              JSON.stringify(this.repositoryLayoutOrigin.layout)
+            this.isFeatureSwitchInPlace(
+              compositionChanged,
+              firstOpen,
+              Boolean(reentry),
+            ) &&
+            this.hasLayoutChangedSinceArticle(grid.layout)
           ) {
             throw new Error(
               'The learner layout changed during feature entry; its current arrangement was preserved. Retry explicitly.',
             )
           }
-          const count = grid.groups.length
-          needsInitialReservation =
-            count < REPOSITORY_MIN_EDITOR_GROUP_COUNT ||
-            (count < this.studyGroupCount() &&
-              (compositionChanged ||
-                count < vscode.window.tabGroups.all.length ||
-                (!firstOpen && Boolean(this.repositoryLayoutOrigin))))
+          needsInitialReservation = this.needsInitialPaneReservation(
+            grid.groups.length,
+            compositionChanged,
+            firstOpen,
+          )
         })
       unarrangedApp = undefined
       // Either requested destination may already name chat; reserve main panes before creating Context.
@@ -4769,6 +4763,76 @@ export class StudyWorkspace {
       if (request === this.readerOpenNumber) this.releaseSourceEntry()
       signal?.removeEventListener('abort', cancel)
     }
+  }
+
+  /**
+   * Says whether an entry switches the feature of a reader that is open already, without a reentry from an article; asked by {@link open} once the main editor is measured.
+   * @param compositionChanged - Whether the entry changes between the Study, the live and the summary composition.
+   * @param firstOpen - Whether the reader was closed when the entry began.
+   * @param isReentry - Whether the entry returned from an article with a retained layout.
+   * @returns `true` only for a changed composition on an open reader that is no reentry.
+   * @example this.isFeatureSwitchInPlace(true, false, false) // => true
+   */
+  private isFeatureSwitchInPlace(
+    compositionChanged: boolean,
+    firstOpen: boolean,
+    isReentry: boolean,
+  ): boolean {
+    return compositionChanged && !firstOpen && !isReentry
+  }
+
+  /**
+   * Says whether the main editor's layout differs from the one measured when the article was left; asked by {@link open} in the turn the grid was measured.
+   * @param layout - The layout of the grid that was just measured.
+   * @returns `true` when an article origin is saved and its layout is another one; `false` without an origin or for the same layout.
+   * @example this.hasLayoutChangedSinceArticle(grid.layout)
+   */
+  private hasLayoutChangedSinceArticle(layout: unknown): boolean {
+    const origin = this.repositoryLayoutOrigin
+    return (
+      origin !== undefined &&
+      JSON.stringify(layout) !== JSON.stringify(origin.layout)
+    )
+  }
+
+  /**
+   * Says whether an entry that finds fewer main groups than its composition uses has a reason to reserve them; the second half of {@link needsInitialPaneReservation}.
+   * @param count - The main editor's measured group count.
+   * @param compositionChanged - Whether the entry changes the composition.
+   * @param firstOpen - Whether the reader was closed when the entry began.
+   * @returns `true` when the composition changed, the window holds groups outside the main editor, or an open reader has an article origin.
+   * @example this.hasReasonToReserveGroups(2, false, true) // => false in a window whose two groups are the main editor's
+   */
+  private hasReasonToReserveGroups(
+    count: number,
+    compositionChanged: boolean,
+    firstOpen: boolean,
+  ): boolean {
+    return (
+      compositionChanged ||
+      count < vscode.window.tabGroups.all.length ||
+      (!firstOpen && Boolean(this.repositoryLayoutOrigin))
+    )
+  }
+
+  /**
+   * Decides whether {@link open} reserves the main panes before it creates the Study pane, in the turn the main editor was measured.
+   * @param count - The main editor's measured group count.
+   * @param compositionChanged - Whether the entry changes the composition.
+   * @param firstOpen - Whether the reader was closed when the entry began.
+   * @returns `true` when the main editor has fewer groups than an article needs, or fewer than the composition uses and {@link hasReasonToReserveGroups} holds.
+   * @example needsInitialReservation = this.needsInitialPaneReservation(grid.groups.length, compositionChanged, firstOpen)
+   */
+  private needsInitialPaneReservation(
+    count: number,
+    compositionChanged: boolean,
+    firstOpen: boolean,
+  ): boolean {
+    return (
+      count < REPOSITORY_MIN_EDITOR_GROUP_COUNT ||
+      (count < this.studyGroupCount() &&
+        this.hasReasonToReserveGroups(count, compositionChanged, firstOpen))
+    )
   }
 
   /**
@@ -5236,14 +5300,8 @@ export class StudyWorkspace {
   async close(): Promise<void> {
     if (this.closingPromise) return this.closingPromise
     // A pane or the captured source that has the keyboard is closed below: the editor group that remains then gets it.
-    const closesKeyboardHolder = Boolean(
-      this.app?.active ||
-      this.contextPanel?.active ||
-      (vscode.window.activeTextEditor &&
-        this.isCapturedSourceInput(
-          vscode.window.tabGroups.activeTabGroup.activeTab?.input,
-        )),
-    )
+    const closesKeyboardHolder =
+      this.hasActiveStudyPane() || this.hasCapturedSourceKeyboard()
     this.closing = true
     this.revision++
     this.lifetime++
@@ -5381,6 +5439,29 @@ export class StudyWorkspace {
         this.closing = false
       }
     }
+  }
+
+  /**
+   * Says whether the Application pane or the Study pane is the active editor; asked by {@link close} before it closes the panes.
+   * @returns `true` when one of the reader's two panes is active, `false` when neither is or neither exists.
+   * @example this.hasActiveStudyPane()
+   */
+  private hasActiveStudyPane(): boolean {
+    return Boolean(this.app?.active || this.contextPanel?.active)
+  }
+
+  /**
+   * Says whether the captured source has the keyboard: a text editor is active and the active group shows a captured source; asked by {@link close} before it closes the source's tabs.
+   * @returns `true` when the editor reports an active text editor and the active tab is a captured source document.
+   * @example this.hasCapturedSourceKeyboard()
+   */
+  private hasCapturedSourceKeyboard(): boolean {
+    return Boolean(
+      vscode.window.activeTextEditor &&
+      this.isCapturedSourceInput(
+        vscode.window.tabGroups.activeTabGroup.activeTab?.input,
+      ),
+    )
   }
 
   /** Releases observers after extension shutdown has retired its service; read-only harnesses inspect state via {@link inspect}. @example await workspace.dispose() */
@@ -5541,18 +5622,13 @@ export class StudyWorkspace {
       await this.readBaselines().catch(() => undefined)
       try {
         this.progress = await this.library.readProgress()
-        this.repositoryOrigin = this.progress.repositoryReturn
-        if (this.progress.selection)
-          this.selection = { ...this.progress.selection, follow: false }
+        this.adoptSavedReadingPlace(this.progress)
       } catch (error) {
         this.report('progress', error)
       }
       try {
         this.catalog = await this.library.list()
-        // A study a newer Codebook saved cannot be read here; the newest entry that is not one is shown first.
-        const id =
-          this.selection.studyId ??
-          this.catalog.find((entry) => entry.format !== 'newer')?.id
+        const id = this.firstShownStudyId()
         if (id) {
           this.selectedArchive = await this.readSavedArchive(id)
           this.selectArchive(this.selectedArchive)
@@ -5567,6 +5643,30 @@ export class StudyWorkspace {
       this.initializing = undefined
       throw error
     }
+  }
+
+  /**
+   * Takes over where the learner last read from the progress that was just loaded: the article a Return goes back to and the selection, which no longer follows a run; called by {@link initialize} in the turn the progress arrived.
+   * @param progress - The learner progress the library returned.
+   * @example this.adoptSavedReadingPlace(this.progress)
+   */
+  private adoptSavedReadingPlace(progress: LearnerProgress): void {
+    this.repositoryOrigin = progress.repositoryReturn
+    if (progress.selection)
+      this.selection = { ...progress.selection, follow: false }
+  }
+
+  /**
+   * Names the saved study a fresh reader shows first; read by {@link initialize} in the turn the catalog was listed.
+   * @returns The study the saved selection names, otherwise the newest listed study this Codebook can read, or `undefined` for a library without one.
+   * @example const id = this.firstShownStudyId()
+   */
+  private firstShownStudyId(): string | undefined {
+    // A study a newer Codebook saved cannot be read here; the newest entry that is not one is shown first.
+    return (
+      this.selection.studyId ??
+      this.catalog.find((entry) => entry.format !== 'newer')?.id
+    )
   }
 
   /** Reads current source independently of whichever older observation the learner selected. @example await this.readBaselines() */
