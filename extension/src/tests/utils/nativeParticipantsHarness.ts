@@ -18,6 +18,10 @@ import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
 import { pausePlace } from '../../utils/pausePlace'
 
+import {
+  breakLocationsInRange,
+  type GeneratedPlace,
+} from './breakLocationsInRange'
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
@@ -25,6 +29,13 @@ import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
 import { sourceBreakpointRequest } from './sourceBreakpointRequest'
+
+/** A generated place as a break location request names it, with the script it lies in. */
+type ScriptPlace = GeneratedPlace & { scriptId: string }
+/** The adapter id of the first editor breakpoint a harness's adapter sees; later ones count up from it. */
+const FIRST_ADAPTER_BREAKPOINT_ID = 12
+/** How far the id of a breakpoint the adapter rebound at its pause lies from the acknowledged one. */
+const REBOUND_ID_OFFSET = 1_000
 
 /** Exercises the real coordinator using two controlled native transports and inert source records; never native product proof. @example const harness = await nativeParticipantsHarness(context); await harness.run.prepare() */
 export async function nativeParticipantsHarness(
@@ -135,9 +146,33 @@ export async function nativeParticipantsHarness(
     browser: { line: 1, column: 1 },
     server: { line: 1, column: 1 },
   }
-  let acknowledgedAt: { line: number; column: number } | undefined,
+  // Where the adapter acknowledges a later registration as verified, given the position the editor requested it at; without it a registration stays pending.
+  let acknowledgedAt:
+      | ((requested: { line: number; column: number }) => {
+          line: number
+          column: number
+        })
+      | undefined,
     browserLineRunsOnInput = false,
     reboundPauseId = false
+  // The generated places each participant's adapter lists as break locations of its module; without them it cannot answer.
+  const possibleBreakLocations: Partial<Record<Participant, GeneratedPlace[]>> =
+    {}
+  // Every range the run asked break locations for, in order, as it sent them.
+  const breakLocationRequests: {
+    participant: Participant
+    start: ScriptPlace
+    end?: ScriptPlace
+  }[] = []
+  // The adapter's id of each editor breakpoint; every breakpoint has its own, as natively.
+  const adapterIds = new Map<string, number>()
+  const adapterId = (breakpoint: { id: string }): number => {
+    const known = adapterIds.get(breakpoint.id)
+    if (known !== undefined) return known
+    const assigned = FIRST_ADAPTER_BREAKPOINT_ID + adapterIds.size
+    adapterIds.set(breakpoint.id, assigned)
+    return assigned
+  }
   let inputResolve = (): void => {},
     heldResponse: (() => void) | undefined,
     holdResponse = false
@@ -302,7 +337,8 @@ export async function nativeParticipantsHarness(
       }
       return breakpoints.some((current) => current.id === breakpoint.id)
         ? {
-            id: breakpoint.id.length + (reboundPauseId ? 1 : 0),
+            id:
+              adapterId(breakpoint) + (reboundPauseId ? REBOUND_ID_OFFSET : 0),
             verified: !unboundPause,
             line: boundAt[name].line,
             column: boundAt[name].column,
@@ -398,7 +434,12 @@ export async function nativeParticipantsHarness(
     },
     async request(
       method: string,
-      parameters?: { expression?: string; type?: string },
+      parameters?: {
+        expression?: string
+        type?: string
+        start?: ScriptPlace
+        end?: ScriptPlace
+      },
     ) {
       commands.push({ participant: name, method })
       if (
@@ -453,6 +494,25 @@ export async function nativeParticipantsHarness(
         return {
           data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
         }
+      const listed = possibleBreakLocations[name]
+      if (
+        method === 'Debugger.getPossibleBreakpoints' &&
+        listed &&
+        parameters?.start
+      ) {
+        const { start, end } = parameters
+        // The run's objects come from its own module context; a test compares plain copies.
+        breakLocationRequests.push({
+          participant: name,
+          start: { ...start },
+          ...(end ? { end: { ...end } } : {}),
+        })
+        return {
+          locations: breakLocationsInRange(listed, start, end).map(
+            (location) => ({ scriptId: name, ...location }),
+          ),
+        }
+      }
       if (method === 'Input.dispatchMouseEvent') {
         if (parameters?.type === 'mousePressed') return {}
         const pending = new Promise<void>((resolve) => {
@@ -518,10 +578,16 @@ export async function nativeParticipantsHarness(
         success: !failedRegistration,
         body: {
           breakpoints: selected.map((breakpoint) => ({
-            id: breakpoint.id.length,
+            id: adapterId(breakpoint),
             // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
             ...(acknowledgedAt
-              ? { verified: true, ...acknowledgedAt }
+              ? {
+                  verified: true,
+                  ...acknowledgedAt({
+                    line: breakpoint.location.range.start.line + 1,
+                    column: breakpoint.location.range.start.character + 1,
+                  }),
+                }
               : { verified: false }),
           })),
         },
@@ -908,7 +974,7 @@ export async function nativeParticipantsHarness(
           body: {
             reason: 'changed',
             breakpoint: {
-              id: breakpoint.id.length,
+              id: adapterId(breakpoint),
               verified: true,
               line,
               column,
@@ -918,8 +984,28 @@ export async function nativeParticipantsHarness(
     },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {
-      acknowledgedAt = { line, column }
+      acknowledgedAt = () => ({ line, column })
     },
+    /** Acknowledges later registrations as verified where this debugger model binds the position the editor requested, so a second request can bind elsewhere than the first. @example harness.acknowledgeRegistrationsWith((requested) => requested.column === 7 ? { line: 2, column: 1 } : requested) */
+    acknowledgeRegistrationsWith(
+      bind: (requested: { line: number; column: number }) => {
+        line: number
+        column: number
+      },
+    ): void {
+      acknowledgedAt = bind
+    },
+    /** Makes a participant's adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for. @example harness.listPossibleBreakLocations('server', [{ lineNumber: 0, columnNumber: 0 }]) */
+    listPossibleBreakLocations(
+      name: Participant,
+      locations: GeneratedPlace[],
+    ): void {
+      possibleBreakLocations[name] = locations
+    },
+    /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
+    breakLocationRequests,
+    /** The adapter's id of an editor breakpoint, as its registration reply and its `breakpoint` events name it. */
+    adapterId,
     /** Makes the click execute the browser stop's line before the first declared stop pauses. */
     runBrowserLineOnInput(): void {
       browserLineRunsOnInput = true

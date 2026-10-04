@@ -77,6 +77,7 @@ import {
 import { captureReplayDebugSnapshot } from './utils/captureReplayDebugSnapshot'
 import { configuredConditionHint } from './utils/configuredConditionHint'
 import { configuredDomExpression } from './utils/configuredDomExpression'
+import { configuredStopFields } from './utils/configuredStopFields'
 import { configuredStops } from './utils/configuredStops'
 import { continuationReceipts } from './utils/continuationReceipts'
 import { createBindingLineRule } from './utils/createBindingLineRule'
@@ -604,43 +605,103 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       await this.assertExecutedModuleSealed(stop, phase)
     }
-    const armed = stop.armed,
-      armedAfterDeclaredLine = armed.line !== position.line
-    if (!stop.breakpoint && armedAfterDeclaredLine)
+    let armed = stop.armed
+    if (!stop.breakpoint && armed.line !== position.line)
       this.evidence.record('breakpoint.armed-after-declared-line', {
         participant: stop.participant,
         declared: { line: position.line, column: position.column },
         armed,
       })
-    stop.breakpoint ??= new OwnedRepositoryBreakpoint(
-      stop.bundle.sourcePath,
-      armed.line,
-      armed.column,
-      'declared-line',
-      stop.acceptsBoundLine,
-    )
+    stop.breakpoint ??= this.requestBreakpoint(stop)
     if (stop.participant === 'server') {
-      const receipt = await this.registeredStop(stop)
+      let receipt = await this.registeredStop(stop)
       this.alive()
       this.evidence.record('breakpoint.registered', {
         participant: stop.participant,
         ...receipt,
       })
+      // An acknowledgement on another line while the stop is armed is answered with one more request on the requested line, when that line can pause; a pending registration is judged at its pause.
+      if (
+        receipt.movedTo &&
+        (await this.rearmOnRequestedLine(stop, receipt.movedTo))
+      ) {
+        receipt = await this.registeredStop(stop)
+        this.alive()
+        this.evidence.record('breakpoint.registered', {
+          participant: stop.participant,
+          ...receipt,
+        })
+        // The second request was acknowledged on another line again: the stop cannot be bound on the line it was requested on.
+        if (receipt.movedTo)
+          throw this.slideRefusal(stop, receipt.movedTo, armed)
+      }
       await this.verifySources()
       return
     }
-    let binding: z.infer<typeof verifiedPlaceSchema>,
-      boundElsewhere: z.infer<typeof verifiedPlaceSchema> | undefined,
+    let binding = await this.verifiedBrowserBinding(stop)
+    this.alive()
+    // A line after the requested one is the stop's place only when the debugger could not pause on the requested line at all; when it can, the stop is requested once more at that line's break location before the requested column.
+    if (
+      binding.line !== armed.line &&
+      (await this.rearmOnRequestedLine(stop, binding))
+    ) {
+      const firstRequest = armed
+      armed = stop.armed
+      binding = await this.verifiedBrowserBinding(stop)
+      this.alive()
+      if (binding.line !== armed.line)
+        throw this.slideRefusal(stop, binding, firstRequest)
+    }
+    this.bindBoundPlace(stop, binding)
+    this.evidence.record('breakpoint.bound', {
+      ...binding,
+      requested: { line: position.line, column: position.column },
+    })
+    await this.verifySources()
+  }
+
+  /**
+   * Adds a stop's owned breakpoint to the editor at the place the stop is requested at ({@link PreparedStop.armed}), with the stop's line rule for its acknowledgement; {@link armStop} calls it for the first request and {@link rearmOnRequestedLine} for the second.
+   * @param stop - The stop being armed.
+   * @returns The owner of the new editor breakpoint; the adapter has not acknowledged it yet.
+   * @example
+   * ```ts
+   * stop.breakpoint ??= this.requestBreakpoint(stop)
+   * ```
+   */
+  private requestBreakpoint(stop: PreparedStop): OwnedRepositoryBreakpoint {
+    return new OwnedRepositoryBreakpoint(
+      stop.bundle.sourcePath,
+      stop.armed.line,
+      stop.armed.column,
+      'declared-line',
+      stop.acceptsBoundLine,
+    )
+  }
+
+  /**
+   * Waits until the debugger verifies a browser stop's breakpoint on a line the stop's rule accepts, for {@link armStop}: once for the first request and once more after {@link rearmOnRequestedLine}.
+   * @param stop - A browser stop whose owned breakpoint exists.
+   * @returns The verified line and column.
+   * @throws When the binding lands on a line the rule refuses (at once, naming the condition) or never verifies within the bound (with the mapping hints); cancellation and an adapter failure keep their own reason.
+   * @example
+   * ```ts
+   * const binding = await this.verifiedBrowserBinding(stop) // { verified: true, line: 23, column: 5 }
+   * ```
+   */
+  private async verifiedBrowserBinding(
+    stop: PreparedStop,
+  ): Promise<z.infer<typeof verifiedPlaceSchema>> {
+    const session = this.participants[stop.participant].selected!
+    let boundElsewhere: z.infer<typeof verifiedPlaceSchema> | undefined,
       pollFailure: unknown
     try {
-      binding = await waitUntil(
+      return await waitUntil(
         async () => {
           let result: unknown
           try {
             result = await awaitResponse(
-              participant.selected!.getDebugProtocolBreakpoint(
-                stop.breakpoint!.breakpoint,
-              ),
+              session.getDebugProtocolBreakpoint(stop.breakpoint!.breakpoint),
               'repository binding',
               this.abort.signal,
             )
@@ -657,7 +718,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           }
           return parsed.data
         },
-        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${armedAfterDeclaredLine ? `requested at ${armed.line}:${armed.column}, the first mapped position after the declared line` : `requested column ${position.column}`}); choose an executable statement reached by the requested action`,
+        `a verified binding of declared stop ${this.declaredAt(stop)} on its declared line or a later line its binding rule accepts (${this.requestedAt(stop)}); choose an executable statement reached by the requested action`,
         ACTIVE_TIMEOUT_MS,
         this.abort.signal,
       )
@@ -671,16 +732,68 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       if (pollFailure !== undefined || this.abort.signal.aborted) throw error
       throw this.bindingFailure(stop, thrownMessage(error))
     }
+  }
+
+  /** Names where a stop's breakpoint is requested, for the text of a binding that never verifies: the declared column, the first mapped position after an unmapped declared line, or the place of a second request on the declared line. @example this.requestedAt(stop) // 'requested column 9' */
+  private requestedAt(stop: PreparedStop): string {
+    const { armed, source } = stop
+    if (armed.line !== source.line)
+      return `requested at ${armed.line}:${armed.column}, the first mapped position after the declared line`
+    return armed.column === source.column
+      ? `requested column ${source.column}`
+      : `requested again at column ${armed.column}, the line's break location before the declared column ${source.column}`
+  }
+
+  /**
+   * Requests a stop's breakpoint once more on the line it was requested on, when the debugger acknowledged it on another line although that line can pause: the requested column lay after the line's last break location, so the break location before it is asked for instead of taking the other line as the stop. {@link armStop} calls it for both participants while the stop is armed, before any input or resume.
+   * The first registration is retired, and its retirement confirmed by the adapter ({@link OwnedRepositoryBreakpoint.retire}), before the second replaces it: afterwards exactly one owned breakpoint exists, and none after a failure or a cancellation.
+   * @param stop - The stop being armed; the adapter acknowledged its owned breakpoint.
+   * @param binding - Where the debugger acknowledged the breakpoint, on another line than requested.
+   * @returns
+   * - `true` when the stop was requested again: {@link PreparedStop.armed} names the new request and `stop.breakpoint` owns the new registration, whose acknowledgement the caller waits for
+   * - `false` when the requested line cannot pause, the adapter cannot list break locations, or the stop's module is not parsed yet: the binding is left to the stop's line rule
+   * @throws The slide refusal ({@link slideRefusal}) when the requested line can pause but has no break location before the requested column; and when the first registration's retirement is not confirmed.
+   * @example
+   * ```ts
+   * if (await this.rearmOnRequestedLine(stop, { line: 23, column: 5 })) binding = await this.verifiedBrowserBinding(stop)
+   * ```
+   */
+  private async rearmOnRequestedLine(
+    stop: PreparedStop,
+    binding: { line: number; column: number },
+  ): Promise<boolean> {
+    // A server module the runtime has not announced has no break locations to ask for.
+    if (!stop.script) return false
+    const firstRequest = stop.armed,
+      pausableColumns = await this.pausableColumns(stop, firstRequest.line)
+    // An adapter that cannot list break locations, and a line that cannot pause, leave the binding to the line rule.
+    if (!pausableColumns?.length) return false
+    const column = pausableColumns.findLast(
+      (pausableColumn) => pausableColumn < firstRequest.column,
+    )
+    if (column === undefined) throw this.slideRefusal(stop, binding)
+    try {
+      await stop.breakpoint!.retire(
+        this.participants[stop.participant].selected!,
+        this.abort.signal,
+      )
+    } catch (error) {
+      if (this.abort.signal.aborted) throw error
+      throw new Error(
+        `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column} although line ${firstRequest.line} can pause at column ${column}, and its first breakpoint could not be retired before a second request there: ${thrownMessage(error)}`,
+      )
+    }
     this.alive()
-    // A line after the requested one is the stop's place only when the debugger could not pause on the requested line at all, not when the requested column lay after its last break location.
-    if (binding.line !== armed.line)
-      await this.refuseSlidePastDeclaredLine(stop, binding)
-    this.bindBoundPlace(stop, binding)
-    this.evidence.record('breakpoint.bound', {
-      ...binding,
-      requested: { line: position.line, column: position.column },
+    stop.armed = { line: firstRequest.line, column }
+    stop.breakpoint = this.requestBreakpoint(stop)
+    this.evidence.record('breakpoint.rearmed-on-requested-line', {
+      participant: stop.participant,
+      declared: { line: stop.source.line, column: stop.source.column },
+      armed: stop.armed,
+      firstRequest,
+      firstBinding: { line: binding.line, column: binding.column },
     })
-    await this.verifySources()
+    return true
   }
 
   /**
@@ -806,30 +919,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Refuses a browser stop the debugger moved to a later line although the declared line itself has a break location: the requested column lay after it, so the later line is not the declared statement. Called by {@link armStop} when a binding lies on a later line.
-   * @param stop - The browser stop being armed; its module is parsed.
-   * @param binding - The verified binding on a later line.
-   * @throws When `Debugger.getPossibleBreakpoints` lists a location of the module that the sealed map puts on the declared line; an adapter that cannot answer leaves the binding to the line rule.
+   * Builds the refusal of a stop the debugger bound on another line although the line it was requested on can pause: the requested column lay after that line's last break location, so the other line is not the requested statement. {@link rearmOnRequestedLine} throws it when no break location lies before the requested column, and {@link armStop} when a second request there was bound on another line again.
+   * @param stop - The stop being armed.
+   * @param binding - Where the debugger bound the breakpoint, on another line than requested.
+   * @param firstRequest - Where the stop was requested first, when it was then requested again at {@link PreparedStop.armed}; absent when no second request was made.
+   * @returns The error to throw, with the mapping hints: it names the declared stop, the bound place, the line that can pause, the second request when there was one, and what to declare.
    * @example
    * ```ts
-   * await this.refuseSlidePastDeclaredLine(stop, { line: 23, column: 5 })
+   * throw this.slideRefusal(stop, { line: 23, column: 5 })
    * ```
    */
-  private async refuseSlidePastDeclaredLine(
+  private slideRefusal(
     stop: PreparedStop,
     binding: { line: number; column: number },
-  ): Promise<void> {
-    const pausableColumns = await this.pausableColumns(stop, stop.armed.line)
-    // An adapter that cannot list break locations leaves the binding to the line rule.
-    if (pausableColumns?.length)
-      throw this.bindingFailure(
-        stop,
-        `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${stop.armed.line === stop.source.line ? `the declared line ${stop.source.line}` : `line ${stop.armed.line}, where the stop was requested`}, so requested column ${stop.armed.column} lies after its statement; request the column where the statement begins`,
-      )
+    firstRequest?: { line: number; column: number },
+  ): Error {
+    const { armed, source } = stop,
+      requestedColumn = (firstRequest ?? armed).column
+    const pausableLine =
+        armed.line === source.line
+          ? `the declared line ${source.line}`
+          : `line ${armed.line}, where the stop was requested`,
+      secondRequest = firstRequest
+        ? `, and a second request at ${armed.line}:${armed.column} was bound on line ${binding.line} again`
+        : ''
+    const field = configuredStopFields(
+      this.definition.configuration.version,
+      this.stops.indexOf(stop),
+    ).source
+    // Codebook chose the column of a stop requested after its declared line, so the agent is told which line to declare.
+    const advice =
+      armed.line === source.line
+        ? `declare the column where the statement begins (${field}.column)`
+        : `declare the stop on line ${armed.line} at the column where its statement begins (${field})`
+    return this.bindingFailure(
+      stop,
+      `Declared stop ${this.declaredAt(stop)} bound at ${binding.line}:${binding.column}, refused: the debugger can pause on ${pausableLine}, so requested column ${requestedColumn} lies after its statement${secondRequest}; ${advice}`,
+    )
   }
 
   /**
-   * Asks the debugger where it can pause on one line of a stop's source, so a breakpoint the debugger moved to a later line because the line cannot pause is told from one requested after the line's last break location; {@link refuseSlidePastDeclaredLine} asks it for the line the stop was requested on.
+   * Asks the debugger where it can pause on one line of a stop's source, so a breakpoint the debugger moved to a later line because the line cannot pause is told from one requested after the line's last break location; {@link rearmOnRequestedLine} asks it for the line the stop was requested on.
    * The request covers only the generated range the sealed map gives for the line; a map too large to scan completely is asked for the whole module, because a partial scan may have missed mappings of the line. Every answered location is mapped back, since the range can hold places of other lines.
    * @param stop - The stop; its module is parsed (`stop.script` is set).
    * @param line - One-based line of the stop's source.

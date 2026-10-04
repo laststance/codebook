@@ -18,6 +18,10 @@ import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { createBundleVerifier } from '../../utils/createBundleVerifier'
 
+import {
+  breakLocationsInRange,
+  type GeneratedPlace,
+} from './breakLocationsInRange'
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
@@ -35,26 +39,8 @@ interface BeforeFailure {
   candidates?: { button: number; link: number; field: number }
 }
 
-/** A zero-based place in the executed module, as the debugger protocol names a location's line and column. */
-interface GeneratedPlace {
-  lineNumber: number
-  columnNumber: number
-}
-
 /** A generated place as a break location request names it, with the script it lies in. */
 type ScriptPlace = GeneratedPlace & { scriptId: string }
-
-/** Tells the harness's debugger whether one generated place lies before another, for the range of a break location request. @example isGeneratedPlaceBefore({ lineNumber: 0, columnNumber: 6 }, { lineNumber: 1, columnNumber: 0 }) // true */
-function isGeneratedPlaceBefore(
-  left: GeneratedPlace,
-  right: GeneratedPlace,
-): boolean {
-  return (
-    left.lineNumber < right.lineNumber ||
-    (left.lineNumber === right.lineNumber &&
-      left.columnNumber < right.columnNumber)
-  )
-}
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
@@ -74,6 +60,8 @@ export async function configuredRuntimeHarness(
       citationEndLine?: number
       /** Line the first stop is declared on instead of line 1. */
       declaredLine?: number
+      /** Column the first stop is declared at instead of column 1. */
+      declaredColumn?: number
     }
   } = {},
 ) {
@@ -89,6 +77,8 @@ export async function configuredRuntimeHarness(
   if (options.before) reference.configuration.action.before = options.before
   if (fixture?.declaredLine)
     reference.configuration.source.line = fixture.declaredLine
+  if (fixture?.declaredColumn)
+    reference.configuration.source.column = fixture.declaredColumn
   // Each of these changes makes the frozen intent hash stale.
   if (additionalStops.length || options.before || fixture)
     reference.configurationHash = sha256(
@@ -465,7 +455,18 @@ export async function configuredRuntimeHarness(
           ? breakpoints.find((candidate) => candidate.id === 'owned-breakpoint')
               ?.location.range.start
           : undefined
-        if (emitInputPause)
+        // A first stop that was requested a second time has a later owned breakpoint; it pauses where that one is bound.
+        const requestedAgain = stopCount
+          ? undefined
+          : breakpoints.find((candidate) =>
+              candidate.id.startsWith('owned-breakpoint-'),
+            )?.location.range.start
+        if (emitInputPause && requestedAgain)
+          emitPause(
+            laterStopBinding?.column ?? requestedAgain.character + 1,
+            laterStopBinding?.line ?? requestedAgain.line + 1,
+          )
+        else if (emitInputPause)
           emitPause(
             firstStopBinding?.column ??
               (requested ? requested.character + 1 : undefined),
@@ -488,15 +489,12 @@ export async function configuredRuntimeHarness(
             ? { start: { ...start }, end: { ...end } }
             : { start: { ...start } },
         )
-        // As the debugger does, only the locations from `start` up to, and not including, `end` are answered; without an `end` the range runs to the end of the module.
         return {
-          locations: possibleBreakLocations
-            .filter(
-              (location) =>
-                !isGeneratedPlaceBefore(location, start) &&
-                (!end || isGeneratedPlaceBefore(location, end)),
-            )
-            .map((location) => ({ scriptId: 'actual', ...location })),
+          locations: breakLocationsInRange(
+            possibleBreakLocations,
+            start,
+            end,
+          ).map((location) => ({ scriptId: 'actual', ...location })),
         }
       }
       throw new Error(`Unexpected CDP request: ${method}`)

@@ -2557,7 +2557,7 @@ test('a browser stop slid to the next line although its declared line has a brea
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; request the column where the statement begins. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
@@ -2634,9 +2634,180 @@ test('a browser stop moved to a later line asks the debugger for the break locat
   ])
   assert.equal(
     String(failure),
-    `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; request the column where the statement begins. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+    `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
   )
   assert.equal(mouse.length, 0)
+})
+
+// Cycle 0045 (CX-A1, ER-9): red while a binding that slid to the next line although its own line can pause was refused at once ("bound at 2:1, refused: the debugger can pause on the declared line 1 …").
+test('a browser stop whose verified binding moved to the next line although its own line can pause is requested again on its line and pauses there', async (context) => {
+  // Arrange: the stop is declared at 1:7; the debugger verifies that request at 2:1, lists a break location at the start of line 1, and binds a request there where it was made.
+  const { run, breakpoints, bindFirstStopAt, listPossibleBreakLines, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: { citationEndLine: 2, declaredColumn: 7 },
+    })
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  // Act
+  await run.prepare()
+  const ownedAfterArming = breakpoints
+    .filter((breakpoint) => breakpoint.id.startsWith('owned-breakpoint'))
+    .map((breakpoint) => ({
+      id: breakpoint.id,
+      ...breakpoint.location.range.start,
+    }))
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on its declared line')
+  const rearmed = run
+    .view()
+    .events.filter(
+      (event) => event.type === 'breakpoint.rearmed-on-requested-line',
+    )
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  // Assert: exactly one owned breakpoint after the second request, at the line's break location, and the stop is committed there.
+  assert.deepEqual(ownedAfterArming, [
+    { id: 'owned-breakpoint-2', line: 0, character: 0 },
+  ])
+  assert.deepEqual(rearmed, [
+    {
+      participant: 'browser',
+      declared: { line: 1, column: 7 },
+      armed: { line: 1, column: 1 },
+      firstRequest: { line: 1, column: 7 },
+      firstBinding: { line: 2, column: 1 },
+    },
+  ])
+  assert.equal(snapshot.source.line, 1)
+  assert.equal(snapshot.source.column, 1)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})
+
+// Cycle 0045 (CX-A1, ER-9, SM-18): the refusal after the one new request; red while no second request was made.
+test('a browser stop that still cannot be bound on its line after one new request is refused and told to declare the statement’s column', async (context) => {
+  // Arrange: the debugger verifies the request at 1:7 and the second request at 1:1 both at 2:1.
+  const {
+    run,
+    breakpoints,
+    bindFirstStopAt,
+    bindLaterStopsAt,
+    listPossibleBreakLines,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA;AACA',
+    fixture: { citationEndLine: 2, declaredColumn: 7 },
+  })
+  bindFirstStopAt(2, 1)
+  bindLaterStopsAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert: no owned breakpoint is left, and nothing was clicked.
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 7 lies after its statement, and a second request at 1:1 was bound on line 2 again; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.deepEqual(
+    breakpoints.map((breakpoint) => breakpoint.id),
+    ['learner-owned'],
+  )
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-15, SM-18, ER-9): red while the refusal on the requested line was never executed with an answering debugger and told the agent to "request the column where the statement begins" about a column Codebook chose.
+test('a stop requested after its unmapped declared line that the debugger slides past a requested line it can pause on is refused naming the requested line', async (context) => {
+  // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request at 2:1, verifies it at 3:1 and lists break locations on lines 2 and 3.
+  const {
+    run,
+    verifyBreakpointsOnlyOnLines,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: ';AACA;AACA',
+    fixture: {
+      source: '// toggles the theme\nconst nextTheme =\n  "dark";\n',
+      citationEndLine: 3,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([2])
+  bindFirstStopAt(3, 1)
+  listPossibleBreakLines([1, 2])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert: no break location lies before the requested column 1, so no second request is made.
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the debugger can pause on line 2, where the stop was requested, so requested column 1 lies after its statement; declare the stop on line 2 at the column where its statement begins (configuration.source). Frozen source map positions in the selected citation: 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Cycle 0045 (PC-2.1): the second request takes its column from the line the stop was requested on, not from the declared column.
+test('a stop requested after its unmapped declared line that slid past the requested line is requested again at that line’s break location before the requested column', async (context) => {
+  // Arrange: line 1 is a comment without a mapping. The generated module keeps a comment on its line 1, which the map attributes to source 3:1, and has the code of source line 3 on its line 2, mapped at 3:7; a mapping onto a kept comment is no position, so the stop declared at 1:1 is requested at 3:7. The debugger verifies that request at 4:1 and lists a break location at the comment's place and on line 4.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: ';AAEA;AAAM;AACN',
+    fixture: {
+      source:
+        '// toggles the theme\n/* why */\nconst nextTheme = "dark";\nrender();\n',
+      citationEndLine: 4,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([3])
+  bindFirstStopAt(4, 1)
+  listPossibleBreakLines([1, 3])
+  // Act
+  await run.prepare()
+  const requestedAgain = breakpoints.find((breakpoint) =>
+    breakpoint.id.startsWith('owned-breakpoint'),
+  )?.location.range.start
+  const events = run.view().events,
+    journal = (type: string): unknown =>
+      JSON.parse(
+        JSON.stringify(events.find((event) => event.type === type)?.detail),
+      )
+  await run.stop()
+  // Assert: the second request is made on line 3 at column 1, before the requested column 7; a candidate "before the declared column 1" would not exist.
+  assert.deepEqual(journal('breakpoint.armed-after-declared-line'), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 3, column: 7 },
+  })
+  assert.deepEqual(journal('breakpoint.rearmed-on-requested-line'), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 3, column: 1 },
+    firstRequest: { line: 3, column: 7 },
+    firstBinding: { line: 4, column: 1 },
+  })
+  assert.deepEqual(
+    { line: requestedAgain?.line, character: requestedAgain?.character },
+    { line: 2, character: 0 },
+  )
 })
 
 // Value: protects=the deadline of a first browser stop that was not moved still naming that stop once the click was sent; fails_when=the run ends with the bare "Repository input reached no verified pause"; why_new=Cycle 0043 N-3; seam=the harness clock
