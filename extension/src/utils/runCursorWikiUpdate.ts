@@ -42,6 +42,17 @@ export function parseCursorWikiUpdateResult(output: string): string {
   return envelope.result
 }
 
+/**
+ * Refuses to go on with a Cursor update that was already cancelled; called by {@link runCursorWikiUpdate} before it looks up the executable and again before it starts the agent, because an abort that arrives in between has no listener to fire.
+ * @param signal - The run's abort, if the caller has one.
+ * @throws A plain error saying that the Wiki update was cancelled, when the signal is aborted.
+ * @example
+ * throwIfWikiUpdateCancelled(controller.signal) // returns while the learner has not cancelled
+ */
+function throwIfWikiUpdateCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
+}
+
 /** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window, which aborts with {@link WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON} and so gets the shorter grace before the hard stop. @param timeoutMs - Bound after which the agent is stopped; the caller passes the bound it announced. @returns The agent's reply, once the agent process has closed. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel (also one that arrives while the executable is looked up, which starts no process), a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed, and after a stop nothing of the agent's process group is left running. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal, 900_000) */
 export async function runCursorWikiUpdate(
   projectRoot: string,
@@ -51,10 +62,10 @@ export async function runCursorWikiUpdate(
 ): Promise<string> {
   if (Buffer.byteLength(prompt, 'utf8') > WIKI_CURSOR_PROMPT_LIMIT_BYTES)
     throw new Error('The Wiki update request is too large.')
-  if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
+  throwIfWikiUpdateCancelled(signal)
   const executable = await resolveCursorAgentExecutable()
   // An abort that arrived while the executable was being resolved has no listener to fire; no agent may start after it.
-  if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
+  throwIfWikiUpdateCancelled(signal)
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn(
       executable,
