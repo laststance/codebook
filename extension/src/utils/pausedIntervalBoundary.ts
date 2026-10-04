@@ -36,7 +36,7 @@ interface PausedObservation {
  * @param events - The run journal.
  * @returns The earliest ending event at or after the commit, or `undefined` while the stop is still held.
  * @example
- * pausedIntervalBoundary({ elapsedMs: 100, participant: 'server', pause: { generation: 1 } }, events)?.type // => 'continue.accepted'
+ * pausedIntervalBoundary({ elapsedMs: 100, participant: 'server', pause: { generation: 1, sessionId: 'server-session' } }, events)?.type // => 'continue.accepted'
  */
 export function pausedIntervalBoundary(
   observation: PausedObservation,

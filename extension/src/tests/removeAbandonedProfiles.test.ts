@@ -174,6 +174,27 @@ test('one sweep looks at no more than 64 profile folders, and the rest wait for 
   assert.equal((await readdir(root)).length, 1)
 })
 
+// Value: protects=the sweep reaching the folders a killed editor left when the profile root also holds many folders of builds before the owner marker; fails_when=the bound is taken from the raw listing, so 64 folders without a marker use it up and the marked folder listed after them is never looked at; why_new=Cycle 0045 local review (runtime-1 #1); seam=a profile root of the test's own, whose listing order the test reads before it marks the folder listed last
+test('a marked profile folder of a killed editor is removed although 64 folders without a marker are listed before it', async (context) => {
+  // Arrange: 65 folders without a marker; the one the directory lists last gets the marker of an editor that is gone. Writing into a folder does not move it in its parent's listing.
+  const root = await profileRoot(context)
+  for (let index = 0; index < 65; index += 1)
+    await profileFolder(join(root, `codebook-browser-${index}`))
+  const listedLast = join(root, (await readdir(root)).at(-1)!)
+  await writeFile(
+    join(listedLast, 'codebook-owner.json'),
+    JSON.stringify({ pid: endedProcessId(), hostname: 'workstation' }),
+  )
+  // Act
+  const removed = await removeAbandonedProfiles(root, {
+    hostname: 'workstation',
+  })
+  // Assert
+  assert.deepEqual(removed, [listedLast])
+  assert.equal(await exists(listedLast), false)
+  assert.equal((await readdir(root)).length, 64)
+})
+
 test('a profile root that does not exist is answered with nothing removed', async (context) => {
   // Arrange
   const root = join(await profileRoot(context), 'absent')

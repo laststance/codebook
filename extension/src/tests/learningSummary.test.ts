@@ -693,6 +693,81 @@ test('a completed run whose explanations carry no learning summary tells the age
   }
 })
 
+// Value: protects=the advice to save a learning summary arriving together with the terminalReference it tells the agent to cite; fails_when=a read of the run resource between the runtime's result and the end of the service's release names save-learning-summary while terminalReference is still absent, so the agent is told to do what it cannot do yet; why_new=Cycle 0045 local review (runtime-2 #1: the advice did not wait for the release as the reference does); seam=the synthetic runtime, which reports its result before the service released the run, and the service's maintenance turn, switched off
+test('a run that reached its result is told to save a learning summary only once its terminal reference can be cited', async () => {
+  // Arrange: a run without a learning summary whose runtime reports a demonstrated result while the service has not released it yet.
+  class ResultBeforeReleaseRuntime extends ControlledRuntime {
+    hasReachedResult = false
+    override view(): ConfiguredRuntimeView {
+      const state = super.view()
+      if (!this.hasReachedResult) return state
+      return {
+        ...state,
+        status: 'completed',
+        runtimeOutcome: 'demonstrated',
+        captureOutcome: 'complete',
+        finalOutcome: 'demonstrated',
+        operation: state.operation && {
+          ...state.operation,
+          afterVerified: true,
+        },
+      }
+    }
+  }
+  const runtimes: ResultBeforeReleaseRuntime[] = []
+  const harness = await createHarness({
+    create: async (directory, definition) => {
+      const runtime = new ResultBeforeReleaseRuntime(directory, definition)
+      runtimes.push(runtime)
+      return runtime
+    },
+  })
+  const service = harness.service
+  service.maintain = (): void => {}
+  try {
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'result-before-release',
+    })
+    const record = service.record(receipt)
+    await record.preparation
+    service.action({
+      ...receipt,
+      key: 'change-theme',
+      action: 'repository-click',
+    })
+    await service.continue(
+      service.state(record).participants.browser.continueArguments!,
+    )
+    runtimes[0]!.hasReachedResult = true
+
+    // Act: the run resource is read before the release and after it.
+    const beforeTheRelease = service.state(record)
+    await service.stop(receipt)
+    const afterTheRelease = service.state(record)
+
+    // Assert
+    assert.equal(beforeTheRelease.runtimeState, 'completed')
+    assert.equal(beforeTheRelease.finalOutcome, 'demonstrated')
+    assert.equal(beforeTheRelease.terminalReference, undefined)
+    assert.deepEqual(beforeTheRelease.nextActions, ['stop', 'read-history'])
+    assert.equal(beforeTheRelease.saveLearningSummary, undefined)
+    assert.equal(afterTheRelease.terminalReference?.kind, 'terminal')
+    assert.deepEqual(afterTheRelease.nextActions, [
+      'save-learning-summary',
+      'read-history',
+    ])
+    assert.equal(
+      afterTheRelease.saveLearningSummary,
+      "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it.",
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const mutation of ['foreign snapshot', 'wrong source'])
   test(`agent learning rejects ${mutation} before any explanation commits`, async () => {
     // Arrange

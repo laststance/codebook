@@ -291,7 +291,7 @@ export class LearningLibrary {
   }
 
   /**
-   * Finds the format number of a study's archive that a newer Codebook saved, by the file names of the library directory; called by {@link readArchive} before any known format is tried.
+   * Finds the format number of a study's archive that a newer Codebook saved, by the file names of the library directory; called by {@link readArchive} before any known format is tried and by {@link studyPaths} before any file of the study is named for a removal.
    * @param identity - The validated study id.
    * @returns The highest such number, or `undefined` when every archive of the study has a known format or the directory does not exist.
    * @example await this.newerFormatOf(study.id) // => 5 beside '<id>.study.v5.json'
@@ -556,10 +556,11 @@ export class LearningLibrary {
    * 5. the catalog sidecars of every study format,
    * 6. the archives from the lowest format to the highest.
    * The recording goes first and the archive last, so a failure never leaves a recording without its study, and the study stays listed by its highest format until the last move.
+   * A study that a newer Codebook saved is not taken apart: nothing of it moves, also when an older archive lies beside the newer one ({@link studyPaths}).
    * @param id - The saved study to remove.
    * @param moveToTrash - Moves one path to the system Trash.
    * @param evidenceDirectory - The directory that holds the raw evidence of the study's run; omitted when it must stay in place.
-   * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, is a result and not a rejection.
+   * @returns What changed on disk; an expected failure, including a lock held by another writer or one that cannot be released afterwards, a study without an archive and a study in a newer format (`nothing-moved` with the sentence of {@link NewerStudyFormatError}), is a result and not a rejection.
    * @throws When `id` is not a study identity.
    * @example
    * await library.removeStudy(study.id, moveToTrash) // => { outcome: 'moved' }
@@ -615,6 +616,7 @@ export class LearningLibrary {
    * The ledger is not among them: it holds the learner's decisions, and a removal rewrites it instead of moving it.
    * @param identity - The validated study id.
    * @returns The existing recording directories, the playback position file when it names the study, the catalog sidecars, and the archives from the lowest format to the highest (the highest archive is the last move, so the study is listed until then).
+   * @throws A {@link NewerStudyFormatError} for a study with an archive in a format this Codebook does not know: which files that format keeps is not known here, so none of the study's files is named, moved or shown, whatever the caller's catalog said.
    * @example await this.studyPaths(study.id) // => { recordings: [], playback: [], sidecars: ['/…/<id>.study.meta.v3.json'], archives: ['/…/<id>.study.v3.json'] }
    */
   private async studyPaths(identity: string): Promise<{
@@ -623,6 +625,9 @@ export class LearningLibrary {
     sidecars: string[]
     archives: string[]
   }> {
+    // The file of a newer format owns the study, as for a read: an older archive beside it is not removed in its place.
+    const newerFormat = await this.newerFormatOf(identity)
+    if (newerFormat !== undefined) throw new NewerStudyFormatError(newerFormat)
     const archives = await this.existingPaths(
       STUDY_STORAGE_FORMATS.toReversed().map(
         (storage) => `${identity}${storage.archiveSuffix}`,
@@ -644,7 +649,7 @@ export class LearningLibrary {
    * @param id - The saved study.
    * @param evidenceDirectory - The raw evidence directory of the study's run; listed when it is a real directory, omitted when it must stay in place.
    * @returns The existing paths; empty when the library holds nothing of that study.
-   * @throws When `id` is not a study identity, or a path cannot be inspected.
+   * @throws When `id` is not a study identity, or a path cannot be inspected; a {@link NewerStudyFormatError} for a study a newer Codebook saved, whose files are not listed for removal.
    * @example
    * await library.studyFiles(study.id) // => ['/…/recordings.v2/<id>', '/…/<id>.study.meta.v3.json', '/…/<id>.study.v3.json']
    */

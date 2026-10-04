@@ -2295,6 +2295,38 @@ test('a run whose whole-run deadline expires while a continuation waits answers 
   )
 })
 
+// Value: protects=the result of a run that completed keeping its place when the whole-run deadline passes before the service released the run; fails_when=the continuation's wait applies the deadline to a completed run, answers failure and the run resource names the deadline as the run's end; why_new=Cycle 0045 local review (runtime-2 #3: the wait applied the deadline without the guard of the maintenance turn); seam=the service's clock, moved by the test, and its maintenance turn, switched off
+test('a run that completes in the turn in which its whole-run deadline passes answers the continuation with its result', async (context) => {
+  // Arrange: a run is paused at its first stop, five seconds before its whole-run deadline. The maintenance turn is switched off, so the completed run is not released before the wait looks at it.
+  let nowMs = CLOCK_START_MS
+  const { service, runtime, record, continueArguments } =
+    await runPausedAtFirstStop(
+      context,
+      'answer-result-at-deadline',
+      () => nowMs,
+    )
+  service.maintain = (): void => {}
+  nowMs = record.deadlineAt - 5_000
+
+  // Act: the runtime completes and the deadline passes before the wait's next look.
+  const continuing = service.continueToNextState(continueArguments)
+  await waitUntil(
+    () => runtime.status === 'running',
+    'the continuation acknowledged',
+    1_000,
+  )
+  runtime.status = 'completed'
+  nowMs = record.deadlineAt
+  const answer = await continuing
+
+  // Assert
+  assert.ok('state' in answer)
+  assert.equal(answer.next, 'result')
+  assert.equal(answer.state.runtimeState, 'completed')
+  assert.equal(answer.state.terminalReason, undefined)
+  assert.equal(answer.state.error, undefined)
+})
+
 // Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20 second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
 test('a continuation whose run shows no next state within 22 seconds of its acknowledgement answers accepted with the latest state and no next state', async (context) => {
   // Arrange: a run is paused at its first stop; after the continuation the synthetic runtime keeps running.

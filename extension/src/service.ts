@@ -1765,8 +1765,10 @@ export class StudyService {
     const holdsHistory =
       historyExclusionState(record.historyExcluded) !== 'ended'
     // A run that reached its result and saved no learning summary would be saved without a summary and a sequence: say so where the agent reads after the result.
+    // Only once the run is released: until then this resource has no terminalReference to cite, and an explanation is refused as busy.
     const lacksLearningSummary =
       holdsHistory &&
+      record.stopped &&
       runtime?.status === 'completed' &&
       finalOutcome === 'demonstrated' &&
       ![...record.explanations.values()].some(
@@ -2151,18 +2153,34 @@ export class StudyService {
 
   /**
    * Ends a run whose whole-run deadline has passed with the deadline's error, so every reader names the same end; called by {@link StudyService.maintain} at each maintenance turn and by {@link StudyService.nextRunState} while a continuation waits, which must not answer past the run's own deadline.
-   * It releases nothing itself: the next maintenance turn stops the run it marked.
-   * @param record - A run that is not stopped.
+   * It releases nothing itself: the next maintenance turn stops the run it marked. A run that already ended on its own ({@link StudyService.hasRunEnded}) is left as it is, whichever caller asks.
+   * @param record - The run whose deadline is compared with the clock.
    * @example this.expireAtDeadline(record) // record.error?.message === 'Study wall deadline expired; history only.' once now() >= record.deadlineAt
    */
   private expireAtDeadline(record: StudyRecord): void {
     if (this.now() < record.deadlineAt) return
+    // The deadline bounds a run that is still on its way; a result that was observed is not turned into a failure while the run waits for its release.
+    if (this.hasRunEnded(record)) return
     record.error ??= new StudyError(
       'RUNTIME_FAILED',
       'Study wall deadline expired; history only.',
     )
     record.runtime?.fail(record.error.message)
     this.failUnfinishedNodePhase(record)
+  }
+
+  /**
+   * Says whether a run ended before its whole-run deadline could apply, so the deadline's error is never added to it; the guard of {@link StudyService.expireAtDeadline} for both of its callers.
+   * @param record - The run whose deadline passed.
+   * @returns `true` for a run that is stopped or being stopped, and for one whose runtime completed (its result was observed and only the release is left); `false` for a run that is still on its way.
+   * @example this.hasRunEnded(record) // => true once record.runtime.view().status === 'completed'
+   */
+  private hasRunEnded(record: StudyRecord): boolean {
+    return (
+      record.stopped ||
+      record.stopping ||
+      record.runtime?.view().status === 'completed'
+    )
   }
 
   /**

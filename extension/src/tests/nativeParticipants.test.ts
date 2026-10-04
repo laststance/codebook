@@ -2471,6 +2471,122 @@ test('a server stop that still cannot be bound on its line after one new request
   assert.equal(harness.run.view().snapshots.length, 1)
 })
 
+/** Two server stops declared at 1:7 of a three-line module whose citation covers lines 1 to 3; every line is mapped at its column 1, so a binding on line 3 lies across the mapped line 2. */
+const SERVER_STOPS_ACROSS_MAPPED_LINE = {
+  mappings: { server: 'AAAA;AACA;AACA' },
+  fixture: {
+    server: { source: THREE_LINE_SERVER_SOURCE, citationEndLine: 3 },
+  },
+  declaredColumn: { server: 7 },
+}
+
+// Value: protects=a server stop declared at a column after its statement's break location being bound on its own line also when the adapter verified it across a mapped line; fails_when=a registration the adapter verified on a later line the stop's rule refuses ends the run as "was not registered" although a second request at the line's break location would bind, which the help promises; why_new=Cycle 0045 local review (runtime-1 #3: the second request was reached only for a later line the rule accepts); seam=the harness's adapter, which verifies a request at column 7 two lines below and lists a break location at the start of line 1
+test('a server stop the adapter acknowledged across a mapped line although its own line can pause is requested again on its line and pauses there', async (context) => {
+  // Arrange: the first stop is captured; the second, in the loaded module, is acknowledged at 3:1 when requested at 1:7, which its rule refuses because line 2 is mapped, and line 1 has a break location at its start.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    SERVER_STOPS_ACROSS_MAPPED_LINE,
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsWith((requested) =>
+    requested.column === 7 ? { line: 3, column: 1 } : requested,
+  )
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 0, columnNumber: 0 },
+    { lineNumber: 1, columnNumber: 0 },
+    { lineNumber: 2, columnNumber: 0 },
+  ])
+  const nextStop = harness.holdNextPause()
+  // Act
+  await harness.run.continue('server', first.pause)
+  const ownedAfterArming = harness.breakpoints.map(
+    (breakpoint) => breakpoint.location.range.start,
+  )
+  nextStop.paused()
+  nextStop.stopped()
+  const second = await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[1]
+  }, 'second server stop captured on its declared line')
+  await harness.run.continue('server', second.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after a second request',
+  )
+  await harness.run.stop()
+  // Assert: exactly one owned breakpoint after the second request, at the line's break location; the refused first registration left no receipt, and the stop is committed on line 1.
+  assert.equal(JSON.stringify(ownedAfterArming), '[{"line":0,"character":0}]')
+  assert.deepEqual(
+    journalEntries(harness, 'breakpoint.rearmed-on-requested-line'),
+    [
+      {
+        participant: 'server',
+        declared: { line: 1, column: 7 },
+        armed: { line: 1, column: 1 },
+        firstRequest: { line: 1, column: 7 },
+        firstBinding: { line: 3, column: 1 },
+      },
+    ],
+  )
+  assert.deepEqual(
+    journalEntries(harness, 'breakpoint.registered').map((receipt) => [
+      receipt.status,
+      receipt.movedTo,
+    ]),
+    [
+      ['pending', undefined],
+      ['bound', undefined],
+    ],
+  )
+  assert.equal(second.source.line, 1)
+  assert.equal(second.source.column, 1)
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+})
+
+// Value: protects=the refusal after the one new request naming the column to declare, also when the adapter verified both requests across a mapped line; fails_when=the second refusal is worded as an unregistered breakpoint with the adapter's reply, or a third request is made; why_new=Cycle 0045 local review (runtime-1 #3); seam=the harness's adapter, which verifies every request at 3:1
+test('a server stop the adapter acknowledged across a mapped line twice is refused after one new request and told to declare the statement’s column', async (context) => {
+  // Arrange: the adapter acknowledges the request at 1:7 and the second request at 1:1 both at 3:1, across the mapped line 2.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    SERVER_STOPS_ACROSS_MAPPED_LINE,
+  )
+  await harness.run.prepare()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  harness.acknowledgeRegistrationsAt(3, 1)
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 0, columnNumber: 0 },
+    { lineNumber: 1, columnNumber: 0 },
+    { lineNumber: 2, columnNumber: 0 },
+  ])
+  // Act
+  const continuation = await harness.run.continue('server', first.pause).then(
+    () => 'continued',
+    (error: unknown) => String(error),
+  )
+  await harness.run.stop()
+  // Assert: one second request, no resume, and no owned breakpoint is left.
+  assert.notEqual(continuation, 'continued')
+  assert.equal(
+    harness.run.view().failures[0],
+    `Next declared stop was not armed and no resume was sent: Declared stop src/mode.ts:1 (stop 2 of 2) bound at 3:1, refused: the debugger can pause on the declared line 1, so requested column 7 lies after its statement, and a second request at 1:1 was bound on line 3 again; declare the column where the statement begins (configuration.additionalStops[0].source.column). Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(
+    journalEntries(harness, 'breakpoint.rearmed-on-requested-line').length,
+    1,
+  )
+  assert.equal(
+    harness.commands.filter((command) => command.method === 'continue').length,
+    0,
+  )
+  assert.equal(harness.breakpoints.length, 0)
+})
+
 // Cycle 0045 (PC-1.7, PC-2.5, PC-4.11): the first registration is retired before the second replaces it, so nothing the adapter says about it later reaches the second.
 test('a late acknowledgement of a server stop’s first registration does not change the binding of its second request', async (context) => {
   // Arrange: the second stop was requested at 1:7, acknowledged at 2:1 and requested again at 1:1, where it is bound. The wait for a pause at the bound place is held open, so a pause on line 1 is the stop's only while the second binding still says line 1.

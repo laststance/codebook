@@ -435,6 +435,36 @@ test('a removal while another writer holds the storage lock moves nothing and na
   )
 })
 
+// Value: protects=a study a newer Codebook saved staying whole when a removal reaches the library although the window's catalog did not know the newer file yet; fails_when=the removal lists only the formats it knows, moves the older archive, the sidecar and the recording to the Trash and leaves the newer archive listed without them; why_new=Cycle 0045 local review (runtime-1 #5: only the workspace's catalog guarded this, and another window can save the newer file after it was read); seam=the library directory, into which the test writes a file as a newer Codebook would name it, and the injected mover
+test('a removal of a study that a newer Codebook saved again beside its older archive moves nothing, and its files are not listed for removal by hand', async (context) => {
+  // Arrange: a saved study with a recording, and beside its v3 archive the archive of format 5 that a newer Codebook wrote.
+  const storage = await removalStorage(context, 4)
+  const study = await saveStudyWithRecording(storage)
+  await writeFile(
+    join(storage.directory, `${study.id}.study.v5.json`),
+    JSON.stringify({ ...study, version: 5 }),
+  )
+  const filesBefore = await filesBelow(storage.directory)
+  // Act
+  const removal = await storage.library.removeStudy(
+    study.id,
+    storage.moveToTrash,
+  )
+  const filesForRemovalByHand = storage.library.studyFiles(study.id)
+  // Assert
+  assert.deepEqual(removal, {
+    outcome: 'nothing-moved',
+    cause:
+      'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  })
+  await assert.rejects(filesForRemovalByHand, {
+    message:
+      'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  })
+  assert.deepEqual(storage.moved, [])
+  assert.deepEqual(await filesBelow(storage.directory), filesBefore)
+})
+
 // Value: protects=asking to remove a study the library does not hold changes nothing; fails_when=the removal moves a leftover recording or playback file of an unknown id, or rejects; why_new=no removal existed; seam=the injected mover
 test('a removal of a study the library does not hold moves nothing and says the archive is unavailable', async (context) => {
   // Arrange

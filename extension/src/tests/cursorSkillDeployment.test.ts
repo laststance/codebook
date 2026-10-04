@@ -819,6 +819,101 @@ test('a window still running the previous extension leaves the skill a newer win
   )
 })
 
+// Value: protects=the shared Cursor skill naming a publisher that exists after a rollback; fails_when=a window of the previous extension accepts the skill a newer version deployed although that newer installation was removed, so every reconnect answers current and the skill keeps naming a deleted publisher until the learner runs Set Up AI Chat; why_new=Cycle 0045 local review (runtime-1 #2: a later version was accepted without a look at its installation); seam=the module loaded with another EXTENSION_VERSION, and the newer installation's directory, which the test removes
+test('a window of the previous extension that reconnects after the newer installation was removed updates the skill to its own publisher', async (context) => {
+  // Arrange: the 0.2.29 window deployed the skill; 0.2.29 was then uninstalled, and a window of 0.2.28 reconnects.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    ),
+    newerExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.29',
+    )
+  const newerWindow = await skillWindow('0.2.29'),
+    previousWindow = await skillWindow('0.2.28')
+  await newerWindow.deployCursorSkill(
+    newerExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await rm(newerExtension, { recursive: true })
+
+  // Act
+  const reconnected = await previousWindow.verifyManagedCursorSkill(
+    previousExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const reconnectedAgain = await previousWindow.verifyManagedCursorSkill(
+    previousExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert
+  assert.equal(reconnected.status, 'updated')
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    publisherSkillOf(previousExtension),
+  )
+  const receipt = JSON.parse(
+    await readFile(
+      join(paths.storageRoot, 'cursor-skill', 'receipt.json'),
+      'utf8',
+    ),
+  )
+  assert.equal(receipt.extensionVersion, '0.2.28')
+  assert.equal(
+    receipt.publisherPath,
+    join(previousExtension, 'skills', 'codebook', 'publish-wiki.mjs'),
+  )
+  assert.equal(reconnectedAgain.status, 'current')
+})
+
+// Value: protects=a newer window's skill staying untouched when its receipt cannot say where its publisher is; fails_when=a receipt without a recorded publisher path is read as a removed installation and the older window overwrites the newer skill; why_new=Cycle 0045 local review (runtime-1 #2: the path is a new, optional field of the receipt); seam=the receipt file, rewritten without the field
+test('a newer window’s skill whose receipt records no publisher path is left as it is', async (context) => {
+  // Arrange: the 0.2.29 window deployed the skill, and its receipt holds no publisher path, as a receipt written before the path was recorded.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    ),
+    newerExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.29',
+    )
+  const newerWindow = await skillWindow('0.2.29'),
+    previousWindow = await skillWindow('0.2.28')
+  await newerWindow.deployCursorSkill(
+    newerExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const receiptPath = join(paths.storageRoot, 'cursor-skill', 'receipt.json')
+  const { publisherPath: _publisherPath, ...receiptWithoutPublisher } =
+    JSON.parse(await readFile(receiptPath, 'utf8'))
+  await writeFile(receiptPath, JSON.stringify(receiptWithoutPublisher))
+  await rm(newerExtension, { recursive: true })
+
+  // Act
+  const reconnected = await previousWindow.verifyManagedCursorSkill(
+    previousExtension,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert
+  assert.equal(reconnected.status, 'current')
+  assert.equal(
+    await readFile(paths.targetPath, 'utf8'),
+    publisherSkillOf(newerExtension),
+  )
+})
+
 // Value: protects=the direction of the implicit update being decided under the lock; fails_when=the older window compares versions only before it takes the lock and then writes its skill over the update a newer window finished meanwhile; why_new=Cycle 0045 (RT-9, PC-4.6); seam=the older window's storage lock
 test('a newer window that finishes its update between an older window’s check and its deployment keeps its skill', async (context) => {
   // Arrange: the skill is of 0.2.27; windows of 0.2.28 and of 0.2.29 both reconnect. The newer one finishes while the older one is about to take the lock.

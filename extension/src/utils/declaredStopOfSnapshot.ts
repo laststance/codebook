@@ -1,5 +1,6 @@
 import type { RetainedRepositoryConfiguration } from '../repositoryConfigSchemas'
 
+import { configuredStopFields } from './configuredStopFields'
 import { configuredStops } from './configuredStops'
 
 /** A committed snapshot's declared stop, its position among the declared stops and where the agent wrote it. */
@@ -17,7 +18,7 @@ export interface DeclaredStopOfSnapshot {
  * @param committedSnapshots - The run's committed snapshots (or a saved study's observations) in commit order.
  * @param snapshotId - The snapshot whose declared stop is asked for.
  * @returns
- * - The declared stop with its index and configuration path
+ * - The declared stop with its index and its configuration path, as {@link configuredStopFields} names the stop's `source`
  * - `undefined` when the snapshot is not among the committed ones, or no stop is declared at its index
  * @example
  * declaredStopOfSnapshot(configuration, snapshots, snapshots[0].id)?.configurationPath // => 'configuration.source'
@@ -34,16 +35,11 @@ export function declaredStopOfSnapshot(
     ),
     stop = configuredStops(configuration)[index]
   if (!stop) return undefined
-  const laterStop = `configuration.additionalStops[${index - 1}]`
   return {
     stop,
     index,
-    configurationPath:
-      index === 0
-        ? 'configuration.source'
-        : // Only a version 2 stop has a source of its own; a version 1 later stop holds its line and column directly.
-          configuration.version === 2
-          ? `${laterStop}.source`
-          : laterStop,
+    // The one naming of a stop's field, which the refusals of a run use too.
+    configurationPath: configuredStopFields(configuration.version, index)
+      .source,
   }
 }
