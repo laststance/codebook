@@ -3318,7 +3318,7 @@ const report = {
   qualification:
     'Real Chromium/compiled product HTML; delayed simulated host snapshots, not native acceptance.',
   compiledSha256: createHash('sha256')
-    .update(await readFile('extension/dist/ui/studyHtml.js'))
+    .update(await readFile(new URL('../dist/ui/studyHtml.js', import.meta.url)))
     .digest('hex'),
   cases: [],
 }
@@ -3338,7 +3338,10 @@ try {
       {
         html: { context: studyHtml('context'), moments: studyHtml('moments') },
         wikiShell: wikiShellPage(
-          await readFile('extension/skills/codebook/reader-shell.html', 'utf8'),
+          await readFile(
+            new URL('../skills/codebook/reader-shell.html', import.meta.url),
+            'utf8',
+          ),
         ),
         message,
         output,

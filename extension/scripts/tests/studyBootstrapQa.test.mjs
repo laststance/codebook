@@ -32,6 +32,23 @@ test('the pane DOM check loads its flow without eval', async () => {
   )
 })
 
+// Local CodeRabbit review of Cycle 0045: the script read the compiled reader and the Wiki shell by a path from the working directory, so it ran from the repository root only.
+test('the pane DOM check reads the compiled reader and the Wiki shell beside the script, so it runs from any folder', async () => {
+  // Arrange
+  const script = await readFile(scriptUrl, 'utf8')
+
+  // Act: every file the script reads, by the first argument of the read: a place beside the script, or a path in quotes.
+  const readTargets = [
+    ...script.matchAll(/readFile\(\s*(new URL\([^)]*\)|'[^']*')/g),
+  ].map(([, target]) => target)
+
+  // Assert
+  assert.deepEqual(readTargets, [
+    "new URL('../dist/ui/studyHtml.js', import.meta.url)",
+    "new URL('../skills/codebook/reader-shell.html', import.meta.url)",
+  ])
+})
+
 // Review of Cycle 0045 (tests-1 #1): the earlier form of this test knew `revision === 3` and `revision: 3` only, so it stayed green for `await waitUntilRendered(3)`, `revision >= 3` and `expectedRevision: 6`.
 test('the pane DOM check states every awaited and compared revision by its distance from the first message, and only the Saved studies cases count from a number of their own', async () => {
   // Arrange
