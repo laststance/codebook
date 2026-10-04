@@ -74,7 +74,34 @@ function isEndingOfOwnPause(
   )
 }
 
-/** Tells whether a `cdp.resumed` entry resumes the given stop's own pause. @example isResumeOf(serverStop, { type: 'cdp.resumed', detail: { participant: 'browser' } }) // false */
+/**
+ * Tells whether a resume may be of the given stop's participant; called by {@link isResumeOf} for a resume of the stop's pause generation.
+ * @param resumed - What the `cdp.resumed` entry says about the resumed pause.
+ * @param observation - The committed stop.
+ * @returns `true` when the entry names no participant (a legacy single-participant entry), when the stop names none, and when both name the same; `false` for a resume of the other participant.
+ * @example
+ * isOfParticipant({ participant: 'browser', generation: 1 }, { elapsedMs: 100, participant: 'server', pause }) // => false
+ * isOfParticipant({ generation: 1 }, { elapsedMs: 100, participant: 'server', pause })                         // => true
+ */
+function isOfParticipant(
+  resumed: z.infer<typeof resumedDetailSchema>,
+  observation: PausedObservation,
+): boolean {
+  return (
+    resumed.participant === undefined ||
+    observation.participant === undefined ||
+    resumed.participant === observation.participant
+  )
+}
+
+/**
+ * Tells whether a `cdp.resumed` entry resumes the given stop's own pause; called by {@link isEndingOfOwnPause} for each `cdp.resumed` at or after the commit.
+ * @param observation - The committed stop.
+ * @param event - A `cdp.resumed` journal event.
+ * @returns `true` when the entry names the stop's pause generation and no other participant ({@link isOfParticipant}); `false` for a detail that does not parse, a pause the run never captured (no generation) and another participant's resume.
+ * @example
+ * isResumeOf(serverStop, { type: 'cdp.resumed', detail: { participant: 'browser' } }) // => false
+ */
 function isResumeOf(
   observation: PausedObservation,
   event: RecordedEvent,
@@ -83,9 +110,7 @@ function isResumeOf(
   return (
     detail.success &&
     detail.data.generation === observation.pause.generation &&
-    (detail.data.participant === undefined ||
-      observation.participant === undefined ||
-      detail.data.participant === observation.participant)
+    isOfParticipant(detail.data, observation)
   )
 }
 
