@@ -1462,6 +1462,41 @@ test("the fake Cursor reports the first group's text editor as the active text e
   }
 })
 
+// Value: protects=reader tests meeting the editor as it loses the keyboard when a disposed pane's tab closes: a group focus command that runs before that close does not keep the keyboard, one that runs after it does; fails_when=the fake clears the lost keyboard for any focus command after the disposal, so a reader that focuses too early passes in the tests and leaves the keyboard on the page body in the editor; why_new=Cycle 0045 cause 12 (f), second native result (obs15 R: the page body had the keyboard after Close although the focus command ran); seam=the fake editor's closeDisposedPanelTabsLater, its panes and keyboardOnBody
+test("the fake editor leaves the keyboard on the page body when a disposed pane's tab closes after a group focus command, until such a command runs after that close", async () => {
+  // Arrange: the Application pane is the tab the focused first group shows; the editor closes a disposed pane's tab 20 ms after the disposal.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  try {
+    await harness.reader.open()
+    const application = harness
+      .nativePanels()
+      .find((panel) => panel.kind === 'codebook.scopedBrowser')
+    assert.ok(application)
+    application.reveal(undefined, false)
+
+    // Act
+    application.dispose()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusActiveEditorGroup',
+    )
+    const rightAfterTheCommand = harness.keyboardOnBody()
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    const afterTheTabClosed = harness.keyboardOnBody()
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusActiveEditorGroup',
+    )
+
+    // Assert
+    assert.equal(rightAfterTheCommand, false)
+    assert.equal(afterTheTabClosed, true)
+    assert.equal(harness.keyboardOnBody(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests meeting the editor as it answers a numbered focus command for the column after the main editor's last group, where Cursor's chat group sits; fails_when=the fake focuses the chat's group for that command, which neither editor does: the command opens a new empty group in the main editor, so a reader that returns the focus that way passes in the tests and leaves an empty group in the editor; why_new=Cycle 0045 cause 12 (d) (obs15 P1 and P2: a new empty group at the chat's column, the chat's group one column on, the caret on the empty group); seam=the fake editor's group focus commands and its "Focus Agent" command
 test("the fake editor opens a new empty group for the focus command of the column after the main editor's last group, and Cursor's Focus Agent command gives the chat the keyboard without changing a group", async () => {
   // Arrange: two groups of the main editor, and the chat's group at column 3 with the keyboard.

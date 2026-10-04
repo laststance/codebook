@@ -964,7 +964,9 @@ export async function workspaceHarness(
         group.activeTab = group.tabs.at(-1)
         closedActiveLeftover = true
       }
-      if (heldDeadPane && !group.tabs.length) emptiedByDeadPane.push(group)
+      // With `closeEmptyGroups` on (the model of `closeDisposedPanelTabsLater`), the editor also removes a group whose last tab the reader closed.
+      if ((heldDeadPane || closeDisposedPanelTabsLater) && !group.tabs.length)
+        emptiedByDeadPane.push(group)
     }
     // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
     for (const emptied of emptiedByDeadPane) {
@@ -1455,6 +1457,12 @@ export async function workspaceHarness(
         )
           keyboardOnBody = true
         const closeTab = (): void => {
+          // The pane was focused again after its disposal (a group focus command reached its group before the editor closed its tab): the keyboard goes with the closing tab, and the editor focuses nothing in its place.
+          if (
+            !separateEditorPart?.focused &&
+            activeTabGroup.activeTab === nativeTab
+          )
+            keyboardOnBody = true
           const emptied = groups.filter(
             (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
           )

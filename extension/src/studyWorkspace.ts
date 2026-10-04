@@ -5180,11 +5180,21 @@ export class StudyWorkspace {
       this.app?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
-      // The tabs are closed without moving the focus, so the keyboard a closed pane or source held would fall to the page body: the group the editor now shows as active takes it.
-      if (closesKeyboardHolder && vscode.window.state.focused)
+      // The tabs are closed without moving the focus, so the keyboard a closed pane or source held would fall to the page body: the group the editor shows as active takes it, once the editor has closed the disposed panes' tabs. A group focused before that is the one that still shows a closing pane, and the keyboard goes with that tab a moment later.
+      if (closesKeyboardHolder && vscode.window.state.focused) {
+        await waitUntil(
+          () =>
+            !this.hasUnownedPaneTab(
+              'codebook.scopedBrowser',
+              'codebook.studyContext',
+            ),
+          "the closed panes' tabs to leave their groups",
+          PRESENTATION_READY_TIMEOUT_MS,
+        ).catch(() => undefined)
         await vscode.commands
           .executeCommand('workbench.action.focusActiveEditorGroup')
           .then(undefined, () => undefined)
+      }
       clearTimeout(this.citationRefreshTimer)
       this.citationRevision++
       this.citationKey = undefined
@@ -9466,19 +9476,27 @@ export class StudyWorkspace {
    * @example if (retiredContextGroup && this.hasRetiredStudyPaneTab()) await this.retiredStudyPaneClosed(signal)
    */
   private hasRetiredStudyPaneTab(): boolean {
-    return (
-      !this.contextPanel &&
-      vscode.window.tabGroups.all.some((group) =>
-        group.tabs.some(
-          (tab) =>
-            tab.input instanceof vscode.TabInputWebview &&
-            isCodebookPaneViewType(
-              tab.input.viewType,
-              'codebook.studyContext',
-            ) &&
-            !this.inheritedPaneTabs.has(tab),
-        ),
-      )
+    return !this.contextPanel && this.hasUnownedPaneTab('codebook.studyContext')
+  }
+
+  /**
+   * Says whether the editor's tab model still holds a tab of a pane this reader disposed, for {@link hasRetiredStudyPaneTab} and {@link close}: the editor closes a disposed pane's tab a moment after the disposal.
+   * Asked while the reader holds no pane of the named kinds; an earlier host's leftover pane is not counted.
+   * @param kinds - The pane view types to look for.
+   * @returns `true` until the editor has closed every such tab.
+   * @example
+   * ```ts
+   * this.hasUnownedPaneTab('codebook.scopedBrowser', 'codebook.studyContext') // => true for about 100 ms after Close disposed both panes in Cursor
+   * ```
+   */
+  private hasUnownedPaneTab(...kinds: string[]): boolean {
+    return vscode.window.tabGroups.all.some((group) =>
+      group.tabs.some(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview &&
+          isCodebookPaneViewType(tab.input.viewType, ...kinds) &&
+          !this.inheritedPaneTabs.has(tab),
+      ),
     )
   }
 
