@@ -295,7 +295,7 @@ test('a configured sixteen-entry library rejects the seventeenth study without l
 
 // Value: protects=after a rollback a study the newer release saved stays listed, counted and untouched, and its older file never stands in for it; fails_when=the listing skips a file whose format number it does not know and shows the older file as the study, or a read ends in a schema error (RT-1, DX-15, PC-4.1); why_new=the library knew only the suffixes of its own formats; seam=the library directory, into which the test writes files as a newer Codebook would name them
 test('a library that holds a study in a newer format beside its older file lists it as saved by a newer Codebook, counts it once and refuses to read it', async (context) => {
-  // Arrange: one study this Codebook saved, one study that also has a file in format 5, and one whose format 4 file holds format 6.
+  // Arrange: one study this Codebook saved, one study that also has a file in format 5, and one whose format 4 files (archive and sidecar) hold format 6.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
@@ -311,6 +311,10 @@ test('a library that holds a study in a newer format beside its older file lists
     join(directory, `${newerInKnownFile.id}.study.v4.json`),
     JSON.stringify({ ...newerInKnownFile, version: 6 }),
   )
+  await writeFile(
+    join(directory, `${newerInKnownFile.id}.study.meta.v4.json`),
+    JSON.stringify({ version: 6, id: newerInKnownFile.id }),
+  )
   const olderBytes = await readFile(
     join(directory, `${savedAgainByNewer.id}.study.v3.json`),
     'utf8',
@@ -323,41 +327,45 @@ test('a library that holds a study in a newer format beside its older file lists
     readOfKnownFile = library.readStudy(newerInKnownFile.id)
   // Assert
   const newerSentence =
-    'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.'
+      'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+    newerSentenceOfKnownFile =
+      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.'
   await assert.rejects(readOfNewer, { message: newerSentence })
   await assert.rejects(checkpointOfNewer, { message: newerSentence })
-  await assert.rejects(readOfKnownFile, {
-    message:
-      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
-  })
+  await assert.rejects(readOfKnownFile, { message: newerSentenceOfKnownFile })
   assert.equal(count, 3)
   assert.deepEqual(
-    listed
-      .map((entry) => ({
-        id: entry.id,
-        format: entry.format,
-        metadata: entry.metadata,
-        outcome: entry.outcome,
-        note: entry.format === 'newer' ? entry.reason : undefined,
-      }))
-      .filter((entry) => entry.id !== newerInKnownFile.id)
-      .sort((left, right) => left.format.localeCompare(right.format)),
-    [
-      {
-        id: savedAgainByNewer.id,
-        format: 'newer',
-        metadata: 'unavailable',
-        outcome: 'Saved by a newer Codebook; kept as it is',
-        note: newerSentence,
-      },
-      {
-        id: readable.id,
+    Object.fromEntries(
+      listed.map((entry) => [
+        entry.id,
+        {
+          format: entry.format,
+          metadata: entry.metadata,
+          outcome: entry.outcome,
+          reason: entry.reason,
+        },
+      ]),
+    ),
+    {
+      [readable.id]: {
         format: 'v3',
         metadata: 'validated',
         outcome: 'pending-teardown',
-        note: undefined,
+        reason: undefined,
       },
-    ],
+      [savedAgainByNewer.id]: {
+        format: 'newer',
+        metadata: 'unavailable',
+        outcome: 'Saved by a newer Codebook; kept as it is',
+        reason: newerSentence,
+      },
+      [newerInKnownFile.id]: {
+        format: 'newer',
+        metadata: 'unavailable',
+        outcome: 'Saved by a newer Codebook; kept as it is',
+        reason: newerSentenceOfKnownFile,
+      },
+    },
   )
   assert.equal(await readFile(newerPath, 'utf8'), newerBytes)
   assert.equal(

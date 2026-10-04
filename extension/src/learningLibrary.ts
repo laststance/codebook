@@ -121,14 +121,7 @@ export class LearningLibrary {
       present.map(async ({ entry, stat }) => {
         // A study of a newer Codebook is listed with the sentence that says so; none of its bytes are read.
         if (entry.format === 'newer')
-          return {
-            id: entry.id,
-            savedAt: stat.mtime.toISOString(),
-            format: entry.format,
-            metadata: 'unavailable' as const,
-            outcome: 'Saved by a newer Codebook; kept as it is',
-            reason: newerStudyFormatMessage(entry.version),
-          }
+          return this.newerEntry(entry.id, stat.mtime, entry.version)
         if (entry.format !== 'v3' && entry.format !== 'v4')
           return {
             id: entry.id,
@@ -153,6 +146,9 @@ export class LearningLibrary {
             outcome: metadata.finalOutcome,
           }
         } catch (error) {
+          // A sidecar a newer Codebook wrote under a known file name is that study's note, not a catalog Retry storage could repair.
+          if (error instanceof NewerStudyFormatError)
+            return this.newerEntry(entry.id, stat.mtime, error.savedFormat)
           // Missing or stale metadata never falls back to legacy history or certifies success.
           return {
             id: entry.id,
@@ -169,6 +165,29 @@ export class LearningLibrary {
     return catalog.sort((left, right) =>
       right.savedAt.localeCompare(left.savedAt),
     )
+  }
+
+  /**
+   * Builds the catalog entry of a study a newer Codebook saved: listed and counted, never opened, with the sentence that names both format numbers as its reason; called by {@link list}.
+   * @param id - The study.
+   * @param modified - When its newest archive was last written, shown as its saved time because the archive itself is not read.
+   * @param savedFormat - The format number the study was saved in.
+   * @returns The entry with `format: 'newer'` and `metadata: 'unavailable'`.
+   * @example this.newerEntry(id, stat.mtime, 5).reason // => 'This study was saved in format 5 by a newer Codebook; …'
+   */
+  private newerEntry(
+    id: string,
+    modified: Date,
+    savedFormat: number,
+  ): StudyCatalogEntry {
+    return {
+      id,
+      savedAt: modified.toISOString(),
+      format: 'newer',
+      metadata: 'unavailable',
+      outcome: 'Saved by a newer Codebook; kept as it is',
+      reason: newerStudyFormatMessage(savedFormat),
+    }
   }
 
   /** Prefers v3/v2 by existence, validates full bytes and never hides corruption with older history. @example await library.readStudy(id) */
@@ -872,11 +891,12 @@ export class LearningLibrary {
     const path = join(this.directory, `${id}${storage.metadataSuffix}`)
     if (!(await lstat(path)).isFile())
       throw new Error('Catalog metadata is not a regular file.')
-    const metadata = retainedStudyMetadataSchema.parse(
-      JSON.parse(
-        (await readBoundedFile(path, STUDY_METADATA_LIMIT_BYTES)).toString(),
-      ),
+    const value: unknown = JSON.parse(
+      (await readBoundedFile(path, STUDY_METADATA_LIMIT_BYTES)).toString(),
     )
+    // The format number is read before the schema, as for an archive: a sidecar of a newer Codebook is refused as that.
+    assertReadableStudyFormat(value)
+    const metadata = retainedStudyMetadataSchema.parse(value)
     if (
       metadata.version !== version ||
       metadata.id !== id ||
