@@ -8966,10 +8966,16 @@ export class StudyWorkspace {
       ) {
         this.layoutReceipt = undefined
         // The receipt read's own failure (a changed group, a grid that never settled) is the cause; keep it readable instead of replacing it.
+        const cause = this.layoutReceiptFailure
+          ? ` Cause: ${this.layoutReceiptFailure}`
+          : ''
+        // The Study panes have a command that applies their layout again; the line names it.
         this.report(
           'layout',
           new Error(
-            `The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.${this.layoutReceiptFailure ? ` Cause: ${this.layoutReceiptFailure}` : ''}`,
+            mode === 'study'
+              ? `The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.${cause}`
+              : `The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.${cause}`,
           ),
         )
         return

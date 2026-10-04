@@ -4453,3 +4453,31 @@ for (const command of [
         await harness.close()
       }
     })
+
+// Value: protects=the line a learner reads when the editor did not keep the Study layout naming the command that applies it again, and that command clearing the line; fails_when=the pane reads "The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.", which names no step that repairs it; why_new=Cycle 0045 finding OBS-2 (native observation round: the line stood in red in the Study pane after Restore Panel Size in Cursor); seam=workspace harness whose editor refuses one layout command
+test('a Study layout the editor did not keep is reported with the command that applies it again, and that command clears the report', async () => {
+  // Arrange: the editor refuses the layout of the first arrangement once.
+  const harness = await workspaceHarness(false)
+  harness.showTransientNativeSizes()
+  harness.failNextCommand('vscode.setEditorLayout')
+  try {
+    await harness.reader.open()
+    const reported = harness.reader.inspect().view!.errors.join(' | ')
+
+    // Act: the learner runs the command the line names.
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(
+      reported,
+      'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
+    )
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      (await harness.reader.readPresentationState()).layoutConfirmed,
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})

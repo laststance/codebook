@@ -1300,7 +1300,7 @@ for (const command of ['vscode.setEditorLayout'])
         harness.reader
           .inspect()
           .view!.errors.includes(
-            'Error: The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.',
+            'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
           ),
         true,
       )
