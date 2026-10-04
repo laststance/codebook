@@ -131,3 +131,41 @@ test('a later stop of a version 1 configuration is named by the stop entry that 
   assert.equal(later?.stop.source.column, 7)
   assert.equal(uncommitted, undefined)
 })
+
+// Cycle 0045 (ER-9, CX-A1): a binding first known at a pause that lies past a requested line that can pause is accepted, and the sentence says which column pauses on that line.
+test('a moved stop whose requested line can pause is told which column to declare to stop there, with the line when Codebook requested it after the declared one', () => {
+  // Arrange: the first stop, declared on line 1 of src/theme.ts, paused on a later line.
+  const declared = declaredStopOfSnapshot(
+    crossRuntimeConfiguration(),
+    [{ id: 'browser:1' }],
+    'browser:1',
+  )
+  assert.ok(declared)
+
+  // Act
+  const requestedOnDeclaredLine = describeBoundPlace({
+      declared,
+      bound: { line: 2, column: 1 },
+      pausable: { line: 1, column: 3 },
+    }),
+    requestedAfterDeclaredLine = describeBoundPlace({
+      declared,
+      bound: { line: 3, column: 1 },
+      armed: { line: 2, column: 9 },
+      pausable: { line: 2, column: 5 },
+    })
+
+  // Assert
+  assert.equal(
+    requestedOnDeclaredLine.place,
+    'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 1 can pause at column 3; declare that column to stop there.',
+  )
+  assert.equal(
+    requestedAfterDeclaredLine.place,
+    'src/theme.ts: this stop paused on line 3, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 3. Name line 3 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 2 can pause at column 5; declare line 2 at that column to stop there.',
+  )
+  assert.equal(
+    JSON.stringify(requestedOnDeclaredLine.pausable),
+    '{"line":1,"column":3}',
+  )
+})

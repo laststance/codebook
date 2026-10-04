@@ -13,6 +13,11 @@ const bindingEntrySchema = z.object({ armed: journaledPlaceSchema.optional() })
 const registrationEntrySchema = z.object({
   status: z.enum(['pending', 'bound']),
 })
+const slideEntrySchema = z.object({
+  declared: journaledPlaceSchema,
+  armed: journaledPlaceSchema.optional(),
+  pausableColumn: z.number().int().positive(),
+})
 
 /**
  * Reads from a live run's journal where the breakpoint of a committed snapshot's stop was requested and when its binding became known, for {@link StudyService.boundPlace}; the runtime's view holds no stop state, so the journal is the one source of the requested column.
@@ -23,6 +28,7 @@ const registrationEntrySchema = z.object({
  * @returns
  * - `armed` when the binding entry names a requested place that differs from the declared one
  * - `acknowledged` `'before-pause'` for a browser stop and for a server stop whose registration was acknowledged as bound while it was armed, `'at-pause'` for a server stop whose registration was still pending then
+ * - `pausable` when the run journaled `breakpoint.slid-past-pausable-line` for the stop: the line its breakpoint was requested on and the column the debugger can pause at there, although the binding first known at the pause lies on a later line
  * - an empty object when the journal holds no commit or no binding entry for the snapshot (a saved study, a synthetic runtime)
  * @example
  * journaledBindingOfSnapshot(view.events, view.snapshots, view.snapshots[0].id)
@@ -35,6 +41,7 @@ export function journaledBindingOfSnapshot(
 ): {
   armed?: z.infer<typeof journaledPlaceSchema>
   acknowledged?: BindingAcknowledgement
+  pausable?: z.infer<typeof journaledPlaceSchema>
 } {
   const commitSequence = (id: string | undefined): number | undefined =>
     events.find(
@@ -66,8 +73,20 @@ export function journaledBindingOfSnapshot(
     binding.type === 'breakpoint.bound' ||
     registrationEntrySchema.safeParse(registration?.detail).data?.status ===
       'bound'
+  // Journaled only when a binding first known at the pause lies past a requested line that can pause.
+  const slide = slideEntrySchema.safeParse(
+    ownEntries.findLast(
+      (event) => event.type === 'breakpoint.slid-past-pausable-line',
+    )?.detail,
+  ).data
   return {
     ...(armed && { armed }),
     acknowledged: wasAcknowledgedWhileArmed ? 'before-pause' : 'at-pause',
+    ...(slide && {
+      pausable: {
+        line: (slide.armed ?? slide.declared).line,
+        column: slide.pausableColumn,
+      },
+    }),
   }
 }

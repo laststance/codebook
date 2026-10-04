@@ -8,12 +8,15 @@ import type { DebugSession } from 'vscode'
 import type * as OwnedRepositoryBreakpointModule from '../ownedRepositoryBreakpoint'
 
 import { loadModule } from './utils/loadModule'
+import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 
-/** Supplies native API identities and explicit adapter messages without starting an editor or application; `acknowledgedAt` selects the registration rule of the owner under test. @example const harness = await breakpointHarness(); const nodeTestStop = await breakpointHarness('declared-column') */
+/** Supplies native API identities and explicit adapter messages without starting an editor or application; `acknowledgedAt` selects the registration rule of the owner under test. The default request is what an editor sends: a breakpoint at character 0 carries no column. @example const harness = await breakpointHarness(); const nodeTestStop = await breakpointHarness('declared-column') */
 async function breakpointHarness(
   acknowledgedAt?: 'declared-line' | 'declared-column',
   /** The owner's rule for a verified reply on another line; without it such a reply is refused. */
   acceptsLaterLine?: (line: number) => boolean,
+  /** One-based column the owned breakpoint is requested at on line 20. */
+  requestedColumn = 5,
 ) {
   class Position {
     constructor(
@@ -71,15 +74,15 @@ async function breakpointHarness(
   const breakpoint = new module.OwnedRepositoryBreakpoint(
     '/repo/actions.ts',
     20,
-    5,
+    requestedColumn,
     acknowledgedAt,
     acceptsLaterLine,
   )
   const request = (
     sequence = 1,
-    positions = [
-      { line: 2, column: 1 },
-      { line: 20, column: 5 },
+    positions: { line: number; column?: number }[] = [
+      { line: 2 },
+      sourceBreakpointRequest({ line: 19, character: requestedColumn - 1 }),
     ],
   ): DebugProtocol.Request => ({
     seq: sequence,
@@ -128,6 +131,22 @@ test('an acknowledged lazy server breakpoint remains pending rather than claimin
     '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"pending"}',
   )
   assert.equal(breakpoint.retired, false)
+})
+
+// Cycle 0045 (RT-12, NF-28): red while a request position without a column never matched a stop at column 1 ("Selected breakpoint registration is absent or ambiguous").
+test('a server stop requested at column 1 registers when the editor sends its breakpoint without a column', async () => {
+  // Arrange: the owned breakpoint is requested at 20:1, which the editor sends as line 20 with no column.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-line', undefined, 1)
+  // Act
+  breakpoint.onRequest(session, request(1, [{ line: 2 }, { line: 20 }]))
+  breakpoint.onResponse(session, response())
+  const receipt = await breakpoint.registered(session, signal)
+  // Assert
+  assert.equal(
+    JSON.stringify(receipt),
+    '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"pending"}',
+  )
 })
 
 test('a registration verified at the requested position of the declared line is bound', async () => {
@@ -305,7 +324,7 @@ test('removed or ambiguous requested positions revoke earlier pending registrati
     ]),
   )
   await assert.rejects(breakpoint.registered(session, signal), /ambiguous/)
-  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]))
+  breakpoint.onRequest(session, request(2, [{ line: 2 }]))
   await assert.rejects(breakpoint.registered(session, signal), /absent/)
   breakpoint.onRequest(session, request(3))
   breakpoint.onResponse(session, response(3))
@@ -367,7 +386,7 @@ test('an owned breakpoint the learner already removed retires without waiting fo
   breakpoint.onResponse(session, response())
   await breakpoint.registered(session, signal)
   editorBreakpoints.splice(editorBreakpoints.indexOf(breakpoint.breakpoint), 1)
-  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]))
+  breakpoint.onRequest(session, request(2, [{ line: 2 }]))
   // Act: finishing the stop must not wait for a setBreakpoints request the editor will never send.
   await breakpoint.retire(session, AbortSignal.timeout(1_000))
   // Assert
@@ -382,7 +401,7 @@ test('a learner-removed owned breakpoint still counts as retired only after the 
   breakpoint.onResponse(session, response())
   await breakpoint.registered(session, signal)
   editorBreakpoints.splice(editorBreakpoints.indexOf(breakpoint.breakpoint), 1)
-  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]))
+  breakpoint.onRequest(session, request(2, [{ line: 2 }]))
   const stillBound: DebugSession = {
     ...session,
     getDebugProtocolBreakpoint: async () => ({ id: 8, verified: true }),
@@ -408,7 +427,7 @@ test('a learner gutter breakpoint on the owned line does not block retiring the 
     command: 'setBreakpoints',
     arguments: {
       source: { path: '/repo/actions.ts' },
-      breakpoints: [{ line: 2, column: 1 }, { line: 20 }],
+      breakpoints: [{ line: 2 }, { line: 20 }],
     },
   })
   breakpoint.onResponse(session, {
@@ -446,7 +465,7 @@ test('a retirement reply that still lists the owned breakpoint id does not count
     command: 'setBreakpoints',
     arguments: {
       source: { path: '/repo/actions.ts' },
-      breakpoints: [{ line: 2, column: 1 }, { line: 20 }],
+      breakpoints: [{ line: 2 }, { line: 20 }],
     },
   })
   breakpoint.onResponse(session, {
@@ -487,7 +506,7 @@ test('without breakpoint ids in the adapter reply, a breakpoint left on the owne
     command: 'setBreakpoints',
     arguments: {
       source: { path: '/repo/actions.ts' },
-      breakpoints: [{ line: 2, column: 1 }, { line: 20 }],
+      breakpoints: [{ line: 2 }, { line: 20 }],
     },
   })
   breakpoint.onResponse(session, {
@@ -752,7 +771,7 @@ test('without breakpoint ids in the adapter reply, a breakpoint left on the plac
   await breakpoint.registered(session, signal)
   // Act: the reply cannot say which breakpoint remains on 21:7.
   const retiring = breakpoint.retire(session, AbortSignal.timeout(1_000))
-  breakpoint.onRequest(session, request(2, [{ line: 2, column: 1 }]))
+  breakpoint.onRequest(session, request(2, [{ line: 2 }]))
   breakpoint.onResponse(session, {
     seq: 102,
     type: 'response',

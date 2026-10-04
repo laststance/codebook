@@ -533,6 +533,28 @@ test('a saved stop on a later line reopens with the binding receipt that names i
   assert.equal(decoded.observations[1]?.source.line, 2)
 })
 
+// Cycle 0045 (ST-17): no test read a receipt with `requestedLine` through the schema; green on 6a7a0b8, its control is the schema's field (the receipt is a strict object).
+test('a saved stop that was requested after its unmapped declared line reopens with the receipt that names its declared, its requested and its bound line', () => {
+  // Arrange: the second stop was declared on line 1, requested on line 2 and bound there.
+  const study = studyWithBindingReceipts()
+  study.observations[1]!.source.binding = {
+    declaredLine: 1,
+    requestedLine: 2,
+    boundLine: 2,
+    mappedLinesBetween: 0,
+  }
+  // Act
+  const decoded = decodeConfiguredStudy(study, study.workspaceKey)
+  // Assert
+  assert.deepEqual(decoded.observations[1]?.source.binding, {
+    declaredLine: 1,
+    requestedLine: 2,
+    boundLine: 2,
+    mappedLinesBetween: 0,
+  })
+  assert.equal(decoded.observations[1]?.source.line, 2)
+})
+
 // Value: protects=a saved observation on a later line never being accepted without the run's record that nothing mapped lay between; fails_when=a later-line observation whose receipt is missing in a study that carries receipts, or whose receipt names other lines, is accepted because its line is inside the citation; why_new=Cycle 0043 O3; seam=none
 test('a saved stop on a later line is rejected when its binding receipt is missing beside another observation’s receipt, or names other lines than declared and observed', () => {
   // Arrange

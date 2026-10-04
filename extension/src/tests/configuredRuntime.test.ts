@@ -1719,6 +1719,55 @@ test('a run does not complete while the page is paused at a pause the debugger m
   )
 })
 
+// Cycle 0045 (X7-B.1): red while the after conditions were read only before the after image was captured, so a page that changed during the capture completed as demonstrated.
+test('a page that changed while the after image was captured is not saved as demonstrated, and the run ends naming the after condition that no longer held', async (context) => {
+  // Arrange: the last continuation is acknowledged, the after conditions held and the after image is being presented.
+  const {
+    run,
+    holdCapture,
+    announceScript,
+    emitCdpPauseAt,
+    manualResume,
+    failAfterWith,
+  } = await configuredRuntimeHarness(context)
+  await run.prepare()
+  announceScript('hook', 'eval-ca9ab6a4.cdp')
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => run.view().snapshots[0], 'first stop'),
+    held = holdCapture('after')
+  await run.continue('browser', snapshot.pause)
+  await held.started
+  // Act: the adapter's hook pauses the page during the capture, and the page's text is replaced before that pause is resumed.
+  emitCdpPauseAt({
+    scriptId: 'hook',
+    lineNumber: 0,
+    columnNumber: 219,
+    functionName: '',
+    hitBreakpoints: [],
+  })
+  failAfterWith({ conditionIndex: 0, reason: 'text-mismatch' })
+  held.release()
+  await waitUntil(
+    () => run.view().captures.after?.status === 'captured',
+    'after image captured',
+  )
+  manualResume()
+  await waitUntil(
+    () => ['completed', 'failed'].includes(run.view().status),
+    'the run ended',
+  )
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    [...run.view().failures],
+    [
+      "Repository after conditions held before the after image was captured and no longer held when they were read again after it: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. The page changed during the capture, so the result is not demonstrated. Declare in configuration.action.after a condition that still holds once the action has finished, then start a new run.",
+    ],
+  )
+  assert.equal(run.view().operation?.afterVerified, false)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
 /** The hints sentence every binding failure ends with. */
 const MAPPED_POSITION_HINTS =
   'These are mapped source positions, not verified debugger bindings or proof that the requested action reaches them.'
@@ -2225,6 +2274,76 @@ test('a stop declared on a line the sealed map has no position on is requested a
   assert.equal(mouse.length, 2)
 })
 
+// Cycle 0045 (ST-14): every live-run test declared 1:1 and mapped the next line at column 1, so the requested column could not be told from the declared one; green on 6a7a0b8, its controls are the column handed to the owned breakpoint and the column of the requested place.
+test('a stop declared at column 1 of an unmapped line is requested and captured at the column of the first mapped position on the next line', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches; line 2 holds an indented statement, mapped at its column 3.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: ';AACE',
+      fixture: {
+        source: '// toggles the theme\n  const nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([2])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the requested column')
+  const armed = run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 1, character: 2 },
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(armed?.detail)), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 2, column: 3 },
+  })
+  assert.equal(snapshot.source.line, 2)
+  assert.equal(snapshot.source.column, 3)
+})
+
+// Cycle 0045 (SP-7, SS-12, SS-13, PC-3.9): red while the place and the two checks of the preparation refusal each scanned the sealed map (three scans for this stop; a fourth by the binding rule when the requested line is not the citation's last).
+test('preparing a stop declared on an unmapped line scans its sealed map once', async (context) => {
+  // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both.
+  const { run, verifyBreakpointsOnlyOnLines, mapScans } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: ';AACA',
+      fixture: {
+        source: '// toggles the theme\nconst nextTheme = "dark";\n',
+        citationEndLine: 2,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([2])
+  // Act: the whole preparation, then the pause, whose handler asks the stop's rule.
+  await run.prepare()
+  const scansOfPreparation = [...mapScans]
+  run.action('one', 'repository-click')
+  await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the first mapped position after its declared line')
+  await run.stop()
+  // Assert: one scan, from the declared line to the end of the citation, and no further one at the pause.
+  assert.deepEqual(scansOfPreparation, [{ startLine: 1, endLine: 2 }])
+  assert.deepEqual(mapScans, [{ startLine: 1, endLine: 2 }])
+})
+
 // Value: protects=an agent and kept evidence telling a stop's declared place from the place its breakpoint was requested at and from where it paused; fails_when=the inspection or the journal names the declared place only under "requested", so the requested place is nowhere; why_new=Cycle 0045 ER-8 (API 1.6 adds declaredSource and armed, no existing key changes its meaning); seam=the runtime harness's adapter, which verifies a breakpoint on line 2 only
 test('the inspection and the journal of a stop declared on an unmapped line name its declared, its armed and its bound place', async (context) => {
   // Arrange: line 1 is a comment the map never reaches, line 2 is the statement; the citation covers both, and the debugger verifies a breakpoint on line 2 only.
@@ -2448,36 +2567,171 @@ test('a stop declared on a blank line with only blank or comment lines after it 
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
 })
 
-// Value: protects=the first admitted run of a stop declared on a blank line above its statement going on in a module whose map is too large to scan; fails_when=preparation refuses every blank or comment-only declared line of an oversized map, although a later line of the citation holds code the debugger binds; why_new=Cycle 0044 merge of 0041-N10-1b with R3 (one rule whatever the map's size: the source text decides when the map cannot); seam=none
+// Value: protects=the first admitted run of a stop declared on a blank line above its statement going on in a module whose map is too large to scan; fails_when=preparation refuses every blank or comment-only declared line of an oversized map, or the stop is requested on its declared line, where a debugger verifies nothing; why_new=Cycle 0044 merge of 0041-N10-1b with R3; Cycle 0045 (ST-20, NF-29 a): the debugger of this test verified a request on the blank line, which the native run disproved; seam=the adapter's possible break locations
 test('a stop declared on a blank line with a code line after it in its citation is armed, also when the sealed map is too large to scan completely', async (context) => {
-  // Arrange: line 2 is blank and line 3 is the statement; the scan stops at its segment limit on generated line 0, before the mapping of line 3, and the debugger verifies the binding at 3:1.
-  const { run, bindFirstStopAt, mouse } = await configuredRuntimeHarness(
-    context,
-    undefined,
-    [],
-    {
-      mappings: `${'A,'.repeat(200_000)}A;;AAEA`,
-      fixture: {
-        source: '// toggles the theme\n\nconst nextTheme = "dark";\n',
-        citationEndLine: 3,
-        declaredLine: 2,
-      },
+  // Arrange: line 2 is blank and line 3 is the statement; the scan stops at its segment limit on generated line 0, before the mapping of line 3. The debugger verifies a breakpoint on line 3 only and lists its one break location there.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;;AAEA`,
+    fixture: {
+      source: '// toggles the theme\n\nconst nextTheme = "dark";\n',
+      citationEndLine: 3,
+      declaredLine: 2,
     },
-  )
-  bindFirstStopAt(3, 1)
+  })
+  verifyBreakpointsOnlyOnLines([3])
+  listPossibleBreakLines([2])
   // Act
   await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
   run.action('oversized-map', 'repository-click')
   const snapshot = await waitUntil(() => {
     const view = run.view()
     if (view.failures.length) throw new Error(view.failures.join('; '))
     return view.snapshots[0]
   }, 'stop captured at the bound line')
+  const armed = run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.armed-after-declared-line',
+    )
   await run.stop()
-  // Assert
+  // Assert: the stop is requested on line 3, the first line from its declared one that can pause.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 2, character: 0 },
+  )
+  assert.deepEqual(JSON.parse(JSON.stringify(armed?.detail)), {
+    participant: 'browser',
+    declared: { line: 2, column: 1 },
+    armed: { line: 3, column: 1 },
+  })
   assert.equal(snapshot.source.line, 3)
   assert.equal(snapshot.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(snapshot.source.binding)), {
+    declaredLine: 2,
+    requestedLine: 3,
+    boundLine: 3,
+    mappedLinesBetween: 0,
+  })
   assert.equal(mouse.length, 2)
+})
+
+// Cycle 0045 (NF-29 a, PC-2.2): a line that only looks like code in the text is never requested; red while a partly scanned stop was requested on its declared line.
+test('a stop declared on the first line of a block comment in a partly scanned module is requested on the first line after the comment that can pause, not on the comment’s body', async (context) => {
+  // Arrange: lines 1 to 3 are one block comment, whose body on line 2 reads like code line by line; line 4 is the statement. The scan stops at its segment limit before the mapping of line 4, and the debugger lists its one break location there.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;;;AAGA`,
+    fixture: {
+      source: '/* toggles\n   the theme\n*/\nconst nextTheme = "dark";\n',
+      citationEndLine: 4,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([4])
+  listPossibleBreakLines([3])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured after the comment')
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 3, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 4)
+  assert.equal(snapshot.source.column, 1)
+})
+
+test('a stop declared on an opening tag in a partly scanned module is requested on the first later line that can pause, not on the line that holds only the tag’s closing bracket', async (context) => {
+  // Arrange: line 1 opens a tag, line 2 holds only its `>`, line 3 is the first line the debugger can pause on. The scan stops at its segment limit before the mapping of line 3.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;;AAEA`,
+    fixture: {
+      source: '<form\n>\n<input name="theme" />\n',
+      citationEndLine: 3,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([3])
+  listPossibleBreakLines([2])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on the first line that can pause')
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 2, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 3)
+  assert.equal(snapshot.source.column, 1)
+})
+
+// Cycle 0045 (NF-29 a, PC-1.6): "not found in a partial scan" is not "absent", and a line the partial scan found needs no question.
+test('a stop whose declared line a partial scan found, or the debugger can pause on, is requested on its declared line', async (context) => {
+  // Arrange: in the first module the scan reads the mapping of line 1 before it stops at its segment limit. In the second it stops on generated line 0, before the mappings of generated lines 1 and 2, which hold source lines 1 and 2; the debugger lists a break location on each.
+  const found = await configuredRuntimeHarness(context, undefined, [], {
+      mappings: `AAAA,${'A,'.repeat(200_000)}A;AACA`,
+      fixture: { citationEndLine: 2 },
+    }),
+    notFound = await configuredRuntimeHarness(context, undefined, [], {
+      mappings: `${'A,'.repeat(200_000)}A;AAAA;AACA`,
+      fixture: {
+        source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
+        citationEndLine: 2,
+      },
+    })
+  found.listPossibleBreakLines([0, 1])
+  notFound.listPossibleBreakLines([1, 2])
+  // Act
+  await found.run.prepare()
+  await notFound.run.prepare()
+  const requested = [found, notFound].map(
+    (harness) =>
+      harness.breakpoints.find(
+        (breakpoint) => breakpoint.id === 'owned-breakpoint',
+      )?.location.range.start.line,
+  )
+  await found.run.stop()
+  await notFound.run.stop()
+  // Assert: the found line is requested without asking the debugger; the other after one question about the whole module.
+  assert.deepEqual(requested, [0, 0])
+  assert.deepEqual(found.breakLocationRequests, [])
+  assert.deepEqual(notFound.breakLocationRequests, [
+    { start: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 } },
+  ])
 })
 
 // Value: protects=a later line being taken as the stop only when the debugger could not pause on the declared line, not when the requested column lay after the declared statement; fails_when=a binding slid to the next line is accepted although the declared line has a break location; why_new=Cycle 0043 R12(b); seam=the adapter's possible break locations
@@ -2491,7 +2745,7 @@ test('a browser stop slid to the next line although its declared line has a brea
   await assert.rejects(run.prepare(), (error: unknown) => {
     assert.equal(
       String(error),
-      `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; request the column where the statement begins. Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+      `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
     )
     return true
   })
@@ -2499,6 +2753,318 @@ test('a browser stop slid to the next line although its declared line has a brea
   // Assert
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (ST-1): the accept path of the slide check had no answering debugger; green on 6a7a0b8, its control is the comparison of each answered location's line with the requested line.
+test('a browser stop bound on the next line is armed and captured there when the debugger lists break locations only on that line', async (context) => {
+  // Arrange: source line 1 is generated lines 0 and 2, source line 2 is generated line 1 between them, so the range asked for line 1 also holds the place of line 2; the debugger can pause only there and verifies the stop declared at 1:1 at 2:1.
+  const {
+    run,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+    breakLocationRequests,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA;AACA;AADA',
+    fixture: {
+      source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
+      citationEndLine: 2,
+    },
+  })
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([1])
+  // Act
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on the line the debugger bound')
+  await run.stop()
+  // Assert: the debugger was asked, and its only break location lies on line 2, so line 2 is the stop.
+  assert.deepEqual(breakLocationRequests, [
+    {
+      start: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 },
+      end: { scriptId: 'actual', lineNumber: 3, columnNumber: 0 },
+    },
+  ])
+  assert.equal(snapshot.source.line, 2)
+  assert.equal(snapshot.source.column, 1)
+})
+
+// Cycle 0045 (B-L6, SP-3, ER-21, PC-3.1): red while the debugger was asked for every break location of the module from 0:0 with no end.
+test('a browser stop moved to a later line asks the debugger for the break locations of the requested line only, and is refused when one lies on it', async (context) => {
+  // Arrange: the adapter verifies the stop declared at 1:1 at 2:1; generated line 0 is source line 1 and holds a break location at column 6, after that line's only mapping, and generated line 1 holds one too.
+  const {
+    run,
+    bindFirstStopAt,
+    listPossibleBreakLocations,
+    breakLocationRequests,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], TWO_LINE_CITATION)
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLocations([
+    { lineNumber: 0, columnNumber: 6 },
+    { lineNumber: 1, columnNumber: 0 },
+  ])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert: the range ends, exclusively, where generated line 1 begins.
+  assert.deepEqual(breakLocationRequests, [
+    {
+      start: { scriptId: 'actual', lineNumber: 0, columnNumber: 0 },
+      end: { scriptId: 'actual', lineNumber: 1, columnNumber: 0 },
+    },
+  ])
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 1 lies after its statement; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Cycle 0045 (CX-A1, ER-9): red while a binding that slid to the next line although its own line can pause was refused at once ("bound at 2:1, refused: the debugger can pause on the declared line 1 …").
+test('a browser stop whose verified binding moved to the next line although its own line can pause is requested again on its line and pauses there', async (context) => {
+  // Arrange: the stop is declared at 1:7; the debugger verifies that request at 2:1, lists a break location at the start of line 1, and binds a request there where it was made.
+  const { run, breakpoints, bindFirstStopAt, listPossibleBreakLines, mouse } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: { citationEndLine: 2, declaredColumn: 7 },
+    })
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  // Act
+  await run.prepare()
+  const ownedAfterArming = breakpoints
+    .filter((breakpoint) => breakpoint.id.startsWith('owned-breakpoint'))
+    .map((breakpoint) => ({
+      id: breakpoint.id,
+      ...breakpoint.location.range.start,
+    }))
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on its declared line')
+  const rearmed = run
+    .view()
+    .events.filter(
+      (event) => event.type === 'breakpoint.rearmed-on-requested-line',
+    )
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => run.view().status === 'completed', 'final result')
+  await run.stop()
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+  const inspection = await readResource(
+    service,
+    service.state(record).observations[0]!.inspectionUri,
+  )
+  // Assert: exactly one owned breakpoint after the second request, at the line's break location, and the stop is committed there; the inspection reports the second request as the armed place.
+  assert.deepEqual(ownedAfterArming, [
+    { id: 'owned-breakpoint-2', line: 0, character: 0 },
+  ])
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.deepEqual(
+    [facts.declaredSource, facts.armed, facts.source.line, facts.place],
+    [{ line: 1, column: 7 }, { line: 1, column: 1 }, 1, undefined],
+  )
+  assert.deepEqual(rearmed, [
+    {
+      participant: 'browser',
+      declared: { line: 1, column: 7 },
+      armed: { line: 1, column: 1 },
+      firstRequest: { line: 1, column: 7 },
+      firstBinding: { line: 2, column: 1 },
+    },
+  ])
+  assert.equal(snapshot.source.line, 1)
+  assert.equal(snapshot.source.column, 1)
+  assert.equal(run.view().finalOutcome, 'demonstrated')
+  assert.equal(mouse.length, 2)
+})
+
+// Cycle 0045 (CX-A1, ER-9, SM-18): the refusal after the one new request; red while no second request was made.
+test('a browser stop that still cannot be bound on its line after one new request is refused and told to declare the statement’s column', async (context) => {
+  // Arrange: the debugger verifies the request at 1:7 and the second request at 1:1 both at 2:1.
+  const {
+    run,
+    breakpoints,
+    bindFirstStopAt,
+    bindLaterStopsAt,
+    listPossibleBreakLines,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA;AACA',
+    fixture: { citationEndLine: 2, declaredColumn: 7 },
+  })
+  bindFirstStopAt(2, 1)
+  bindLaterStopsAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert: no owned breakpoint is left, and nothing was clicked.
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 2:1, refused: the debugger can pause on the declared line 1, so requested column 7 lies after its statement, and a second request at 1:1 was bound on line 2 again; declare the column where the statement begins (configuration.source.column). Frozen source map positions in the selected citation: 1:1, 2:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.deepEqual(
+    breakpoints.map((breakpoint) => breakpoint.id),
+    ['learner-owned'],
+  )
+  assert.equal(mouse.length, 0)
+  assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (CX-A1, ER-9): red while a browser pause adopted after the debugger moved its breakpoint past a line that can pause was accepted without a word about that line; ER-9 keeps it accepted (the program already stands there) and names the column.
+test('a browser stop adopted after the debugger moved it past a line that can pause is committed there, and its inspection names the column that pauses on the declared line', async (context) => {
+  // Arrange: the stop declared at 1:7 is armed there; afterwards the adapter reports the breakpoint, and pauses, at 2:1, and lists a break location at the start of line 1. The test ends the wait for a pause at the armed place itself instead of spending its 3 s.
+  const { run, bindFirstStopAt, listPossibleBreakLines, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: { citationEndLine: 2, declaredColumn: 7 },
+    })
+  await run.prepare()
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  const sourceBoundWait = holdSourceBoundWait()
+  // Act
+  run.action('moved-after-arming', 'repository-click')
+  await waitUntil(
+    () => run.view().events.some((event) => event.type === 'dap.stopped'),
+    'stop announced',
+  )
+  sourceBoundWait.release()
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the line the debugger moved it to')
+  const slide = run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.slid-past-pausable-line')
+  await run.stop()
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+  const inspection = await readResource(
+    service,
+    service.state(record).observations[0]!.inspectionUri,
+  )
+  // Assert
+  assert.equal(stop.source.line, 2)
+  assert.equal(stop.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(slide?.detail)), {
+    participant: 'browser',
+    declared: { line: 1, column: 7 },
+    bound: { line: 2, column: 1 },
+    pausableColumn: 1,
+  })
+  assert.ok('text' in inspection)
+  assert.equal(
+    JSON.parse(JSON.parse(inspection.text).content).place,
+    'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 1 can pause at column 1; declare that column to stop there.',
+  )
+  assert.equal(run.view().failures.length, 0)
+})
+
+// Cycle 0045 (ST-15, SM-18, ER-9): red while the refusal on the requested line was never executed with an answering debugger and told the agent to "request the column where the statement begins" about a column Codebook chose.
+test('a stop requested after its unmapped declared line that the debugger slides past a requested line it can pause on is refused naming the requested line', async (context) => {
+  // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request at 2:1, verifies it at 3:1 and lists break locations on lines 2 and 3.
+  const {
+    run,
+    verifyBreakpointsOnlyOnLines,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+    mouse,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: ';AACA;AACA',
+    fixture: {
+      source: '// toggles the theme\nconst nextTheme =\n  "dark";\n',
+      citationEndLine: 3,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([2])
+  bindFirstStopAt(3, 1)
+  listPossibleBreakLines([1, 2])
+  // Act
+  const failure = await run.prepare().then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  await run.stop()
+  // Assert: no break location lies before the requested column 1, so no second request is made.
+  assert.equal(
+    String(failure),
+    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: the debugger can pause on line 2, where the stop was requested, so requested column 1 lies after its statement; declare the stop on line 2 at the column where its statement begins (configuration.source). Frozen source map positions in the selected citation: 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
+  )
+  assert.equal(mouse.length, 0)
+})
+
+// Cycle 0045 (PC-2.1): the second request takes its column from the line the stop was requested on, not from the declared column.
+test('a stop requested after its unmapped declared line that slid past the requested line is requested again at that line’s break location before the requested column', async (context) => {
+  // Arrange: line 1 is a comment without a mapping. The generated module keeps a comment on its line 1, which the map attributes to source 3:1, and has the code of source line 3 on its line 2, mapped at 3:7; a mapping onto a kept comment is no position, so the stop declared at 1:1 is requested at 3:7. The debugger verifies that request at 4:1 and lists a break location at the comment's place and on line 4.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    bindFirstStopAt,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: ';AAEA;AAAM;AACN',
+    fixture: {
+      source:
+        '// toggles the theme\n/* why */\nconst nextTheme = "dark";\nrender();\n',
+      citationEndLine: 4,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([3])
+  bindFirstStopAt(4, 1)
+  listPossibleBreakLines([1, 3])
+  // Act
+  await run.prepare()
+  const requestedAgain = breakpoints.find((breakpoint) =>
+    breakpoint.id.startsWith('owned-breakpoint'),
+  )?.location.range.start
+  const events = run.view().events,
+    journal = (type: string): unknown =>
+      JSON.parse(
+        JSON.stringify(events.find((event) => event.type === type)?.detail),
+      )
+  await run.stop()
+  // Assert: the second request is made on line 3 at column 1, before the requested column 7; a candidate "before the declared column 1" would not exist.
+  assert.deepEqual(journal('breakpoint.armed-after-declared-line'), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 3, column: 7 },
+  })
+  assert.deepEqual(journal('breakpoint.rearmed-on-requested-line'), {
+    participant: 'browser',
+    declared: { line: 1, column: 1 },
+    armed: { line: 3, column: 1 },
+    firstRequest: { line: 3, column: 7 },
+    firstBinding: { line: 4, column: 1 },
+  })
+  assert.deepEqual(
+    { line: requestedAgain?.line, character: requestedAgain?.character },
+    { line: 2, character: 0 },
+  )
 })
 
 // Value: protects=the deadline of a first browser stop that was not moved still naming that stop once the click was sent; fails_when=the run ends with the bare "Repository input reached no verified pause"; why_new=Cycle 0043 N-3; seam=the harness clock

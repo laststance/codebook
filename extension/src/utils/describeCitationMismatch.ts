@@ -1,6 +1,7 @@
 import type { ConfiguredDescriptor } from '../configuredStudySchemas'
 import type { RetainedRepositoryConfiguration } from '../repositoryConfigSchemas'
 
+import { configuredStopFields } from './configuredStopFields'
 import { configuredStops } from './configuredStops'
 
 /**
@@ -26,18 +27,8 @@ export function describeCitationMismatch(
       anchor.path === path && line >= anchor.startLine && line <= anchor.endLine
     const selected = anchors[stop.anchorIndex]
     if (selected && contains(selected)) continue
-    // The first stop is the top-level source; later stops are named by their position in additionalStops.
-    const additional = `configuration.additionalStops[${stopIndex - 1}]`
-    const sourceField =
-      stopIndex === 0
-        ? 'configuration.source'
-        : configuration.version === 2
-          ? `${additional}.source`
-          : additional
-    const indexField =
-      stopIndex > 0 && configuration.version === 2
-        ? `${additional}.anchorIndex`
-        : 'configuration.book.anchorIndex'
+    const { source: sourceField, anchorIndex: indexField } =
+      configuredStopFields(configuration.version, stopIndex)
     const position = `${path}:${line}`
     const selection = selected
       ? `${indexField} ${stop.anchorIndex} selects citation ${selected.path}:${selected.startLine}-${selected.endLine}, which does not contain ${sourceField} ${position}.`

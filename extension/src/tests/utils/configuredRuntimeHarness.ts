@@ -16,13 +16,19 @@ import type { ViewportRecordingObserver } from '../../runtimeSupport/browserView
 import { sha256 } from '../../runtimeSupport/utils/sha256'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { createBundleVerifier } from '../../utils/createBundleVerifier'
 
+import {
+  breakLocationsInRange,
+  type GeneratedPlace,
+} from './breakLocationsInRange'
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
+import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
 interface BeforeFailure {
@@ -32,6 +38,9 @@ interface BeforeFailure {
   /** The page's control counts, sent with a missing click target. */
   candidates?: { button: number; link: number; field: number }
 }
+
+/** A generated place as a break location request names it, with the script it lies in. */
+type ScriptPlace = GeneratedPlace & { scriptId: string }
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
@@ -51,6 +60,8 @@ export async function configuredRuntimeHarness(
       citationEndLine?: number
       /** Line the first stop is declared on instead of line 1. */
       declaredLine?: number
+      /** Column the first stop is declared at instead of column 1. */
+      declaredColumn?: number
     }
   } = {},
 ) {
@@ -66,6 +77,8 @@ export async function configuredRuntimeHarness(
   if (options.before) reference.configuration.action.before = options.before
   if (fixture?.declaredLine)
     reference.configuration.source.line = fixture.declaredLine
+  if (fixture?.declaredColumn)
+    reference.configuration.source.column = fixture.declaredColumn
   // Each of these changes makes the frozen intent hash stale.
   if (additionalStops.length || options.before || fixture)
     reference.configurationHash = sha256(
@@ -145,8 +158,12 @@ export async function configuredRuntimeHarness(
   // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
   let verifiableLines: number[] | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
-  // The generated lines the adapter lists as break locations of the module; without them it cannot answer.
-  let possibleBreakLines: number[] | undefined
+  // The generated places the adapter lists as break locations of the module; without them it cannot answer.
+  let possibleBreakLocations: GeneratedPlace[] | undefined
+  // Every scan of a sealed map the run asked its verifiers for, in order.
+  const mapScans: { startLine: number; endLine: number }[] = []
+  // Every range the run asked break locations for, in order, as it sent them.
+  const breakLocationRequests: { start: ScriptPlace; end?: ScriptPlace }[] = []
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
     requiredValueObject = false,
@@ -351,7 +368,12 @@ export async function configuredRuntimeHarness(
     },
     async request(
       method: string,
-      parameters?: { expression?: string; type?: string },
+      parameters?: {
+        expression?: string
+        type?: string
+        start?: ScriptPlace
+        end?: ScriptPlace
+      },
       timeout?: number,
     ) {
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
@@ -433,7 +455,18 @@ export async function configuredRuntimeHarness(
           ? breakpoints.find((candidate) => candidate.id === 'owned-breakpoint')
               ?.location.range.start
           : undefined
-        if (emitInputPause)
+        // A first stop that was requested a second time has a later owned breakpoint; it pauses where that one is bound.
+        const requestedAgain = stopCount
+          ? undefined
+          : breakpoints.find((candidate) =>
+              candidate.id.startsWith('owned-breakpoint-'),
+            )?.location.range.start
+        if (emitInputPause && requestedAgain)
+          emitPause(
+            laterStopBinding?.column ?? requestedAgain.character + 1,
+            laterStopBinding?.line ?? requestedAgain.line + 1,
+          )
+        else if (emitInputPause)
           emitPause(
             firstStopBinding?.column ??
               (requested ? requested.character + 1 : undefined),
@@ -444,14 +477,26 @@ export async function configuredRuntimeHarness(
         return pending
       }
       if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
-      if (method === 'Debugger.getPossibleBreakpoints' && possibleBreakLines)
+      if (
+        method === 'Debugger.getPossibleBreakpoints' &&
+        possibleBreakLocations &&
+        parameters?.start
+      ) {
+        const { start, end } = parameters
+        // The run's objects come from its own module context; a test compares plain copies.
+        breakLocationRequests.push(
+          end
+            ? { start: { ...start }, end: { ...end } }
+            : { start: { ...start } },
+        )
         return {
-          locations: possibleBreakLines.map((lineNumber) => ({
-            scriptId: 'actual',
-            lineNumber,
-            columnNumber: 0,
-          })),
+          locations: breakLocationsInRange(
+            possibleBreakLocations,
+            start,
+            end,
+          ).map((location) => ({ scriptId: 'actual', ...location })),
         }
+      }
       throw new Error(`Unexpected CDP request: ${method}`)
     },
   }
@@ -487,10 +532,9 @@ export async function configuredRuntimeHarness(
           command: 'setBreakpoints',
           arguments: {
             source: { path: sourcePath },
-            breakpoints: breakpoints.map((breakpoint) => ({
-              line: breakpoint.location.range.start.line + 1,
-              column: breakpoint.location.range.start.character + 1,
-            })),
+            breakpoints: breakpoints.map((breakpoint) =>
+              sourceBreakpointRequest(breakpoint.location.range.start),
+            ),
           },
         })
         if (removedAck)
@@ -595,6 +639,19 @@ export async function configuredRuntimeHarness(
         },
       },
       './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
+      './utils/createBundleVerifier': {
+        // The real verifier, with every scan of its sealed map recorded.
+        createBundleVerifier: (sealed: BundleSource) => {
+          const verifier = createBundleVerifier(sealed)
+          return {
+            ...verifier,
+            mappedPositions: (startLine: number, endLine: number) => {
+              mapScans.push({ startLine, endLine })
+              return verifier.mappedPositions(startLine, endLine)
+            },
+          }
+        },
+      },
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async () => ({ bundle, discovery: {} }),
       },
@@ -728,10 +785,21 @@ export async function configuredRuntimeHarness(
     bindFirstStopAt(line: number, column: number): void {
       firstStopBinding = { line, column }
     },
-    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with a location at column 0 of each of these zero-based generated lines. */
+    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with a location at column 0 of each of these zero-based generated lines, within the range the run asks for. */
     listPossibleBreakLines(lines: number[]): void {
-      possibleBreakLines = lines
+      possibleBreakLocations = lines.map((lineNumber) => ({
+        lineNumber,
+        columnNumber: 0,
+      }))
     },
+    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for. @example harness.listPossibleBreakLocations([{ lineNumber: 0, columnNumber: 6 }]) */
+    listPossibleBreakLocations(locations: GeneratedPlace[]): void {
+      possibleBreakLocations = locations
+    },
+    /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
+    breakLocationRequests,
+    /** Every scan of a sealed map the run made, by its line range, in order: preparation scans once per stop, and a binding failure scans the citation for its hints. */
+    mapScans,
     /** Reports every later stop's verified binding, and its pause, at this position instead of the requested one. */
     bindLaterStopsAt(line: number, column: number): void {
       laterStopBinding = { line, column }
