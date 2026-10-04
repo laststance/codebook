@@ -21,7 +21,8 @@ const SITE_PUBLISHED_AT = '2026-10-03T11:30:00.000Z'
 /**
  * One element of the hand-written page the served Wiki script runs against in tests; it has only what that script uses.
  *
- * Text nodes are plain strings. Selectors are `*` or one compound per comma (tag, `#id`, `.class`, `[attribute]`, `[attribute=value]`); anything else throws, so an unsupported selector cannot pass as "not found".
+ * Text nodes are plain strings. Selectors are `*` or one compound per comma (tag, `#id`, `.class`, `[attribute]`, `[attribute=value]`); anything else throws, so an unsupported selector cannot pass as "not found" or match every element.
+ * `insertBefore` refuses a reference that is not a child with the browser's `NotFoundError`, before it changes anything.
  *
  * @example
  * ```ts
