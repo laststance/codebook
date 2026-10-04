@@ -18,53 +18,6 @@ export type WikiUpdateMarkerClaim =
   | { heldBy: WikiUpdateMarker }
 
 /**
- * Reads the marker of another window's live run; called by {@link makeWayForWikiUpdateMarker} when the exclusive write found a marker in the way.
- * @param outputDirectory - Resolved Wiki output folder.
- * @param ownWindowId - This window's id; its own marker never holds the Wiki against itself.
- * @returns
- * - Another window's run is live: its marker
- * - No live marker, or the reservation of a stopped watch (the start check let this start pass it: its bound is over, or the learner chose to go on): `undefined`
- * @example
- * await readLiveRunMarker('/repo/.codebook/wiki', windowId) // => { pid: 4242, windowId: '3f6c…', host: 'vscode', startedAtMs: 1790000000000 }
- */
-async function readLiveRunMarker(
-  outputDirectory: string,
-  ownWindowId: string,
-): Promise<WikiUpdateMarker | undefined> {
-  const heldBy = await readLiveWikiUpdateMarker(outputDirectory, ownWindowId)
-  if (!heldBy) return undefined
-  return heldBy.watchEndedAtMs === undefined ? heldBy : undefined
-}
-
-/**
- * Decides what a failed exclusive write means and removes a marker no live run owns; called by {@link claimWikiUpdateMarker} with the error of each failed attempt.
- * @param error - What the exclusive write threw.
- * @param outputDirectory - Resolved Wiki output folder.
- * @param ownWindowId - This window's id.
- * @param isLastAttempt - Whether the write was already tried again after a removal; a marker still in the way then is not removed a second time.
- * @returns
- * - Another window's live run holds the Wiki: its marker, and the marker file stays
- * - A stale marker was removed, so the write can be tried once more: `undefined`
- * @throws The given error when it is not `EEXIST`, and when the marker is in the way again on the last attempt.
- * @example
- * await makeWayForWikiUpdateMarker(error, '/repo/.codebook/wiki', windowId, false) // => undefined after a killed editor's marker was removed
- */
-async function makeWayForWikiUpdateMarker(
-  error: unknown,
-  outputDirectory: string,
-  ownWindowId: string,
-  isLastAttempt: boolean,
-): Promise<WikiUpdateMarker | undefined> {
-  if (systemErrorCode(error) !== 'EEXIST') throw error
-  // A live run holds the Wiki. A stopped watch's reservation does not: the start check let this start pass it (its bound is over, or the learner chose to go on).
-  const heldBy = await readLiveRunMarker(outputDirectory, ownWindowId)
-  if (heldBy) return heldBy
-  if (isLastAttempt) throw error
-  await rm(outputDirectory + WIKI_UPDATE_RUN_MARKER_SUFFIX, { force: true })
-  return undefined
-}
-
-/**
  * Writes this window's marker beside the Wiki when a run begins, exclusively, so that of two windows that start at the same moment only one runs.
  *
  * Why: a look at the marker and the start of a run are two steps; only an exclusive write decides a race between two windows. A marker in the way that no live window's run owns (a killed editor's, this window's own from a run that already ended, or the reservation of a stopped watch, which the start check has let pass) is removed and the write is tried once more.
@@ -107,13 +60,15 @@ export async function claimWikiUpdateMarker(
         },
       }
     } catch (error) {
-      const heldBy = await makeWayForWikiUpdateMarker(
-        error,
+      if (systemErrorCode(error) !== 'EEXIST') throw error
+      const heldBy = await readLiveWikiUpdateMarker(
         outputDirectory,
         marker.windowId,
-        isLastAttempt,
       )
-      if (heldBy) return { heldBy }
+      // A live run holds the Wiki. A stopped watch's reservation does not: the start check let this start pass it (its bound is over, or the learner chose to go on).
+      if (heldBy && heldBy.watchEndedAtMs === undefined) return { heldBy }
+      if (isLastAttempt) throw error
+      await rm(markerPath, { force: true })
     }
   }
   throw new Error('The Wiki update marker could not be written.')
