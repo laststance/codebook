@@ -2725,10 +2725,25 @@ test('a browser stop whose verified binding moved to the next line although its 
   await run.continue('browser', snapshot.pause)
   await waitUntil(() => run.view().status === 'completed', 'final result')
   await run.stop()
-  // Assert: exactly one owned breakpoint after the second request, at the line's break location, and the stop is committed there.
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+  const inspection = await readResource(
+    service,
+    service.state(record).observations[0]!.inspectionUri,
+  )
+  // Assert: exactly one owned breakpoint after the second request, at the line's break location, and the stop is committed there; the inspection reports the second request as the armed place.
   assert.deepEqual(ownedAfterArming, [
     { id: 'owned-breakpoint-2', line: 0, character: 0 },
   ])
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.deepEqual(
+    [facts.declaredSource, facts.armed, facts.source.line, facts.place],
+    [{ line: 1, column: 7 }, { line: 1, column: 1 }, 1, undefined],
+  )
   assert.deepEqual(rearmed, [
     {
       participant: 'browser',
@@ -2778,6 +2793,60 @@ test('a browser stop that still cannot be bound on its line after one new reques
   )
   assert.equal(mouse.length, 0)
   assert.equal(run.view().finalOutcome, 'not-demonstrated')
+})
+
+// Cycle 0045 (CX-A1, ER-9): red while a browser pause adopted after the debugger moved its breakpoint past a line that can pause was accepted without a word about that line; ER-9 keeps it accepted (the program already stands there) and names the column.
+test('a browser stop adopted after the debugger moved it past a line that can pause is committed there, and its inspection names the column that pauses on the declared line', async (context) => {
+  // Arrange: the stop declared at 1:7 is armed there; afterwards the adapter reports the breakpoint, and pauses, at 2:1, and lists a break location at the start of line 1. The test ends the wait for a pause at the armed place itself instead of spending its 3 s.
+  const { run, bindFirstStopAt, listPossibleBreakLines, holdSourceBoundWait } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: { citationEndLine: 2, declaredColumn: 7 },
+    })
+  await run.prepare()
+  bindFirstStopAt(2, 1)
+  listPossibleBreakLines([0, 1])
+  const sourceBoundWait = holdSourceBoundWait()
+  // Act
+  run.action('moved-after-arming', 'repository-click')
+  await waitUntil(
+    () => run.view().events.some((event) => event.type === 'dap.stopped'),
+    'stop announced',
+  )
+  sourceBoundWait.release()
+  const stop = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.participants.browser.snapshot
+  }, 'stop committed at the line the debugger moved it to')
+  const slide = run
+    .view()
+    .events.find((event) => event.type === 'breakpoint.slid-past-pausable-line')
+  await run.stop()
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+  const inspection = await readResource(
+    service,
+    service.state(record).observations[0]!.inspectionUri,
+  )
+  // Assert
+  assert.equal(stop.source.line, 2)
+  assert.equal(stop.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(slide?.detail)), {
+    participant: 'browser',
+    declared: { line: 1, column: 7 },
+    bound: { line: 2, column: 1 },
+    pausableColumn: 1,
+  })
+  assert.ok('text' in inspection)
+  assert.equal(
+    JSON.parse(JSON.parse(inspection.text).content).place,
+    'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 1 can pause at column 1; declare that column to stop there.',
+  )
+  assert.equal(run.view().failures.length, 0)
 })
 
 // Cycle 0045 (ST-15, SM-18, ER-9): red while the refusal on the requested line was never executed with an answering debugger and told the agent to "request the column where the statement begins" about a column Codebook chose.

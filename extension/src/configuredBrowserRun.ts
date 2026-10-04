@@ -624,6 +624,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // An acknowledgement on another line while the stop is armed is answered with one more request on the requested line, when that line can pause; a pending registration is judged at its pause.
       if (
         receipt.movedTo &&
+        receipt.movedTo.line > armed.line &&
         (await this.rearmOnRequestedLine(stop, receipt.movedTo))
       ) {
         receipt = await this.registeredStop(stop)
@@ -632,8 +633,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           participant: stop.participant,
           ...receipt,
         })
-        // The second request was acknowledged on another line again: the stop cannot be bound on the line it was requested on.
-        if (receipt.movedTo)
+        // The second request was acknowledged on a later line again: the stop cannot be bound on the line it was requested on.
+        if (receipt.movedTo && receipt.movedTo.line > armed.line)
           throw this.slideRefusal(stop, receipt.movedTo, armed)
       }
       await this.verifySources()
@@ -643,14 +644,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     // A line after the requested one is the stop's place only when the debugger could not pause on the requested line at all; when it can, the stop is requested once more at that line's break location before the requested column.
     if (
-      binding.line !== armed.line &&
+      binding.line > armed.line &&
       (await this.rearmOnRequestedLine(stop, binding))
     ) {
       const firstRequest = armed
       armed = stop.armed
       binding = await this.verifiedBrowserBinding(stop)
       this.alive()
-      if (binding.line !== armed.line)
+      if (binding.line > armed.line)
         throw this.slideRefusal(stop, binding, firstRequest)
     }
     this.bindBoundPlace(stop, binding)
@@ -747,10 +748,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Requests a stop's breakpoint once more on the line it was requested on, when the debugger acknowledged it on another line although that line can pause: the requested column lay after the line's last break location, so the break location before it is asked for instead of taking the other line as the stop. {@link armStop} calls it for both participants while the stop is armed, before any input or resume.
+   * Requests a stop's breakpoint once more on the line it was requested on, when the debugger acknowledged it on a later line although that line can pause: the requested column lay after the line's last break location, so the break location before it is asked for instead of taking the later line as the stop. {@link armStop} calls it for both participants while the stop is armed, before any input or resume.
    * The first registration is retired, and its retirement confirmed by the adapter ({@link OwnedRepositoryBreakpoint.retire}), before the second replaces it: afterwards exactly one owned breakpoint exists, and none after a failure or a cancellation.
    * @param stop - The stop being armed; the adapter acknowledged its owned breakpoint.
-   * @param binding - Where the debugger acknowledged the breakpoint, on another line than requested.
+   * @param binding - Where the debugger acknowledged the breakpoint, on a later line than requested.
    * @returns
    * - `true` when the stop was requested again: {@link PreparedStop.armed} names the new request and `stop.breakpoint` owns the new registration, whose acknowledgement the caller waits for
    * - `false` when the requested line cannot pause, the adapter cannot list break locations, or the stop's module is not parsed yet: the binding is left to the stop's line rule
@@ -921,9 +922,39 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Builds the refusal of a stop the debugger bound on another line although the line it was requested on can pause: the requested column lay after that line's last break location, so the other line is not the requested statement. {@link rearmOnRequestedLine} throws it when no break location lies before the requested column, and {@link armStop} when a second request there was bound on another line again.
+   * Journals that a binding first known at a stop's pause lies past a requested line that can pause, called by {@link inspect} for a server stop whose registration was still pending while it was armed and for a browser pause adopted after the debugger moved its breakpoint.
+   * The program already stands on the bound line, so the binding stays accepted under the stop's line rule and nothing is refused; the entry `breakpoint.slid-past-pausable-line` lets the stop's `place` sentence name the column that pauses on the requested line ({@link journaledBindingOfSnapshot}, {@link describeBoundPlace}).
+   * @param stop - The paused stop; its binding was accepted and recorded.
+   * @param bound - Where the debugger has the breakpoint at the pause.
+   * @example
+   * ```ts
+   * await this.journalSlidePastPausableLine(stop, { line: 36, column: 5 })
+   * ```
+   */
+  private async journalSlidePastPausableLine(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+  ): Promise<void> {
+    if (bound.line <= stop.armed.line || !stop.script) return
+    const pausableColumns = await this.pausableColumns(stop, stop.armed.line)
+    // A requested line that cannot pause, or an adapter that cannot say, leaves nothing to tell.
+    if (!pausableColumns?.length) return
+    this.evidence.record('breakpoint.slid-past-pausable-line', {
+      participant: stop.participant,
+      ...declaredAndArmedPlace(stop.source, stop.armed),
+      bound: { line: bound.line, column: bound.column },
+      // The break location a second request would have taken: the nearest before the requested column, otherwise the line's first.
+      pausableColumn:
+        pausableColumns.findLast(
+          (pausableColumn) => pausableColumn < stop.armed.column,
+        ) ?? pausableColumns[0],
+    })
+  }
+
+  /**
+   * Builds the refusal of a stop the debugger bound on a later line although the line it was requested on can pause: the requested column lay after that line's last break location, so the later line is not the requested statement. {@link rearmOnRequestedLine} throws it when no break location lies before the requested column, and {@link armStop} when a second request there was bound on another line again.
    * @param stop - The stop being armed.
-   * @param binding - Where the debugger bound the breakpoint, on another line than requested.
+   * @param binding - Where the debugger bound the breakpoint, on a later line than requested.
    * @param firstRequest - Where the stop was requested first, when it was then requested again at {@link PreparedStop.armed}; absent when no second request was made.
    * @returns The error to throw, with the mapping hints: it names the declared stop, the bound place, the line that can pause, the second request when there was one, and what to declare.
    * @example
@@ -2378,6 +2409,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           this.refusedBindingText(stop, parsed.data),
         )
       this.bindBoundPlace(stop, parsed.data)
+      await this.journalSlidePastPausableLine(stop, parsed.data)
+      current()
     } else if (stopped.adopted) {
       // A browser pause away from the binding verified at arming: the debugger may have moved that binding since, so it is read again and named.
       const moved = verifiedPlaceSchema.safeParse(
@@ -2401,6 +2434,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
             this.refusedBindingText(stop, moved.data),
           )
         this.bindBoundPlace(stop, moved.data)
+        await this.journalSlidePastPausableLine(stop, moved.data)
+        current()
       }
     }
     const stack: DebugProtocol.StackTraceResponse['body'] = await awaitResponse(

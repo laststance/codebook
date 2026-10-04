@@ -155,6 +155,8 @@ export async function nativeParticipantsHarness(
       | undefined,
     browserLineRunsOnInput = false,
     reboundPauseId = false
+  // The one-based column of a requested breakpoint whose registration request the adapter leaves unanswered.
+  let unansweredColumn: number | undefined
   // The generated places each participant's adapter lists as break locations of its module; without them it cannot answer.
   const possibleBreakLocations: Partial<Record<Participant, GeneratedPlace[]>> =
     {}
@@ -570,6 +572,14 @@ export async function nativeParticipantsHarness(
           ),
         },
       })
+      // A request the adapter never answers leaves the breakpoint without a current receipt.
+      if (
+        selected.some(
+          (breakpoint) =>
+            breakpoint.location.range.start.character + 1 === unansweredColumn,
+        )
+      )
+        continue
       run.onResponse(sessions[name], {
         type: 'response',
         seq: ++sequence,
@@ -994,6 +1004,10 @@ export async function nativeParticipantsHarness(
       },
     ): void {
       acknowledgedAt = bind
+    },
+    /** Leaves every registration request unanswered that holds a breakpoint requested at this one-based column, as an adapter that has not replied yet does. @example harness.leaveRegistrationUnansweredAtColumn(1) */
+    leaveRegistrationUnansweredAtColumn(column: number): void {
+      unansweredColumn = column
     },
     /** Makes a participant's adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for. @example harness.listPossibleBreakLocations('server', [{ lineNumber: 0, columnNumber: 0 }]) */
     listPossibleBreakLocations(
