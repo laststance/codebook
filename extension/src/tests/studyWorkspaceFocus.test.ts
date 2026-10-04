@@ -1542,6 +1542,61 @@ test("the fake Cursor reports a text editor shown with the keyboard beside the c
   }
 })
 
+// Value: protects=reader tests meeting the editor's side bars as both editors treat them: the maximize command hides both, the end of the maximization shows neither, the show commands are safe on an open bar, and only the editor area's width tells which bars are open; fails_when=the fake brings the bars back when the maximization ends, so a reader that leaves the window without its side bars passes in the tests; why_new=Cycle 0045 NF-22 (obs15 P4 in Cursor 3.23.12 and VS Code 1.140.0); seam=the fake editor's modelSideBars, sideBars and its layout read in pixels
+test('the fake editor hides both side bars for the maximize command, shows neither when the maximization ends, and reads the columns of the editor area in the pixels the bars leave', async () => {
+  // Arrange: two columns between a primary side bar of 214 px and a secondary one of 461 px in a window of 1335 px.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  try {
+    const run = (command: string): Thenable<unknown> =>
+        harness.editor.commands.executeCommand(command),
+      columns = (): Thenable<unknown> => run('vscode.getEditorLayout')
+
+    // Act
+    const betweenBothBars = await columns()
+    await run('workbench.action.closeSidebar')
+    const withoutPrimary = await columns()
+    await run('workbench.action.maximizeEditorHideSidebar')
+    await run('workbench.action.minimizeOtherEditors')
+    const afterTheMaximization = {
+      bars: harness.sideBars(),
+      columns: await columns(),
+    }
+    await run('workbench.action.focusAuxiliaryBar')
+    await run('workbench.action.focusAuxiliaryBar')
+    const afterShowingTwice = harness.sideBars()
+    await run('workbench.action.focusActiveEditorGroup')
+
+    // Assert
+    assert.deepEqual(betweenBothBars, {
+      orientation: 0,
+      groups: [{ size: 330 }, { size: 330 }],
+    })
+    assert.deepEqual(withoutPrimary, {
+      orientation: 0,
+      groups: [{ size: 437 }, { size: 437 }],
+    })
+    assert.deepEqual(afterTheMaximization.bars, {
+      primary: false,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    assert.deepEqual(afterShowingTwice, {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: true,
+    })
+    assert.deepEqual(harness.sideBars(), {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=reader tests meeting the editor as it answers a numbered focus command for the column after the main editor's last group, where Cursor's chat group sits; fails_when=the fake focuses the chat's group for that command, which neither editor does: the command opens a new empty group in the main editor, so a reader that returns the focus that way passes in the tests and leaves an empty group in the editor; why_new=Cycle 0045 cause 12 (d) (obs15 P1 and P2: a new empty group at the chat's column, the chat's group one column on, the caret on the empty group); seam=the fake editor's group focus commands and its "Focus Agent" command
 test("the fake editor opens a new empty group for the focus command of the column after the main editor's last group, and Cursor's Focus Agent command gives the chat the keyboard without changing a group", async () => {
   // Arrange: two groups of the main editor, and the chat's group at column 3 with the keyboard.

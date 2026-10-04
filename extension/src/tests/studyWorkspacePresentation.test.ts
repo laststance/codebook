@@ -874,7 +874,13 @@ test('restoring replay preserves a learner draft opened over historical source d
     assert.equal(draft.tab.isDirty, true)
     assert.equal(draft.document.getText(), 'Original learner draft.\n')
     assert.deepEqual(harness.editorLayout(), placedLayout)
-    assert.deepEqual(harness.commands, commands)
+    // The held read was the width read that follows the end of the Read's maximization: the side bars the Read hid come back (the recording's two rows give no width, so both are shown) and the editor group the learner is in gets the keyboard back (Cycle 0045 NF-22). No layout command follows.
+    assert.deepEqual(harness.commands, [
+      ...commands,
+      'workbench.action.focusAuxiliaryBar',
+      'workbench.action.focusSideBar',
+      'workbench.action.focusActiveEditorGroup',
+    ])
     assert.deepEqual(harness.panelReveals(), reveals)
     assert.equal(harness.reader.presentationState().layoutConfirmed, false)
     assert.equal(harness.presentationPreferences.size, 0)

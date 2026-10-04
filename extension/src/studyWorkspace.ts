@@ -9,6 +9,7 @@ import {
   AGENT_STORAGE_DIRECTORY,
   APPLICATION_PANE_CLOSED_MESSAGE,
   CHOICE_RETIRED_ERROR_KINDS,
+  HIDDEN_SIDE_BAR_MIN_GAIN_PX,
   HORIZONTAL_EDITOR_ORIENTATION,
   LIVE_EDITOR_GROUP_COUNT,
   LIVE_EDITOR_LAYOUT,
@@ -141,6 +142,7 @@ import {
   describeViewportDelivery,
   type ViewportDeliveryLog,
 } from './utils/describeViewportDelivery'
+import { editorAreaWidthPx } from './utils/editorAreaWidthPx'
 import { editorLayoutGroupCount } from './utils/editorLayoutGroupCount'
 import { evidenceInUseElsewhere } from './utils/evidenceInUseElsewhere'
 import { focusEditorGroupCommand } from './utils/focusEditorGroupCommand'
@@ -513,6 +515,11 @@ export class StudyWorkspace {
   private arranging?: Promise<void>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
+  /** What {@link rememberSideBarsBeforeRead} measured before a Read's maximize command hid the side bars, for {@link showSideBarsHiddenByRead}: whether the primary side bar was open (`undefined` when the editor area's width could not be read) and the editor area's width without it. */
+  private sideBarsBeforeRead?: {
+    primaryVisible: boolean | undefined
+    widthWithoutPrimaryPx: number | undefined
+  }
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
   private layoutReceipt?: {
@@ -1206,6 +1213,7 @@ export class StudyWorkspace {
             'workbench.action.minimizeOtherEditors',
           )
           this.maximizedByRead = false
+          await this.showSideBarsHiddenByRead()
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
@@ -1567,6 +1575,7 @@ export class StudyWorkspace {
           'workbench.action.minimizeOtherEditors',
         )
         this.maximizedByRead = false
+        await this.showSideBarsHiddenByRead()
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
@@ -2137,6 +2146,76 @@ export class StudyWorkspace {
     return count !== undefined && this.hasMainEditorFocus(count)
       ? count
       : undefined
+  }
+
+  /**
+   * Measures which side bars are open before {@link readStudyPane} maximizes a pane, and hides the primary one for that measurement.
+   * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link showSideBarsHiddenByRead} reads it once more when both bars are hidden.
+   * @returns Once {@link sideBarsBeforeRead} holds the measurement. A grid whose top level is rows gives no width: the primary side bar's state is then unknown.
+   * @example
+   * ```ts
+   * await this.rememberSideBarsBeforeRead() // sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874 } for columns of 363 + 297 beside a side bar of 214
+   * ```
+   */
+  private async rememberSideBarsBeforeRead(): Promise<void> {
+    const widthPx = await this.readEditorAreaWidthPx()
+    await vscode.commands
+      .executeCommand('workbench.action.closeSidebar')
+      .then(undefined, () => undefined)
+    const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
+    this.sideBarsBeforeRead = {
+      primaryVisible:
+        widthPx === undefined || widthWithoutPrimaryPx === undefined
+          ? undefined
+          : widthWithoutPrimaryPx - widthPx > HIDDEN_SIDE_BAR_MIN_GAIN_PX,
+      widthWithoutPrimaryPx,
+    }
+  }
+
+  /**
+   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}.
+   * Only the bars that were open before the Read are shown: the primary one as {@link rememberSideBarsBeforeRead} measured it, the secondary one when the editor area without both bars is wider than it was without the primary one alone. A bar whose state could not be measured (rows at the top level of the grid give no width) is shown. The editor's commands that show a bar leave an open bar as it is and give the bar the keyboard, which the active editor group gets back.
+   * @returns `true` when a bar was shown and the active editor group focused again, `false` when no Read's measurement was pending or both bars were closed before it.
+   * @example
+   * ```ts
+   * await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+   * this.maximizedByRead = false
+   * await this.showSideBarsHiddenByRead()
+   * ```
+   */
+  private async showSideBarsHiddenByRead(): Promise<boolean> {
+    const before = this.sideBarsBeforeRead
+    if (!before) return false
+    this.sideBarsBeforeRead = undefined
+    const widthPx = await this.readEditorAreaWidthPx()
+    const showsAuxiliary =
+        widthPx === undefined ||
+        before.widthWithoutPrimaryPx === undefined ||
+        widthPx - before.widthWithoutPrimaryPx > HIDDEN_SIDE_BAR_MIN_GAIN_PX,
+      showsPrimary = before.primaryVisible !== false
+    const run = (command: string): Thenable<unknown> =>
+      vscode.commands.executeCommand(command).then(undefined, () => undefined)
+    if (showsAuxiliary) await run('workbench.action.focusAuxiliaryBar')
+    if (showsPrimary) await run('workbench.action.focusSideBar')
+    if (!showsAuxiliary && !showsPrimary) return false
+    await run('workbench.action.focusActiveEditorGroup')
+    return true
+  }
+
+  /**
+   * Reads the width of the editor area for {@link rememberSideBarsBeforeRead} and {@link showSideBarsHiddenByRead}.
+   * @returns The width {@link editorAreaWidthPx} finds in the editor's layout, or `undefined` when the layout has no columns at its top level or the read failed.
+   * @example
+   * ```ts
+   * const widthPx = await this.readEditorAreaWidthPx() // => 660 for the three-pane Study layout between Cursor's two side bars
+   * ```
+   */
+  private async readEditorAreaWidthPx(): Promise<number | undefined> {
+    return editorAreaWidthPx(
+      await vscode.commands
+        .executeCommand<unknown>('vscode.getEditorLayout')
+        .then(undefined, () => undefined),
+    )
   }
 
   /**
@@ -2881,10 +2960,15 @@ export class StudyWorkspace {
       try {
         // Maximize may settle after a newer learner tab choice; only its original owned target may publish Read success.
         assertReadFocus()
+        // The maximize command hides both side bars and nothing of the editor brings them back: which of them are open is measured first, once per reading, and from then on the reading is ended by Restore or Close, which show them again.
+        if (!this.maximizedByRead) {
+          this.maximizedByRead = true
+          await this.rememberSideBarsBeforeRead()
+          assertReadFocus()
+        }
         await vscode.commands.executeCommand(
           'workbench.action.maximizeEditorHideSidebar',
         )
-        this.maximizedByRead = true
         assertReadFocus()
         focusedPane.assertCurrent()
         assertPlacement()
@@ -3058,6 +3142,7 @@ export class StudyWorkspace {
         'workbench.action.minimizeOtherEditors',
       )
       this.maximizedByRead = false
+      await this.showSideBarsHiddenByRead()
       assertRetained()
       const expanded = retained
         ? await this.readPassivePresentationLayout()
@@ -5113,6 +5198,8 @@ export class StudyWorkspace {
     this.presentationControlRevision = 0
     this.presentationConfirmed = false
     this.requestedPresentation = undefined
+    // A closed reader carries no reason of a reading or a refused change that ended with it.
+    this.presentationReason = undefined
     this.repositoryRecordingOpen = undefined
     // Closing disposes the native session: a Node stop still loading its values is abandoned, and no Run and Debug hint may survive a reopen.
     this.selectedNodeHistoryRequest++
@@ -5123,6 +5210,7 @@ export class StudyWorkspace {
     this.playback?.hide()
     this.clearLearningSummary()
     const pending = (this.closingPromise = (async () => {
+      let restoredSideBars = false
       // One bound for every storage wait of this close, counted from the first of them: a writer that never returns is waited for once, not once per wait.
       let storageDeadlineMs: number | undefined
       const storageTimeLeftMs = (): number =>
@@ -5176,6 +5264,8 @@ export class StudyWorkspace {
         await vscode.commands
           .executeCommand('workbench.action.minimizeOtherEditors')
           .then(undefined, () => undefined)
+        // The Read also hid the side bars; the bars it hid are shown again while the panes still give the editor area its columns.
+        restoredSideBars = await this.showSideBarsHiddenByRead()
       }
       const tabs = vscode.window.tabGroups.all
         .flatMap((group) => group.tabs)
@@ -5192,7 +5282,10 @@ export class StudyWorkspace {
       this.app = undefined
       this.initialAppPlacement = undefined
       // The tabs are closed without moving the focus, so the keyboard a closed pane or source held would fall to the page body: the group the editor shows as active takes it, once the editor has closed the disposed panes' tabs. A group focused before that is the one that still shows a closing pane, and the keyboard goes with that tab a moment later.
-      if (closesKeyboardHolder && vscode.window.state.focused) {
+      if (
+        (closesKeyboardHolder || restoredSideBars) &&
+        vscode.window.state.focused
+      ) {
         await waitUntil(
           () =>
             !this.hasUnownedPaneTab(
