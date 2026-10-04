@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -13,6 +13,8 @@ import {
 } from './utils/fakeClock'
 import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { loadModule } from './utils/loadModule'
+import { publishedWikiFixture } from './utils/publishedWikiFixture'
+import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
 
 // Value: protects=deadline tests firing a run's timers as real time would; fails_when=a timer cleared by an earlier callback of the same advance still fires, or timers fire in the order they were set instead of the order they fall due; why_new=Cycle 0043 R15 (the clock fired a snapshot in insertion order); seam=none
 test('a manual clock fires due timers in the order they fall due and never one an earlier callback cleared', () => {
@@ -240,4 +242,59 @@ test("the fake Wiki page's clock moves exactly the time asked for: a timer due a
     firedAfterMs: null,
   })
   assert.equal(page.body.getAttribute('data-fired-after-ms'), '1500')
+})
+
+// Value: protects=the machine's temporary folder staying free of Wiki projects that a failed fixture created; fails_when=the fixture rejects after it created its temporary project and leaves it there, although no caller holds its cleanup; why_new=Cycle 0045 X7-D.3; seam=TMPDIR of this test process, so the fixture's project is the only thing in a folder the test owns
+test('a published Wiki fixture whose first publish is refused removes the temporary project it created', async () => {
+  // Arrange: temporary projects are created in a folder of this test; the publisher refuses the project root as output folder.
+  const temporaryFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-fixture-cleanup-'),
+  )
+  const previousTemporaryFolder = process.env.TMPDIR
+  process.env.TMPDIR = temporaryFolder
+  try {
+    // Act
+    const publishing = publishedWikiFixture('.')
+    // Assert
+    await assert.rejects(publishing, {
+      message:
+        'The Wiki output cannot be the project root or a folder that contains it. A folder inside the project, such as .codebook/wiki, is accepted.',
+    })
+    assert.deepEqual(await readdir(temporaryFolder), [])
+  } finally {
+    if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTemporaryFolder
+    await rm(temporaryFolder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the machine's temporary folder staying free of Wiki projects that a failed fixture created; fails_when=the served Wiki's reader does not start and the project written for it stays, although no caller holds its `close`; why_new=Cycle 0045 X7-D.3; seam=TMPDIR of this test process, and the fixture loaded with a reader that refuses to start
+test('a served minimal Wiki whose reader does not start removes the temporary project it created', async () => {
+  // Arrange: temporary projects are created in a folder of this test, and the fixture's reader refuses to start.
+  const temporaryFolder = await mkdtemp(
+    join(tmpdir(), 'codebook-fixture-cleanup-'),
+  )
+  const previousTemporaryFolder = process.env.TMPDIR
+  process.env.TMPDIR = temporaryFolder
+  try {
+    const fixture = await loadModule<typeof ServeMinimalWikiModule>(
+      join(__dirname, 'utils', 'serveMinimalWiki.js'),
+      {
+        '../../deepWikiReader': {
+          startDeepWikiReader: async () => {
+            throw new Error('The reader could not start.')
+          },
+        },
+      },
+    )
+    // Act
+    const serving = fixture.serveMinimalWiki()
+    // Assert
+    await assert.rejects(serving, { message: 'The reader could not start.' })
+    assert.deepEqual(await readdir(temporaryFolder), [])
+  } finally {
+    if (previousTemporaryFolder === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTemporaryFolder
+    await rm(temporaryFolder, { recursive: true, force: true })
+  }
 })
