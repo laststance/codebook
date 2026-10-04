@@ -93,10 +93,10 @@ export class ReplayDebugger {
         REPLAY_DEBUG_TYPE,
         {
           createDebugAdapterDescriptor: (session) => {
-            // A learner-stopped owner stays detached: an editor relaunch would otherwise be adopted without history.
+            // A learner-stopped owner stays detached: an editor relaunch would otherwise be adopted without history. A startup that outlived its bound is still this owner's own launch, so its adapter is served and adoptLateStartup takes the session over.
             if (
               this.closed ||
-              this.detached ||
+              (this.detached && !this.startupExpired) ||
               session.configuration.codebookReplayOwner !== this.token ||
               this.session
             )
@@ -557,7 +557,8 @@ export class ReplayDebugger {
    * Takes over a session whose startup outlived {@link REPLAY_DEBUG_CAPTURE_TIMEOUT_MS} but then completed, on behalf of {@link launchSession}.
    *
    * The expired startup already failed its waiters and made this owner unavailable; a healthy but slow editor would otherwise
-   * leave replay failing until the learner reopens the recording. A session the learner stopped meanwhile is never adopted.
+   * leave replay failing until the learner reopens the recording. The editor may ask for the adapter before or after the bound
+   * expired: the descriptor factory serves both. A session the learner stopped meanwhile is never adopted.
    *
    * @param started - The editor's answer to the launch.
    * @returns `true` when this owner is available again with the late session, `false` when nothing was adopted.

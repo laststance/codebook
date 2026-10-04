@@ -62,7 +62,7 @@ async function flushNative(): Promise<void> {
   for (let turn = 0; turn < 5; turn++)
     await new Promise<void>((resolve) => setImmediate(resolve))
 }
-/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, `disconnectBeforeTermination` models native Stop ordering, `configurationGate` delays the editor's configurationDone (and so the first stopped event), `refusalGate` delays each refused start's answer and `listeners` replaces the reader's notification handlers. @example harness().changes() */
+/** Exposes owned native lifecycle operations and counts reader notifications; `manualInspection` lets readiness tests withhold client requests, `disconnectBeforeTermination` models native Stop ordering, `configurationGate` delays the editor's configurationDone (and so the first stopped event), `refusalGate` delays each refused start's answer, `listeners` replaces the reader's notification handlers and `descriptorGate` delays the editor's request for the adapter of an accepted launch. @example harness().changes() */
 function harness(
   startGate?: Promise<void>,
   terminationGate?: Promise<void>,
@@ -74,6 +74,8 @@ function harness(
   listeners?: { changed?: () => void; failed?: (error: unknown) => void },
   /** The id of another debug session whose paused thread holds the Run and Debug focus, as while a live run or a learner's own session is paused and selected in Call Stack. */
   focusedForeignPauseSessionId?: string,
+  /** Holds an accepted launch before the editor asks the descriptor factory for its adapter, as a slow editor does. */
+  descriptorGate?: Promise<void>,
 ) {
   const terminated = new TestEmitter<vscode.DebugSession>(),
     stopped: string[] = [],
@@ -194,6 +196,10 @@ function harness(
           workspaceFolder: undefined,
           customRequest: async () => undefined,
           getDebugProtocolBreakpoint: async () => undefined,
+        }
+        if (descriptorGate) {
+          signalStarted()
+          await descriptorGate
         }
         await factory?.createDebugAdapterDescriptor(session, undefined)
         const configured = adapter
@@ -1711,6 +1717,61 @@ test('a healthy startup slower than the capture timeout is adopted when it compl
 
     // Assert
     assert.match(outcome, /Historical debugger closed/)
+    assert.equal(fixture.owner.available, true)
+    assert.equal(next, 'inspected')
+    assert.deepEqual(fixture.stopped, [])
+    assert.equal(fixture.startCalls(), 1)
+  } finally {
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
+})
+
+// Value: protects=replay after a startup in which the editor asked for the historical adapter only after the capture timeout; fails_when=the descriptor factory refuses its own expired launch as a detached owner's, so the late session never starts and replay fails until the learner reopens the recording; why_new=Cycle 0045 A-L3 (the adoption covered only a descriptor requested before the bound expired, and its comment promised both); seam=none
+test('a startup whose adapter the editor asks for only after the capture timeout is adopted when it completes, so the next stop presents without reopening the replay', async (context) => {
+  // Arrange: the editor accepted the launch and has not asked for its adapter when the capture timeout passes.
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  let requestAdapter = (): void => {}
+  const descriptorGate = new Promise<void>((resolve) => {
+    requestAdapter = resolve
+  })
+  const fixture = harness(
+    undefined,
+    undefined,
+    0,
+    false,
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    descriptorGate,
+  )
+  const showing = fixture.owner
+    .present(inspectedSnapshot, 'Recorded pause', new AbortController().signal)
+    .catch((error: unknown) => String(error))
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_CAPTURE_TIMEOUT_MS)
+    const outcome = await showing
+    const availableAfterTimeout = fixture.owner.available
+
+    // Act: the editor asks for the adapter and finishes the launch.
+    requestAdapter()
+    await flushNative()
+    const next = await fixture.owner.present(
+      inspectedSnapshot,
+      'Next recorded pause',
+      new AbortController().signal,
+    )
+
+    // Assert
+    assert.equal(
+      outcome,
+      'Error: Historical debugger closed. Reopen the learning replay to restore it.',
+    )
+    assert.equal(availableAfterTimeout, false)
     assert.equal(fixture.owner.available, true)
     assert.equal(next, 'inspected')
     assert.deepEqual(fixture.stopped, [])
