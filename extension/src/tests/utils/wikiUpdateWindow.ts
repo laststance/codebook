@@ -31,9 +31,12 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command, or one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
 export type HeldUpdateStep =
-  'freshness-inspection' | 'chat-open' | 'candidate-listing'
+  | 'freshness-inspection'
+  | 'chat-open'
+  | 'candidate-listing'
+  | 'publish-token-read'
 
 /**
  * Opens an editor window (the real extension with a stubbed `vscode`) on a project whose Wiki already exists, and records everything the learner would see of an update.
@@ -274,6 +277,7 @@ export async function openWikiUpdateWindow(options: {
         readWikiPublishToken: async (outputDirectory: string) => {
           if (options.publishTokenReadFails !== undefined)
             throw new Error(options.publishTokenReadFails)
+          await passHold('publish-token-read')
           return readWikiPublishToken(outputDirectory)
         },
       },

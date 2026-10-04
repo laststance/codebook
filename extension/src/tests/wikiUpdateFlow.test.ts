@@ -949,6 +949,46 @@ test('closing the window while the VS Code chat is still opening ends the update
   }
 })
 
+// Value: protects=what a window leaves beside the Wiki when it closes while the VS Code chat is still opening; fails_when=the closing window does not wait for the run it aborted there, so the run's end is recorded after the shutdown looked for a reservation, and its marker stays on disk for other windows to read; why_new=Cycle 0045 local review runtime-2 #4; seam=the read of the publish token at the run's end, which is kept open
+test('a window that closes while the VS Code chat is still opening waits until the run it stopped has ended, and leaves no marker beside the Wiki', async () => {
+  // Arrange: the chat command has not answered, and the read the run's end begins with is kept open.
+  const wiki = await openWikiWindow({ cancellable: [] })
+  try {
+    const chat = wiki.hold('chat-open')
+    const click = wiki.clickUpdate()
+    await chat.started
+    const endOfTheRun = wiki.hold('publish-token-read')
+
+    // Act: the window closes; the stopped run reaches its end and is held there for a moment.
+    let hasWindowClosed = false
+    const closing = wiki.closeWindow().then(() => {
+      hasWindowClosed = true
+    })
+    await endOfTheRun.started
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    const closedBeforeTheRunEnded = hasWindowClosed
+    endOfTheRun.release()
+    await closing
+    const stateWhenClosed = wiki.status().state
+    const markerWhenClosed = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    chat.release()
+    await click
+
+    // Assert
+    assert.equal(closedBeforeTheRunEnded, false)
+    assert.equal(stateWhenClosed, 'cancelled')
+    assert.equal(markerWhenClosed, 'gone')
+    assert.deepEqual(wiki.progressTitles, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test(
   'a Cursor agent that does not stop is not waited for longer than the termination grace when the window closes',
   { timeout: 5_000 },

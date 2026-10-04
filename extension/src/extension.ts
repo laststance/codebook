@@ -1173,43 +1173,49 @@ export function activate(
         uncoveredPaths: run.uncoveredAtStart,
       })
       if (!isCursorHost) {
-        // While the chat opens, the closing window finds this run and aborts it.
+        // While the chat opens, the closing window finds this run, aborts it and waits until its end was recorded and its marker removed.
+        let reportOpeningEnded = (): void => {}
         const opening = {
           controller: run.controller,
-          settled: Promise.resolve(),
+          settled: new Promise<void>((resolveSettled) => {
+            reportOpeningEnded = resolveSettled
+          }),
         }
         activeWikiRun = opening
-        let didChatOpen: boolean
         try {
-          // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
-          didChatOpen = await settledWithin(
-            Promise.race([
-              vscode.commands.executeCommand('workbench.action.chat.open', {
-                query,
-                isPartialQuery: false,
-              }),
-              once(run.controller.signal, 'abort'),
-            ]),
-            WIKI_CHAT_OPEN_TIMEOUT_MS,
-          )
-        } catch (error) {
-          await finishWikiUpdate(run, {
-            failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
-          })
-          return
+          let didChatOpen: boolean
+          try {
+            // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
+            didChatOpen = await settledWithin(
+              Promise.race([
+                vscode.commands.executeCommand('workbench.action.chat.open', {
+                  query,
+                  isPartialQuery: false,
+                }),
+                once(run.controller.signal, 'abort'),
+              ]),
+              WIKI_CHAT_OPEN_TIMEOUT_MS,
+            )
+          } catch (error) {
+            await finishWikiUpdate(run, {
+              failure: `The editor chat could not be opened (${thrownMessage(error)}). Install or enable GitHub Copilot Chat, then press Update LLM Wiki again.`,
+            })
+            return
+          }
+          if (!didChatOpen) {
+            await finishWikiUpdate(run, {
+              failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
+            })
+            return
+          }
+          // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
+          if (isExtensionStopping || run.controller.signal.aborted) {
+            await finishWikiUpdate(run, { cancelled: true })
+            return
+          }
         } finally {
           if (activeWikiRun === opening) activeWikiRun = undefined
-        }
-        if (!didChatOpen) {
-          await finishWikiUpdate(run, {
-            failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
-          })
-          return
-        }
-        // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
-        if (isExtensionStopping || run.controller.signal.aborted) {
-          await finishWikiUpdate(run, { cancelled: true })
-          return
+          reportOpeningEnded()
         }
         // The chat API reports no result, so the extension watches for the publish itself; the watch outlives this call.
         void track(watchVsCodeWikiUpdate(run))
