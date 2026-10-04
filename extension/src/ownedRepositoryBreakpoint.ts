@@ -143,7 +143,7 @@ export class OwnedRepositoryBreakpoint {
       count: number
       receipt?: RegistrationReceipt
       failure?: string
-      /** Where the adapter's latest `breakpoint` event put the acknowledged breakpoint when the owner refuses that place; while it is set the receipt does not stand. */
+      /** Where the adapter's latest `breakpoint` event put the acknowledged breakpoint when the owner refuses that place; while it is set the receipt does not stand. Also where a refused registration reply verified the breakpoint, beside `failure`. */
       refusedAt?: VerifiedPlace
     } & VerifiedRegistration
   >()
@@ -382,6 +382,7 @@ export class OwnedRepositoryBreakpoint {
             ? resolve(binding.source.path) === resolve(this.path)
             : null,
         })}`
+        registration.refusedAt = this.refusedReplyPlace(binding)
       } else {
         const { verifiedAt, ...moved } = this.verifiedPlaces(binding)
         registration.verifiedAt = verifiedAt
@@ -424,6 +425,32 @@ export class OwnedRepositoryBreakpoint {
       return
     }
     retirement.confirmed = true
+  }
+
+  /**
+   * Gives {@link onResponse} the place a refused registration reply verified the owned breakpoint at, so the owner can read it with {@link refusedPlace} instead of taking it from the refusal's text.
+   * @param binding - The owned breakpoint's entry of the refused reply; `undefined` when the reply held none.
+   * @returns The verified line and column when the reply names a place this owner does not accept ({@link acknowledgesPosition}); `undefined` for a reply without an entry, for one that is unverified or names no whole position, and for one refused for another reason at an accepted place.
+   * @example
+   * this.refusedReplyPlace({ verified: true, line: 26, column: 5 }) // => { line: 26, column: 5 } for an owner requested at 22:40 whose rule refuses line 26
+   */
+  private refusedReplyPlace(
+    binding: { verified: boolean; line?: number; column?: number } | undefined,
+  ): VerifiedPlace | undefined {
+    if (!binding || this.acknowledgesPosition(binding)) return undefined
+    return wholeVerifiedPosition(binding)
+  }
+
+  /**
+   * Reads where the adapter verified this breakpoint when its owner refuses that place, in the registration reply or in a later `breakpoint` event, so the owner can answer the refusal by requesting the breakpoint elsewhere; {@link ConfiguredBrowserRun} asks it when the registration of a stop it is arming was refused.
+   * Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter answered the registration.
+   * @returns The refused line and column, or `undefined` when the session has no registration, the registration stands, or it was refused for another reason than its place.
+   * @example
+   * owned.refusedPlace(session) // => { line: 26, column: 5 }
+   */
+  refusedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
+    return this.registrations.get(session.id)?.refusedAt
   }
 
   /**
