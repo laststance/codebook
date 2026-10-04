@@ -152,7 +152,7 @@ async function boundary(
               token: `token-${service.instanceId}`,
               instanceId: service.instanceId,
               workspace: directory,
-              apiVersion: '1.5',
+              apiVersion: '1.6',
             },
             close: async (): Promise<void> => {},
           }

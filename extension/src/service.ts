@@ -86,11 +86,19 @@ import {
 } from './schemas'
 import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
+import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
+import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
+import {
+  explanationPlace,
+  type ExplanationPlace,
+} from './utils/explanationPlace'
 import { fullLibraryMessage } from './utils/fullLibraryMessage'
 import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
 import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
+import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { namesLineNumber } from './utils/namesLineNumber'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
@@ -103,6 +111,8 @@ export interface Explanation {
   snapshotUri: string
   sourceHash: string
   capturedFacts: { path: string; value: ConfiguredFactValue }[]
+  /** Codebook's own place of the stop, present when the debugger bound it on another line than declared; taken from the snapshot and the declared stop, never from {@link Explanation.agentInterpretation}. */
+  boundPlace?: ExplanationPlace
   learningSummary?: LearningSummary
   agentInterpretation: string
   createdAt: string
@@ -150,6 +160,8 @@ interface StudyRecordState {
     { signature: string; result: Promise<{ explanationUri: string }> }
   >
   sourceReveals: Set<Promise<void>>
+  /** Per committed snapshot of a moved stop, how far {@link StudyService.explain}'s one check of the paused line has gone: `refused` after the one refusal, `explained` once an explanation was accepted, after which none is checked. */
+  placeGuards: Map<string, 'refused' | 'explained'>
   historyReceipt?: {
     revision: number
     signature: string
@@ -633,6 +645,7 @@ export class StudyService {
       explanations: new Map(),
       explanationKeys: new Map(),
       sourceReveals: new Set(),
+      placeGuards: new Map(),
       ...(intent.profile === NODE_TEST_PROFILE
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
@@ -963,6 +976,25 @@ export class StudyService {
         )
       return { path, value }
     })
+    // Codebook's own place of a moved stop is saved with every explanation of it, whatever the interpretation says.
+    const movedPlace = explanationPlace(
+        this.boundPlace(record, snapshot, false),
+      ),
+      placeGuard = record.placeGuards.get(snapshot.id)
+    // Only the first explanation of a moved stop is checked: a later one (the one after the result) is about something else.
+    const placeNamed =
+      movedPlace && placeGuard !== 'explained'
+        ? namesLineNumber(input.interpretation, movedPlace.boundLine)
+        : undefined
+    // The last check before the key is reserved, so the one refusal is never spent on a call that is invalid for another reason.
+    if (movedPlace && placeNamed === false && placeGuard !== 'refused') {
+      record.placeGuards.set(snapshot.id, 'refused')
+      throw new StudyError(
+        'INVALID_REFERENCE',
+        `This stop paused on line ${movedPlace.boundLine} of ${movedPlace.path}; you declared line ${movedPlace.declaredLine}. Name line ${movedPlace.boundLine} as the place of the pause in the interpretation and send codebook_explain again; the same key is free.`,
+      )
+    }
+    if (movedPlace) record.placeGuards.set(snapshot.id, 'explained')
     const explanation: Explanation = {
       id: randomUUID(),
       instanceId: this.instanceId,
@@ -970,6 +1002,7 @@ export class StudyService {
       snapshotUri: input.snapshotUri,
       sourceHash: input.sourceHash,
       capturedFacts,
+      ...(movedPlace && { boundPlace: movedPlace }),
       learningSummary,
       agentInterpretation: input.interpretation,
       createdAt: new Date(this.now()).toISOString(),
@@ -986,6 +1019,8 @@ export class StudyService {
         record.runtime!.evidence.record('agent.explanation-saved', {
           id: explanation.id,
           snapshotId: snapshot.id,
+          // Recorded for the first saved explanation of a moved stop only: whether its interpretation holds the paused line's number.
+          ...(placeNamed !== undefined && { placeNamed }),
         })
         await record.runtime!.evidence.flush()
         record.explanations.set(explanation.id, explanation)
@@ -1137,6 +1172,43 @@ export class StudyService {
       'INVALID_REFERENCE',
       'Snapshot is absent, uncommitted, or belongs to another run.',
     )
+  }
+
+  /**
+   * Gives the declared, requested and bound places of a committed snapshot's stop from the run itself, so every text and field about a moved stop has one source; called by {@link readResource} for the inspection resource, by {@link StudyService.state} for the run resource's observation entries and by {@link StudyService.explain} for its check and the place it saves.
+   * @param record - The run the snapshot belongs to.
+   * @param snapshot - A committed snapshot of that run.
+   * @param readsJournal - Whether the requested place and the time the binding became known are read from the run's journal ({@link journaledBindingOfSnapshot}); a caller that needs only the lines or the sentence passes `false`.
+   * @returns
+   * - The places, with `place` (the sentence) only for a stop the debugger bound on another line than declared
+   * - `undefined` when the run has no frozen definition or no stop is declared for the snapshot
+   * @example
+   * service.boundPlace(record, snapshot)?.place // => 'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); ...'
+   * service.boundPlace(record, snapshot)?.armed // => { line: 2, column: 1 } for a stop declared on an unmapped line 1
+   */
+  boundPlace(
+    record: StudyRecord,
+    snapshot: RuntimeSnapshot,
+    readsJournal = true,
+  ): BoundPlace | undefined {
+    const runtime = record.runtime?.view()
+    if (!record.definition || !runtime) return undefined
+    const declared = declaredStopOfSnapshot(
+      record.definition.configuration,
+      runtime.snapshots,
+      snapshot.id,
+    )
+    if (!declared) return undefined
+    return describeBoundPlace({
+      declared,
+      bound: { line: snapshot.source.line, column: snapshot.source.column },
+      ...(readsJournal &&
+        journaledBindingOfSnapshot(
+          runtime.events,
+          runtime.snapshots,
+          snapshot.id,
+        )),
+    })
   }
 
   /** Reserves a monotonic reader checkpoint before I/O so even same-material retries cannot accept an older completion. @example const revision = service.beginHistory(record, signature) */
@@ -1512,6 +1584,8 @@ export class StudyService {
           actionId: snapshot.actionId,
           participant: snapshot.participant,
           capturePhase: snapshot.capturePhase,
+          // Present only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
+          place: this.boundPlace(record, snapshot, false)?.place,
           snapshotUri: this.uri(
             record.id,
             `snapshots/${encodeURIComponent(snapshot.id)}`,

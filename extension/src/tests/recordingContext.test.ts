@@ -24,12 +24,21 @@ const png = Buffer.from(
   'base64',
 )
 
-/** Combines actual service/archive/recording I/O with a deterministic synthetic runtime clock; it is not native proof. @example const harness = await contextHarness() */
-async function contextHarness(io: RecordingIo = recordingDiskIo) {
+/**
+ * Combines actual service/archive/recording I/O with a deterministic synthetic runtime clock; it is not native proof.
+ * @param io - The recording store's file operations, replaced by a test that makes one of them fail.
+ * @param citationEndLine - Last line of the first citation of the article the run starts on. The default cites line 1 only; a test of a stop the debugger moves to line 2 passes 2, and the run then starts on a second revision of the article that cites both lines.
+ * @example const harness = await contextHarness()
+ */
+async function contextHarness(
+  io: RecordingIo = recordingDiskIo,
+  citationEndLine = 1,
+) {
   let clock = 0
   const harness = await createHarness({
-    create: async (directory) => {
-      const runtime = new ControlledRuntime(directory)
+    // The runtime takes the definition the service froze, which names the wider citation when one was published.
+    create: async (directory, definition) => {
+      const runtime = new ControlledRuntime(directory, definition)
       runtime.evidence.elapsedMs = () => clock
       return runtime
     },
@@ -41,10 +50,35 @@ async function contextHarness(io: RecordingIo = recordingDiskIo) {
     library = new LearningLibrary(directory, workspaceKey)
   service.environment.build.sourceHash = sha256('source-build')
   service.recordings = store
+  let configuration = harness.configuration
+  // A saved stop on a later line must lie inside its citation, so the article is published again with the wider one.
+  if (citationEndLine > 1) {
+    const article = await service.repository!.readDefinition('interface', 1),
+      document = article.revision.document
+    const widened = await service.publishBook({
+      instanceId: service.instanceId,
+      bookId: 'interface',
+      expectedRevision: 1,
+      key: 'wider-citation',
+      document: {
+        ...document,
+        nodes: document.nodes.map((node) => ({
+          ...node,
+          anchors: node.anchors.map((anchor, index) =>
+            index === 0 ? { ...anchor, endLine: citationEndLine } : anchor,
+          ),
+        })),
+      },
+    })
+    configuration = {
+      ...configuration,
+      book: { ...configuration.book, revision: widened.revision },
+    }
+  }
   const receipt = service.start({
       instanceId: service.instanceId,
       profile: 'repository-browser',
-      configuration: harness.configuration,
+      configuration,
       key: 'recorded',
     }),
     record = service.record(receipt)
@@ -82,6 +116,45 @@ async function contextHarness(io: RecordingIo = recordingDiskIo) {
       await service.saveRecordingContext(record, study, revision)
       return { study, revision }
     },
+  }
+}
+
+/**
+ * Puts the committed synthetic snapshot where a debugger bound its stop, with the native top frame at that place: a saved study keeps a position other than the declared one only when that frame confirms it.
+ * @param snapshot - The run's committed snapshot, declared at src/theme.ts 1:1.
+ * @param place - The line and column the debugger bound and paused at.
+ * @param binding - The run's receipt that its binding rule held, which a stop on another line carries.
+ * @example bindCommittedSnapshotAt(harness.runtime.snapshots[0]!, { line: 1, column: 7 })
+ */
+const bindCommittedSnapshotAt = (
+  snapshot: ControlledRuntime['snapshots'][number],
+  place: { line: number; column: number },
+  binding?: NonNullable<
+    ControlledRuntime['snapshots'][number]['source']['binding']
+  >,
+): void => {
+  snapshot.source = {
+    ...snapshot.source,
+    ...place,
+    ...(binding && { binding }),
+  }
+  snapshot.debugger = {
+    version: 1,
+    frames: [
+      {
+        name: 'toggleTheme',
+        ...place,
+        source: {
+          name: 'src/theme.ts',
+          text: snapshot.source.text,
+          hash: snapshot.source.hash,
+          line: place.line,
+        },
+        scopes: [],
+      },
+    ],
+    variables: [],
+    limitations: [],
   }
 }
 
@@ -520,9 +593,9 @@ test('an observation the debugger bound at another column reports the bound posi
   }
 })
 
-// Value: protects=an agent citing a saved observation at the position the debugger bound; fails_when=the saved learning resource lists only the line and hash, so the bound column and the declared position are lost after shutdown; why_new=Cycle 0036 C02e (only the live inspection resource reported them); seam=none
+// Value: protects=an agent citing a saved observation at the position the debugger bound; fails_when=the saved learning resource lists only the line and hash, so the bound column and the declared position are lost after shutdown, or copies one of the two places into the other; why_new=Cycle 0036 C02e (only the live inspection resource reported them), and Cycle 0045 X7-E3.3 (both places were expected at 1:1, so a copy passed); seam=none
 test('the saved learning resource lists each observation with its source line and column and the declared position as requestedSource', async () => {
-  // Arrange: one stop declared at 1:1 is captured and the study is saved.
+  // Arrange: one stop declared at 1:1 is captured where the debugger bound it, at 1:7, and the study is saved.
   const harness = await contextHarness(),
     { service, record } = harness
   try {
@@ -532,6 +605,10 @@ test('the saved learning resource lists each observation with its source line an
       ...harness.receipt,
       key: 'saved-position',
       action: 'repository-click',
+    })
+    bindCommittedSnapshotAt(harness.runtime.snapshots[0]!, {
+      line: 1,
+      column: 7,
     })
     harness.clock(200)
     await service.stop(harness.receipt)
@@ -555,12 +632,166 @@ test('the saved learning resource lists each observation with its source line an
       .observations[0]
     assert.equal(
       JSON.stringify(observation.source),
-      '{"hash":"f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771","line":1,"column":1}',
+      '{"hash":"f117f21caab18af046f2e57a64ff045dd846130ab2e86fbe6c9360cfcc275771","line":1,"column":7}',
     )
     assert.equal(
       JSON.stringify(observation.requestedSource),
       '{"line":1,"column":1}',
     )
+    assert.equal(
+      JSON.stringify(observation.declaredSource),
+      '{"line":1,"column":1}',
+    )
+    assert.equal('armed' in observation, false)
+    assert.equal('place' in observation, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a reader of a saved study learning which line a moved stop paused on from Codebook's own fields, whatever the agent wrote; fails_when=the saved learning resource gives a moved stop no sentence and its explanations no place, so a text that names the declared line stands alone; why_new=Cycle 0045 cause 1 (ER-5 and the decision on PC-1.8, PC-2.6, PC-3.3, PC-4.10, PC-5.7); seam=none
+test('the saved learning resource of a stop the debugger moved to the next line says which line it paused on and gives that place with each explanation', async () => {
+  // Arrange: the stop declared at src/theme.ts 1:1 is captured at 2:1 inside a citation over lines 1 to 2, explained twice and saved.
+  const harness = await contextHarness(recordingDiskIo, 2),
+    { service, record } = harness
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+    harness.clock(100)
+    service.action({
+      ...harness.receipt,
+      key: 'moved-line',
+      action: 'repository-click',
+    })
+    bindCommittedSnapshotAt(
+      harness.runtime.snapshots[0]!,
+      { line: 2, column: 1 },
+      { declaredLine: 1, boundLine: 2, mappedLinesBetween: 0 },
+    )
+    const observed = service.state(record).observations[0]!
+    await service.explain({
+      ...harness.receipt,
+      key: 'at-the-stop',
+      snapshotUri: observed.snapshotUri,
+      sourceHash: sha256('const nextTheme = "dark";\n'),
+      valuePaths: ['value:nextTheme'],
+      interpretation:
+        'The stop paused on line 2, where the next theme is dark.',
+    })
+    await service.explain({
+      ...harness.receipt,
+      key: 'after-the-result',
+      snapshotUri: observed.snapshotUri,
+      sourceHash: sha256('const nextTheme = "dark";\n'),
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'After the click the label reads Dark.',
+    })
+    harness.clock(200)
+    await service.stop(harness.receipt)
+    await harness.checkpoint()
+    const id = record.recording!.header.studyId,
+      metadata = await readResource(
+        service,
+        `codebook://${service.instanceId}/studies/${id}/recording`,
+      )
+    assert.ok('text' in metadata)
+
+    // Act
+    const learning = await readResource(
+      service,
+      JSON.parse(metadata.text).learningUri,
+    )
+
+    // Assert
+    assert.ok('text' in learning)
+    const observation = JSON.parse(JSON.parse(learning.text).content)
+      .observations[0]
+    assert.equal(
+      observation.place,
+      'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.',
+    )
+    assert.equal(
+      JSON.stringify(observation.declaredSource),
+      '{"line":1,"column":1}',
+    )
+    assert.equal(observation.source.line, 2)
+    assert.equal(observation.source.column, 1)
+    // The run requested this stop on its declared line, so the saved receipt names no requested line and the resource no armed place.
+    assert.equal('armed' in observation, false)
+    assert.equal(observation.interpretations.length, 2)
+    assert.equal(
+      observation.interpretations[0].text,
+      'The stop paused on line 2, where the next theme is dark.',
+    )
+    assert.equal(
+      JSON.stringify(observation.interpretations[0].boundPlace),
+      '{"path":"src/theme.ts","declaredLine":1,"boundLine":2,"boundColumn":1}',
+    )
+    assert.equal(
+      observation.interpretations[1].text,
+      'After the click the label reads Dark.',
+    )
+    assert.equal(
+      JSON.stringify(observation.interpretations[1].boundPlace),
+      '{"path":"src/theme.ts","declaredLine":1,"boundLine":2,"boundColumn":1}',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the saved learning resource naming where the breakpoint was requested as far as the saved receipt holds it; fails_when=a saved stop requested on the first mapped line after its declared line has no armed place, or one with a column the receipt never held; why_new=Cycle 0045 ER-8 as limited by PC-1.4 and PC-5.4 (the receipt keeps the requested line only, and only when it differs); seam=none
+test('the saved learning resource of a stop requested on another line than declared gives armed as that line only', async () => {
+  // Arrange: the stop declared at src/theme.ts 1:1 was requested on line 2, captured at 2:1, and the study is saved.
+  const harness = await contextHarness(recordingDiskIo, 2),
+    { service, record } = harness
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+    harness.clock(100)
+    service.action({
+      ...harness.receipt,
+      key: 'requested-on-next-line',
+      action: 'repository-click',
+    })
+    bindCommittedSnapshotAt(
+      harness.runtime.snapshots[0]!,
+      { line: 2, column: 1 },
+      {
+        declaredLine: 1,
+        requestedLine: 2,
+        boundLine: 2,
+        mappedLinesBetween: 0,
+      },
+    )
+    harness.clock(200)
+    await service.stop(harness.receipt)
+    await harness.checkpoint()
+    const id = record.recording!.header.studyId,
+      metadata = await readResource(
+        service,
+        `codebook://${service.instanceId}/studies/${id}/recording`,
+      )
+    assert.ok('text' in metadata)
+
+    // Act
+    const learning = await readResource(
+      service,
+      JSON.parse(metadata.text).learningUri,
+    )
+
+    // Assert
+    assert.ok('text' in learning)
+    const observation = JSON.parse(JSON.parse(learning.text).content)
+      .observations[0]
+    assert.equal(JSON.stringify(observation.armed), '{"line":2}')
+    assert.equal(
+      JSON.stringify(observation.declaredSource),
+      '{"line":1,"column":1}',
+    )
+    assert.equal(
+      JSON.stringify(observation.requestedSource),
+      '{"line":1,"column":1}',
+    )
+    assert.equal(observation.source.line, 2)
   } finally {
     await harness.close()
   }

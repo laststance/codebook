@@ -4,7 +4,9 @@ import { LearningLibrary } from '../learningLibrary'
 import type { ResourceContent } from '../resources'
 import type { StudyService } from '../service'
 
-import { configuredStops } from './configuredStops'
+import { declaredStopOfSnapshot } from './declaredStopOfSnapshot'
+import { describeBoundPlace } from './describeBoundPlace'
+import { explanationPlace } from './explanationPlace'
 import { readJsonPage } from './readJsonPage'
 
 /** Resolves only current-instance canonical library/recording resources, using bounded pages and pinned context hashes. @example await readRecordingResource(service, recordingUri) */
@@ -103,7 +105,6 @@ export async function readRecordingResource(
       const [, contextHash, selection, ...page] = suffix.split('/')
       const { context } = await store.readContext(studyId, contextHash)
       if (!selection) return json(context)
-      const declaredStops = configuredStops(context.study.configuration)
       return readJsonPage(
         `${base}/context/${contextHash}/learning`,
         {
@@ -117,29 +118,58 @@ export async function readRecordingResource(
             'learningSummary' in context.study
               ? context.study.learningSummary
               : undefined,
-          observations: context.study.observations.map(
-            (observation, index) => ({
+          observations: context.study.observations.map((observation) => {
+            // Saved observations follow the declared stop order, so an observation's index names the stop it answers.
+            const declared = declaredStopOfSnapshot(
+                context.study.configuration,
+                context.study.observations,
+                observation.id,
+              ),
+              requestedLine = observation.source.binding?.requestedLine
+            const boundPlace =
+                declared &&
+                describeBoundPlace({
+                  declared,
+                  bound: observation.source,
+                  // The saved receipt keeps the requested line only, and only when it differs from the declared line.
+                  ...(requestedLine !== undefined && {
+                    armed: { line: requestedLine },
+                  }),
+                }),
+              declaredPlace = boundPlace && {
+                line: boundPlace.declaredLine,
+                column: boundPlace.declaredColumn,
+              },
+              // Codebook's own place of a moved stop stands beside each of its explanations, whatever their text says.
+              movedPlace = explanationPlace(boundPlace)
+            return {
               id: observation.id,
               elapsedMs: observation.elapsedMs,
+              // Only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
+              place: boundPlace?.place,
               // The position the debugger bound and paused at, as the live inspection resource reports it; cite this one.
               source: {
                 hash: observation.source.hash,
                 line: observation.source.line,
                 column: observation.source.column,
               },
-              // Saved observations follow the declared stop order, so an observation's index names the stop it answers.
-              requestedSource: declaredStops[index] && {
-                line: declaredStops[index].source.line,
-                column: declaredStops[index].source.column,
-              },
+              // requestedSource keeps its meaning (the declared position); declaredSource says it under its own name.
+              requestedSource: declaredPlace,
+              declaredSource: declaredPlace,
+              armed: boundPlace?.armed,
               values: observation.values,
               unavailableValues:
                 'unavailableValues' in observation
                   ? observation.unavailableValues
                   : undefined,
-              interpretations: observation.interpretations,
-            }),
-          ),
+              interpretations: movedPlace
+                ? observation.interpretations.map((interpretation) => ({
+                    ...interpretation,
+                    boundPlace: movedPlace,
+                  }))
+                : observation.interpretations,
+            }
+          }),
           interpretationAvailability: context.interpretationAvailability,
           pausedIntervals: context.pausedIntervals,
         },

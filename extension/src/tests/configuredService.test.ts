@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -1131,6 +1131,402 @@ test('an observation committed on the line the debugger moved its stop to report
   assert.equal(facts.source.column, 1)
 })
 
+/**
+ * Starts a run on the fixture, sends its click and commits its one stop, declared at src/theme.ts 1:1, at 2:1, as a run does when the debugger binds the breakpoint on the next line.
+ * @param context - The test that owns the harness.
+ * @param key - The start key of the run.
+ * @returns The harness's service and runtime with the run's receipt, its record and the moved stop's snapshot URI and source hash.
+ * @example const { service, receipt, snapshotUri, sourceHash } = await runWithStopMovedToNextLine(context, 'moved')
+ */
+const runWithStopMovedToNextLine = async (
+  context: TestContext,
+  key: string,
+) => {
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key,
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    stop = runtime.snapshots[0]!
+  stop.source = { ...stop.source, line: 2, column: 1 }
+  return {
+    service,
+    runtime,
+    receipt,
+    record,
+    snapshotUri: service.state(record).observations[0]!.snapshotUri,
+    sourceHash: configuration.source.hash,
+  }
+}
+
+/** The `agent.explanation-saved` entries of a run's journal, in the order they were written. @example savedExplanationEntries(runtime)[0] // { id, snapshotId, placeNamed: true } */
+const savedExplanationEntries = (runtime: {
+  evidence: { events: { type: string; detail: unknown }[] }
+}) =>
+  runtime.evidence.events
+    .filter((event) => event.type === 'agent.explanation-saved')
+    .map((event) => JSON.parse(JSON.stringify(event.detail)))
+
+// Value: protects=an agent that reads a moved stop's inspection directly before it explains the stop learning which line the stop paused on; fails_when=the inspection gives the two places as fields only (source.line beside requestedSource), which both chat runs of the baseline round read and still gave the learner the declared line; why_new=Cycle 0045 cause 1 (ER-5); seam=none
+test('the inspection of a stop the debugger moved to the next line says which line it paused on, which line was declared, and to name the paused line', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, record } = await runWithStopMovedToNextLine(
+    context,
+    'moved-place',
+  )
+  const observation = service.state(record).observations[0]!
+
+  // Act
+  const inspection = await readResource(service, observation.inspectionUri)
+
+  // Assert
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.equal(
+    facts.place,
+    'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.',
+  )
+  assert.equal(JSON.stringify(facts.declaredSource), '{"line":1,"column":1}')
+  assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
+  assert.equal(facts.source.line, 2)
+  assert.equal('armed' in facts, false)
+})
+
+// Value: protects=the run resource, which an agent polls, naming the paused line of a moved stop as well; fails_when=only the inspection carries the sentence, so an agent that explains from the run resource's observation list never meets it; why_new=Cycle 0045 cause 1 (ER-5); seam=none
+test('the run resource lists the observation of a moved stop with the sentence that names the line it paused on', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, receipt } = await runWithStopMovedToNextLine(
+    context,
+    'moved-place-run-resource',
+  )
+
+  // Act
+  const resource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  assert.equal(
+    JSON.parse(resource.text).observations[0].place,
+    'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.',
+  )
+})
+
+// A guard, green before Cycle 0045 as well (PC-3.11): the sentence must not appear where nothing moved to another line.
+test('an observation that paused on its declared line carries no place sentence', async (context) => {
+  // Arrange: one stop is committed where it was declared (1:1), a second one at another column of its declared line (1:7 to 1:9).
+  const { service, configuration, runtimes } =
+    await configuredServiceHarness(context)
+  const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unmoved-place',
+      configuration: {
+        ...configuration,
+        additionalStops: [
+          {
+            line: 1,
+            column: 7,
+            inspections: [{ path: 'nextTheme', mode: 'value', required: true }],
+          },
+        ],
+      },
+    }),
+    record = service.record(receipt)
+  await record.preparation
+  service.action({ ...receipt, action: 'repository-click', key: 'one' })
+  const runtime = runtimes[0]!,
+    firstStop = runtime.snapshots[0]!
+  runtime.snapshots.push({
+    ...firstStop,
+    id: 'browser-session:2',
+    pause: { ...firstStop.pause, generation: 2 },
+    source: { ...firstStop.source, column: 9 },
+  })
+  const observations = service.state(record).observations
+
+  // Act
+  const onDeclaredPosition = await readResource(
+      service,
+      observations[0]!.inspectionUri,
+    ),
+    atAnotherColumn = await readResource(
+      service,
+      observations[1]!.inspectionUri,
+    ),
+    runResource = await readResource(service, receipt.runUri)
+
+  // Assert
+  assert.ok('text' in onDeclaredPosition)
+  assert.ok('text' in atAnotherColumn)
+  assert.ok('text' in runResource)
+  assert.equal(
+    'place' in JSON.parse(JSON.parse(onDeclaredPosition.text).content),
+    false,
+  )
+  assert.equal(
+    'place' in JSON.parse(JSON.parse(atAnotherColumn.text).content),
+    false,
+  )
+  const listed = JSON.parse(runResource.text).observations
+  assert.equal(listed.length, 2)
+  assert.equal('place' in listed[0], false)
+  assert.equal('place' in listed[1], false)
+})
+
+// Value: protects=the first saved interpretation of a moved stop naming the line the stop paused on, which part 5 of the validation contract judges; fails_when=an interpretation without the paused line's number is saved at once, as in both chat runs of the baseline round, or the refusal takes the key; why_new=Cycle 0045 cause 1 (ER-5); seam=none
+test('an explanation of a moved stop that names no line is refused with the line it paused on and saved under the same key once it names it', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain')
+  const explanation = {
+    ...receipt,
+    key: 'explain-moved-stop',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+  }
+
+  // Act
+  const refused = (): Promise<{ explanationUri: string }> =>
+    service.explain({
+      ...explanation,
+      interpretation: 'The next theme is dark at this stop.',
+    })
+  assert.throws(refused, {
+    code: 'INVALID_REFERENCE',
+    message:
+      'This stop paused on line 2 of src/theme.ts; you declared line 1. Name line 2 as the place of the pause in the interpretation and send codebook_explain again; the same key is free.',
+  })
+  const saved = await service.explain({
+    ...explanation,
+    interpretation: 'The stop paused on line 2, where the next theme is dark.',
+  })
+  const resource = await readResource(service, saved.explanationUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const savedExplanation = JSON.parse(resource.text)
+  assert.equal(
+    savedExplanation.agentInterpretation,
+    'The stop paused on line 2, where the next theme is dark.',
+  )
+  assert.equal(
+    JSON.stringify(savedExplanation.boundPlace),
+    '{"path":"src/theme.ts","declaredLine":1,"boundLine":2,"boundColumn":1}',
+  )
+  const entries = savedExplanationEntries(runtime)
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].placeNamed, true)
+})
+
+// Value: protects=the check costing an agent at most one extra call; fails_when=a second interpretation without the line's number is refused again, so an agent that cannot produce the numeral never saves the stop; why_new=Cycle 0045 cause 1 (the decision on PC-1.8, PC-2.6, PC-3.3, PC-4.10, PC-5.7); seam=none
+test('after one refusal the next explanation of that moved stop is saved although it names no line, and the journal records that the line was not named', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain-twice')
+  const explanation = {
+    ...receipt,
+    key: 'explain-moved-stop',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The next theme is dark at this stop.',
+  }
+  assert.throws(() => service.explain(explanation), {
+    code: 'INVALID_REFERENCE',
+  })
+
+  // Act
+  const saved = await service.explain(explanation)
+  const resource = await readResource(service, saved.explanationUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  const savedExplanation = JSON.parse(resource.text)
+  assert.equal(
+    savedExplanation.agentInterpretation,
+    'The next theme is dark at this stop.',
+  )
+  assert.equal(
+    JSON.stringify(savedExplanation.boundPlace),
+    '{"path":"src/theme.ts","declaredLine":1,"boundLine":2,"boundColumn":1}',
+  )
+  const entries = savedExplanationEntries(runtime)
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].placeNamed, false)
+})
+
+// The documented limit of the guard (PC-1.8): it reads a number in prose and is no proof of the place. The place a learner reads is the structured boundPlace.
+test('an interpretation that gives the declared line as the place and holds the paused line’s number as a value is saved at once', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain-limit')
+
+  // Act
+  const saved = await service.explain({
+    ...receipt,
+    key: 'explain-with-wrong-place',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The stop paused on line 1 with the value 2.',
+  })
+  const resource = await readResource(service, saved.explanationUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  assert.equal(
+    JSON.stringify(JSON.parse(resource.text).boundPlace),
+    '{"path":"src/theme.ts","declaredLine":1,"boundLine":2,"boundColumn":1}',
+  )
+  assert.equal(savedExplanationEntries(runtime)[0].placeNamed, true)
+})
+
+// The other side of the same limit: a numeral the check cannot read costs one refusal and is then saved.
+test('an interpretation that names the paused line only in words is refused once and then saved', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain-words')
+  const explanation = {
+    ...receipt,
+    key: 'explain-in-words',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The stop paused on line two, where the theme is dark.',
+  }
+
+  // Act
+  const firstCall = (): Promise<{ explanationUri: string }> =>
+    service.explain(explanation)
+  assert.throws(firstCall, {
+    code: 'INVALID_REFERENCE',
+    message:
+      'This stop paused on line 2 of src/theme.ts; you declared line 1. Name line 2 as the place of the pause in the interpretation and send codebook_explain again; the same key is free.',
+  })
+  const saved = await service.explain(explanation)
+
+  // Assert
+  assert.match(saved.explanationUri, /\/explanations\/[0-9a-f-]{36}$/)
+  assert.equal(savedExplanationEntries(runtime)[0].placeNamed, false)
+})
+
+// Value: protects=the explanation the shipped skill asks for after the result, which is about the result and need not name the line again; fails_when=every explanation of a moved stop is checked, so that later one is refused; why_new=Cycle 0045 cause 1 (PC-2.6); seam=none
+test('a second explanation of a moved stop that names no line is saved once a first one exists', async (context) => {
+  // Arrange: the first explanation of the stop committed at 2:1 names line 2 and is saved.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain-later')
+  await service.explain({
+    ...receipt,
+    key: 'explain-at-the-stop',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'The stop paused on line 2, where the next theme is dark.',
+  })
+
+  // Act
+  const later = await service.explain({
+    ...receipt,
+    key: 'explain-after-the-result',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: 'After the click the label reads Dark.',
+  })
+  const resource = await readResource(service, later.explanationUri)
+
+  // Assert
+  assert.ok('text' in resource)
+  assert.equal(
+    JSON.stringify(JSON.parse(resource.text).boundPlace),
+    '{"path":"src/theme.ts","declaredLine":1,"boundLine":2,"boundColumn":1}',
+  )
+  const entries = savedExplanationEntries(runtime)
+  assert.equal(entries.length, 2)
+  assert.equal(entries[0].placeNamed, true)
+  assert.equal('placeNamed' in entries[1], false)
+})
+
+// Value: protects=the check reading the paused line's number as a number of its own; fails_when=digits inside a longer number (12 or 20 for line 2) count as naming the line; why_new=Cycle 0045 cause 1 (ER-5: "not inside a longer number"); seam=none
+test('an interpretation that holds the paused line’s number only inside a longer number is refused', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain-longer-number')
+
+  // Act
+  const explained = (): Promise<{ explanationUri: string }> =>
+    service.explain({
+      ...receipt,
+      key: 'explain-with-longer-numbers',
+      snapshotUri,
+      sourceHash,
+      valuePaths: ['value:nextTheme'],
+      interpretation: 'The value 12 arrives after 20 ms and the theme is dark.',
+    })
+
+  // Assert
+  assert.throws(explained, {
+    code: 'INVALID_REFERENCE',
+    message:
+      'This stop paused on line 2 of src/theme.ts; you declared line 1. Name line 2 as the place of the pause in the interpretation and send codebook_explain again; the same key is free.',
+  })
+  assert.equal(savedExplanationEntries(runtime).length, 0)
+})
+
+// Value: protects=an agent that answers in Japanese with full-width digits; fails_when=the check compares raw characters, so "２" is not read as 2 and the explanation is refused; why_new=Cycle 0045 cause 1 (ER-5: compared after NFKC normalisation); seam=none
+test('an interpretation that names the paused line in full-width digits is saved at once', async (context) => {
+  // Arrange: the stop is declared at src/theme.ts 1:1 and the run committed it at 2:1.
+  const { service, runtime, receipt, snapshotUri, sourceHash } =
+    await runWithStopMovedToNextLine(context, 'moved-explain-full-width')
+
+  // Act
+  const saved = await service.explain({
+    ...receipt,
+    key: 'explain-in-full-width-digits',
+    snapshotUri,
+    sourceHash,
+    valuePaths: ['value:nextTheme'],
+    interpretation: '２行目で停止しました。次のテーマは dark です。',
+  })
+
+  // Assert
+  assert.match(saved.explanationUri, /\/explanations\/[0-9a-f-]{36}$/)
+  assert.equal(savedExplanationEntries(runtime)[0].placeNamed, true)
+})
+
+// Value: protects=the help an agent reads before its first start naming the fields of the three places, the place sentence and the check, with the API and extension versions the constants hold; fails_when=the help still describes requestedSource only, or its entry repeats version numbers typed beside the constants; why_new=Cycle 0045 ER-8, ER-5 (4) and DX-19 (first clause); seam=none
+test('configured help names the declared, the requested and the bound place, says that a moved stop’s inspection carries place and that its first interpretation must name the paused line, and takes its versions from the constants', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+
+  // Assert
+  assert.ok('text' in help)
+  const contract = z
+    .object({ entry: z.string(), sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    contract.entry,
+    'API 1.6, extension 0.2.0 or later. Read actual workspace source and publish an immutable source-only article first. Use its default repository/<bookId>/<nodeId> identity, exact revision, selected citation, path/hash and one-based source line/column. Leave learningItemId absent to preserve the article identity.',
+  )
+  assert.equal(
+    (contract.sequence[2] ?? '').includes(
+      " declaredSource is the position you declared (requestedSource is its older name), armed the place Codebook requested the breakpoint at when that differs, source where it bound and paused: cite source. A saved study's learning resource gives armed as {line} only, and only when the requested line differs from the declared line; a request moved to another column of the declared line is in the live inspection and the journal only. When the debugger bound a stop on another line than you declared, its inspection carries place, one sentence that names the line the stop paused on: name that line as the place of the pause in the interpretation, in the learning summary and in your answer to the learner. codebook_explain refuses the first interpretation of such a stop when it does not contain the paused line's number; send it again under the same key with the line named. ",
+    ),
+    true,
+  )
+})
+
 // Value: protects=an editor chat that reads an observation's inspectionUri, its pages or its imageUri with the standard MCP resources/read; fails_when=those URIs answer "Resource … not found" and are readable only through codebook_read_resource; why_new=resource tests read these URIs through the service, never through MCP templates (Cycle 0044 rows N-5, N-13); seam=the synthetic runtime's snapshot capture
 test('MCP resources/read returns an observation’s inspection, its pages and its snapshot image', async (context) => {
   // Arrange
@@ -1212,6 +1608,34 @@ test('MCP resources/read returns an observation’s inspection, its pages and it
       mimeType: 'image/png',
       blob: Buffer.from('snapshot png fixture').toString('base64'),
     },
+  )
+})
+
+// Value: protects=an MCP client that lists resource templates reading what an inspection holds since API 1.6; fails_when=the template still describes the bound position beside requestedSource only; why_new=Cycle 0045 ER-8 (protocol.ts:418); seam=none
+test('the inspection resource template says that an inspection names the declared place, the requested place when it differs and the place sentence of a moved stop', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context),
+    endpoint = await startServer(service)
+  context.after(() => endpoint.close())
+  const client = new Client({ name: 'mcp-templates-test', version: '1.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(endpoint.descriptor.url), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${endpoint.descriptor.token}` },
+      },
+    }),
+  )
+  context.after(() => client.close())
+
+  // Act
+  const templates = await client.listResourceTemplates()
+
+  // Assert
+  assert.equal(
+    templates.resourceTemplates.find(
+      (template) => template.name === 'inspection',
+    )?.description,
+    "An observation's inspectionUri: the bound source position beside declaredSource (requestedSource is its older name), armed when the breakpoint was requested elsewhere, place for a stop bound on another line than declared, and the captured values, as a bounded JSON page with nextUri.",
   )
 })
 
@@ -1308,7 +1732,7 @@ test('a reveal whose pause the learner resumes in the debugger meanwhile answers
   })
 })
 
-test('API 1.5 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
+test('API 1.6 discovery exposes the bounded configured profile and its executable configuration schema without starting input', async (context) => {
   // Arrange
   const { service, runtimes } = await configuredServiceHarness(context)
   // Act
@@ -1318,7 +1742,7 @@ test('API 1.5 discovery exposes the bounded configured profile and its executabl
     ),
     help = await readResource(service, 'codebook://help/repository-browser')
   // Assert
-  assert.equal(status.apiVersion, '1.5')
+  assert.equal(status.apiVersion, '1.6')
   assert.ok(profile && 'requiresConfiguration' in profile)
   assert.equal(profile.requiresConfiguration, true)
   assert.equal(profile.minimumExtensionVersion, '0.2.0')
