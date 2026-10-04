@@ -191,12 +191,10 @@ export class OwnedRepositoryBreakpoint {
       return
     }
     if (session.id !== retirement.sessionId) return
-    // Without the owned id, a same-position learner breakpoint is indistinguishable from the owned one, and it cannot be disabled for this run.
+    // Without the owned id, a same-position learner breakpoint is indistinguishable from the owned one, and it cannot be disabled for this run. A breakpoint the adapter never acknowledged has no verified place either, so only the requested position is compared.
     if (
       retirement.ownedBreakpointId === undefined &&
-      parsed.data.breakpoints.some((position) =>
-        this.isOwnedPosition(position, retirement.verifiedAt),
-      )
+      parsed.data.breakpoints.some((position) => this.isOwnedPosition(position))
     ) {
       retirement.failure =
         'A breakpoint still targets the selected position; owned removal cannot retire learner breakpoints.'
@@ -269,10 +267,18 @@ export class OwnedRepositoryBreakpoint {
       : { verifiedAt, movedTo: verifiedAt }
   }
 
-  /** Tells whether a breakpoint position of a request or reply may be the owned one: the requested position, or the place the adapter verified it at; a position without a column matches any column of that line. @example this.isOwnedPosition({ line: 35 }, { line: 35, column: 5 }) // true */
+  /**
+   * Tells whether a breakpoint position of a request or reply may be the owned one, for the two retirement checks: {@link onRequest}, when the adapter never acknowledged the owned breakpoint, and {@link onResponse}, when its reply does not identify every breakpoint.
+   * @param position - One breakpoint of the editor's replacement request or of the adapter's reply; a position without a column matches any column of its line.
+   * @param verifiedAt - Where the adapter verified the owned breakpoint, which also counts as its place; left out by {@link onRequest}, whose owner was never acknowledged and so was verified nowhere.
+   * @returns `true` for the requested position and for the verified place.
+   * @example
+   * this.isOwnedPosition({ line: 20, column: 5 }) // true for an owner requested at 20:5
+   * this.isOwnedPosition({ line: 35 }, { line: 35, column: 5 }) // true
+   */
   private isOwnedPosition(
     position: { line?: number; column?: number },
-    verifiedAt: VerifiedPlace | undefined,
+    verifiedAt?: VerifiedPlace,
   ): boolean {
     return [{ line: this.line, column: this.column }, verifiedAt].some(
       (place) =>

@@ -529,6 +529,32 @@ test('a retirement reply that still lists the owned breakpoint id does not count
   assert.equal(breakpoint.retired, false)
 })
 
+// Cycle 0045 (A-L2): the request half of the retirement check had no test; it compares the requested position only, because an owner the adapter never acknowledged was verified nowhere.
+test('retiring an owned breakpoint the adapter never acknowledged fails at once when the replacement request still names the declared position', async () => {
+  // Arrange: the adapter never answered the registration, so the owned breakpoint has no adapter id.
+  const { breakpoint, session, request, signal } = await breakpointHarness()
+  breakpoint.onRequest(session, request())
+
+  // Act: the editor's replacement after the removal still holds a breakpoint on 20:5 (a learner's), and the adapter's reply lists it.
+  const retiring = breakpoint.retire(session, signal)
+  breakpoint.onRequest(session, request(2, [{ line: 20, column: 5 }]))
+  breakpoint.onResponse(session, {
+    seq: 102,
+    type: 'response',
+    command: 'setBreakpoints',
+    request_seq: 2,
+    success: true,
+    body: { breakpoints: [{ verified: true, line: 20, column: 5 }] },
+  })
+
+  // Assert: the request decided it, before the adapter's reply was read.
+  await assert.rejects(retiring, {
+    message:
+      'A breakpoint still targets the selected position; owned removal cannot retire learner breakpoints.',
+  })
+  assert.equal(breakpoint.retired, false)
+})
+
 test('without breakpoint ids in the adapter reply, a breakpoint left on the owned position still blocks retirement', async () => {
   // Arrange
   const { breakpoint, session, request, response, signal } =
