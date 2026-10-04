@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
+  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -1288,6 +1289,98 @@ test('a VS Code watch that was stopped before the chat staged anything still ref
     assert.equal(wiki.chatRequests.length, 2)
   } finally {
     await wiki.close()
+  }
+})
+
+test('a second window’s Update is refused while the first window’s stopped watch is still inside its bound', async () => {
+  // Arrange: the first window stops watching before its chat staged anything, so no run and no candidate show the chat's work.
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  const wiki = await openWikiWindow({ cancellable: progress })
+  const secondWindow = await openWikiUpdateWindow({
+    projectRoot: wiki.projectRoot,
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+  })
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+
+    // Act: the second window's press is refused; its next press takes the override.
+    await secondWindow.clickUpdate()
+    const refused = secondWindow.status()
+    const requestsAfterRefusal = secondWindow.chatRequests.length
+    isOverrideChosen = true
+    await secondWindow.clickUpdate()
+    const deadline = Date.now() + 2_000
+    while (secondWindow.status().state !== 'running' && Date.now() < deadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+
+    // Assert
+    assert.equal(refused.state, 'failed')
+    assert.match(
+      refused.state === 'failed' ? refused.reason : '',
+      /^The VS Code chat another editor window asked at \d{1,2}:\d{2}[^;]* may still be updating this Wiki; that window stopped watching it at \d{1,2}:\d{2}[^.]* and Codebook waits for it until \d{1,2}:\d{2}[^.]*\. If that chat was stopped, choose Update anyway in the editor’s notification\.$/,
+    )
+    assert.equal(requestsAfterRefusal, 0)
+    assert.deepEqual(secondWindow.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.equal(secondWindow.status().state, 'running')
+    assert.equal(secondWindow.chatRequests.length, 1)
+  } finally {
+    await secondWindow.close()
+    await wiki.close()
+  }
+})
+
+test('a stopped watch’s reservation leaves the disk when its window closes, and not the marker of a window that took the update over', async () => {
+  // Arrange: two windows stop their watches; in the second case another window takes the update over with Update anyway.
+  const progress: CancellableProgress[] = []
+  const closedAlone = await openWikiWindow({ cancellable: progress })
+  const takenOver = await openWikiWindow({ cancellable: progress })
+  const takingOver = await openWikiUpdateWindow({
+    projectRoot: takenOver.projectRoot,
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Update anyway'),
+  })
+  const markerOf = (window: { outputDirectory: string }): string =>
+    `${window.outputDirectory}.update-run.json`
+  const isOnDisk = (path: string): Promise<boolean> =>
+    access(path).then(
+      () => true,
+      () => false,
+    )
+  try {
+    await closedAlone.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(closedAlone.status)
+    await takenOver.clickUpdate()
+    progress[1]!.cancel()
+    await waitForEnd(takenOver.status)
+    await takingOver.clickUpdate()
+    const deadline = Date.now() + 2_000
+    while (takingOver.status().state !== 'running' && Date.now() < deadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+    const wasReservedWhileOpen = await isOnDisk(markerOf(closedAlone))
+
+    // Act
+    await closedAlone.closeWindow()
+    await takenOver.closeWindow()
+
+    // Assert
+    assert.equal(wasReservedWhileOpen, true)
+    assert.equal(await isOnDisk(markerOf(closedAlone)), false)
+    assert.equal(takingOver.status().state, 'running')
+    assert.equal(await isOnDisk(markerOf(takenOver)), true)
+  } finally {
+    await takingOver.close()
+    await rm(closedAlone.projectRoot, { recursive: true, force: true })
+    await rm(takenOver.projectRoot, { recursive: true, force: true })
   }
 })
 

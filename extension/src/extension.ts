@@ -169,6 +169,17 @@ export function activate(
   ).data
   // This window's id in the marker of a running update; another window's live marker refuses a start here.
   const wikiWindowId = randomUUID()
+  // The reservation this window's stopped VS Code watch left on disk for other windows, with the timer that removes it at the watch bound.
+  let wikiReservation:
+    { release: () => Promise<void>; timer: NodeJS.Timeout } | undefined
+  /** Removes this window's reservation from the disk: at the watch bound and when the window closes, where the chat it stood for is gone. A marker another window wrote since is left alone. @example await dropWikiReservation() */
+  const dropWikiReservation = async (): Promise<void> => {
+    const reservation = wikiReservation
+    wikiReservation = undefined
+    if (!reservation) return
+    clearTimeout(reservation.timer)
+    await reservation.release().catch(() => undefined)
+  }
   /** The button of a refusal that names an earlier chat's leftover: it starts the update with that leftover ignored. */
   const UPDATE_ANYWAY_ACTION = 'Update anyway'
   // A window that is closing has nobody to notify of the run its shutdown stops, and starts no run.
@@ -188,6 +199,8 @@ export function activate(
     isOutputOutsideProject: boolean
     /** Removes this run's marker beside the Wiki, so another window may start. */
     releaseMarker: () => Promise<void>
+    /** Leaves the marker as the reservation of a watch that was stopped while its chat may still work, for other windows to read. */
+    reserveMarker: (watchEndedAtMs: number) => Promise<void>
     startedAtMs: number
     /** The bound the run announces on the page and in its request, and the one it is stopped at. */
     timeoutMs: number
@@ -619,7 +632,11 @@ export function activate(
             WIKI_CURSOR_TERMINATION_GRACE_MS,
           )
       } finally {
-        await deepWikiReader?.close()
+        try {
+          await dropWikiReservation()
+        } finally {
+          await deepWikiReader?.close()
+        }
       }
     }
   }
@@ -744,15 +761,26 @@ export function activate(
       failure: observed.failure,
     })
     wikiUpdateRun.end(end)
-    await run.releaseMarker().catch(() => undefined)
+    const endedAtMs = Date.now()
+    // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
+    const mayAgentStillWork =
+      run.host === 'vscode' &&
+      (end.state === 'cancelled' || end.state === 'timed-out')
+    if (mayAgentStillWork) {
+      // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
+      await run.reserveMarker(endedAtMs).catch(() => undefined)
+      wikiReservation = {
+        release: run.releaseMarker,
+        timer: setTimeout(() => {
+          void dropWikiReservation()
+        }, WIKI_UPDATE_WATCH_TIMEOUT_MS).unref(),
+      }
+    } else await run.releaseMarker().catch(() => undefined)
     lastWikiRun = {
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
-      endedAtMs: Date.now(),
-      // Stopping a VS Code watch does not stop the chat; a Cursor agent is stopped with its run.
-      mayAgentStillWork:
-        run.host === 'vscode' &&
-        (end.state === 'cancelled' || end.state === 'timed-out'),
+      endedAtMs,
+      mayAgentStillWork,
     }
     void context.workspaceState.update(
       WIKI_UPDATE_LAST_RUN_STATE_KEY,
@@ -888,6 +916,7 @@ export function activate(
     | 'publicationAtStart'
     | 'uncoveredAtStart'
     | 'releaseMarker'
+    | 'reserveMarker'
     | 'startedAtMs'
   > & {
     /** Whether the opened folder is inside a Git repository; the request names only the conditions that can hold in it. */
@@ -985,7 +1014,21 @@ export function activate(
         outputDirectory,
         wikiWindowId,
       )
-      if (otherWindow) return refuse(describeOtherWindow(otherWindow))
+      if (otherWindow) {
+        const { watchEndedAtMs } = otherWindow
+        // A run that is active in another window refuses the start, and nothing overrides it.
+        if (watchEndedAtMs === undefined)
+          return refuse(describeOtherWindow(otherWindow))
+        // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on.
+        if (
+          !isLeftoverIgnored &&
+          Date.now() < watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+        )
+          return refuse(
+            `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+            updateAnyway,
+          )
+      }
       if (!isLeftoverIgnored) {
         const nowMs = Date.now()
         // The record of another output says nothing about this one's candidates.
@@ -1029,12 +1072,16 @@ export function activate(
       })
       // Another window began its run between the look at the marker and this write.
       if ('heldBy' in claim) return refuse(describeOtherWindow(claim.heldBy))
+      // This window's own reservation, if it left one, is now this run's marker; its timer must not remove it.
+      clearTimeout(wikiReservation?.timer)
+      wikiReservation = undefined
       return {
         tokenAtStart,
         publicationAtStart,
         uncoveredAtStart: before?.freshness.addedPaths ?? [],
         hasGitRepository: !before?.freshness.addedFilesUnchecked,
         releaseMarker: claim.release,
+        reserveMarker: claim.reserve,
         startedAtMs,
       }
     }
@@ -1091,6 +1138,7 @@ export function activate(
         // The label is the absolute path exactly when the folder is not inside the project.
         isOutputOutsideProject: outputLabel === outputDirectory,
         releaseMarker: start.releaseMarker,
+        reserveMarker: start.reserveMarker,
         startedAtMs: start.startedAtMs,
         timeoutMs: isCursorHost
           ? WIKI_CURSOR_UPDATE_TIMEOUT_MS
