@@ -4325,7 +4325,13 @@ test('a selection refused because the main editor reports no keyboard focus clos
     )
     resetFakeClock(context)
     // Assert
-    assert.equal(refusedAfterMs, 5_000)
+    // The faked clock moves in steps of 50 ms, and the refusal is seen one step after the bound at the latest.
+    assert.equal(
+      refusedAfterMs !== undefined &&
+        refusedAfterMs >= 5_000 &&
+        refusedAfterMs <= 5_050,
+      true,
+    )
     assert.equal(
       answer instanceof Error && answer.message,
       'The Codebook panes were not arranged: the main editor did not report the keyboard focus within 5 s after Codebook focused its first editor group. Click into a file in the main editor, then try again.',
