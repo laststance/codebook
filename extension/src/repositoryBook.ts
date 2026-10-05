@@ -27,6 +27,7 @@ import {
 import type { RepositorySourceService } from './repositorySource'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { bookIdOfFileName } from './utils/bookIdOfFileName'
 import { bookIntentDigest } from './utils/bookIntentDigest'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { projectRecording } from './utils/projectRecording'
@@ -466,7 +467,7 @@ export class RepositoryBookStore {
 
   /**
    * Enumerates only bounded book identities beside the shared ledger, without loading all revision payloads; called by {@link list} for the catalog and by {@link publishOwned} for the book count that admits a new book.
-   * @returns The ids of the stored books, sorted, each once although a book may have a file of both formats. A file with a book suffix whose prefix is no book id (a stray `X.book.v1.json`) is nobody's book: it is skipped and not counted.
+   * @returns The ids of the stored books ({@link bookIdOfFileName}), sorted, each once although a book may have a file of both formats. A file with a book suffix whose prefix is no book id (a stray `X.book.v1.json`) is nobody's book: it is skipped and not counted.
    * @throws A {@link StudyError} `LIMIT_EXCEEDED` when the directory holds more books than {@link BOOK_MAX_FILES}.
    * @example await this.entries() // => ['another', 'architecture'] beside a stray 'X.book.v1.json'
    */
@@ -477,15 +478,9 @@ export class RepositoryBookStore {
     })
     const entries = new Set<string>()
     for (const name of await readdir(this.library.directory)) {
-      const storage = BOOK_STORAGE_FORMATS.find((format) =>
-        name.endsWith(format.suffix),
-      )
-      if (!storage) continue
-      const parsedId = bookIdSchema.safeParse(
-        name.slice(0, -storage.suffix.length),
-      )
-      // A file named like a book whose prefix is no book id (a stray `X.book.v1.json`) is nobody's book and is skipped.
-      if (parsedId.success) entries.add(parsedId.data)
+      const bookId = bookIdOfFileName(name)
+      // A file that is no book's, also one named like a book whose prefix is no book id (a stray `X.book.v1.json`), is skipped.
+      if (bookId) entries.add(bookId)
     }
     if (entries.size > BOOK_MAX_FILES)
       throw new StudyError(
