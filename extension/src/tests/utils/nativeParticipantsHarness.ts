@@ -65,6 +65,8 @@ export async function nativeParticipantsHarness(
         {
           /** Replaces the participant's one-statement source; its default ({@link FIXTURE_SOURCES}) already has an empty line 2. */
           source?: string
+          /** The module the participant executes, when a build changed the source's text or order (a statement appended at the module's end); by default the executed module is the source text. */
+          javascript?: string
           /** Last line of the participant's citation instead of line 1. */
           citationEndLine?: number
           /** Line the participant's stops are declared on instead of line 1. */
@@ -223,6 +225,15 @@ export async function nativeParticipantsHarness(
   let earlyBrowserPause: 'pending' | 'sent' | undefined
   // The page is paused at a server stop's breakpoint in its stub of the server module; the next browser continue resumes only that pause.
   let browserAtServerBreakpoint = false
+  // The editor breakpoints, by participant session, that the adapter sent `changed` news about: the editor keeps no column of such news for a breakpoint that has none of its own.
+  const breakpointsWithNews: Record<Participant, Set<string>> = {
+    browser: new Set(),
+    server: new Set(),
+  }
+  // Where a participant's adapter verifies its breakpoints by news right after it answered their registration as unverified.
+  const verifiedByNewsAt: Partial<
+    Record<Participant, { line: number; column: number }>
+  > = {}
   // Where the server's adapter reports its breakpoints verified while the run reads the after conditions before the input, once.
   let newsDuringDomCheck: { line: number; column: number } | undefined
   // The adapter's next answer to a break location request, kept back until released.
@@ -249,7 +260,7 @@ export async function nativeParticipantsHarness(
     return {
       sourcePath,
       source: source.text,
-      javascript: source.text,
+      javascript: options.fixture?.[name]?.javascript ?? source.text,
       sourceMap: JSON.stringify({
         version: 3,
         sources: options.otherOriginal?.[name]
@@ -380,13 +391,24 @@ export async function nativeParticipantsHarness(
         held.entered()
         await held.wait
       }
-      return breakpoints.some((current) => current.id === breakpoint.id)
+      const current = breakpoints.find(
+        (candidate) => candidate.id === breakpoint.id,
+      )
+      // As VS Code and Cursor do: a breakpoint at character 0 has no column of its own, and the editor drops the column of the adapter's `changed` news about such a breakpoint.
+      const hasNews =
+          current !== undefined && breakpointsWithNews[name].has(current.id),
+        keepsColumn =
+          current !== undefined &&
+          (current.location.range.start.character > 0 || !hasNews)
+      // An adapter that verifies its breakpoints by news after its reply has verified nothing before that news.
+      const awaitsNews = Boolean(verifiedByNewsAt[name]) && !hasNews
+      return current
         ? {
             id:
               adapterId(breakpoint) + (reboundPauseId ? REBOUND_ID_OFFSET : 0),
-            verified: !unboundPause,
+            verified: !unboundPause && !awaitsNews,
             line: boundAt[name].line,
-            column: boundAt[name].column,
+            ...(keepsColumn ? { column: boundAt[name].column } : {}),
             source: {
               path: foreignBinding
                 ? '/foreign/source.ts'
@@ -439,13 +461,14 @@ export async function nativeParticipantsHarness(
     emitDeclaredPause(name)
     emitStopped(name)
   }
-  /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position. */
+  /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, or on this line when the adapter names no column. The editor stand-in then answers a breakpoint requested at column 1 without a column ({@link breakpointsWithNews}). */
   const announceVerified = (
     name: Participant,
     line: number,
-    column: number,
+    column?: number,
   ): void => {
-    for (const breakpoint of breakpoints)
+    for (const breakpoint of breakpoints) {
+      breakpointsWithNews[name].add(breakpoint.id)
       run.onEvent(sessions[name], {
         type: 'event',
         seq: ++sequence,
@@ -456,10 +479,11 @@ export async function nativeParticipantsHarness(
             id: adapterId(breakpoint),
             verified: true,
             line,
-            column,
+            ...(column === undefined ? {} : { column }),
           },
         },
       })
+    }
   }
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold once the input was sent (or at once, when a test says so). */
   const pageEvaluation = (expression: string | undefined): unknown => {
@@ -694,6 +718,9 @@ export async function nativeParticipantsHarness(
           })),
         },
       })
+      // The adapter resolved the breakpoints after it answered: it verifies them by news.
+      const news = verifiedByNewsAt[name]
+      if (news) announceVerified(name, news.line, news.column)
     }
   }
   const vscode = {
@@ -1125,13 +1152,21 @@ export async function nativeParticipantsHarness(
     bindAt(name: Participant, line: number, column: number): void {
       boundAt[name] = { line, column }
     },
-    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads. */
+    /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position, as js-debug reports a pending breakpoint when its module loads; without a column the adapter names the line only. Afterwards the editor stand-in answers a breakpoint requested at column 1 without a column, as VS Code and Cursor do. */
     announceBreakpointVerified(
+      name: Participant,
+      line: number,
+      column?: number,
+    ): void {
+      announceVerified(name, line, column)
+    },
+    /** Makes a participant's adapter verify its breakpoints by news at this position right after it answered their registration as unverified, as an adapter that resolves a breakpoint after its reply does; until that news the editor stand-in answers the binding as unverified. @example harness.verifyRegistrationsByNews('browser', 1, 3) */
+    verifyRegistrationsByNews(
       name: Participant,
       line: number,
       column: number,
     ): void {
-      announceVerified(name, line, column)
+      verifiedByNewsAt[name] = { line, column }
     },
     /** Makes the server's adapter announce the server module and report its breakpoints verified at this position while the run reads the after conditions before the input, once: the news arrives between the page reads and the last receipt check. @example harness.announceServerBreakpointVerifiedDuringDomCheck(4, 1) */
     announceServerBreakpointVerifiedDuringDomCheck(

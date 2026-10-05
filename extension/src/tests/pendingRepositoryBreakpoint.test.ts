@@ -1068,3 +1068,34 @@ test('a registration the adapter later reports verified on a line the owner’s 
     '{"sessionId":"owned-server","requestSequence":1,"breakpointId":8,"status":"bound","movedTo":{"line":21,"column":7}}',
   )
 })
+
+// Cycle 0046 (row 76): the adapter's own report keeps the column the editor drops from the binding of a breakpoint requested at column 1; red while only an accepted place could be read, so a refused place had no column to word its refusal with.
+test('the place the adapter last reported for the owned breakpoint is read with its column while pending, accepted and refused', async () => {
+  // Arrange: the owner requested 20:5 and its rule accepts line 21; the registration is acknowledged as pending.
+  const { breakpoint, session, request, response } = await breakpointHarness(
+    'declared-line',
+    (line) => line === 21,
+  )
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(session, response())
+  const news = (line: number, column: number) => ({
+    seq: 200 + line,
+    type: 'event' as const,
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line, column },
+    },
+  })
+  // Act: the adapter reports the breakpoint verified at 21:7, which the owner accepts, and then at 30:3, which it refuses.
+  const whilePending = breakpoint.reportedPlace(session)
+  breakpoint.onEvent(session, news(21, 7))
+  const whenAccepted = breakpoint.reportedPlace(session)
+  breakpoint.onEvent(session, news(30, 3))
+  const whenRefused = breakpoint.reportedPlace(session)
+  // Assert
+  assert.equal(
+    JSON.stringify([whilePending ?? null, whenAccepted, whenRefused]),
+    '[null,{"line":21,"column":7},{"line":30,"column":3}]',
+  )
+})

@@ -3244,6 +3244,10 @@ test('a server stop on a function head whose lines have mapped positions but no 
     declared: { line: 1, column: 1 },
     boundLine: 4,
     breakLocationLines: [4],
+    generatedPlaces: {
+      requested: { line: 1, column: 1 },
+      bound: { line: 4, column: 1 },
+    },
   })
   assert.equal(harness.run.view().finalOutcome, 'demonstrated')
 })

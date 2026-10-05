@@ -8,10 +8,10 @@ import {
   WIKI_PUBLISH_BACKUP_INFIX,
 } from '../constants'
 
-/** Names one file by inode, modification time and size; `-` when it is missing. */
+/** Names one file by inode number, modification time in nanoseconds and size, all read exactly (a number would round an inode number above 2^53, which a file id on NTFS can be); `-` when it is missing. */
 async function fileStamp(path: string): Promise<string> {
-  const fileStat = await stat(path).catch(() => undefined)
-  return fileStat ? `${fileStat.ino}:${fileStat.mtimeMs}:${fileStat.size}` : '-'
+  const fileStat = await stat(path, { bigint: true }).catch(() => undefined)
+  return fileStat ? `${fileStat.ino}:${fileStat.mtimeNs}:${fileStat.size}` : '-'
 }
 
 /** Counts the output folder and its subfolders and names the latest modification time among them; creating, removing or renaming a file changes its folder's time. `0:0` while the folder cannot be listed. */
@@ -62,7 +62,7 @@ function isWatchedSibling(sibling: Dirent, outputName: string): boolean {
  * @example
  * ```ts
  * await readWikiWatchStamp('/repo/.codebook/wiki')
- * // => 'wiki=1837462:1790000000000.5:20481/3:1790000000000.5|wiki.stage-3f6c…=1837470:1790000004000:512+1837471:1790000009000:20990'
+ * // => 'wiki=1837462:1790000000000500000:20481/3:1790000000000.5|wiki.stage-3f6c…=1837470:1790000004000000000:512+1837471:1790000009000000000:20990'
  * ```
  */
 export async function readWikiWatchStamp(

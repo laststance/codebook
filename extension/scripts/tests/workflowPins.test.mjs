@@ -432,6 +432,9 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/processStartFormHere.test.ts',
     'extension/src/tests/namesMachineInClear.test.ts',
     'extension/src/tests/readWikiRegularFile.test.ts',
+    'extension/src/tests/openWithoutFollowing.test.ts',
+    'extension/src/tests/hashFileSha256.test.ts',
+    'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
   ])
   const actionReferences = workflow
     .split('\n')
@@ -442,7 +445,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .split('\n')
     .filter((line) => line.trim().startsWith('paths:'))
 
-  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the seventeen test files
+  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the twenty test files
   // load; only the two constants files, which most pull requests change, are left out.
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
@@ -451,36 +454,49 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/canJudgeOwnerHere.test.ts',
     'extension/src/tests/claimWikiUpdateMarker.test.ts',
     'extension/src/tests/currentStorageOwner.test.ts',
+    'extension/src/tests/hashFileSha256.test.ts',
     'extension/src/tests/isFromEarlierBoot.test.ts',
     'extension/src/tests/isProcessGone.test.ts',
     'extension/src/tests/isRecordedOwnerGone.test.ts',
     'extension/src/tests/isSameStorageMachine.test.ts',
     'extension/src/tests/namesMachineInClear.test.ts',
+    'extension/src/tests/openWithoutFollowing.test.ts',
     'extension/src/tests/processStartFormHere.test.ts',
     'extension/src/tests/readBootIdentity.test.ts',
     'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
     'extension/src/tests/readProcessStart.test.ts',
     'extension/src/tests/readRecordedOwner.test.ts',
     'extension/src/tests/readWikiRegularFile.test.ts',
+    'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/utils/answerKernelBootId.ts',
+    'extension/src/tests/utils/createLinkIfAllowed.ts',
+    'extension/src/tests/utils/fileSystemWithLargeFileIds.ts',
     'extension/src/tests/utils/idleChild.ts',
     'extension/src/tests/utils/loadModule.ts',
+    'extension/src/tests/utils/loadOpenWithoutFollowing.ts',
     'extension/src/tests/utils/startOfKilledWindow.ts',
     'extension/src/tests/withStorageLock.test.ts',
+    'extension/src/utils/atomicPrivateBytes.ts',
+    'extension/src/utils/atomicPrivateWrite.ts',
     'extension/src/utils/canJudgeOwnerHere.ts',
     'extension/src/utils/claimStorageLockTakeover.ts',
     'extension/src/utils/claimWikiUpdateMarker.ts',
     'extension/src/utils/currentStorageOwner.ts',
     'extension/src/utils/deriveMachineKeys.ts',
+    'extension/src/utils/hashFileSha256.ts',
     'extension/src/utils/isFromEarlierBoot.ts',
     'extension/src/utils/isLeftEmpty.ts',
     'extension/src/utils/isProcessGone.ts',
+    'extension/src/utils/isRecordedFileId.ts',
     'extension/src/utils/isRecordedOwnerGone.ts',
+    'extension/src/utils/isSameFileId.ts',
     'extension/src/utils/isSameStorageMachine.ts',
     'extension/src/utils/isStaleStorageLock.ts',
+    'extension/src/utils/modifiedAtMsOf.ts',
     'extension/src/utils/namesMachineInClear.ts',
+    'extension/src/utils/openWithoutFollowing.ts',
     'extension/src/utils/placeStorageLock.ts',
     'extension/src/utils/processStartFormHere.ts',
     'extension/src/utils/readBootIdentity.ts',
@@ -488,6 +504,8 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/readProcessStart.ts',
     'extension/src/utils/readRecordedOwner.ts',
     'extension/src/utils/readWikiRegularFile.ts',
+    'extension/src/utils/recordedFileId.ts',
+    'extension/src/utils/refreshCursorMcpCatalog.ts',
     'extension/src/utils/removeStaleStorageClaims.ts',
     'extension/src/utils/removeStaleStorageLock.ts',
     'extension/src/utils/systemErrorCode.ts',
@@ -518,7 +536,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js',
+    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
