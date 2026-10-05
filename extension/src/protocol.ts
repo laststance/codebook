@@ -27,7 +27,7 @@ import {
   publishBookSchema,
   openBookSchema,
 } from './repositorySchemas'
-import { readResource } from './resources'
+import { readResource, type ResourceContent } from './resources'
 import {
   actionSchema,
   continueSchema,
@@ -60,14 +60,49 @@ async function toolResult(
 }
 
 /**
+ * Answers a text resource for `codebook_read_resource`, called by {@link resourceToolResult} once the read gave text: the text is always the first content, and some editor chats expose only structured results, so the guarded body is carried there too.
+ * @param resource - The text a resource read answered.
+ * @returns
+ * - A cited source of a book: its exact text and then its numbered copy as two text contents, and both as `text` and `numberedText` in the structured content
+ * - JSON: the text, and the parsed body as `data` in the structured content
+ * - Any other text: the text, and the same text in the structured content
+ * @example
+ * ```ts
+ * textResourceToolResult({ uri, mimeType: 'text/plain', text: 'a()\n', numberedText: '1\ta()\n2\t' }).content.length // => 2
+ * ```
+ */
+function textResourceToolResult(
+  resource: Extract<ResourceContent, { text: string }>,
+): CallToolResult {
+  const content: CallToolResult['content'] = [
+    { type: 'text', text: resource.text },
+  ]
+  const identity = { ok: true, uri: resource.uri, mimeType: resource.mimeType }
+  // A cited source also answers its numbered copy, after the exact text, so a chat that reads either form takes lines from Codebook.
+  if (resource.numberedText !== undefined)
+    return {
+      content: [...content, { type: 'text', text: resource.numberedText }],
+      structuredContent: {
+        ...identity,
+        text: resource.text,
+        numberedText: resource.numberedText,
+      },
+    }
+  // JSON is parsed for chats that read only the structured result.
+  if (resource.mimeType === 'application/json') {
+    const data: unknown = JSON.parse(resource.text)
+    return { content, structuredContent: { ...identity, data } }
+  }
+  return { content, structuredContent: { ...identity, text: resource.text } }
+}
+
+/**
  * Lets tool-only editor chats read the same guarded Codebook resources when they cannot call MCP resources directly; the handler of `codebook_read_resource`.
  * @param service - The service whose resources are read.
  * @param uri - A Codebook URI an earlier answer returned.
  * @returns
  * - An image: one image content, and the URI and type as structured content
- * - A cited source of a book: its exact text and then its numbered copy as two text contents, and both as `text` and `numberedText` in the structured content
- * - JSON: the text, and the parsed body as `data` in the structured content
- * - Any other text: the text, and the same text in the structured content
+ * - Text: the answer of {@link textResourceToolResult}
  * - A refused read: the domain error, marked as an error
  * @example
  * ```ts
@@ -91,45 +126,7 @@ async function resourceToolResult(
           mimeType: resource.mimeType,
         },
       }
-    const content: CallToolResult['content'] = [
-      { type: 'text', text: resource.text },
-    ]
-    // A cited source also answers its numbered copy, after the exact text, so a chat that reads either form takes lines from Codebook.
-    if (resource.numberedText !== undefined) {
-      content.push({ type: 'text', text: resource.numberedText })
-      return {
-        content,
-        structuredContent: {
-          ok: true,
-          uri: resource.uri,
-          mimeType: resource.mimeType,
-          text: resource.text,
-          numberedText: resource.numberedText,
-        },
-      }
-    }
-    // Some editor chats expose only structured results, so carry the guarded body there too.
-    if (resource.mimeType === 'application/json') {
-      const data: unknown = JSON.parse(resource.text)
-      return {
-        content,
-        structuredContent: {
-          ok: true,
-          uri: resource.uri,
-          mimeType: resource.mimeType,
-          data,
-        },
-      }
-    }
-    return {
-      content,
-      structuredContent: {
-        ok: true,
-        uri: resource.uri,
-        mimeType: resource.mimeType,
-        text: resource.text,
-      },
-    }
+    return textResourceToolResult(resource)
   } catch (error) {
     const failure = domainError(error).describe()
     return {

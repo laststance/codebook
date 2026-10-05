@@ -20,13 +20,40 @@ export function describeMisplacedDocumentMembers(
     unknown = keys.filter((key) => !documentMembers.includes(key))
   // A key that is no document member keeps the usual refusal.
   if (misplaced.length === 0) return undefined
-  const isOne = misplaced.length === 1
-  const names = joinWithAnd(misplaced),
-    places = joinWithAnd(misplaced.map((member) => `document.${member}`))
-  const sentence = `${names} ${isOne ? 'is a member' : 'are members'} of the published document, not of the call: give ${isOne ? 'it' : 'them'} inside document, as ${places}.`
   // Other unknown keys are named as the schema names them, after the sentence.
-  if (unknown.length === 0) return sentence
-  return `${sentence} Unrecognized key${unknown.length === 1 ? '' : 's'}: ${unknown.map((key) => JSON.stringify(key)).join(', ')}`
+  if (unknown.length === 0) return misplacedMembersSentence(misplaced)
+  return `${misplacedMembersSentence(misplaced)} ${unrecognizedKeysText(unknown)}`
+}
+
+/**
+ * Says where members of the published document given beside `document` belong, for {@link describeMisplacedDocumentMembers}.
+ * @param members - One or more document members the call gave at its top level.
+ * @returns One sentence that names them and their places `document.<member>`.
+ * @example
+ * misplacedMembersSentence(['edges', 'title'])
+ * // => 'edges and title are members of the published document, not of the call: give them inside document, as document.edges and document.title.'
+ */
+function misplacedMembersSentence(members: readonly string[]): string {
+  const names = joinWithAnd(members),
+    places = joinWithAnd(members.map((member) => `document.${member}`))
+  // One member is "it", several are "them".
+  return members.length === 1
+    ? `${names} is a member of the published document, not of the call: give it inside document, as ${places}.`
+    : `${names} are members of the published document, not of the call: give them inside document, as ${places}.`
+}
+
+/**
+ * Names unknown keys as the strict schema names them, for {@link describeMisplacedDocumentMembers} when they come beside misplaced document members.
+ * @param keys - One or more unknown keys.
+ * @returns `Unrecognized key: "a"` for one key, `Unrecognized keys: "a", "b"` for several.
+ * @example
+ * unrecognizedKeysText(['draft']) // => 'Unrecognized key: "draft"'
+ */
+function unrecognizedKeysText(keys: readonly string[]): string {
+  const quoted = keys.map((key) => JSON.stringify(key)).join(', ')
+  return keys.length === 1
+    ? `Unrecognized key: ${quoted}`
+    : `Unrecognized keys: ${quoted}`
 }
 
 /**

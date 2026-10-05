@@ -13,11 +13,6 @@ import type {
 } from '../repositoryConfigSchemas'
 
 type ConditionPhase = 'before' | 'after'
-/** The relation a text mismatch may report to the declared literal, never page text. */
-type TextDifference = Extract<
-  ConfiguredDomFailure,
-  { reason: 'text-mismatch' }
->['textDifference']
 
 /**
  * Tells the editor agent how to correct a declared DOM condition that timed out, called by {@link ConfiguredBrowserRun} when it composes the timeout text of before and after conditions.
@@ -42,10 +37,7 @@ export function configuredConditionHint(
   failure: ConfiguredDomFailure,
 ): string {
   if (failure.reason === 'text-mismatch')
-    return failure.matchedElements === undefined
-      ? textConditionHint(phase, failure.textDifference)
-      : TEXT_CONDITION_RULE_HINT +
-          severalElementsTextHint(failure.matchedElements)
+    return textConditionHint(phase, failure)
   if (failure.reason === 'attribute-mismatch')
     return attributeConditionHint(phase, condition)
   if (failure.reason === 'click-target-missing')
@@ -64,12 +56,28 @@ const VALUE_ATTRIBUTE_HINT_BY_PHASE: Record<ConditionPhase, string> = {
   after: ATTRIBUTE_ENTIRE_VALUE_HINT,
 }
 
-/** Adds the phase's fix only when the element holds the expected text beside other text. */
+/**
+ * Words the hint of a text mismatch for {@link configuredConditionHint}: the rule, then what the page reported about the relation.
+ * @param phase - Whether the condition guards the input or proves the result.
+ * @param failure - The text mismatch the page reported.
+ * @returns
+ * - Several matched elements: the rule and the sentence of {@link severalElementsTextHint}
+ * - One element that holds the expected text beside other text: the rule and the phase's fix
+ * - Otherwise: the rule alone
+ * @example
+ * textConditionHint('after', { reason: 'text-mismatch', matchedElements: 3 }) // => ' A text condition compares … Here the selector matched 3 elements …'
+ */
 function textConditionHint(
   phase: ConditionPhase,
-  textDifference: TextDifference,
+  failure: Extract<ConfiguredDomFailure, { reason: 'text-mismatch' }>,
 ): string {
-  if (textDifference !== 'surrounding-text') return TEXT_CONDITION_RULE_HINT
+  if (failure.matchedElements !== undefined)
+    return (
+      TEXT_CONDITION_RULE_HINT +
+      severalElementsTextHint(failure.matchedElements)
+    )
+  if (failure.textDifference !== 'surrounding-text')
+    return TEXT_CONDITION_RULE_HINT
   return TEXT_CONDITION_RULE_HINT + TEXT_BESIDE_OTHER_TEXT_HINT_BY_PHASE[phase]
 }
 
