@@ -11,7 +11,10 @@ import type {
 import type { NodeTestConfiguration } from './nodeTestConfigSchemas'
 import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import type { Evidence, RecordedEvent } from './runtimeSupport/evidence'
-import type { HostConfiguration } from './runtimeSupport/hostBrowser'
+import type {
+  HostConfiguration,
+  ProfileLeft,
+} from './runtimeSupport/hostBrowser'
 import type { PauseIdentity, PauseGate } from './runtimeSupport/pauseGate'
 
 export interface NodeTestRuntime {
@@ -59,6 +62,8 @@ export type ConfiguredRuntimeView = {
   status: string
   cleaned: boolean
   resourcesReleased: boolean
+  /** The run's own browser profile folder when its cleanup could not remove it. It is no failed release: `cleaned`, `resourcesReleased` and the outcomes are as without it. */
+  browserProfileLeft?: ProfileLeft
   runtimeOutcome: 'demonstrated' | 'not-demonstrated'
   captureOutcome: 'complete' | 'incomplete'
   finalOutcome: ConfiguredStudy['finalOutcome']
@@ -120,6 +125,8 @@ export interface StudyRuntime {
 export interface StudyEnvironment {
   readonly workspace: string
   readonly host: HostConfiguration
+  /** `vscode.env.remoteName` of the window: `wsl` in a WSL remote window, absent in a local one. A remote window has no Trash, so {@link StudyService} starts there with study removal unavailable. */
+  readonly remoteName?: string
   readonly build: { revision: string; dirty: boolean; sourceHash: string }
   assertWorkspace?(): void
   prerequisites(): Promise<{

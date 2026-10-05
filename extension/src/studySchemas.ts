@@ -43,7 +43,8 @@ export interface StudyCatalogEntry {
   id: string
   savedAt: string
   profile?: 'repository-browser' | 'node-test'
-  format: 'legacy-v1' | 'v2' | 'v3' | 'v4' | 'node-test-history'
+  /** `newer` marks a study a newer Codebook saved in a format this one cannot read: it is listed and counted, never opened, repaired or deleted here, and its `reason` is the sentence that says so. */
+  format: 'legacy-v1' | 'v2' | 'v3' | 'v4' | 'node-test-history' | 'newer'
   outcome: string
   metadata: 'legacy-unverified' | 'validated' | 'unavailable'
   reason?: string

@@ -7,6 +7,7 @@ import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
+import { CURSOR_FOCUS_AGENT_COMMAND, type ReaderErrorKind } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import type { NodeTestSourceStop } from '../ownedNodeTestRun'
@@ -23,8 +24,8 @@ import type * as RepositoryReaderModule from '../repositoryReader'
 import type { BookObservationBinding } from '../repositorySchemas'
 import { RepositorySourceService } from '../repositorySource'
 import type { ConfiguredRuntimeView } from '../runtime'
-import { VIEWPORT_ACK_TIMEOUT_REASON } from '../runtimeSupport/constants'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
 import type { StudyViewMessage } from '../ui/studyHtml'
@@ -41,6 +42,10 @@ import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
 const NATIVE_VARIABLES_REFRESH_MS = 400
 /** How long the fake host's Variables view, opened for the first time in the editor session, needs before its tree holds the rows that list commands act on; VS Code 1.140 took about 60 ms. */
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
+/** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
+const DISPOSED_TAB_CLOSE_DELAY_MS = 20
+/** The fake window of {@link workspaceHarness}'s side bar model, in pixels as Cursor 3.23.12 showed it (Cycle 0045 NF-22, obs15 P4): primary side bar 214, editor area 660, secondary side bar 461. */
+const SIDE_BAR_WINDOW_PX = { window: 1335, primary: 214, auxiliary: 461 }
 /**
  * How the fake host's Variables view missed the presented stop, as observed in VS Code 1.140:
  * - `'never-opened'`: Run and Debug was not opened in this editor session; the view asks for the stop's scopes as soon as it is shown, fills its tree a moment later and expands nothing by itself
@@ -50,10 +55,16 @@ const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 type NativeVariablesHiding =
   'never-opened' | 'missed-the-stop' | 'shows-another-session'
 
-/** Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions. @example const reader = await workspaceHarness() */
+/**
+ * Keeps native presentation inert while exercising actual checkpoints, source watching and durable decisions.
+ * @param remoteName - `vscode.env.remoteName` of the fake window, for the editor and the service alike; `wsl` models a WSL remote window, which has no Trash.
+ * @example const reader = await workspaceHarness()
+ * @example const readerInWsl = await workspaceHarness(true, false, 'wsl')
+ */
 export async function workspaceHarness(
   attach = true,
   deterministicClock = false,
+  remoteName?: string,
 ) {
   let clock = 0
   let savedStudyCapacity: unknown
@@ -69,6 +80,8 @@ export async function workspaceHarness(
   let answerInformationMessage: (
     items: string[],
   ) => Promise<string | undefined> = async () => undefined
+  /** The text of every native error notification the reader showed. */
+  const errorMessages: string[] = []
   let hostAppName = 'Visual Studio Code'
   /** Native commands the fake editor answers `getCommands` with: the ones the reader asks the host about before it runs them. */
   const nativeHostCommands = [
@@ -79,6 +92,16 @@ export async function workspaceHarness(
   ]
   /** Commands this host does not register; see `removeHostCommands`. */
   const absentHostCommands = new Set<string>()
+  /** The editor's commands that give its second to eighth group the keyboard focus, in that order. */
+  const focusGroupAtColumnCommands = [
+    'workbench.action.focusSecondEditorGroup',
+    'workbench.action.focusThirdEditorGroup',
+    'workbench.action.focusFourthEditorGroup',
+    'workbench.action.focusFifthEditorGroup',
+    'workbench.action.focusSixthEditorGroup',
+    'workbench.action.focusSeventhEditorGroup',
+    'workbench.action.focusEighthEditorGroup',
+  ]
   /** The fake host's own Variables view for the presented stop, which the native commands of Show Variables act on; a view no test hides already lists the values. See `hideNativeVariables`. */
   const nativeVariables: {
     hiding?: NativeVariablesHiding
@@ -92,35 +115,64 @@ export async function workspaceHarness(
     firstScopeFocused: false,
     valuesListed: true,
   }
+  /** Which list of the fake host holds the keyboard focus, and so takes the list commands: its Variables view, or another list the learner clicked (the Explorer). See `clickAnotherList`. */
+  let focusedList: 'variables' | 'another-list' = 'variables'
+  /** What the list commands did to the other list while it held the focus. */
+  const anotherList = { firstRowFocused: false, firstRowExpanded: false }
+  /** Whether the Learning summary shares its side bar with Run and Debug, as in Cursor: the focus command of Variables then puts Run and Debug in the summary's place. See `shareSummarySideBarWithRunAndDebug`. */
+  let summarySharesSideBarWithRunAndDebug = false
+  /** The context keys the reader set with the editor's `setContext` command. */
+  const contextKeys = new Map<string, unknown>()
   /** Pending `awaitRetrieval` checks of the fake historical debugger, re-run whenever the fake Variables view asks for scopes or lists values. */
   const nativeVariablesWaiters = new Set<() => void>()
   const trashMoves: { path: string; options: unknown }[] = []
+  /** The reader's listeners for a changed editor setting; see `setSavedStudyCapacity`. */
+  const configurationListeners = new Set<
+    (event: { affectsConfiguration(section: string): boolean }) => void
+  >()
   let rejectsTrashMove: (path: string) => boolean = () => false
   let beforeTrashMove: (path: string) => Promise<void> = async () => {}
   let heldTrashMove: { wait: Promise<void>; entered(): void } | undefined
+  /** Every text the reader wrote to the editor's clipboard. */
+  const clipboardTexts: string[] = []
   const harness = await createHarness({
     create: async (directory, profile) => {
       const runtime = new ControlledRuntime(directory, profile)
       if (deterministicClock) runtime.evidence.elapsedMs = () => clock
       return runtime
     },
+    remoteName,
   })
-  const saveStatus = {
-    name: '',
-    text: '',
-    tooltip: '',
-    command: undefined as unknown,
-    visible: false,
-    show(): void {
-      this.visible = true
-    },
-    hide(): void {
-      this.visible = false
-    },
-    dispose(): void {
-      this.visible = false
-    },
+  /** Builds one fake status bar item. It counts the assignments of its command, because the editor turns every assigned command object into a new internal command and disposes the one before. @example createStatusItem().commandAssignments // => 0 */
+  const createStatusItem = () => {
+    let assignedCommand: unknown
+    return {
+      name: '',
+      text: '',
+      tooltip: '',
+      commandAssignments: 0,
+      get command(): unknown {
+        return assignedCommand
+      },
+      set command(value: unknown) {
+        this.commandAssignments++
+        assignedCommand = value
+      },
+      visible: false,
+      show(): void {
+        this.visible = true
+      },
+      hide(): void {
+        this.visible = false
+      },
+      dispose(): void {
+        this.visible = false
+      },
+    }
   }
+  const saveStatus = createStatusItem()
+  /** The identifier of every status bar item the reader created, in order; the first one is `saveStatus`, a later one would be a second control in the status bar. */
+  const createdStatusItemIds: string[] = []
   let changed = (): void => {}
   const disposable = () => ({ dispose(): void {} })
   let outlineUpdates = 0
@@ -213,7 +265,7 @@ export async function workspaceHarness(
   type SourceEditor = {
     document: { uri: Uri; getText(): string }
     readonly viewColumn: number
-    setDecorations(): void
+    setDecorations(decoration?: unknown, ranges?: readonly unknown[]): void
     selections: { active: Position; anchor: Position }[]
     visibleRanges: Range[]
     revealRange(range: Range, revealType?: number): void
@@ -246,7 +298,9 @@ export async function workspaceHarness(
   const visibleSourceEditors: (SourceEditor & {
       group: (typeof groups)[number]
     })[] = [],
-    decoratedColumns: number[] = []
+    decoratedColumns: number[] = [],
+    /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
+    decoratedRangeCounts: number[] = []
   let retainedReadingRange: Range | undefined
   /** Models native scrolling for display and explicit reveal without conflating their callbacks. @example scrollReadingRange(new Range(position, position)) */
   const scrollReadingRange = (range: Range, revealType?: number): void => {
@@ -276,8 +330,12 @@ export async function workspaceHarness(
     get viewColumn() {
       return reportedColumn ?? group.viewColumn
     },
-    setDecorations(): void {
+    setDecorations(
+      _decoration?: unknown,
+      ranges: readonly unknown[] = [],
+    ): void {
       decoratedColumns.push(reportedColumn ?? group.viewColumn)
+      decoratedRangeCounts.push(ranges.length)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
     get visibleRanges() {
@@ -307,6 +365,7 @@ export async function workspaceHarness(
     closed: typeof groups
     changed: typeof groups
   }): void => {
+    staleNamedGroup = undefined
     for (const listener of groupChangeListeners) listener(event)
   }
   let sourceProvider = async (_uri: Uri) => ''
@@ -316,6 +375,8 @@ export async function workspaceHarness(
     sourceDocument?: { uri: string; hash: string }
   }> = []
   let historicalDebugInvalidations = 0
+  /** What each invalidation told the fake historical debugger its emptied session reads in Run and Debug, in order. */
+  const historicalDebugInvalidationLabels: string[] = []
   const historicalDebuggers: TestReplayDebugger[] = []
   let historicalDebugInspection: ReplayInspection = 'inspected'
   let nextHistoricalDebugPresentation:
@@ -370,7 +431,13 @@ export async function workspaceHarness(
       }
       return historicalDebugInspection
     }
-    /** Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter. @example await debuggerView.awaitRetrieval('scopes', 2_000) // => false when the view never asks */
+    /**
+     * Mirrors the real owner's bounded wait for native Variables, reading the fake host's view instead of a debug adapter.
+     * @returns
+     * - `true` once the fake view retrieved that stage of the presented stop
+     * - `false` when `timeoutMs` elapsed first, or at once when the owned session ended or this owner was disposed, also for a view that refreshes later
+     * @example await debuggerView.awaitRetrieval('scopes', 2_000) // => false when the view never asks
+     */
     awaitRetrieval(
       stage: ReplayRetrievalStage,
       timeoutMs: number,
@@ -382,6 +449,8 @@ export async function workspaceHarness(
           resolve(retrieved)
         }
         const check = (): void => {
+          // Like the real owner, an ended session answers no request, so nothing is left to wait for.
+          if (!this.available) return finish(false)
           if (
             stage === 'scopes'
               ? nativeVariables.scopesRetrieved
@@ -401,14 +470,17 @@ export async function workspaceHarness(
     ): Promise<void> {
       signal.throwIfAborted()
     }
-    invalidate(): void {
+    invalidate(label = 'Not recorded at this moment'): void {
       historicalDebugInvalidations++
+      historicalDebugInvalidationLabels.push(label)
     }
     /** Mirrors the real owner: a second call returns at once, and the registration ends only when the first call finishes stopping the session. @example await debuggerView.dispose() */
     async dispose(): Promise<void> {
       this.available = false
       if (this.closed) return
       this.closed = true
+      // Like the real owner, disposal ends every wait for native Variables at once.
+      for (const check of [...nativeVariablesWaiters]) check()
       // A held disposal models an editor that has not yet acknowledged the stop of the owned session.
       const held = nextHistoricalDebugDisposal
       if (held) {
@@ -471,10 +543,57 @@ export async function workspaceHarness(
     maximizedEditorGroup = false
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
+  // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard; the next tab or group change rebuilds the tab model and corrects the name.
+  let staleNamedGroup: (typeof groups)[number] | undefined
+  // The tab that had the keyboard was closed while the focus was to be preserved, or its pane was disposed: no editor has the keyboard, the page body does (Cursor 3.23.12 after Close Study Workspace, Cycle 0045 obs15 P4), until something is focused again.
+  let keyboardOnBody = false
+  /** Which side bars the fake window shows, once a test models them with `modelSideBars`; the editor area then has the width they leave. */
+  let sideBars: { primary: boolean; auxiliary: boolean } | undefined
+  /** The widths of the fake window's side bars in pixels; `modelSideBars` can replace Cursor's. */
+  let sideBarWidthsPx = {
+    primary: SIDE_BAR_WINDOW_PX.primary,
+    auxiliary: SIDE_BAR_WINDOW_PX.auxiliary,
+  }
+  /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
+  let keyboardInSideBar = false
+  // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
+  let activeStackItem: unknown, focusEditorOnBreak: boolean | undefined
+  // Every text document the reader showed, with the group and whether it left the keyboard focus where it was.
+  const textDocumentShows: {
+    name: string
+    viewColumn: number | undefined
+    preserveFocus: boolean
+  }[] = []
+  // Cursor reports a pane that was revealed in front of another tab of its group one turn after the call returned.
+  let revealsPanelsLater = false,
+    applyingLaterReveal = false
+  // Cursor 3.23.12 closes a disposed panel's tab, and a moment later the group it left empty, while a layout read is pending.
+  let closeDisposedPanelTabsDuringLayoutRead = false
+  /** The fake editor answers every tab change with new TabGroup objects, as Cursor does; see `replaceGroupObjectsOnTabChanges`. */
+  let replacesGroupObjectsOnTabChanges = false
   /** The bottom panel is maximized: the editor area is hidden and reports its stacked groups at their minimum height. */
   let panelMaximized = false
   /** Tab closes of disposed panels the fake editor has not run yet; see `closeDisposedPanelTabsLater`. */
   const pendingDisposedTabCloses: (() => void)[] = []
+  /** The fake editor's own timers that have not run yet (a disposed pane's tab close, a late reveal). The harness's `close` clears them, so no fake editor changes its groups or calls a listener after its test ended. */
+  const pendingEditorTimers = new Set<ReturnType<typeof setTimeout>>()
+  /**
+   * Runs one pending tab change of the fake editor by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS}, unless a layout read took it from `pendingDisposedTabCloses` first or the harness was closed; called for a disposed pane's tab close and for a late reveal.
+   * @param change - The change that was pushed to `pendingDisposedTabCloses`.
+   * @example
+   * pendingDisposedTabCloses.push(closeTab)
+   * applyByItselfLater(closeTab)
+   */
+  function applyByItselfLater(change: () => void): void {
+    const timer = setTimeout(() => {
+      pendingEditorTimers.delete(timer)
+      const index = pendingDisposedTabCloses.indexOf(change)
+      if (index < 0) return
+      pendingDisposedTabCloses.splice(index, 1)
+      change()
+    }, DISPOSED_TAB_CLOSE_DELAY_MS)
+    pendingEditorTimers.add(timer)
+  }
   const automaticallyClosedColumns: number[] = []
   let transientLayout = false,
     settledLayout: unknown,
@@ -504,6 +623,8 @@ export async function workspaceHarness(
   let deferredPanelFocus: { kind: string; remaining: number } | undefined
   let deferPrimaryFocusEcho = false,
     pendingPrimaryFocusEcho: typeof activeTabGroup | undefined
+  // Cursor 3.23.12: a pane of the main editor that is no text editor takes the keyboard without a report while the editor names the chat's group.
+  let leavesPaneFocusUnreportedBesideChat = false
   let deferMovedFocusEcho = false,
     pendingMovedFocusEcho: typeof activeTabGroup | undefined
   let deferKeptFocusEcho = false,
@@ -525,6 +646,38 @@ export async function workspaceHarness(
     displayedImage: string | undefined,
     sourceColumn = 2
   let nextImage: { wait: Promise<void>; entered(): void } | undefined
+  /**
+   * Gives every editor group a new TabGroup object, as Cursor 3.23.12 does whenever a tab opened, another tab of a group became active, a tab closed, or a group opened or closed (obs13 items 7 and 8: 19 of 19 events that name every group); a no-op unless `replaceGroupObjectsOnTabChanges` is on.
+   * The view columns, the tabs and the keyboard focus stay, and every holder of a group object is pointed at the new one. The Tab objects are kept: Cursor replaces them too and reports a tab of unknown input with `input` undefined.
+   * @param closed - Groups the same change closed; they are reported as closed and get no new object.
+   * @param opened - The group the same change opened; it is reported as opened and keeps its object.
+   * @example replaceGroupObjects() // harness.groups[0] is another object in the same view column, reported as changed
+   */
+  function replaceGroupObjects(
+    closed: typeof groups = [],
+    opened?: (typeof groups)[number],
+  ): void {
+    if (!replacesGroupObjectsOnTabChanges) return
+    const replacements = new Map(
+      groups
+        .filter((group) => group !== opened)
+        .map((group) => [group, { ...group, tabs: [...group.tabs] }]),
+    )
+    /** Names the new object of a group that survived, and leaves a group that is gone as it is. */
+    const replaced = (group: (typeof groups)[number]) =>
+      replacements.get(group) ?? group
+    groups.splice(0, groups.length, ...groups.map(replaced))
+    activeTabGroup = replaced(activeTabGroup)
+    if (separateEditorPart)
+      separateEditorPart.group = replaced(separateEditorPart.group)
+    for (const editor of visibleSourceEditors)
+      editor.group = replaced(editor.group)
+    changedGroups({
+      opened: opened ? [opened] : [],
+      closed,
+      changed: [...replacements.values()],
+    })
+  }
   /** Mirrors native group creation for the layout-return regressions without changing older fixtures. @example nativeGroup(3).viewColumn // 3 */
   function nativeGroup(column: number, preserveLayout = false) {
     const existing = groups.find(
@@ -566,6 +719,11 @@ export async function workspaceHarness(
           .filter((candidate) => candidate !== separateEditorPart?.group)
           .map(() => ({})),
       }
+    if (replacesGroupObjectsOnTabChanges) {
+      // Cursor names the opened group and gives every surviving group a new object in the same event.
+      replaceGroupObjects([], group)
+      return group
+    }
     changedGroups({ opened: [group], closed: [], changed: retained })
     return group
   }
@@ -713,7 +871,51 @@ export async function workspaceHarness(
   ): void {
     if (!panelMaximized) return
     expandGroup(column)
-    if (changesVisibleEditors) panelMaximized = false
+    if (changesVisibleEditors) returnHiddenEditorArea()
+  }
+  /**
+   * Brings the hidden editor area back, as VS Code 1.140 does while the bottom panel is maximized whenever a group shows another editor or is activated: the panel leaves its maximized state.
+   * The area was laid out without height, so every stacked group comes back at its minimum height and the last group of each stack takes the height that is left, whichever group the trigger acted on: of two stacked groups the first is a 70 px strip.
+   * Called by {@link revealIntoHiddenEditorArea} (a reveal, a shown text document), a panel's registration, the commands that focus another group, the tab closes and `vscode.setEditorLayout`, whose own layout then replaces these sizes. The command that focuses the group that is already active is not among them: it brings the area back with the sizes the groups had.
+   * @example returnHiddenEditorArea() // groupHeightPx(1) => 70 and groupHeightPx(2) => 770 for two stacked groups
+   */
+  function returnHiddenEditorArea(): void {
+    if (!panelMaximized) return
+    panelMaximized = false
+    const returned = (
+      node: unknown,
+      isStack: boolean,
+      heightPx: number,
+    ): unknown => {
+      const children = layoutChildren(node)
+      if (!children) return node
+      // Groups side by side, and a group alone in its stack, keep their sizes and the whole height.
+      if (!isStack || children.length === 1)
+        return {
+          ...Object(node),
+          groups: children.map((child) => returned(child, !isStack, heightPx)),
+        }
+      const lastHeightPx =
+        heightPx - GROUP_MINIMUM_PX.height * (children.length - 1)
+      return {
+        ...Object(node),
+        groups: children.map((child, index) => {
+          const childHeightPx =
+            index === children.length - 1
+              ? lastHeightPx
+              : GROUP_MINIMUM_PX.height
+          return {
+            ...Object(returned(child, false, childHeightPx)),
+            size: childHeightPx,
+          }
+        }),
+      }
+    }
+    editorLayout = returned(
+      editorLayout,
+      Reflect.get(Object(editorLayout), 'orientation') === 1,
+      EDITOR_AREA_PX.height,
+    )
   }
   /** Measures one group of the fake editor area in pixels, from the proportions or pixels of the measured layout. @example groupHeightPx(1) // 420 for the Application group of the Study layout */
   function groupHeightPx(column: number): number | undefined {
@@ -759,7 +961,90 @@ export async function workspaceHarness(
         candidate.tabs.includes(retained.nativeTab),
       )?.viewColumn
     if (activeTabGroup === emptied) activeTabGroup = groups[0]!
-    changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
+    if (replacesGroupObjectsOnTabChanges) replaceGroupObjects([emptied])
+    else changedGroups({ opened: [], closed: [emptied], changed: [...groups] })
+  }
+  /**
+   * Closes tabs as the editor does, group by group, for the reader's `tabGroups.close` requests and for the Close Editor command.
+   * A group that loses the tab it shows brings a hidden editor area back, and a native group a dead pane leaves empty is removed by {@link removeEmptiedGroup}.
+   * @param tabs - The tabs to close; a tab the editor will not release keeps every requested tab of its own group.
+   * @returns
+   * - `true` when every requested tab closed
+   * - `false` when a group kept its tabs because one of them refuses to close
+   * @example closeTabs([leftover]) // => true, and the tab beside the leftover is the one its group shows
+   */
+  function closeTabs(tabs: Tab[]): boolean {
+    let accepted = true,
+      closedActiveLeftover = false
+    const emptiedByDeadPane: typeof groups = [],
+      groupCountBefore = groups.length
+    for (const group of groups) {
+      const requested = group.tabs.filter((tab) => tabs.includes(tab))
+      if (!requested.length) continue
+      // One tab the editor will not release keeps every requested tab of its group and fails the answer; the other groups still close.
+      if (requested.some((tab) => closeRefusingTabs.has(tab))) {
+        accepted = false
+        continue
+      }
+      const active = group.activeTab,
+        heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
+      group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
+      // The group shows another editor, or none, once the tab it showed is closed.
+      if (active && tabs.includes(active)) returnHiddenEditorArea()
+      // The editor activates the neighbouring tab when the active one closes.
+      if (
+        active &&
+        tabs.includes(active) &&
+        (leftoverCapturedTabs.has(active) || deadPaneTabs.has(active))
+      ) {
+        group.activeTab = group.tabs.at(-1)
+        closedActiveLeftover = true
+      }
+      // With `closeEmptyGroups` on (the model of `closeDisposedPanelTabsLater`), the editor also removes a group whose last tab the reader closed.
+      if ((heldDeadPane || closeDisposedPanelTabsLater) && !group.tabs.length)
+        emptiedByDeadPane.push(group)
+    }
+    // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
+    // From the last column to the first, each group looked up again by its column: a removal renumbers the later columns, and Cursor answers it with new group objects.
+    const emptiedColumns = emptiedByDeadPane
+      .map((group) => group.viewColumn)
+      .toSorted((left, right) => right - left)
+    for (const emptiedColumn of emptiedColumns) {
+      const mainGroups = groups.filter(
+        (candidate) => candidate !== separateEditorPart?.group,
+      )
+      if (!nativeLayout || mainGroups.length === 1) break
+      const emptied = mainGroups.find(
+        (candidate) =>
+          candidate.viewColumn === emptiedColumn && !candidate.tabs.length,
+      )
+      if (!emptied) continue
+      // The keyboard focus of the removed group goes to the group before it, or to the next one when it was the first.
+      if (activeTabGroup === emptied) {
+        const index = groups.indexOf(emptied)
+        activeTabGroup = groups[index > 0 ? index - 1 : 1]!
+        closedActiveLeftover = true
+      }
+      removeEmptiedGroup(emptied)
+    }
+    // Cursor answers closed tabs with new group objects; a removed group above already came with them.
+    if (
+      groups.length === groupCountBefore &&
+      tabs.some((tab) => !groups.some((group) => group.tabs.includes(tab)))
+    )
+      replaceGroupObjects()
+    if (closedActiveLeftover) {
+      if (lateEditorAfterLeftoverClose || staleEditorAfterLeftoverClose) {
+        // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
+        partialFocusEditor = { value: staleEditorAfterLeftoverClose }
+        staleEditorAfterLeftoverClose = undefined
+        setTimeout(() => {
+          partialFocusEditor = undefined
+          activeTextEditorChanged(focusedSourceEditor())
+        }, 60)
+      } else activeTextEditorChanged(focusedSourceEditor())
+    }
+    return accepted
   }
   /** Models Cursor's refusal to place a normal reader in its separate chat part; panel and text opens share this boundary. @example nativeReaderColumn(2) // 1 when only main column one and chat column two exist */
   function nativeReaderColumn(requested: number): number {
@@ -992,6 +1277,7 @@ export async function workspaceHarness(
           !registered ||
           (pendingPanelActivity !== kind &&
             !separateEditorPart?.focused &&
+            !staleNamedGroup &&
             activeTabGroup.activeTab === nativeTab)
         )
       },
@@ -1001,6 +1287,27 @@ export async function workspaceHarness(
         )
       },
       reveal(column?: number, preserveFocus?: boolean): void {
+        // The pane comes to the front of its group, with the tab events of that, one turn after this call returned.
+        if (
+          revealsPanelsLater &&
+          !applyingLaterReveal &&
+          column === undefined &&
+          !groups.some((group) => group.activeTab === nativeTab)
+        ) {
+          const applyReveal = (): void => {
+            if (!panels.has(value)) return
+            applyingLaterReveal = true
+            try {
+              value.reveal(column, preserveFocus)
+            } finally {
+              applyingLaterReveal = false
+            }
+          }
+          pendingDisposedTabCloses.push(applyReveal)
+          // Without a layout read the reveal is reported by itself a moment later.
+          applyByItselfLater(applyReveal)
+          return
+        }
         panelReveals.push({ kind, column, preserveFocus })
         const previousColumn = value.viewColumn,
           previousFocusedGroup = activeTabGroup
@@ -1055,27 +1362,11 @@ export async function workspaceHarness(
             emptied
           ) {
             automaticallyClosedColumns.push(emptied.viewColumn)
-            groups.splice(groups.indexOf(emptied), 1)
-            for (const remaining of groups)
-              if (remaining.viewColumn > emptied.viewColumn)
-                remaining.viewColumn--
-            for (const retained of panels)
-              retained.viewColumn = groups.find((candidate) =>
-                candidate.tabs.includes(retained.nativeTab),
-              )?.viewColumn
-            editorLayout = {
-              orientation: 0,
-              groups: groups
-                .filter((candidate) => candidate !== separateEditorPart?.group)
-                .map(() => ({})),
-            }
-            changedGroups({
-              opened: [],
-              closed: [emptied],
-              changed: [...groups],
-            })
+            removeEmptiedGroup(emptied)
           }
           if (!preserveFocus) {
+            // A pane revealed with the focus takes the keyboard from the page body.
+            keyboardOnBody = false
             retainDelayedTextFocus(kind)
             if (!suppressNativeInnerFocus && !value.blockInnerFocus)
               innerFocusedPanel = kind
@@ -1170,6 +1461,8 @@ export async function workspaceHarness(
               for (const listener of viewChanged) listener()
             })
           }
+          // A pane that moved or came to the front changed a group's tabs; a reveal of the pane already in front did not.
+          if (!wasInFront) replaceGroupObjects()
           for (const listener of viewChanged) listener()
         }
         if (contextCoversSource && kind === 'codebook.studyContext')
@@ -1199,7 +1492,19 @@ export async function workspaceHarness(
       },
       dispose(): void {
         if (!panels.delete(value)) return
+        // A disposed pane that had the keyboard leaves it to no editor.
+        if (
+          !separateEditorPart?.focused &&
+          activeTabGroup.activeTab === nativeTab
+        )
+          keyboardOnBody = true
         const closeTab = (): void => {
+          // The pane was focused again after its disposal (a group focus command reached its group before the editor closed its tab): the keyboard goes with the closing tab, and the editor focuses nothing in its place.
+          if (
+            !separateEditorPart?.focused &&
+            activeTabGroup.activeTab === nativeTab
+          )
+            keyboardOnBody = true
           const emptied = groups.filter(
             (group) => group.tabs.length === 1 && group.tabs[0] === nativeTab,
           )
@@ -1208,12 +1513,44 @@ export async function workspaceHarness(
             if (group.activeTab === nativeTab) group.activeTab = undefined
           }
           // The editor then removes the group the tab left empty (workbench.editor.closeEmptyGroups, on by default).
-          if (closeDisposedPanelTabsLater)
-            for (const group of emptied) removeEmptiedGroup(group)
+          if (closeDisposedPanelTabsDuringLayoutRead) {
+            const emptiedColumns = emptied.map((group) => group.viewColumn)
+            // The tab's close gives every group a new object; the emptied group's close, which follows it while a layout read is pending, does so again.
+            replaceGroupObjects()
+            pendingDisposedTabCloses.push(() => {
+              for (const group of groups.filter(
+                (candidate) =>
+                  candidate !== separateEditorPart?.group &&
+                  emptiedColumns.includes(candidate.viewColumn) &&
+                  !candidate.tabs.length,
+              ))
+                removeEmptiedGroup(group)
+            })
+          } else if (closeDisposedPanelTabsLater && emptied.length) {
+            // From the last column to the first, each group looked up again by its column, as in the close of dead panes above.
+            const laterEmptiedColumns = emptied
+              .map((group) => group.viewColumn)
+              .toSorted((left, right) => right - left)
+            for (const emptiedColumn of laterEmptiedColumns) {
+              const group = groups.find(
+                (candidate) =>
+                  candidate !== separateEditorPart?.group &&
+                  candidate.viewColumn === emptiedColumn &&
+                  !candidate.tabs.length,
+              )
+              if (group) removeEmptiedGroup(group)
+            }
+          } else replaceGroupObjects()
         }
         // VS Code closes a disposed editor from a worker with a 0 ms delay; a layout read that reached the busy window with the disposal is answered before that worker runs.
-        if (closeDisposedPanelTabsLater) pendingDisposedTabCloses.push(closeTab)
-        else closeTab()
+        if (
+          closeDisposedPanelTabsLater ||
+          closeDisposedPanelTabsDuringLayoutRead
+        ) {
+          pendingDisposedTabCloses.push(closeTab)
+          // Without a layout read the worker closes the tab by itself a moment later.
+          applyByItselfLater(closeTab)
+        } else closeTab()
         for (const listener of disposed) listener()
       },
     }
@@ -1221,8 +1558,17 @@ export async function workspaceHarness(
     const register = (): void => {
       registered = true
       const group = nativeGroup(value.viewColumn ?? 1)
-      if (!group.tabs.includes(nativeTab)) group.tabs.push(nativeTab)
+      if (!group.tabs.includes(nativeTab)) {
+        group.tabs.push(nativeTab)
+        // Cursor reports the opened tab before it reports it as the tab its group shows (obs15 P1: "opened", then "changed").
+        if (replacesGroupObjectsOnTabChanges)
+          for (const listener of tabChangeListeners)
+            listener({ opened: [nativeTab], closed: [], changed: [] })
+      }
       group.activeTab = nativeTab
+      // The new pane is the editor its group shows now, with or without the keyboard focus.
+      returnHiddenEditorArea()
+      replaceGroupObjects()
     }
     if (registered) register()
     else {
@@ -1347,8 +1693,13 @@ export async function workspaceHarness(
       this.rendererAttached = true
       viewportEvents.push(`reveal:${this.mode}`)
     }
-    /** Marks selected live presentation without starting another runtime. @example await viewport.showLive() */
+    /**
+     * Marks selected live presentation without starting another runtime.
+     * @throws "Viewport lease is released" once the lease was closed or its panel is gone, before the panel is touched, like the real viewport.
+     * @example await viewport.showLive()
+     */
     async showLive(signal?: AbortSignal): Promise<void> {
+      if (this.closed) throw new Error('Viewport lease is released')
       // Like the real viewport, a lease that is not pinned to history only restores a detached renderer, leaving an attached one's panel untouched.
       if (!this.historical) {
         if (!this.rendererAttached)
@@ -1424,7 +1775,7 @@ export async function workspaceHarness(
       assert.equal(this.rendererAttached, true, 'Webview is not ready')
       // No renderer acknowledges a frame once another writer replaced this viewport's document; the real delivery then runs out of its paint budget.
       if (this.mode === 'recording' && !this.rendererInPlace())
-        throw new Error(VIEWPORT_ACK_TIMEOUT_REASON)
+        throw new ViewportAckTimeoutError()
       const held = nextImage
       nextImage = undefined
       if (held) {
@@ -1532,6 +1883,11 @@ export async function workspaceHarness(
     },
   }
   const playbackPanelMessages: StudyViewMessage[] = []
+  /** The last Study message the bottom panel had received at the moment each of its open requests was answered, by request number; see `playbackPanelMessageAtReply`. */
+  const playbackPanelMessagesAtReply = new Map<
+    number,
+    StudyViewMessage | undefined
+  >()
   const playbackPanelListeners = new Set<(message: unknown) => void>()
   const playbackPanelVisibilityListeners = new Set<() => void>()
   const playbackPanelDisposeListeners = new Set<() => void>()
@@ -1550,6 +1906,10 @@ export async function workspaceHarness(
             webview: 'moments',
             openRequest: message.openRequest,
           })
+          playbackPanelMessagesAtReply.set(
+            message.openRequest,
+            structuredClone(playbackPanelMessages.at(-1)),
+          )
           return true
         }
         playbackPanelMessages.push(message)
@@ -1592,17 +1952,34 @@ export async function workspaceHarness(
         get appName(): string {
           return hostAppName
         },
+        remoteName,
+        clipboard: {
+          writeText: async (text: string): Promise<void> => {
+            clipboardTexts.push(text)
+          },
+        },
       },
       commands: {
         async getCommands(): Promise<string[]> {
-          return nativeHostCommands.filter(
-            (name) => !absentHostCommands.has(name),
-          )
+          return [
+            ...nativeHostCommands,
+            // Cursor, whose Agent chat is the separate editor part, registers "Focus Agent".
+            ...(separateEditorPart ? [CURSOR_FOCUS_AGENT_COMMAND] : []),
+          ].filter((name) => !absentHostCommands.has(name))
         },
-        async executeCommand(name: string, layout?: unknown): Promise<unknown> {
+        async executeCommand(
+          name: string,
+          layout?: unknown,
+          contextValue?: unknown,
+        ): Promise<unknown> {
           // Both native hosts reject a command they do not register, in these words.
           if (absentHostCommands.has(name))
             throw new Error(`command '${name}' not found`)
+          // A context key changes no pane, focus or layout; it is kept apart from the recorded native commands.
+          if (name === 'setContext') {
+            contextKeys.set(String(layout), contextValue)
+            return
+          }
           if (name === 'codebook.observedMoments.focus') {
             assert.ok(playbackPanelProvider)
             playbackPanel.visible = true
@@ -1622,13 +1999,27 @@ export async function workspaceHarness(
             for (const listener of summaryVisibilityListeners) listener()
           }
           commands.push(name)
-          if (name === 'workbench.debug.action.focusVariablesView')
+          if (name === 'workbench.debug.action.focusVariablesView') {
+            focusedList = 'variables'
             showNativeVariablesView()
-          // A list command acts on the rows the focused tree holds at that moment; an empty tree gives it nothing to focus or expand.
-          if (name === 'list.focusFirst' && nativeVariables.treeHoldsStop)
-            nativeVariables.firstScopeFocused = true
-          if (name === 'list.expand' && nativeVariables.firstScopeFocused)
-            listNativeValues()
+            // Run and Debug opens in the side bar the summary shares with it and takes its place.
+            if (summarySharesSideBarWithRunAndDebug && summary.visible) {
+              summary.visible = false
+              for (const listener of summaryVisibilityListeners) listener()
+            }
+          }
+          // A list command acts on the rows the focused list holds at that moment; an empty tree gives it nothing to focus or expand.
+          if (name === 'list.focusFirst') {
+            if (focusedList === 'another-list')
+              anotherList.firstRowFocused = true
+            else if (nativeVariables.treeHoldsStop)
+              nativeVariables.firstScopeFocused = true
+          }
+          if (name === 'list.expand') {
+            if (focusedList === 'another-list')
+              anotherList.firstRowExpanded = anotherList.firstRowFocused
+            else if (nativeVariables.firstScopeFocused) listNativeValues()
+          }
           const held = nextCommand
           if (held?.name === name) {
             nextCommand = undefined
@@ -1663,6 +2054,12 @@ export async function workspaceHarness(
             activeTabGroup.activeTab
           )
             activeTabGroup.activeTab.isPreview = false
+          // The learner's Close Editor closes the tab the focused group shows, as a close request for that tab does.
+          if (
+            name === 'workbench.action.closeActiveEditor' &&
+            activeTabGroup.activeTab
+          )
+            closeTabs([activeTabGroup.activeTab])
           if (name === 'workbench.action.minimizeOtherEditors') {
             maximizedEditorGroup = false
             // Native Expand also changes group proportions while exiting maximization.
@@ -1683,8 +2080,82 @@ export async function workspaceHarness(
           }
           if (name === 'workbench.action.toggleMaximizeEditorGroup')
             maximizedEditorGroup = !maximizedEditorGroup
-          if (name === 'workbench.action.maximizeEditorHideSidebar')
+          if (name === 'workbench.action.maximizeEditorHideSidebar') {
             maximizedEditorGroup = true
+            // The command hides both side bars, and no later command of the editor brings them back by itself (both editors, obs15 P4).
+            if (sideBars) sideBars = { primary: false, auxiliary: false }
+          }
+          if (sideBars && name === 'workbench.action.closeSidebar')
+            sideBars.primary = false
+          // The two focus commands show a hidden side bar, leave an open one as it is, and give it the keyboard.
+          if (sideBars && name === 'workbench.action.focusSideBar') {
+            sideBars.primary = true
+            keyboardInSideBar = true
+          }
+          if (sideBars && name === 'workbench.action.focusAuxiliaryBar') {
+            sideBars.auxiliary = true
+            keyboardInSideBar = true
+          }
+          if (name === 'workbench.action.focusActiveEditorGroup')
+            keyboardInSideBar = false
+          // The activated group is in view before the command answers: another group that takes the focus comes back at the minimum heights.
+          if (name === 'workbench.action.focusFirstEditorGroup')
+            returnHiddenEditorArea()
+          // The group that already was the active one comes back with the sizes the rows had before the panel was maximized (VS Code 1.140.0: 344 / 343 before and after).
+          if (name === 'workbench.action.focusActiveEditorGroup')
+            panelMaximized = false
+          // Every command that gives an editor group or the chat the keyboard takes it from the page body.
+          if (
+            name === 'workbench.action.focusActiveEditorGroup' ||
+            name === 'workbench.action.focusFirstEditorGroup' ||
+            focusGroupAtColumnCommands.includes(name) ||
+            name === CURSOR_FOCUS_AGENT_COMMAND
+          )
+            keyboardOnBody = false
+          const focusedColumn = focusGroupAtColumnCommands.indexOf(name) + 2
+          // The editor's commands for its second to eighth group give that group the keyboard focus and keep the tab it shows.
+          if (focusedColumn > 1) {
+            const mainGroups = groups.filter(
+              (group) => group !== separateEditorPart?.group,
+            )
+            // The command counts the main editor's groups only. For the column after the last of them it opens a new empty group there and focuses it (VS Code keeps this from before the grid); the chat's group, which sat at that column, moves one column on (Cursor 3.23.12, Cycle 0045 obs15 P1 and P2).
+            if (nativeLayout && focusedColumn === mainGroups.length + 1) {
+              const opened = nativeGroup(focusedColumn)
+              activeTabGroup =
+                groups.find((group) => group.viewColumn === focusedColumn) ??
+                opened
+              innerFocusedPanel = undefined
+              if (separateEditorPart) separateEditorPart.focused = false
+              changedGroups({
+                opened: [],
+                closed: [],
+                changed: [activeTabGroup],
+              })
+              activeTextEditorChanged(undefined)
+            }
+            const focusedGroup = mainGroups.find(
+              (group) => group.viewColumn === focusedColumn,
+            )
+            if (focusedGroup && focusedGroup !== activeTabGroup) {
+              const previousGroup = activeTabGroup
+              returnHiddenEditorArea()
+              activeTabGroup = focusedGroup
+              innerFocusedPanel = undefined
+              if (separateEditorPart) separateEditorPart.focused = false
+              changedGroups({
+                opened: [],
+                closed: [],
+                changed: [previousGroup, focusedGroup],
+              })
+              activeTextEditorChanged(focusedSourceEditor())
+            }
+          }
+          // Cursor's "Focus Agent": the selected chat's input gets the keyboard; no tab or group changes, and the editor keeps naming the tab group it named.
+          if (name === CURSOR_FOCUS_AGENT_COMMAND && separateEditorPart) {
+            separateEditorPart.focused = true
+            innerFocusedPanel = undefined
+            activeTextEditorChanged(undefined)
+          }
           if (name === 'workbench.action.focusFirstEditorGroup') {
             const previousEditor = focusedSourceEditor(),
               previousGroup = activeTabGroup,
@@ -1692,6 +2163,21 @@ export async function workspaceHarness(
             const primaryEditor = visibleSourceEditors.find(
               (editor) => editor.group === primaryGroup,
             )
+            // The first group has the keyboard and layout reads are answered for the main editor, yet no group event arrives and the group the editor named stays the named one: the chat's, or the main editor's group it named while the chat input had the keyboard. A text editor the first group shows is reported as the active text editor, a pane is not reported at all.
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              separateEditorPart &&
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.focused)
+            ) {
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
+              activeTabGroup = primaryGroup
+              separateEditorPart.focused = false
+              if (primaryGroup.activeTab?.input instanceof TabInputText)
+                activeTextEditorChanged(focusedSourceEditor())
+              return undefined
+            }
             // Native text and tab-group notifications have no cross-event ordering guarantee.
             if (primaryNotificationOrder === 'editor first') {
               partialFocusEditor = { value: primaryEditor }
@@ -1724,23 +2210,49 @@ export async function workspaceHarness(
             if (hideGridWhileMaximized && maximizedEditorGroup) return undefined
             // The disposed panels' tabs close one task after this read is answered.
             const dueTabCloses = pendingDisposedTabCloses.splice(0)
-            if (dueTabCloses.length)
+            if (
+              dueTabCloses.length &&
+              (closeDisposedPanelTabsDuringLayoutRead || revealsPanelsLater)
+            ) {
+              // Cursor's closes arrive while the read is pending: the reader's listeners see them before the answer.
+              await new Promise<void>((resolve) => setImmediate(resolve))
+              for (const close of dueTabCloses) close()
+              // A tab that closed in this read is followed by its emptied group in the same read.
+              for (const close of pendingDisposedTabCloses.splice(0)) close()
+              await new Promise<void>((resolve) => setImmediate(resolve))
+            } else if (dueTabCloses.length)
               setImmediate(() => {
                 for (const close of dueTabCloses) close()
               })
+            // The focused separate part answers for itself, and a hidden editor area reports its stacked groups collapsed.
+            let reportedLayout = editorLayout
+            if (separateEditorPart?.focused)
+              reportedLayout =
+                separatePartLayoutReport ?? separateEditorPart.layout
+            else if (panelMaximized)
+              reportedLayout = collapsedLayout(editorLayout)
             const layout = JSON.parse(
-              JSON.stringify(
-                separateEditorPart?.focused
-                  ? (separatePartLayoutReport ?? separateEditorPart.layout)
-                  : panelMaximized
-                    ? collapsedLayout(editorLayout)
-                    : editorLayout,
-                (key, value) =>
-                  key === 'groups' && Array.isArray(value)
-                    ? value.map((group) => ({ size: 1, ...group }))
-                    : value,
+              JSON.stringify(reportedLayout, (key, value) =>
+                key === 'groups' && Array.isArray(value)
+                  ? value.map((group) => ({ size: 1, ...group }))
+                  : value,
               ),
             )
+            // With modelled side bars the main editor's columns are read in pixels of the area the bars leave, as the editor reports them.
+            if (
+              sideBars &&
+              reportedLayout === editorLayout &&
+              layout.orientation === 0
+            ) {
+              const areaPx =
+                  SIDE_BAR_WINDOW_PX.window -
+                  (sideBars.primary ? sideBarWidthsPx.primary : 0) -
+                  (sideBars.auxiliary ? sideBarWidthsPx.auxiliary : 0),
+                columns: { size: number }[] = layout.groups,
+                total = columns.reduce((sum, column) => sum + column.size, 0)
+              for (const column of columns)
+                column.size = Math.round((column.size / total) * areaPx)
+            }
             // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
             if (settlementPending) {
               editorLayout = structuredClone(settledLayout)
@@ -1756,6 +2268,8 @@ export async function workspaceHarness(
               separateEditorPart.layout = structuredClone(layout)
               return
             }
+            // A layout given to the main grid brings a hidden editor area back; the given layout replaces the sizes of that return.
+            returnHiddenEditorArea()
             settledLayout =
               constrainStudyGrid && nativeGroupCount(layout) === 3
                 ? {
@@ -1889,7 +2403,12 @@ export async function workspaceHarness(
       },
       StatusBarAlignment: { Right: 2 },
       window: {
-        createStatusBarItem: () => saveStatus,
+        createStatusBarItem: (id: string) => {
+          createdStatusItemIds.push(id)
+          return createdStatusItemIds.length === 1
+            ? saveStatus
+            : createStatusItem()
+        },
         state: windowState,
         onDidChangeWindowState: (
           callback: (state: typeof windowState) => void,
@@ -1916,6 +2435,11 @@ export async function workspaceHarness(
         showInformationMessage: (message: string, ...items: string[]) => {
           informationMessages.push({ message, items })
           return answerInformationMessage(items)
+        },
+        // An error notification of the reader has no button; it stays until the learner dismisses it.
+        showErrorMessage: async (message: string): Promise<undefined> => {
+          errorMessages.push(message)
+          return undefined
         },
         createTextEditorDecorationType: disposable,
         createTreeView: (
@@ -1979,6 +2503,11 @@ export async function workspaceHarness(
             document instanceof Uri
               ? await openSourceDocument(document)
               : document
+          textDocumentShows.push({
+            name: basename(sourceDocument.uri.path),
+            viewColumn: options?.viewColumn,
+            preserveFocus: Boolean(options?.preserveFocus),
+          })
           sourceColumn =
             options?.viewColumn === undefined
               ? sourceColumn
@@ -1997,11 +2526,24 @@ export async function workspaceHarness(
             group.viewColumn,
             group.activeTab !== tab || !options?.preserveFocus,
           )
+          const showsAnotherTab = group.activeTab !== tab
           group.activeTab = tab
           if (!options?.preserveFocus) {
+            // Cursor beside the chat: a text editor that takes the keyboard is reported as the active text editor, while the chat's group stays the named one until a tab or group changes (as after the command that focuses the first editor group).
+            if (
+              leavesPaneFocusUnreportedBesideChat &&
+              separateEditorPart &&
+              !showsAnotherTab &&
+              ((staleNamedGroup ?? activeTabGroup) ===
+                separateEditorPart.group ||
+                separateEditorPart.focused)
+            )
+              staleNamedGroup = staleNamedGroup ?? activeTabGroup
             activeTabGroup = group
             innerFocusedPanel = undefined
             if (separateEditorPart) separateEditorPart.focused = false
+            // A text document shown with the focus takes the keyboard from the page body.
+            keyboardOnBody = false
           }
           if (options?.preview !== undefined) tab.isPreview = options.preview
           const editor = sourceEditor(
@@ -2045,6 +2587,8 @@ export async function workspaceHarness(
             },
           })
           visibleSourceEditors.push(visible)
+          // A tab that opened or became the one its group shows changed the tabs; the same tab shown again did not.
+          if (showsAnotherTab) replaceGroupObjects()
           if (!options?.preserveFocus)
             activeTextEditorChanged(focusedSourceEditor())
           const displayed = nextSourceDisplay
@@ -2055,12 +2599,15 @@ export async function workspaceHarness(
         tabGroups: {
           all: groups,
           get activeTabGroup() {
-            return activeTabGroup
+            return staleNamedGroup ?? activeTabGroup
           },
           onDidChangeTabs: (callback: (event: TabChanges) => void) => {
             const notify = (
               event: TabChanges = { opened: [], closed: [], changed: [] },
-            ): void => callback(event)
+            ): void => {
+              staleNamedGroup = undefined
+              callback(event)
+            }
             tabChangeListeners.add(notify)
             return {
               dispose(): void {
@@ -2076,96 +2623,51 @@ export async function workspaceHarness(
               },
             }
           },
-          close: async (tabs: Tab[]) => {
+          close: async (tabs: Tab[], preserveFocus?: boolean) => {
             tabCloseRequests.push([...tabs])
             if (rejectNextTabClose) {
               rejectNextTabClose = false
               throw new Error('Canceled')
             }
-            let accepted = true,
-              closedActiveLeftover = false
-            const emptiedByDeadPane: typeof groups = []
-            for (const group of groups) {
-              const requested = group.tabs.filter((tab) => tabs.includes(tab))
-              if (!requested.length) continue
-              // One tab the editor will not release keeps every requested tab of its group and fails the answer; the other groups still close.
-              if (requested.some((tab) => closeRefusingTabs.has(tab))) {
-                accepted = false
-                continue
-              }
-              const active = group.activeTab,
-                heldDeadPane = requested.some((tab) => deadPaneTabs.has(tab))
-              group.tabs = group.tabs.filter((tab) => !tabs.includes(tab))
-              // The editor activates the neighbouring tab when the active one closes.
-              if (
-                active &&
-                tabs.includes(active) &&
-                (leftoverCapturedTabs.has(active) || deadPaneTabs.has(active))
-              ) {
-                group.activeTab = group.tabs.at(-1)
-                closedActiveLeftover = true
-              }
-              if (heldDeadPane && !group.tabs.length)
-                emptiedByDeadPane.push(group)
-            }
-            // The editor removes a group whose last tab closed and renumbers the later columns; its last main group stays, empty.
-            for (const emptied of emptiedByDeadPane) {
-              const mainGroups = groups.filter(
-                (candidate) => candidate !== separateEditorPart?.group,
-              )
-              if (!nativeLayout || mainGroups.length === 1) break
-              const index = groups.indexOf(emptied)
-              groups.splice(index, 1)
-              for (const remaining of groups)
-                if (remaining.viewColumn > emptied.viewColumn)
-                  remaining.viewColumn--
-              if (activeTabGroup === emptied) {
-                activeTabGroup = groups[Math.max(0, index - 1)]!
-                closedActiveLeftover = true
-              }
-              editorLayout = {
-                orientation: 0,
-                groups: groups
-                  .filter(
-                    (candidate) => candidate !== separateEditorPart?.group,
-                  )
-                  .map(() => ({})),
-              }
-              changedGroups({
-                opened: [],
-                closed: [emptied],
-                changed: [...groups],
-              })
-            }
-            if (closedActiveLeftover) {
-              if (
-                lateEditorAfterLeftoverClose ||
-                staleEditorAfterLeftoverClose
-              ) {
-                // The tab model already names the next tab while the active text editor is still unset, or still shows the document of the tab that closed.
-                partialFocusEditor = { value: staleEditorAfterLeftoverClose }
-                staleEditorAfterLeftoverClose = undefined
-                setTimeout(() => {
-                  partialFocusEditor = undefined
-                  activeTextEditorChanged(focusedSourceEditor())
-                }, 60)
-              } else activeTextEditorChanged(focusedSourceEditor())
-            }
-            return accepted
+            // Closing the tab that has the keyboard while preserving the focus focuses nothing in its place.
+            const closesFocusedTab =
+              Boolean(preserveFocus) &&
+              !separateEditorPart?.focused &&
+              activeTabGroup.activeTab !== undefined &&
+              tabs.includes(activeTabGroup.activeTab)
+            const closed = closeTabs(tabs)
+            if (closesFocusedTab && closed) keyboardOnBody = true
+            return closed
           },
         },
       },
       debug: {
-        // No test of this harness pauses a native debug session; the Application pane then always preserves the keyboard focus when it is revealed.
-        activeStackItem: undefined,
+        // Unset unless a test pauses a debug session with `setActiveStackItem`; the Application pane then always preserves the keyboard focus when it is revealed.
+        get activeStackItem() {
+          return activeStackItem
+        },
       },
       workspace: {
         getConfiguration: (section: string) => ({
           get: (key: string) =>
             section === 'codebook' && key === 'savedStudyLimit'
               ? savedStudyCapacity
-              : undefined,
+              : section === 'debug' && key === 'focusEditorOnBreak'
+                ? focusEditorOnBreak
+                : undefined,
         }),
+        onDidChangeConfiguration: (
+          listener: (event: {
+            affectsConfiguration(section: string): boolean
+          }) => void,
+        ) => {
+          configurationListeners.add(listener)
+          return {
+            dispose(): void {
+              configurationListeners.delete(listener)
+            },
+          }
+        },
         fs: {
           // Models the editor's Trash: the path leaves the library and stays recoverable outside it.
           delete: async (uri: Uri, options: unknown): Promise<void> => {
@@ -2290,13 +2792,21 @@ export async function workspaceHarness(
       summary.visible = false
       for (const listener of summaryVisibilityListeners) listener()
     },
+    /** Changes the Saved Study Limit setting and tells the reader, as the editor does when the learner edits Settings. @example harness.setSavedStudyCapacity(2) */
     setSavedStudyCapacity(value: unknown): void {
       savedStudyCapacity = value
+      for (const listener of configurationListeners)
+        listener({
+          affectsConfiguration: (section) =>
+            section === 'codebook' || section === 'codebook.savedStudyLimit',
+        })
     },
     /** Every native warning dialog the reader opened, with its title, options and buttons. @example harness.warningDialogs[0].title */
     warningDialogs,
     /** Every native information message the reader showed, with its buttons. @example harness.informationMessages[0].message */
     informationMessages,
+    /** The text of every native error notification the reader showed. @example harness.errorMessages[0] */
+    errorMessages,
     /** Decides how the learner answers the reader's next information messages; unanswered ones are dismissed. @example harness.answerInformationMessages(async ([move]) => move) */
     answerInformationMessages(
       answer: (items: string[]) => Promise<string | undefined>,
@@ -2323,6 +2833,22 @@ export async function workspaceHarness(
       nativeVariables.firstScopeFocused = false
       nativeVariables.valuesListed = false
     },
+    /** Models the learner clicking into another list of the host (the Explorer) while Show Variables waits: that list holds the keyboard focus until a command focuses Variables again. @example harness.clickAnotherList() */
+    clickAnotherList(): void {
+      focusedList = 'another-list'
+    },
+    /** What the list commands did to the list the learner clicked. @example harness.anotherListView() // => { firstRowFocused: false, firstRowExpanded: false } */
+    anotherListView(): { firstRowFocused: boolean; firstRowExpanded: boolean } {
+      return { ...anotherList }
+    },
+    /** Models Cursor's side bar, which the Learning summary shares with Run and Debug: the Variables focus command then hides the summary. @example harness.shareSummarySideBarWithRunAndDebug() */
+    shareSummarySideBarWithRunAndDebug(): void {
+      summarySharesSideBarWithRunAndDebug = true
+    },
+    /** Reads a context key the reader set with the editor's `setContext` command. @example harness.contextKey('codebook.learningSummaryMovable') // => true */
+    contextKey(key: string): unknown {
+      return contextKeys.get(key)
+    },
     /** What the fake host's Variables view shows of the presented stop. @example harness.nativeVariablesView() // => { firstScopeFocused: true, valuesListed: true } */
     nativeVariablesView(): {
       firstScopeFocused: boolean
@@ -2341,6 +2867,8 @@ export async function workspaceHarness(
     },
     /** Every path the reader moved to the editor's Trash, with the options it passed. @example harness.trashMoves.map((move) => move.path) */
     trashMoves,
+    /** Every text the reader wrote to the editor's clipboard, in order. @example harness.clipboardTexts.at(-1) */
+    clipboardTexts,
     /** Makes the editor's Trash refuse the moves a test names. @example harness.rejectTrashMoves((path) => path.endsWith('.study.v3.json')) */
     rejectTrashMoves(rejects: (path: string) => boolean): void {
       rejectsTrashMove = rejects
@@ -2362,6 +2890,7 @@ export async function workspaceHarness(
       return { started, release }
     },
     saveStatus,
+    createdStatusItemIds,
     reader,
     createReader,
     groups,
@@ -2423,6 +2952,11 @@ export async function workspaceHarness(
     postedMessages: () => postedMessages,
     /** Lists the reader's replies to open requests in the order the webviews received them, so a test can assert which pane was answered and when. @example harness.openRequestReplies() // => [{ webview: 'context', openRequest: 3 }] */
     openRequestReplies: () => openRequestReplies.map((reply) => ({ ...reply })),
+    /** Gives the last Study message the bottom panel had received when its open request with this number was answered, so a test can assert that the message naming the entry arrived before the reply. @example harness.playbackPanelMessageAtReply(1)?.model.selection.studyId */
+    playbackPanelMessageAtReply: (
+      openRequest: number,
+    ): StudyViewMessage | undefined =>
+      playbackPanelMessagesAtReply.get(openRequest),
     presentationPreferences,
     watchedPatterns,
     viewportEvents,
@@ -2432,6 +2966,10 @@ export async function workspaceHarness(
     historicalDebugPresentations,
     historicalDebuggers,
     historicalDebugInvalidations: () => historicalDebugInvalidations,
+    /** What each invalidation told the historical debugger its emptied session reads in Run and Debug, in order. @example harness.historicalDebugInvalidationLabels().at(-1) // => 'Not recorded at this moment' */
+    historicalDebugInvalidationLabels: () => [
+      ...historicalDebugInvalidationLabels,
+    ],
     readCapturedSource: (uri: string) => {
       const parsed = new URL(uri)
       return sourceProvider(
@@ -2485,6 +3023,11 @@ export async function workspaceHarness(
       visibleSourceEditors
         .find((editor) => editor.document.uri.fsPath === path)
         ?.document.getText(),
+    /** Gives the one-based line each visible source editor's cursor stands on, which is the line the reader highlighted there. @example harness.displayedSourceLines() // => [2] */
+    displayedSourceLines: (): number[] =>
+      visibleSourceEditors.map(
+        (editor) => (editor.selections[0]?.active.line ?? 0) + 1,
+      ),
     panelReveals: () => [...panelReveals],
     suppressNativeInnerFocus(): void {
       suppressNativeInnerFocus = true
@@ -2683,6 +3226,8 @@ export async function workspaceHarness(
       decoratedColumns.length = 0
     },
     decoratedColumns: () => [...decoratedColumns],
+    /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. @example harness.decoratedRangeCounts().at(-1) // => 0 once the stop's highlight was cleared */
+    decoratedRangeCounts: () => [...decoratedRangeCounts],
     moveSource(column: number): void {
       const editor = lastSourceEditor
       assert.ok(editor)
@@ -2722,9 +3267,11 @@ export async function workspaceHarness(
     closeEmptyGroupsAfterPanelMove(): void {
       closeEmptyGroupsOnMove = true
     },
+    /** The fake editor the reader runs in, so a test can act on it as the learner or another extension does: run a native command, create a panel, show a document or close a tab. @example await harness.editor.commands.executeCommand('workbench.action.focusFirstEditorGroup') */
+    editor: editorDependencies.vscode,
     /**
-     * Maximizes the bottom panel as its title bar's "Maximize Panel Size" does: the editor area is hidden until the learner restores the panel or an editor is opened or revealed.
-     * While hidden, the fake editor reports every stacked group at its minimum height (70 px), expands a group an editor is revealed in, and brings the area back when that reveal changes a group's visible editor.
+     * Maximizes the bottom panel as its title bar's "Maximize Panel Size" does: the editor area is hidden until the learner restores the panel or the editor brings the area back itself.
+     * While hidden, the fake editor reports every stacked group at its minimum height (70 px) and expands a group an editor is revealed in. It brings the area back, as VS Code 1.140 does, for a reveal or a shown document that changes a group's visible editor, a created webview panel, a focus-group command, `vscode.setEditorLayout`, a close of the tab a group shows and the Close Editor command; without a layout of its own the area returns with the first of two stacked groups 70 px high.
      * @example harness.maximizePanel()
      */
     maximizePanel(): void {
@@ -2738,17 +3285,84 @@ export async function workspaceHarness(
     /** The height of one editor group in a fake editor area of 840 px, by view column. @example harness.groupHeightPx(1) // 420 */
     groupHeightPx,
     /**
-     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
+     * Makes the fake editor close a disposed panel's tab one task after it answered the next layout read, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, and then remove the group that tab left empty, as a busy VS Code 1.140 window does: its group view closes disposed editors from a worker with a 0 ms delay, so a layout read that arrived with the disposal is answered first, and `workbench.editor.closeEmptyGroups` is on by default.
      * Without it the tab leaves at once and the emptied group stays, which is the editor with `closeEmptyGroups` off.
      * @example harness.closeDisposedPanelTabsLater()
      */
     closeDisposedPanelTabsLater(): void {
       closeDisposedPanelTabsLater = true
     },
+    /**
+     * Makes the fake editor close a disposed panel's tab a moment after the disposal ({@link DISPOSED_TAB_CLOSE_DELAY_MS}), and the group that tab left empty while the next layout read is pending, as Cursor 3.23.12 was seen to at a live entry from the three-pane Study layout (Cycle 0045, owed check 2, take o2b: the context pane's tab closed about 100 ms after the entry began, at +440 ms, and its group at +451 ms, each with new objects for every group). A layout read that arrives before the tab closed is interrupted by both closes. The reader's listeners see a close before the read it interrupts is answered. That the group's close falls into a layout read is the model's choice of moment: the trace gives the order of the two closes and their distance of 11 ms, not what the reader awaited.
+     * @example
+     * harness.replaceGroupObjectsOnTabChanges()
+     * harness.closeDisposedPanelTabsDuringLayoutRead()
+     */
+    closeDisposedPanelTabsDuringLayoutRead(): void {
+      closeDisposedPanelTabsDuringLayoutRead = true
+    },
     automaticallyClosedColumns: () => [...automaticallyClosedColumns],
     useCursorGroupWrappers(twoEventContraction = false): void {
       cursorGroupWrappers = true
       cursorTwoEventContraction = twoEventContraction
+    },
+    /**
+     * Makes the fake editor answer every tab change the way Cursor 3.23.12 does: whenever a tab opened, another tab of a group became active, a tab closed, or a group opened or closed, every TabGroup object is replaced by a new one in the same view column and all groups are reported as changed (obs13 items 7 and 8). A focus move between groups keeps the objects, as it does there.
+     * Off by default, which is VS Code: its group objects live as long as their groups. The Tab objects are kept in both modes.
+     * @example harness.replaceGroupObjectsOnTabChanges()
+     */
+    replaceGroupObjectsOnTabChanges(): void {
+      replacesGroupObjectsOnTabChanges = true
+    },
+    /** Says whether no editor has the keyboard because the tab or pane that had it was closed and nothing was focused in its place; the page body then has it, as in the editor. Whatever gives an editor group, a text editor or the chat the keyboard ends that: a group focus command, Cursor's Focus Agent, a pane revealed or a document shown with the focus, the chat's `focus` and `focusTab`, and the learner's `focusMutableDraft`. @example harness.keyboardOnBody() // => true after tabGroups.close([focusedTab], true) */
+    keyboardOnBody: () => keyboardOnBody,
+    /**
+     * Gives the fake window a primary and a secondary side bar that are open or closed, as the learner has them, and makes the fake editor behave as both editors were seen to (Cycle 0045 NF-22, obs15 P4): `workbench.action.maximizeEditorHideSidebar` hides both bars, and leaving that maximization (`workbench.action.minimizeOtherEditors`, a new layout, closing the panes) shows neither again. `workbench.action.closeSidebar` hides the primary one; `workbench.action.focusSideBar` and `workbench.action.focusAuxiliaryBar` show their bar when it is hidden and give it the keyboard. No API of the editor says which bars are open: a layout read of columns answers in pixels of the editor area the bars leave (214 + 660 + 461 = 1335 with both open).
+     * @param open - Which of the two bars the learner has open.
+     * @param widthsPx - The bars' widths in the window of 1335 px; left out, Cursor's 214 and 461.
+     * @example
+     * harness.modelSideBars({ primary: true, auxiliary: false })
+     * harness.modelSideBars({ primary: false, auxiliary: true }, { primary: 300, auxiliary: 300 })
+     */
+    modelSideBars(
+      open: { primary: boolean; auxiliary: boolean },
+      widthsPx: { primary: number; auxiliary: number } = sideBarWidthsPx,
+    ): void {
+      sideBars = { ...open }
+      sideBarWidthsPx = { ...widthsPx }
+    },
+    /** The side bars the fake window shows now, and whether one of them has the keyboard; `undefined` bars without `modelSideBars`. @example harness.sideBars() // => { primary: true, auxiliary: true, hasKeyboard: false } */
+    sideBars: () => ({ ...sideBars, hasKeyboard: keyboardInSideBar }),
+    /**
+     * Sets what the fake editor reports as the selected stack item of Run and Debug: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
+     * @example
+     * harness.focusMutableDraft('actions.ts', 2)
+     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     */
+    setActiveStackItem(item: unknown, focusesEditorOnBreak?: boolean): void {
+      activeStackItem = item
+      focusEditorOnBreak = focusesEditorOnBreak
+    },
+    /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
+    textDocumentShows: () => [...textDocumentShows],
+    /**
+     * Makes the fake editor bring a revealed pane to the front of its group after `reveal()` returned: while the next layout read is pending, or by itself after {@link DISPOSED_TAB_CLOSE_DELAY_MS} when no layout read arrives, with the tab and group events of that change arriving then, as an editor does whose reveal is a request to another process (the hypothesis of Cycle 0045 row NF-20 for Cursor: "Open replay" read its own reveal of the Application pane as a change the learner made). A reveal that moves the pane to another column, and one of a pane that is in front already, are applied at once as before.
+     * @example harness.revealPanelsLater()
+     */
+    revealPanelsLater(): void {
+      revealsPanelsLater = true
+    },
+    /**
+     * Makes the fake editor answer `workbench.action.focusFirstEditorGroup` the way Cursor 3.23.12 was seen to while the chat has the keyboard, whether it names the chat's group as the active tab group (Cycle 0045: owed check 1, take A1, and obs15 P2) or a group of the main editor (obs15 R: a recording opened from the chat input while the editor named the captured source's group): the first group takes the keyboard and layout reads are answered for the main editor from then on, but no group event arrives and the named group stays the active tab group until the next tab or group change rebuilds the tab model. A text editor the first group shows is reported as the active text editor (`onDidChangeActiveTextEditor`); a pane (the Application pane) is not reported at all, and its `active` flag stays false.
+     * @example
+     * const chat = harness.addSeparateEditorPart()
+     * harness.leavePaneFocusUnreportedBesideChat()
+     * chat.focusTab()
+     */
+    leavePaneFocusUnreportedBesideChat(): void {
+      leavesPaneFocusUnreportedBesideChat = true
+      // This is Cursor, which also replaces every tab group object with each tab change; that rebuild is what corrects the stale name.
+      replacesGroupObjectsOnTabChanges = true
     },
     useNativeLayout(layout: unknown): void {
       nativeLayout = true
@@ -2804,6 +3418,21 @@ export async function workspaceHarness(
         focused: () => separateEditorPart?.focused,
         focus(): void {
           separateEditorPart!.focused = true
+          keyboardOnBody = false
+          activeTextEditorChanged(undefined)
+        },
+        /** Gives the chat tab the keyboard focus the way Cursor reports it: its group is the active tab group, no text editor is active, and a layout read is answered for the chat's own part. @example chat.focusTab() */
+        focusTab(): void {
+          const previous = activeTabGroup
+          activeTabGroup = separateEditorPart!.group
+          separateEditorPart!.focused = true
+          keyboardOnBody = false
+          innerFocusedPanel = undefined
+          changedGroups({
+            opened: [],
+            closed: [],
+            changed: [previous, activeTabGroup],
+          })
           activeTextEditorChanged(undefined)
         },
         /** Refreshes only the foreign wrapper when presentation tests create a pane; lifecycle and movement remain distinct. @example chat.resync('wrapper') */
@@ -2862,6 +3491,8 @@ export async function workspaceHarness(
       activeTabGroup = group
       visibleSourceEditors.push(editor)
       if (separateEditorPart) separateEditorPart.focused = false
+      // The learner's editor has the keyboard, whoever lost it before.
+      keyboardOnBody = false
       activeTextEditorChanged(editor)
       return {
         document,
@@ -2875,6 +3506,7 @@ export async function workspaceHarness(
           group.activeTab = tab
           activeTabGroup = group
           if (separateEditorPart) separateEditorPart.focused = false
+          keyboardOnBody = false
           activeTextEditorChanged(editor)
         },
       }
@@ -3067,6 +3699,13 @@ export async function workspaceHarness(
             input: new TabInputText(Uri.file(`/group-${group.viewColumn}`)),
           })
       const previous = [...groups]
+      /** Gives a tab the new input wrapper of its own kind that a full tab-model resync reports. @example resyncedInput(new TabInputText(uri)) // => another TabInputText of the same uri */
+      const resyncedInput = (input: Tab['input']): Tab['input'] => {
+        if (input instanceof TabInputText) return new TabInputText(input.uri)
+        if (input instanceof TabInputWebview)
+          return new TabInputWebview(input.viewType)
+        return new TabInputUnknown()
+      }
       groups.splice(
         0,
         groups.length,
@@ -3075,12 +3714,7 @@ export async function workspaceHarness(
           tabs: group.tabs.map((tab) => ({
             ...tab,
             label: 'Recorded application',
-            input:
-              tab.input instanceof TabInputText
-                ? new TabInputText(tab.input.uri)
-                : tab.input instanceof TabInputWebview
-                  ? new TabInputWebview(tab.input.viewType)
-                  : new TabInputUnknown(),
+            input: resyncedInput(tab.input),
           })),
         })),
       )
@@ -3130,24 +3764,22 @@ export async function workspaceHarness(
       kind: 'known' | 'unknown' | 'duplicate' | 'ambiguous' | 'empty',
     ): void {
       for (const group of groups) {
-        const type =
-          kind === 'ambiguous' || group.viewColumn === 1
-            ? 'codebook.scopedBrowser'
-            : group.viewColumn === 2
-              ? 'codebook.repositoryWiki'
-              : 'codebook.studyContext'
+        // Column 1 holds the Application pane and column 2 the Wiki; an ambiguous seed puts the Application pane everywhere.
+        let type = 'codebook.studyContext'
+        if (kind === 'ambiguous' || group.viewColumn === 1)
+          type = 'codebook.scopedBrowser'
+        else if (group.viewColumn === 2) type = 'codebook.repositoryWiki'
         const tab = {
           label: 'Application',
           input: new TabInputWebview(
             `${kind === 'unknown' ? 'foreign-' : 'mainThreadWebview-'}${type}`,
           ),
         }
-        group.tabs =
-          kind === 'empty'
-            ? []
-            : kind === 'duplicate'
-              ? [tab, { ...tab }]
-              : [tab]
+        // An empty seed leaves the group without a tab; a duplicate seed gives it the same pane twice.
+        let seededTabs = [tab]
+        if (kind === 'empty') seededTabs = []
+        else if (kind === 'duplicate') seededTabs = [tab, { ...tab }]
+        group.tabs = seededTabs
       }
     },
     holdNextImage() {
@@ -3219,6 +3851,8 @@ export async function workspaceHarness(
       for (const debuggerView of historicalDebuggers) {
         if (!debuggerView.available) continue
         debuggerView.available = false
+        // Like the real owner, a wait on the ended session fails now instead of at its deadline.
+        for (const check of [...nativeVariablesWaiters]) check()
         debuggerView.changed('session-ended')
       }
     },
@@ -3282,8 +3916,14 @@ export async function workspaceHarness(
     async close(): Promise<void> {
       await reader.retire(harness.service)
       await reader.dispose()
+      // The fake editor of a closed harness changes nothing any more: its pending tab closes and reveals are dropped with their timers.
+      for (const timer of pendingEditorTimers) clearTimeout(timer)
+      pendingEditorTimers.clear()
+      pendingDisposedTabCloses.length = 0
       await harness.close()
     },
+    /** Counts the fake editor's own timers that have not run yet: a disposed pane's tab close or a late reveal that waits for {@link DISPOSED_TAB_CLOSE_DELAY_MS}. @example harness.pendingEditorTimerCount() // => 2 right after a reader with two panes was closed in an editor that closes tabs later */
+    pendingEditorTimerCount: (): number => pendingEditorTimers.size,
   }
 }
 
@@ -3370,6 +4010,7 @@ export async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
  * Creates sealed recording/context before workspace replay/navigation tests open history; runtime values and native paint are synthetic.
  * @param capturedApplication - Also retain a real paused-browser PNG checkpoint.
  * @param recordedDebugger - Attach captured native debugger state to the recorded stop, paused from 100 ms until its 900 ms continuation (recording ends at 1,000 ms), so replay presents it through the historical debugger.
+ * @param duringStop - Runs once the stop committed at 100 ms and before the run continues (900 ms) or stops (200 ms without `recordedDebugger`), so a test can save an explanation at a recorded time inside the stop by setting the clock first.
  * @example const harness = await recordedReaderHarness(true, true)
  */
 export async function recordedReaderHarness(
@@ -3377,6 +4018,9 @@ export async function recordedReaderHarness(
   recordedDebugger = false,
   /** Column of the declared line at which the debugger bound and captured the stop; another column than the declared 1 gives a moved-column study. Used with `recordedDebugger`. */
   boundColumn = 1,
+  duringStop?: (
+    stopped: Awaited<ReturnType<typeof workspaceHarness>>,
+  ) => Promise<void>,
 ) {
   const harness = await workspaceHarness(true, true),
     service = harness.service
@@ -3456,6 +4100,7 @@ export async function recordedReaderHarness(
   record.recording.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
   harness.clock(100)
   await harness.reader.action('click')
+  await duringStop?.(harness)
   // The continuation receipt seals the recorded stop's paused interval, long enough for several Play ticks to advance through it.
   if (recordedDebugger) {
     harness.clock(900)
@@ -3466,6 +4111,8 @@ export async function recordedReaderHarness(
   const studyId = record.recording.header.studyId,
     directory = harness.reader.inspect().libraryDirectory!
   const store = new RecordingStore(directory, directory.split('/').at(-1)!)
+  /** Whether a hold of {@link holdPositionSaves} is active on the reader's store. */
+  let positionSavesHeld = false
   return {
     ...harness,
     studyId,
@@ -3474,26 +4121,37 @@ export async function recordedReaderHarness(
     png,
     controller: service.playbackController!,
     /**
-     * Holds every playback position save that starts from now on behind a storage lock, as a slow disk does, until `release()`.
-     * @returns `release` lets the held saves write and restores normal saving.
+     * Holds every playback position save this harness's reader starts from now on behind a storage lock, as a slow disk does, until `release()`.
+     * The hold is put on the recording store the reader owns, so the reader of another harness goes on saving.
+     * @returns `release` lets the held saves write and restores normal saving; calling it again does nothing.
+     * @throws When an earlier hold of this harness is not released yet: two holds on one store could not be released in either order.
      * @example const held = harness.holdPositionSaves(); held.release()
      */
     holdPositionSaves() {
-      const savePreference = RecordingStore.prototype.savePreference
-      let releaseStorage = (): void => {}
+      if (positionSavesHeld)
+        throw new Error(
+          'Position saves of this workspace harness are already held. Release that hold before holding them again.',
+        )
+      const readerStore = harness.reader['recordings']
+      assert.ok(readerStore, 'The reader has no recording store yet.')
+      const savePreference = readerStore.savePreference
+      let releaseStorage = (): void => {},
+        released = false
       const storageHeld = new Promise<void>((resolve) => {
         releaseStorage = resolve
       })
-      RecordingStore.prototype.savePreference = async function (
-        this: RecordingStore,
-        preference,
-      ): Promise<void> {
+      positionSavesHeld = true
+      readerStore.savePreference = async (preference): Promise<void> => {
         await storageHeld
-        return savePreference.call(this, preference)
+        return savePreference.call(readerStore, preference)
       }
       return {
         release(): void {
-          RecordingStore.prototype.savePreference = savePreference
+          if (released) return
+          released = true
+          positionSavesHeld = false
+          // The store's own method comes back when the override on this one store is removed.
+          Reflect.deleteProperty(readerStore, 'savePreference')
           releaseStorage()
         },
       }
@@ -3674,6 +4332,8 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
+    publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */
     selectNoStudy: (): void => reader['selectNoStudy'](),
     /** The reader's error lines, as its panes show them. */
@@ -3681,10 +4341,14 @@ export function readerSeams(harness: {
     /** Counts the study checkpoints that wait to be written. */
     queuedStudyWrites: (): number => reader['pendingArchives'].size,
     /** Says whether the reader holds an error line of one kind. */
-    hasErrorOfKind: (kind: string): boolean => reader['errors'].has(kind),
+    hasErrorOfKind: (kind: ReaderErrorKind): boolean =>
+      reader['errors'].has(kind),
     /** Drops the reader's error line of one kind, as the action that retires it does. */
-    dropErrorOfKind: (kind: string): boolean => reader['errors'].delete(kind),
+    dropErrorOfKind: (kind: ReaderErrorKind): boolean =>
+      reader['errors'].delete(kind),
     isLoading: (): boolean => reader['loading'],
+    /** Says whether the selected captured source reached an active native tab, as the reader requires before a control or a reveal succeeds. */
+    isSourceShown: (): boolean => reader['sourceReady'](),
     isRecordingActive: (): boolean => reader['recordingActive'],
     isLiveArrangement: (): boolean => reader['liveComposition'],
     /** Makes one checkpoint of a run, forced as Retry storage and retirement force it. */

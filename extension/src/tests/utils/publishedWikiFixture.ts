@@ -69,6 +69,7 @@ async function listFiles(directory: string, prefix = ''): Promise<string[]> {
  *
  * @param outputSetting - Project-relative output folder, as `codebook.wikiOutputDirectory` would name it.
  * @returns The project and output paths, the agent's three steps, the folder hash and a cleanup.
+ * @throws When the first publish fails, for example over an output folder the publisher refuses; the temporary project is removed before the error is passed on.
  *
  * @example
  * ```ts
@@ -105,7 +106,8 @@ export async function publishedWikiFixture(
   )
   const outputDirectory = join(projectRoot, outputSetting)
   const sourceText = 'export const value = 1;\n'
-  await writeFile(join(projectRoot, 'source.ts'), sourceText)
+  const cleanup = (): Promise<void> =>
+    rm(projectRoot, { recursive: true, force: true })
   const prepare = async (stageDirectory?: string): Promise<string> =>
     (
       await publisher.prepareWikiStage({
@@ -162,12 +164,19 @@ export async function publishedWikiFixture(
       stageDirectory: stage,
     })
   }
-  const firstStage = await prepare()
-  await writeCandidate(firstStage, { heading: 'First' })
-  await publish(firstStage)
   const learnerFile = join(outputDirectory, 'notes', 'mine.md')
-  await mkdir(join(outputDirectory, 'notes'))
-  await writeFile(learnerFile, 'my own notes\n')
+  try {
+    await writeFile(join(projectRoot, 'source.ts'), sourceText)
+    const firstStage = await prepare()
+    await writeCandidate(firstStage, { heading: 'First' })
+    await publish(firstStage)
+    await mkdir(join(outputDirectory, 'notes'))
+    await writeFile(learnerFile, 'my own notes\n')
+  } catch (error) {
+    // A fixture that failed hands no cleanup to its caller, so it removes its own temporary project.
+    await cleanup()
+    throw error
+  }
   return {
     projectRoot,
     outputDirectory,
@@ -183,7 +192,6 @@ export async function publishedWikiFixture(
           .update(await readFile(join(outputDirectory, path)))
       return digest.digest('hex')
     },
-    cleanup: (): Promise<void> =>
-      rm(projectRoot, { recursive: true, force: true }),
+    cleanup,
   }
 }

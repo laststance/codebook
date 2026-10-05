@@ -1,19 +1,23 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { type DeepWikiReader, startDeepWikiReader } from '../../deepWikiReader'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 
+import { writeMinimalWiki } from './writeMinimalWiki'
+
 /**
  * Publishes a one-page Wiki in a temporary project and serves it, for tests of the reader's routes and of its served page script.
  *
- * @param readUpdateStatus - Update state the reader answers at `api/update-status`; idle when omitted.
- * @returns The started reader, the path of its manifest and a `close` that stops the reader and removes the project.
+ * @param readUpdateStatus - Update state of the reader's window, built from the Wiki folder this fixture serves (the reader answers a run of another folder as idle); idle when omitted.
+ * @param startReader - The reader's start function; a test that loads the reader module with replaced parts hands its own, the real one serves when omitted.
+ * @returns The started reader, the Wiki folder it serves, the path of its manifest and a `close` that stops the reader and removes the project, also when the reader's close fails (its error is passed on after the removal).
+ * @throws When the Wiki cannot be written or its reader does not start; the temporary project is removed before the error is passed on.
  *
  * @example
  * ```ts
- * const wiki = await serveMinimalWiki(() => ({ state: 'idle' }))
+ * const wiki = await serveMinimalWiki((outputDirectory) => ({ state: 'already-current', finishedAt: '2026-10-03T12:10:00.000Z', outputDirectory, outputLabel: '.codebook/wiki' }))
  * try {
  *   await fetch(new URL('api/update-status', wiki.reader.url))
  * } finally {
@@ -22,46 +26,46 @@ import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
  * ```
  */
 export async function serveMinimalWiki(
-  readUpdateStatus?: () => WikiUpdateStatus,
+  readUpdateStatus?: (outputDirectory: string) => WikiUpdateStatus,
+  startReader: typeof startDeepWikiReader = startDeepWikiReader,
 ): Promise<{
   reader: DeepWikiReader
+  outputDirectory: string
   manifestPath: string
   close(): Promise<void>
 }> {
   const projectDirectory = await mkdtemp(
     join(tmpdir(), 'codebook-wiki-status-'),
   )
-  const projectRoot = await realpath(projectDirectory)
-  const output = join(projectRoot, '.codebook', 'wiki')
-  await mkdir(output, { recursive: true })
-  await writeFile(
-    join(output, 'index.html'),
-    '<!doctype html><body>Wiki</body>',
-  )
-  const manifestPath = join(output, 'codebook-wiki.json')
-  await writeFile(
-    manifestPath,
-    JSON.stringify({
-      schemaVersion: 1,
-      repositoryRoot: projectRoot,
-      pages: [],
-      assets: [],
-      includedSources: [],
-    }),
-  )
-  const reader = await startDeepWikiReader(
-    output,
-    projectRoot,
-    async () => ({ handoff: 'unused' }),
-    'vscode',
-    readUpdateStatus,
-  )
-  return {
-    reader,
-    manifestPath,
-    async close(): Promise<void> {
-      await reader.close()
-      await rm(projectDirectory, { recursive: true, force: true })
-    },
+  const removeProject = (): Promise<void> =>
+    rm(projectDirectory, { recursive: true, force: true })
+  try {
+    const projectRoot = await realpath(projectDirectory)
+    const { outputDirectory: output, manifestPath } =
+      await writeMinimalWiki(projectRoot)
+    const reader = await startReader(
+      output,
+      projectRoot,
+      async () => ({ handoff: 'unused' }),
+      'vscode',
+      readUpdateStatus && (() => readUpdateStatus(output)),
+    )
+    return {
+      reader,
+      outputDirectory: output,
+      manifestPath,
+      async close(): Promise<void> {
+        // The project is removed also when the reader's close fails.
+        try {
+          await reader.close()
+        } finally {
+          await removeProject()
+        }
+      },
+    }
+  } catch (error) {
+    // A fixture that failed hands no `close` to its caller, so it removes its own temporary project.
+    await removeProject()
+    throw error
   }
 }

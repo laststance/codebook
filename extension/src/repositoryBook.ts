@@ -11,9 +11,8 @@ import {
   BOOK_SCHEMA_VERSION_V2,
   BOOK_STORAGE_FORMATS,
   PRIVATE_DIRECTORY_MODE,
-  STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
 } from './constants'
-import { StudyError } from './errors'
+import { StudyArchiveUnavailableError, StudyError } from './errors'
 import type { LearningLibrary } from './learningLibrary'
 import { RecordingStore } from './recordingStore'
 import {
@@ -32,7 +31,6 @@ import { bookIntentDigest } from './utils/bookIntentDigest'
 import { bookObservationHash } from './utils/bookObservationHash'
 import { projectRecording } from './utils/projectRecording'
 import { readBoundedFile } from './utils/readBoundedFile'
-import { thrownMessage } from './utils/thrownMessage'
 import { validateRepositoryBook } from './utils/validateRepositoryBook'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -380,8 +378,8 @@ export class RepositoryBookStore {
     studyId: string,
   ): ReturnType<LearningLibrary['readCheckpoint']> {
     return this.library.readCheckpoint(studyId).catch((error: unknown) => {
-      if (thrownMessage(error) !== STUDY_ARCHIVE_UNAVAILABLE_MESSAGE)
-        throw error
+      // Only the library's own class says that the archive is gone; another failure with the same words is passed on.
+      if (!(error instanceof StudyArchiveUnavailableError)) throw error
       throw new StudyError(
         'BOOK_UNAVAILABLE',
         `Linked saved study ${studyId} is no longer in the study library; it was deleted or never saved.`,
@@ -519,17 +517,43 @@ export class RepositoryBookStore {
       )
     return this.receipt(book.bookId, prior)
   }
-  /** Rejects stale replacement before preparation and after queue wait. @example this.assertRevision(book, 1) */
+  /**
+   * Reads the revision a publication must expect in order to replace a book; called by {@link assertRevision} before it compares the two.
+   * @param book - The stored book, or `undefined` when none exists under the id.
+   * @returns The number of the last stored revision, or 0 when there is no book or no revision.
+   * @example
+   * this.currentRevision(undefined) // => 0
+   * this.currentRevision(book)      // => 1 for a book published once
+   */
+  private currentRevision(book: RepositoryBook | undefined): number {
+    return book?.revisions.at(-1)?.revision ?? 0
+  }
+  /**
+   * Rejects a publication whose expected revision is not the book's current one, before preparation and again after the queue wait; called by {@link publishOwned}.
+   * For a book that exists the refusal says what exists and the two ways on (replace it with the current revision as the expected one, or keep it and publish under another book id), because an agent that only read "read the current book" ran on the article it found.
+   * @param book - The stored book, or `undefined` when none exists under the id.
+   * @param expected - The revision the publication expects to replace; 0 creates the book.
+   * @throws A `BOOK_CONFLICT` {@link StudyError} when `expected` differs from the current revision.
+   * @example
+   * this.assertRevision(book, 0)
+   * // throws "Book interface exists at revision 1. To replace it, publish the complete document again with expectedRevision 1; to keep it, publish under another book id. A run stops only on lines its article's node cites, so publish your own citations before you start."
+   */
   private assertRevision(
     book: RepositoryBook | undefined,
     expected: number,
   ): void {
-    const current = book?.revisions.at(-1)?.revision ?? 0
-    if (expected !== current)
+    const current = this.currentRevision(book)
+    if (expected === current) return
+    // A book that does not exist yet has no revision to replace or to keep.
+    if (!book || current === 0)
       throw new StudyError(
         'BOOK_CONFLICT',
         `Expected book revision ${expected}, current ${current}; read the current book before retrying.`,
       )
+    throw new StudyError(
+      'BOOK_CONFLICT',
+      `Book ${book.bookId} exists at revision ${current}. To replace it, publish the complete document again with expectedRevision ${current}; to keep it, publish under another book id. A run stops only on lines its article's node cites, so publish your own citations before you start.`,
+    )
   }
   /** Rejects rebinding before source/checkpoint I/O so agents receive actionable conflict recovery. @example this.assertLearningIdentities(book, intent) */
   private assertLearningIdentities(

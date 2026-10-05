@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { WikiUpdateRun } from '../utils/wikiUpdateRun'
+import { WikiUpdateRun, type WikiUpdateEnd } from '../utils/wikiUpdateRun'
 
 const fixedClock = (): Date => new Date('2026-10-03T12:00:00.000Z')
 const output = {
@@ -12,10 +12,10 @@ const output = {
 test('a second Wiki update start is refused while the first run is active', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
-  const secondStartWasAccepted = run.begin('cursor', output, 900_000)
+  const secondStartWasAccepted = run.begin('cursor', output, 900_000, false)
 
   // Assert
   assert.equal(secondStartWasAccepted, false)
@@ -33,12 +33,17 @@ test('a second Wiki update start is refused while the first run is active', () =
 test('a published Wiki update shows the new identity and its host, and lets the next run start', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('cursor', output, 900_000)
+  run.begin('cursor', output, 900_000, false)
 
   // Act
-  run.succeed('a1b2c3d4e5f6+0f9e8d7c')
+  run.end({
+    state: 'succeeded',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
+  })
   const published = run.status()
-  const nextStartWasAccepted = run.begin('cursor', output, 900_000)
+  const nextStartWasAccepted = run.begin('cursor', output, 900_000, false)
 
   // Assert
   assert.deepEqual(published, {
@@ -46,6 +51,8 @@ test('a published Wiki update shows the new identity and its host, and lets the 
     host: 'cursor',
     finishedAt: '2026-10-03T12:00:00.000Z',
     identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
     outputDirectory: '/repo/.codebook/wiki',
     outputLabel: '.codebook/wiki',
   })
@@ -55,10 +62,14 @@ test('a published Wiki update shows the new identity and its host, and lets the 
 test('a failed Wiki update says whether the site on disk was kept or replaced', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
-  run.fail('The published Wiki does not match the source.', 'replaced')
+  run.end({
+    state: 'failed',
+    reason: 'The published Wiki does not match the source.',
+    site: 'replaced',
+  })
 
   // Assert
   assert.deepEqual(run.status(), {
@@ -75,10 +86,10 @@ test('a failed Wiki update says whether the site on disk was kept or replaced', 
 test('a cancelled Wiki update names the host that ran it, so the page can say what was stopped', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
-  run.cancel('kept')
+  run.end({ state: 'cancelled', site: 'kept' })
 
   // Assert
   assert.deepEqual(run.status(), {
@@ -94,10 +105,10 @@ test('a cancelled Wiki update names the host that ran it, so the page can say wh
 test('a timed-out Wiki update carries the bound that passed', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('cursor', output, 900_000)
+  run.begin('cursor', output, 900_000, false)
 
   // Act
-  run.timeOut('kept')
+  run.end({ state: 'timed-out', site: 'kept' })
 
   // Assert
   assert.deepEqual(run.status(), {
@@ -114,10 +125,15 @@ test('a timed-out Wiki update carries the bound that passed', () => {
 test('a conflict names the blocking paths and what kind of block it is', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
-  run.conflict(['notes/mine.md'], 'learner-file', 'kept')
+  run.end({
+    state: 'conflict',
+    paths: ['notes/mine.md'],
+    cause: 'learner-file',
+    site: 'kept',
+  })
 
   // Assert
   assert.deepEqual(run.status(), {
@@ -135,10 +151,10 @@ test('a conflict names the blocking paths and what kind of block it is', () => {
 test('a conflict with no path is not recorded as a conflict', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
-  run.conflict([], 'learner-file', 'kept')
+  run.end({ state: 'conflict', paths: [], cause: 'learner-file', site: 'kept' })
 
   // Assert
   const status = run.status()
@@ -152,11 +168,16 @@ test('a conflict with no path is not recorded as a conflict', () => {
 test('a late result after a run ended cannot overwrite the newer state', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
-  run.cancel('kept')
+  run.begin('vscode', output, 900_000, false)
+  run.end({ state: 'cancelled', site: 'kept' })
 
   // Act
-  run.succeed('a1b2c3d4e5f6+0f9e8d7c')
+  run.end({
+    state: 'succeeded',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
+  })
 
   // Assert
   assert.equal(run.status().state, 'cancelled')
@@ -167,23 +188,52 @@ test('an update that finds the Wiki already current records that and starts no r
   const run = new WikiUpdateRun(fixedClock)
 
   // Act
-  run.alreadyCurrent(output, 'a1b2c3d4e5f6+0f9e8d7c')
+  run.alreadyCurrent(output, {
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
+  })
 
   // Assert
   assert.deepEqual(run.status(), {
     state: 'already-current',
     finishedAt: '2026-10-03T12:00:00.000Z',
     identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
     outputDirectory: '/repo/.codebook/wiki',
     outputLabel: '.codebook/wiki',
   })
   assert.equal(run.isRunning(), false)
 })
 
+test('an already-current check of a project without a Git repository records that added files were not checked', () => {
+  // Arrange
+  const run = new WikiUpdateRun(fixedClock)
+
+  // Act
+  run.alreadyCurrent(
+    output,
+    { identity: 'no-revision+0f9e8d7c', index: '0f9e8d7c' },
+    true,
+  )
+
+  // Assert
+  assert.deepEqual(run.status(), {
+    state: 'already-current',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    addedFilesUnchecked: true,
+    identity: 'no-revision+0f9e8d7c',
+    index: '0f9e8d7c',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  })
+})
+
 test('an already-current note never replaces a run that is active', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
   run.alreadyCurrent(output)
@@ -195,7 +245,7 @@ test('an already-current note never replaces a run that is active', () => {
 test('a staged candidate is noted on the running state so the page can say work is under way', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
   run.markCandidateStaged()
@@ -211,8 +261,8 @@ test('a staged candidate is noted on the running state so the page can say work 
 test('a staged-candidate note after the run ended changes nothing', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
-  run.timeOut('kept')
+  run.begin('vscode', output, 900_000, false)
+  run.end({ state: 'timed-out', site: 'kept' })
 
   // Act
   run.markCandidateStaged()
@@ -271,7 +321,7 @@ test('a start refused for another reason is shown as a failure that kept the sit
 test('a refused start never replaces a run that is active', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
+  run.begin('vscode', output, 900_000, false)
 
   // Act
   run.refuseStart('vscode', output, { kind: 'failed', reason: 'Too late.' })
@@ -283,8 +333,13 @@ test('a refused start never replaces a run that is active', () => {
 test('the status snapshot cannot change the run when a caller edits it', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
-  run.begin('vscode', output, 900_000)
-  run.conflict(['notes/mine.md'], 'learner-file', 'kept')
+  run.begin('vscode', output, 900_000, false)
+  run.end({
+    state: 'conflict',
+    paths: ['notes/mine.md'],
+    cause: 'learner-file',
+    site: 'kept',
+  })
   const snapshot = run.status()
 
   // Act
@@ -294,5 +349,71 @@ test('the status snapshot cannot change the run when a caller edits it', () => {
   const status = run.status()
   assert.deepEqual(status.state === 'conflict' ? status.paths : undefined, [
     'notes/mine.md',
+  ])
+})
+
+test('each ending the classifier can return is recorded with its own fields through one entry', () => {
+  // Arrange
+  const endings: WikiUpdateEnd[] = [
+    {
+      state: 'succeeded',
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+    },
+    {
+      state: 'failed',
+      reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+      site: 'replaced',
+    },
+    { state: 'cancelled', site: 'kept' },
+    { state: 'timed-out', site: 'kept' },
+    {
+      state: 'conflict',
+      paths: ['notes/mine.md'],
+      cause: 'learner-file',
+      site: 'kept',
+    },
+  ]
+
+  // Act
+  const recorded = endings.map((ending) => {
+    const run = new WikiUpdateRun(fixedClock)
+    run.begin('cursor', output, 900_000, false)
+    run.end(ending)
+    return run.status()
+  })
+
+  // Assert
+  const ended = {
+    host: 'cursor',
+    finishedAt: '2026-10-03T12:00:00.000Z',
+    outputDirectory: '/repo/.codebook/wiki',
+    outputLabel: '.codebook/wiki',
+  }
+  assert.deepEqual(recorded, [
+    {
+      ...ended,
+      state: 'succeeded',
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+    },
+    {
+      ...ended,
+      state: 'failed',
+      reason: 'Cursor Agent stopped with exit code 1 before finishing.',
+      site: 'replaced',
+    },
+    { ...ended, state: 'cancelled', site: 'kept' },
+    // Only a timeout carries the bound the run began with.
+    { ...ended, state: 'timed-out', site: 'kept', timeoutMs: 900_000 },
+    {
+      ...ended,
+      state: 'conflict',
+      paths: ['notes/mine.md'],
+      cause: 'learner-file',
+      site: 'kept',
+    },
   ])
 })

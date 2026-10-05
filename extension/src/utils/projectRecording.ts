@@ -4,16 +4,47 @@ import type {
   RecordingIndex,
 } from '../recordingSchemas'
 
-/** Selects only evidence available at the requested receipt time, preserving missing ranges and separately opted-in later annotations. @example projectRecording(index, context, 500).observation?.values */
+/**
+ * When an explanation that the replay shows before its own saved time was saved, measured against the selected stop's recorded pause.
+ * {@link projectRecording} sets it and the Study pane turns it into a sentence with {@link savedLaterNote}.
+ */
+export type ExplanationSavedLater =
+  'while-pause-held' | 'after-pause-ended' | 'after-recording-ended'
+
+/** One saved explanation as the replay shows it at the selected time. `savedLater` is present when it is shown before the time it was saved and the recording tells when that was; it is absent for an explanation shown from its saved time on, and for one saved within the recording at a stop whose pause the recording did not seal. */
+export type ShownInterpretation =
+  RecordingContext['study']['observations'][number]['interpretations'][number] & {
+    savedLater?: ExplanationSavedLater
+  }
+
+/**
+ * Selects what the replay shows at one recorded time, for {@link PlaybackController}, the Study workspace and the article links of {@link RepositoryBookStore}.
+ *
+ * Recorded facts (frame, source, debugger state, phases, confirmations) appear only from their own time. An explanation appears from the time it was saved, with one exception: while the playhead stands in a stop's own recorded pause (its commit time, or inside its sealed paused interval), that stop shows every explanation saved before the pause ended and its first saved explanation (the first of its saved list, which is kept in the order of saving) whenever that was saved. Such an explanation carries `savedLater`, with one exception: at a stop whose pause the recording did not seal (no entry in `pausedIntervals`: a stop without native debugger state, or a pause whose end was not observed), a first explanation saved within the recording is shown without `savedLater`, because the recording does not say whether the pause was still held then. Every other explanation later than the playhead stays in `laterInterpretations`.
+ *
+ * @param index - The verified recording journal.
+ * @param context - The saved study with its receipt times; `undefined` projects the film alone.
+ * @param positionMs - The selected recorded time, in milliseconds of the recording's clock.
+ * @returns
+ * - `observation`: the stop selected at that time with the explanations shown there, or `undefined` when no stop is selected
+ * - `laterInterpretations`: the last committed stop's explanations that are later than the playhead and not shown, each with `availableMs` (`null` when it was saved after the recording ended)
+ * - `frame`, `missing`, `debugger`, `pauseConfirmed`, `rendererConfirmed`, `contextStatus`: the recorded facts at that time
+ * @throws When the position is outside the verified range, or the context belongs to another recording.
+ * @example
+ * // A stop committed at 500 ms and held until 900 ms, explained at 700 ms:
+ * projectRecording(index, context, 500).observation?.interpretations[0]?.savedLater // => 'while-pause-held'
+ * projectRecording(index, context, 700).observation?.interpretations[0]?.savedLater // => undefined
+ */
 export function projectRecording(
   index: RecordingIndex,
   context: RecordingContext | undefined,
   positionMs: number,
 ) {
+  const recordingEndMs = index.endMs ?? index.lastVerifiedMs
   if (
     !Number.isFinite(positionMs) ||
     positionMs < index.header.startedMs ||
-    positionMs > (index.endMs ?? index.lastVerifiedMs)
+    positionMs > recordingEndMs
   )
     throw new Error(
       'Playback position is outside the verified recording range.',
@@ -58,21 +89,40 @@ export function projectRecording(
   const available = (id: string) =>
     context?.interpretationAvailability.find((value) => value.id === id)
       ?.elapsedMs
-  const atPosition = (value: { id: string }) => {
-    const elapsed = available(value.id)
-    return elapsed !== undefined && elapsed !== null && elapsed <= positionMs
+  // An explanation without a receipt in the journal was saved after the recording ended.
+  const savedMs = (value: { id: string }) =>
+    available(value.id) ?? Number.POSITIVE_INFINITY
+  // In a stop's own recorded pause that stop shows what was saved until the pause ended; everywhere else only what was saved by the playhead.
+  const shownUntilMs =
+    hasHistoricalState && interval ? interval.endMs : positionMs
+  const isShown = (value: { id: string }, order: number) =>
+    savedMs(value) <= shownUntilMs || (hasHistoricalState && order === 0)
+  const savedLater = (savedAtMs: number): ExplanationSavedLater | undefined => {
+    if (savedAtMs > recordingEndMs) return 'after-recording-ended'
+    // Without a sealed interval the recording does not say whether the pause was still held at that time.
+    if (!interval) return undefined
+    return savedAtMs <= interval.endMs
+      ? 'while-pause-held'
+      : 'after-pause-ended'
   }
   // Keep interpretation availability bound to the selected recorded source.
   const observation = currentObservation && {
     ...currentObservation,
-    interpretations: currentObservation.interpretations.filter(atPosition),
+    interpretations: currentObservation.interpretations
+      .filter(isShown)
+      .map((value): ShownInterpretation => {
+        // An explanation shown ahead of the time it was saved at says when that was.
+        const saved =
+          savedMs(value) > positionMs ? savedLater(savedMs(value)) : undefined
+        return saved ? { ...value, savedLater: saved } : value
+      }),
   }
+  const shownIds = new Set(
+    observation?.interpretations.map((value) => value.id),
+  )
   const laterInterpretations =
     observed?.interpretations
-      .filter((value) => {
-        const elapsed = available(value.id)
-        return elapsed === null || elapsed === undefined || elapsed > positionMs
-      })
+      .filter((value) => savedMs(value) > positionMs && !shownIds.has(value.id))
       .map((value) => ({
         ...value,
         availableMs: available(value.id) ?? null,

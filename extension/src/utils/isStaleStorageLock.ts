@@ -1,19 +1,28 @@
-import { hostname } from 'node:os'
-
-import { isProcessGone } from './isProcessGone'
-import { readRecordedOwner } from './readRecordedOwner'
+import { isLeftEmpty } from './isLeftEmpty'
+import { isRecordedOwnerGone } from './isRecordedOwnerGone'
+import {
+  readRecordedOwner,
+  type StorageOwnerIdentity,
+} from './readRecordedOwner'
 
 /**
- * Says whether a storage lock file was left by a writer process that no longer exists on this machine, so {@link withStorageLock} can take the lock over instead of refusing every later write until the file is removed by hand.
- * A lock records `{ pid, hostname }`; one that cannot be read, names another machine, has no host (written by an earlier build) or whose process may still run is not stale. {@link removeStaleStorageLock} judges the lock with it, a second time under its claim, and {@link claimStorageLockTakeover} judges the claims of earlier takeovers, which record the same owner.
- * @param lockPath - The `writer.lock` file that is present, or one takeover claim beside it.
+ * Says whether a storage lock file was left by a writer that no longer exists on this machine, so {@link withStorageLock} can take the lock over instead of refusing every later write until the file is removed by hand.
+ * A lock records its owner's process id, host name, machine id and boot ({@link RecordedOwner}). {@link removeStaleStorageLock} judges the lock with it, a second time under its claim, and {@link removeStaleStorageClaims} judges the claims and the prepared files of earlier takeovers, which record the same owner.
+ * @param lockPath - The `writer.lock` file that is present, or one takeover claim or prepared file beside it.
+ * @param identity - The machine and the boot of this process.
  * @returns
- * - `true` when the lock names this machine and a process id that no longer exists
- * - `false` for every other lock
+ * - `true` when the lock names this machine and either an earlier boot or a process id that no longer exists ({@link isRecordedOwnerGone})
+ * - `true` for a file that was created and never written and has stayed empty ({@link isLeftEmpty}): a writer of an earlier build that was killed between the two left it
+ * - `false` for every other lock: one of another machine, one whose process may still run, and one whose content is not an owner record
  * @example
- * await isStaleStorageLock('/storage/learning/writer.lock') // => true after the editor that wrote it was killed
+ * await isStaleStorageLock('/storage/learning/writer.lock', await currentStorageOwner()) // => true after the editor that wrote it was killed
  */
-export async function isStaleStorageLock(lockPath: string): Promise<boolean> {
+export async function isStaleStorageLock(
+  lockPath: string,
+  identity: StorageOwnerIdentity,
+): Promise<boolean> {
   const owner = await readRecordedOwner(lockPath)
-  return owner?.hostname === hostname() && isProcessGone(owner.pid)
+  // Without an owner record only emptiness says anything; any other content may be a lock this build cannot read.
+  if (!owner) return isLeftEmpty(lockPath, 'file')
+  return isRecordedOwnerGone(owner, identity)
 }

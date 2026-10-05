@@ -13,16 +13,30 @@ import type { BundleSource } from '../../repositoryBundle'
 import type { RepositoryConfiguration } from '../../repositoryConfigSchemas'
 import type { RuntimeControl } from '../../runtime'
 import type { ViewportRecordingObserver } from '../../runtimeSupport/browserViewport'
+import type { ProfileLeft } from '../../runtimeSupport/hostBrowser'
 import { sha256 } from '../../runtimeSupport/utils/sha256'
+import { WaitTimeoutError } from '../../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../../runtimeSupport/utils/waitUntil'
 import { configuredDomExpression } from '../../utils/configuredDomExpression'
+import { createBundleVerifier } from '../../utils/createBundleVerifier'
 
+import {
+  answerBreakLocationRequest,
+  type BreakLocationRange,
+  type GeneratedPlace,
+  type ScriptPlace,
+} from './breakLocationsInRange'
 import { createConfiguredStudy } from './createConfiguredStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import {
+  loadConstantsWith,
+  type RuntimeConstantOverrides,
+} from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
+import { sourceBreakpointRequest } from './sourceBreakpointRequest'
 
 /** What the owned page reports for a condition that does not hold; `textDifference` is left open so a test can send a value the run must refuse. */
 interface BeforeFailure {
@@ -32,6 +46,9 @@ interface BeforeFailure {
   /** The page's control counts, sent with a missing click target. */
   candidates?: { button: number; link: number; field: number }
 }
+
+/** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
+const FIXTURE_SOURCE = 'var nextTheme = "dark";\n'
 
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
@@ -45,13 +62,19 @@ export async function configuredRuntimeHarness(
     before?: RepositoryConfiguration['action']['before']
     /** Opts into a source the debugger can bind on another line than declared: the executed module is then the source text itself, so generated line n is source line n + 1 under a map such as 'AAAA;AACA'. */
     fixture?: {
-      /** Replaces the one-statement source; its default already has an empty line 2. */
+      /** Replaces the one-statement source; its default (`var nextTheme = "dark";`) already has an empty line 2. */
       source?: string
       /** Last line of the first citation instead of line 1. */
       citationEndLine?: number
       /** Line the first stop is declared on instead of line 1. */
       declaredLine?: number
+      /** Column the first stop is declared at instead of column 1. */
+      declaredColumn?: number
     }
+    /** Replaces runtime bounds in the run's own module and in the constants it reads ({@link loadConstantsWith}), so a test can make two bounds equal and see what depends on their values. The modules the run requires (the owned breakpoint, `waitUntil`) keep the real bounds. */
+    runtimeConstants?: RuntimeConstantOverrides
+    /** The stand-in browser closes without a failure and then names this profile folder as one it could not remove, as the real adapter does. */
+    browserProfileLeft?: ProfileLeft
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -60,12 +83,18 @@ export async function configuredRuntimeHarness(
   })
   const repository = await repositoryHarness(context),
     fixture = options.fixture,
-    reference = createConfiguredStudy(fixture?.source, fixture?.citationEndLine)
+    // A fixture without its own source declares the stop's binding with `var`, which the run reads where it was declared: a `const` on the stop's own line would make the run request the stop on the next mapped line, as it does for an agent's declaration.
+    reference = createConfiguredStudy(
+      fixture ? (fixture.source ?? FIXTURE_SOURCE) : undefined,
+      fixture?.citationEndLine,
+    )
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
   if (options.before) reference.configuration.action.before = options.before
   if (fixture?.declaredLine)
     reference.configuration.source.line = fixture.declaredLine
+  if (fixture?.declaredColumn)
+    reference.configuration.source.column = fixture.declaredColumn
   // Each of these changes makes the frozen intent hash stale.
   if (additionalStops.length || options.before || fixture)
     reference.configurationHash = sha256(
@@ -111,6 +140,7 @@ export async function configuredRuntimeHarness(
     listeners = new Map<string, (event: unknown) => void>()
   const clock = createManualClock()
   let requestSequence = 0
+  const bindingWaitBudgetsMs: (number | undefined)[] = []
   let emitInputPause = true,
     emitPreparationResume = false,
     stopAtStartupBreakpoint = false,
@@ -122,6 +152,8 @@ export async function configuredRuntimeHarness(
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
     afterFailure: BeforeFailure | undefined,
     afterReadCount = 0,
+    // The elements the page shows after the input, each with its text; when set, the after conditions are evaluated on them by the real page expression.
+    afterPageElements: { selector: string; textContent: string }[] | undefined,
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -142,11 +174,21 @@ export async function configuredRuntimeHarness(
   const sourceBoundWait = createSourceBoundWaitHold()
   // The failure the adapter answers a binding lookup with, as a session that ended does.
   let bindingLookupFailure: string | undefined
+  // Whether the adapter leaves the next binding lookup of an owned breakpoint without an answer.
+  let isNextBindingLookupUnanswered = false
+  // The sentence the wait for the before conditions words its timeout with instead of its own.
+  let beforeTimeoutSentence: string | undefined
   // The source lines the adapter verifies a breakpoint on; a request on any other line stays unverified, as a debugger leaves one on a line without a mapped position.
   let verifiableLines: number[] | undefined
   let recordingObserver = (): ViewportRecordingObserver | undefined => undefined
-  // The generated lines the adapter lists as break locations of the module; without them it cannot answer.
-  let possibleBreakLines: number[] | undefined
+  // The generated places the adapter lists as break locations of the module; without them it cannot answer.
+  let possibleBreakLocations: GeneratedPlace[] | undefined
+  // Every scan of a sealed map the run asked its verifiers for, in order.
+  const mapScans: { startLine: number; endLine: number }[] = []
+  // Every range the run asked break locations for, in order, as it sent them.
+  const breakLocationRequests: BreakLocationRange[] = []
+  // The bound the run gave each of those requests, in the same order; `undefined` for a request left to the default.
+  const breakLocationRequestTimeoutsMs: (number | undefined)[] = []
   let rejectedCapture: string | undefined,
     requiredValueUnavailable = false,
     requiredValueObject = false,
@@ -240,11 +282,19 @@ export async function configuredRuntimeHarness(
         listeners.get('Debugger.resumed')?.({})
         const next = additionalStops[stopCount - 1]
         if (next) {
+          // A debugger that verifies only some lines pauses a later stop where its breakpoint was requested.
+          const requestedLater = verifiableLines
+            ? breakpoints.find((candidate) =>
+                candidate.id.startsWith('owned-breakpoint-'),
+              )?.location.range.start
+            : undefined
           // A line that ran only before its breakpoint existed never pauses again.
           if (emitNextPause)
             emitPause(
-              laterStopBinding?.column ?? next.column,
-              laterStopBinding?.line,
+              laterStopBinding?.column ??
+                (requestedLater ? requestedLater.character + 1 : next.column),
+              laterStopBinding?.line ??
+                (requestedLater ? requestedLater.line + 1 : undefined),
             )
         } else inputResolve()
         return {}
@@ -256,6 +306,11 @@ export async function configuredRuntimeHarness(
         (candidate) => candidate.id === breakpoint.id,
       )
       if (owned && bindingLookupFailure) throw new Error(bindingLookupFailure)
+      // An adapter that does not answer: the lookup stays pending for as long as its caller waits.
+      if (owned && isNextBindingLookupUnanswered) {
+        isNextBindingLookupUnanswered = false
+        return new Promise<never>(() => {})
+      }
       // The first stop and every later one can each be reported at another position than requested; the learner's own breakpoint never is.
       let reported: { line: number; column: number } | undefined
       if (owned?.id === 'owned-breakpoint') reported = firstStopBinding
@@ -351,7 +406,12 @@ export async function configuredRuntimeHarness(
     },
     async request(
       method: string,
-      parameters?: { expression?: string; type?: string },
+      parameters?: {
+        expression?: string
+        type?: string
+        start?: ScriptPlace
+        end?: ScriptPlace
+      },
       timeout?: number,
     ) {
       // After the input, the after conditions answer the failure a test chose, and every read of them is counted.
@@ -363,6 +423,25 @@ export async function configuredRuntimeHarness(
         afterReadCount++
         if (afterFailure)
           return { result: { value: { ready: false, failure: afterFailure } } }
+        if (afterPageElements) {
+          const shown = afterPageElements
+          return {
+            result: {
+              value: JSON.parse(
+                JSON.stringify(
+                  runInNewContext(afterExpression, {
+                    document: {
+                      querySelectorAll: (selector: string) =>
+                        shown.filter(
+                          (element) => element.selector === selector,
+                        ),
+                    },
+                  }),
+                ),
+              ),
+            },
+          }
+        }
       }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
@@ -433,7 +512,18 @@ export async function configuredRuntimeHarness(
           ? breakpoints.find((candidate) => candidate.id === 'owned-breakpoint')
               ?.location.range.start
           : undefined
-        if (emitInputPause)
+        // A first stop that was requested a second time has a later owned breakpoint; it pauses where that one is bound.
+        const requestedAgain = stopCount
+          ? undefined
+          : breakpoints.find((candidate) =>
+              candidate.id.startsWith('owned-breakpoint-'),
+            )?.location.range.start
+        if (emitInputPause && requestedAgain)
+          emitPause(
+            laterStopBinding?.column ?? requestedAgain.character + 1,
+            laterStopBinding?.line ?? requestedAgain.line + 1,
+          )
+        else if (emitInputPause)
           emitPause(
             firstStopBinding?.column ??
               (requested ? requested.character + 1 : undefined),
@@ -444,14 +534,20 @@ export async function configuredRuntimeHarness(
         return pending
       }
       if (method === 'Page.addScriptToEvaluateOnNewDocument') return {}
-      if (method === 'Debugger.getPossibleBreakpoints' && possibleBreakLines)
-        return {
-          locations: possibleBreakLines.map((lineNumber) => ({
-            scriptId: 'actual',
-            lineNumber,
-            columnNumber: 0,
-          })),
-        }
+      if (
+        method === 'Debugger.getPossibleBreakpoints' &&
+        possibleBreakLocations &&
+        parameters?.start
+      ) {
+        const { range, answer } = answerBreakLocationRequest(
+          possibleBreakLocations,
+          'actual',
+          { start: parameters.start, end: parameters.end },
+        )
+        breakLocationRequests.push(range)
+        breakLocationRequestTimeoutsMs.push(timeout)
+        return answer
+      }
       throw new Error(`Unexpected CDP request: ${method}`)
     },
   }
@@ -487,10 +583,9 @@ export async function configuredRuntimeHarness(
           command: 'setBreakpoints',
           arguments: {
             source: { path: sourcePath },
-            breakpoints: breakpoints.map((breakpoint) => ({
-              line: breakpoint.location.range.start.line + 1,
-              column: breakpoint.location.range.start.character + 1,
-            })),
+            breakpoints: breakpoints.map((breakpoint) =>
+              sourceBreakpointRequest(breakpoint.location.range.start),
+            ),
           },
         })
         if (removedAck)
@@ -547,9 +642,13 @@ export async function configuredRuntimeHarness(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
+      ...(options.runtimeConstants
+        ? await loadConstantsWith(options.runtimeConstants)
+        : {}),
       './ownedRepositoryBreakpoint': breakpointModule,
       './runtimeSupport/hostBrowser': {
         HostBrowser: class {
+          profileLeft?: ProfileLeft
           async launch(
             configuration: DebugSession['configuration'],
           ): Promise<void> {
@@ -591,10 +690,24 @@ export async function configuredRuntimeHarness(
           }
           async close(): Promise<void> {
             releases.push('browser')
+            this.profileLeft = options.browserProfileLeft
           }
         },
       },
       './runtimeSupport/cdp': { Cdp: { connect: async () => proxy } },
+      './utils/createBundleVerifier': {
+        // The real verifier, with every scan of its sealed map recorded.
+        createBundleVerifier: (sealed: BundleSource) => {
+          const verifier = createBundleVerifier(sealed)
+          return {
+            ...verifier,
+            mappedPositions: (startLine: number, endLine: number) => {
+              mapScans.push({ startLine, endLine })
+              return verifier.mappedPositions(startLine, endLine)
+            },
+          }
+        },
+      },
       './utils/readDevelopmentBundle': {
         readDevelopmentBundle: async () => ({ bundle, discovery: {} }),
       },
@@ -628,12 +741,17 @@ export async function configuredRuntimeHarness(
             const value = await read()
             signal?.throwIfAborted()
             if (value) return value
+            // A wait is free to word its timeout; the run must know it by its type.
+            if (beforeTimeoutSentence)
+              throw new WaitTimeoutError(beforeTimeoutSentence)
             return waitUntil(read, description, 0, signal)
           }
           if (
             rejectBinding &&
             description.startsWith('a verified binding of declared stop')
           ) {
+            // The wait ends at once here, so the budget the run asked for is kept for the test to read.
+            bindingWaitBudgetsMs.push(timeoutMs)
             signal?.throwIfAborted()
             await read()
             signal?.throwIfAborted()
@@ -716,11 +834,13 @@ export async function configuredRuntimeHarness(
     rejectBreakpointBinding(): void {
       rejectBinding = true
     },
+    /** The budget the run gave each binding wait that {@link rejectBreakpointBinding} ended at once, in milliseconds. */
+    bindingWaitBudgetsMs,
     /** Makes the page report other executed bytes for the selected module than the sealed bundle holds, as a rebuild between sealing and arming does. */
     replaceExecutedModule(scriptSource: string): void {
       executedScriptSource = scriptSource
     },
-    /** Makes the adapter verify a breakpoint only when it is requested on one of these source lines, and pause the first stop where its breakpoint was requested: a request on a line without a mapped position is never verified, as natively. @example harness.verifyBreakpointsOnlyOnLines([2]) */
+    /** Makes the adapter verify a breakpoint only when it is requested on one of these source lines, and pause every stop where its breakpoint was requested: a request on a line without a mapped position is never verified, as natively. @example harness.verifyBreakpointsOnlyOnLines([2]) */
     verifyBreakpointsOnlyOnLines(lines: number[]): void {
       verifiableLines = lines
     },
@@ -728,10 +848,23 @@ export async function configuredRuntimeHarness(
     bindFirstStopAt(line: number, column: number): void {
       firstStopBinding = { line, column }
     },
-    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with a location at column 0 of each of these zero-based generated lines. */
+    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with a location at column 0 of each of these zero-based generated lines, within the range the run asks for. */
     listPossibleBreakLines(lines: number[]): void {
-      possibleBreakLines = lines
+      possibleBreakLocations = lines.map((lineNumber) => ({
+        lineNumber,
+        columnNumber: 0,
+      }))
     },
+    /** Makes the adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for. @example harness.listPossibleBreakLocations([{ lineNumber: 0, columnNumber: 6 }]) */
+    listPossibleBreakLocations(locations: GeneratedPlace[]): void {
+      possibleBreakLocations = locations
+    },
+    /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
+    breakLocationRequests,
+    /** The bound in milliseconds the run gave each of those requests, in the same order; `undefined` where the run left the request to its default bound. */
+    breakLocationRequestTimeoutsMs,
+    /** Every scan of a sealed map the run made, by its line range, in order: preparation scans once per stop, and a binding failure scans the citation for its hints. */
+    mapScans,
     /** Reports every later stop's verified binding, and its pause, at this position instead of the requested one. */
     bindLaterStopsAt(line: number, column: number): void {
       laterStopBinding = { line, column }
@@ -745,6 +878,10 @@ export async function configuredRuntimeHarness(
     /** Makes the adapter answer every binding lookup of an owned breakpoint with this failure instead of a binding. */
     failBindingLookup(message: string): void {
       bindingLookupFailure = message
+    },
+    /** Makes the adapter leave the next binding lookup of an owned breakpoint without an answer, as an adapter that is busy does; every later lookup is answered again. @example harness.leaveNextBindingLookupUnanswered() */
+    leaveNextBindingLookupUnanswered(): void {
+      isNextBindingLookupUnanswered = true
     },
     observeRecording(
       observer: () => ViewportRecordingObserver | undefined,
@@ -805,6 +942,14 @@ export async function configuredRuntimeHarness(
     failBeforeWith(failure: BeforeFailure): void {
       ready = false
       beforeFailure = failure
+    },
+    /** Makes the wait for before conditions that do not hold end with a timeout of the wait's error type worded as this sentence, instead of the wait's own wording. @example harness.wordBeforeTimeoutAs('The page was not ready in time') */
+    wordBeforeTimeoutAs(sentence: string): void {
+      beforeTimeoutSentence = sentence
+    },
+    /** Makes the page show these elements after the input, so the run's own after-condition expression reads them: each element answers the selector it is listed under, with its text. @example harness.showAfterPage([{ selector: 'label', textContent: 'Dark' }]) */
+    showAfterPage(elements: { selector: string; textContent: string }[]): void {
+      afterPageElements = elements
     },
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {

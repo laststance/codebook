@@ -1,9 +1,9 @@
 # Cycle 0044 — Update LLM Wiki ends with a visible result in both hosts, and every carried defect is fixed
 
 Type: product-increment with the carried defects of Cycles 0031 to 0043\
-Status: validating\
+Status: closed\
 Result: demonstrated in VS Code; in Cursor demonstrated for a refused start and a failure, not run for a running update\
-Delivery: PR-open\
+Delivery: merged\
 Goal version: 9\
 Tracking issue: https://github.com/laststance/codebook/issues/83 \
 Goal issue: https://github.com/laststance/codebook/issues/1 \
@@ -321,13 +321,13 @@ The working context was compacted a fourth time, after the Cursor rows were reco
 
 ### Local review, 2026-10-04
 
-Local CodeRabbit CLI: NOT RUN (the owner has not run `coderabbit auth login` on this host; that coverage is missing, not clean). `open-code-review-delegate` on the range `c549da6..d1bb463`: OCR selected 126 reviewable files of 220 and excluded 94 (89 test files by its default path rule, two of them deleted; 4 Markdown files as an unsupported type; 1 deleted source file); its one rule group for TypeScript and JavaScript and one for the HTML shell were applied. The host reviewed the 126 files in four batches with delegated read-only reviewers: 126 reviewed, 0 skipped. This is not an independent external-provider review.
+Local CodeRabbit CLI: NOT RUN (the owner has not run `coderabbit auth login` on this host; that coverage is missing, not clean). `open-code-review-delegate` on the range `c549da6..d1bb463`: OCR selected 126 reviewable files of 220 and excluded 94 (89 test files by its default path rule, two of them deleted; 4 Markdown files as an unsupported type; 1 deleted source file); its one rule group for TypeScript and JavaScript and one for the HTML shell were applied. The host reviewed the 126 files in four batches with delegated read-only reviewers: 126 reviewed, 0 skipped. The Files column below adds up to 139, because the 13 helpers under `extension/src/tests/utils/` were given to batch C and to batch D; the four lists hold 126 different files. This is not an independent external-provider review.
 
 | Batch                                                                                                    | Files | Critical | High | Medium | Low |
 | -------------------------------------------------------------------------------------------------------- | ----: | -------: | ---: | -----: | --: |
 | A: `studyWorkspace.ts`, the replay debugger, the server, the publisher and shell, the pane               |    16 |        0 |    1 |      1 |   7 |
 | B: `extension.ts`, `configuredBrowserRun.ts`, the service, library, recording store, reader, CI workflow |    18 |        0 |    1 |      3 |   8 |
-| C: `extension/src/utils/`                                                                                |    90 |        0 |    1 |      2 |  10 |
+| C: `extension/src/utils/` (77 files) and the 13 helpers of `extension/src/tests/utils/`                  |    90 |        0 |    1 |      2 |  10 |
 | D: test harnesses and helpers                                                                            |    15 |        0 |    0 |      4 |  12 |
 
 No finding is critical. Five findings are defects this cycle's own changes introduced; they are fixed before the delivery (`12f1cff`), each with a test that is red without the fix (the compiled file reverted, the named test run, the file restored and compared):
@@ -687,3 +687,10 @@ The audit's documentation debt goes to Cycle 0045's Issue with the list under "N
 | CX-S1           | A captured-source tab of an earlier run that the learner pinned is closed in every group when another run or study of the same file is shown; the filter does not read `isPinned` (Codex structured review, read from code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 - At most one next candidate and why (after evidence): the frozen natural `/codebook` request, once per host, on the delivered source. The defining live-to-replay path is where this cycle changed the most code without a chat run (N-7, N-8, the binding and pause rules), and a natural request that passes on its first run is still AC-LIVE's first open proof.
+
+## Delivery closure, 2026-10-04
+
+- `/ship` invocation 1: three review passes (the third on the delivered tree, with the Codex adversarial challenge and structured review completed), the documentation audit's first attempt (status updated, no blocker, five files), commits `24d0836`, `0c5d79b`, `61c1afc`. Its push failed several times with "Could not resolve host" on the development host and succeeded on a retry with unchanged content.
+- Pull request [#84](https://github.com/laststance/codebook/pull/84) (`@coderabbitai ignore`, "Linked to #83"). CI on `61c1afc`: 22 of 23 checks passed and the new Reader DOM job failed for a missing video encoder on the runner; `0c9807f` fixed the workflow and `24e1e11` corrected the records. CI on the final head `24e1e11`: 23 of 23 checks passed (Reader DOM 82 of 82 cases). Separate exact-HEAD gate: PR head, local HEAD and `origin` all `24e1e11`, base `main` `c549da6`, mergeable and clean, no closing keyword, the evidence ledger on that commit with tests 2,405 of 2,405, package 193 of 193 and hook 4 of 4, every static gate passing; what differs from the reviewed tree is the workflow file and seven documents. Merge in its own step: `gh pr merge 84 --squash --match-head-commit 24e1e11…`, squash `6a7a0b8` at 2026-10-04T02:48:17Z. CI on `main`: 20 of 20 checks passed.
+- Issue #83 was closed by hand on 2026-10-04 with the outcomes that are not PASS, the 172 rows of the table above, the 37 low findings of the local review by label and the documentation debt DOC-1 to DOC-6 named. Under the cycle rule every one of them is a task of Cycle 0045's Issue #85 (222 rows: the OCR row expands to its eight medium findings, and the low findings and the documentation debt are rows of their own).
+- Two driver slips of the delivery, beside the one recorded under pass 3: the telemetry command of `/ship` was once run with `--help` and recorded one empty line; nothing else was affected.

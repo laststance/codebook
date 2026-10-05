@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { constants } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { promisify } from 'node:util'
 
 import { findWikiUpdateStartBlock } from '../utils/findWikiUpdateStartBlock'
 
@@ -37,7 +42,7 @@ test('a generated page the learner edited by hand blocks the start and is named,
   }
 })
 
-test('a generated page the learner deleted blocks the start like an edited one', async () => {
+test('a deleted generated page is reported as missing, not as edited by hand', async () => {
   // Arrange
   const wiki = await publishedWikiFixture()
   await rm(join(wiki.outputDirectory, 'index.html'))
@@ -46,7 +51,7 @@ test('a generated page the learner deleted blocks the start like an edited one',
     const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
 
     // Assert
-    assert.deepEqual(block, { cause: 'edited-page', paths: ['index.html'] })
+    assert.deepEqual(block, { cause: 'missing-page', paths: ['index.html'] })
   } finally {
     await wiki.cleanup()
   }
@@ -168,5 +173,154 @@ test('a Wiki published before file hashes were recorded does not block the start
     assert.equal(block, undefined)
   } finally {
     await rm(join(output, '..'), { recursive: true, force: true })
+  }
+})
+
+test('a symbolic link under the Wiki folder refuses the update at its start and is named, as the real publisher refuses it', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  await symlink(wiki.learnerFile, join(wiki.outputDirectory, 'shared-notes.md'))
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, {
+      cause: 'special-file',
+      paths: ['shared-notes.md'],
+    })
+    await assert.rejects(wiki.prepare(), /Wiki publication refuses a linked/)
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a generated page replaced by a link is named and is not read through the link', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  const indexPath = join(wiki.outputDirectory, 'index.html')
+  // The link leads to a file with exactly the published bytes: reading through it would find nothing wrong.
+  const sameBytesElsewhere = join(wiki.projectRoot, 'index-copy.html')
+  await writeFile(sameBytesElsewhere, await readFile(indexPath))
+  await rm(indexPath)
+  await symlink(sameBytesElsewhere, indexPath)
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, { cause: 'special-file', paths: ['index.html'] })
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test(
+  'a published page replaced by a link to a named pipe is reported at once instead of holding the start',
+  { timeout: 2_000 },
+  async (context) => {
+    // Arrange
+    const wiki = await publishedWikiFixture()
+    const indexPath = join(wiki.outputDirectory, 'index.html')
+    const pipePath = join(wiki.projectRoot, 'never-written.pipe')
+    await promisify(execFile)('mkfifo', [pipePath])
+    await rm(indexPath)
+    await symlink(pipePath, indexPath)
+    // A read that waits on the pipe would keep this process alive, and the test's body with it: the hook runs also when the body is stopped at its time bound.
+    context.after(async () => {
+      await open(pipePath, constants.O_WRONLY | constants.O_NONBLOCK).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await wiki.cleanup()
+    })
+
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, { cause: 'special-file', paths: ['index.html'] })
+  },
+)
+
+test('a manifest that is no JSON blocks the start as a manifest Codebook cannot read, before anything else reads it', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  await writeFile(
+    join(wiki.outputDirectory, 'codebook-wiki.json'),
+    '{ "schemaVersion": 1, "pages": [',
+  )
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, {
+      cause: 'unreadable-manifest',
+      paths: ['codebook-wiki.json'],
+    })
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a publish that finishes while the start check looks does not block the start as an unfinished earlier publish', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  const journalPath = `${wiki.outputDirectory}.publish-journal.json`
+  // The publisher wrote its journal a moment ago and is still swapping the folders.
+  await writeFile(journalPath, '{}')
+  const waits: number[] = []
+  try {
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory, {
+      wait: async (delayMs) => {
+        waits.push(delayMs)
+        // The publish ends while the check waits for its second look.
+        await rm(journalPath)
+      },
+    })
+
+    // Assert
+    assert.equal(block, undefined)
+    assert.deepEqual(waits, [2_000])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+test('a journal that is still there at the second look, and one written long ago, are reported as an unfinished publish', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  const journalPath = `${wiki.outputDirectory}.publish-journal.json`
+  await writeFile(journalPath, '{}')
+  const waits: number[] = []
+  const wait = async (delayMs: number): Promise<void> => {
+    waits.push(delayMs)
+  }
+  try {
+    // Act
+    const writtenJustNow = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      { wait },
+    )
+    const writtenAMinuteAgo = await findWikiUpdateStartBlock(
+      wiki.outputDirectory,
+      { wait, now: () => Date.now() + 60_000 },
+    )
+
+    // Assert
+    assert.deepEqual(writtenJustNow, {
+      cause: 'unfinished-publish',
+      paths: ['wiki.publish-journal.json'],
+    })
+    assert.deepEqual(writtenAMinuteAgo, {
+      cause: 'unfinished-publish',
+      paths: ['wiki.publish-journal.json'],
+    })
+    // Only the fresh journal got a second look.
+    assert.deepEqual(waits, [2_000])
+  } finally {
+    await wiki.cleanup()
   }
 })

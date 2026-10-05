@@ -58,7 +58,11 @@ import {
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { assertStudyCheckpoint } from './utils/assertStudyCheckpoint'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
-import { fullLibraryMessage } from './utils/fullLibraryMessage'
+import {
+  fullLibraryMessage,
+  type StudyRemovalAvailability,
+} from './utils/fullLibraryMessage'
+import { isProcessGone } from './utils/isProcessGone'
 import { readBoundedFile } from './utils/readBoundedFile'
 import { readPngDimensions } from './utils/readPngDimensions'
 import { recordingPhases } from './utils/recordingPhases'
@@ -124,6 +128,15 @@ export class RecordingStore {
     pending: Promise<RecordingIndex>
   }
 
+  /**
+   * @param learningDirectory - The learning directory this store shares with the study library.
+   * @param workspaceKey - The hash of the workspace the recordings belong to.
+   * @param limits - Bounds a test lowers; the slot count is the default of `capacity`.
+   * @param io - The disk operations, replaced by a test that injects a fault.
+   * @param capacity - Reads the Saved Study Limit setting at each admission.
+   * @param removalAvailability - Reads at each refused reservation whether this window can remove a saved study, so the refusal names a removal only while one can work here.
+   * @example new RecordingStore(learningDirectory, workspaceKey, {}, undefined, () => 64, () => service.studyRemovalAvailability)
+   */
   constructor(
     readonly learningDirectory: string,
     readonly workspaceKey: string,
@@ -131,6 +144,8 @@ export class RecordingStore {
     private readonly io: RecordingIo = recordingDiskIo,
     private readonly capacity: () => unknown = () =>
       limits.slots ?? DEFAULT_SAVED_STUDY_LIMIT,
+    private readonly removalAvailability: () => StudyRemovalAvailability = () =>
+      'available',
   ) {
     recordingHashSchema.parse(workspaceKey)
     this.directory = join(learningDirectory, CONFIGURED_RECORDING_DIRECTORY)
@@ -213,7 +228,9 @@ export class RecordingStore {
         const identities = await this.identities()
         const limit = savedStudyLimit(this.capacity())
         if (identities.length >= limit)
-          throw new Error(fullLibraryMessage('recording', limit))
+          throw new Error(
+            fullLibraryMessage('recording', limit, this.removalAvailability()),
+          )
         if (identities.includes(binding.studyId))
           throw new Error('Recording already exists for this study.')
         const directory = this.path(binding.studyId, version)
@@ -329,6 +346,15 @@ export class RecordingStore {
     const verifiedFrames = new Map<string, RecordedFrameFacts>()
     // The writer of this session already hashed and measured every frame it put on disk; reading those files again made a reload of a long in-progress recording grow by about 0.6 ms a frame.
     const writer = seal ? undefined : this.ownWriter(studyId, header)
+    // What the writer measured stands for a frame only while the directory still holds that file at its measured size; a frame deleted or cut short since is read, and so ends the verified prefix.
+    const writtenFrameOnDisk = (
+      hash: string,
+    ): RecordedFrameFacts | undefined => {
+      const written = writer?.writtenFrame(hash)
+      return written && disk.frameBytes.get(hash) === written.byteLength
+        ? written
+        : undefined
+    }
     let lastMs = header.startedMs,
       frameCount = 0,
       hasGap = false,
@@ -355,7 +381,7 @@ export class RecordingStore {
           )
             throw new Error('Recording contains a foreign image phase.')
           let verified =
-            verifiedFrames.get(entry.hash) ?? writer?.writtenFrame(entry.hash)
+            verifiedFrames.get(entry.hash) ?? writtenFrameOnDisk(entry.hash)
           if (!verified) {
             const png = await this.readFrame(
               studyId,
@@ -737,12 +763,24 @@ export class RecordingStore {
     return readBoundedFile(path, limit)
   }
 
-  /** Counts blobs, orphan files and atomic temporaries before validating the full recording budget. @example await store.inventory(studyId) */
+  /**
+   * Counts blobs, orphan files and atomic temporaries before validating the full recording budget; called by {@link read} and before a context is saved.
+   * @param studyId - The recording to inspect.
+   * @param expectedVersion - The recording format its header named.
+   * @returns The bytes of all frame files, the bytes of all files, and the size of each frame file by its hash, so {@link read} can tell that a frame its writer measured is still on disk.
+   * @throws When the directory holds a non-regular or unknown file, too many files, or more bytes than a recording may use.
+   * @example await store.inventory(studyId) // => { pngBytes: 35812, totalBytes: 36400, frameBytes: Map { '<hash>' => 35812 } }
+   */
   async inventory(
     studyId: string,
     expectedVersion?: RecordingHeader['version'],
-  ): Promise<{ pngBytes: number; totalBytes: number }> {
+  ): Promise<{
+    pngBytes: number
+    totalBytes: number
+    frameBytes: ReadonlyMap<string, number>
+  }> {
     const { directory } = await this.location(studyId, expectedVersion)
+    const frameBytes = new Map<string, number>()
     let fileCount = 0,
       pngBytes = 0,
       totalBytes = 0
@@ -753,8 +791,10 @@ export class RecordingStore {
       if (!stat.isFile())
         throw new Error('Recording contains a non-regular file.')
       totalBytes += stat.size
-      if (/^[a-f0-9]{64}\.png$/.test(entry.name)) pngBytes += stat.size
-      else if (
+      if (/^[a-f0-9]{64}\.png$/.test(entry.name)) {
+        pngBytes += stat.size
+        frameBytes.set(entry.name.slice(0, -'.png'.length), stat.size)
+      } else if (
         ![
           RECORDING_HEADER_FILE,
           RECORDING_JOURNAL_FILE,
@@ -774,7 +814,7 @@ export class RecordingStore {
           'Recording storage exceeds its bound, including orphan files.',
         )
     }
-    return { pngBytes, totalBytes }
+    return { pngBytes, totalBytes, frameBytes }
   }
 
   /** Gives writers an explicit format destination; readers use {@link location} to honor newer-file presence. @example store.path(studyId, 2) */
@@ -869,7 +909,7 @@ export class RecordingStore {
       : undefined
   }
 
-  /** Keeps uncertain live/PID-reused owners unfinalized; only an absent local process establishes interruption. @example this.ownerState(header) // 'interrupted' */
+  /** Keeps uncertain live/PID-reused owners unfinalized; only a local process that {@link isProcessGone} finds absent establishes interruption. @example this.ownerState(header) // 'interrupted' */
   private ownerState(
     header: RecordingHeader,
     writer?: RecordingWriter,
@@ -877,17 +917,7 @@ export class RecordingStore {
     if (writer && header.owner.sessionId === this.sessionId)
       return writer.state().status === 'recording' ? 'recording' : 'partial'
     if (header.owner.hostname !== hostname()) return 'unfinalized'
-    try {
-      process.kill(header.owner.pid, 0)
-      return 'unfinalized'
-    } catch (error) {
-      return error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        error.code === 'ESRCH'
-        ? 'interrupted'
-        : 'unfinalized'
-    }
+    return isProcessGone(header.owner.pid) ? 'interrupted' : 'unfinalized'
   }
 
   /** Selects the highest existing recording directory and pins multi-file reads to that format. @example await this.location(studyId, 2) */

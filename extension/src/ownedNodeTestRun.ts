@@ -175,7 +175,16 @@ export class OwnedNodeTestRun {
     const launch = (this.launch = await prepareNodeTestLaunch(
       this.workspace,
       this.configuration,
-      (request) => listVitestTestFiles({ ...request, node: this.node, signal }),
+      (request) =>
+        listVitestTestFiles({
+          ...request,
+          node: this.node,
+          signal,
+          // The listing's own outcome decides the run; what a failed release left behind is journaled with its group and folder.
+          onReleaseFailed: (failure) => {
+            this.record('node-test.vitest-listing-not-released', failure)
+          },
+        }),
     ))
     signal.throwIfAborted()
     this.outputTerminal = new NodeTestOutputTerminal(this.id, vscode, () => {
@@ -322,7 +331,7 @@ export class OwnedNodeTestRun {
       this.ownedBreakpointId = registered.breakpointId
       // A pending reply names no position, so the adapter is asked once more while the test is still paused.
       if (registered.status === 'pending')
-        await this.breakpoint.assertBoundAsDeclared(bound.session)
+        await this.breakpoint.assertBoundAsDeclared(bound.session, signal)
       // The learner can resume or step while retirement and registration are awaited.
       await this.assertAcceptedPause(previous, 'the next declared stop')
       const fromIndex = this.stops.length

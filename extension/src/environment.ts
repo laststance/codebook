@@ -29,7 +29,7 @@ import {
   type DevelopmentLockIdentity,
 } from './utils/assertDevelopmentWorkspace'
 import { configuredStops } from './utils/configuredStops'
-import { resolveChromeExecutable } from './utils/resolveChromeExecutable'
+import { createChromeExecutableLookup } from './utils/createChromeExecutableLookup'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 
 export interface StudyPresentation {
@@ -72,6 +72,54 @@ export function requireWorkspace(): string {
       'Open a trusted file workspace on this machine or in WSL; other remote and virtual workspaces are not supported.',
     )
   return folder.uri.fsPath
+}
+
+/**
+ * Lists what the editor itself lacks for a study, before any executable is looked for; called first by the prerequisite check of {@link createEnvironment}, behind every status read and run start.
+ * @param workspace - The workspace folder the agent server was started for.
+ * @returns The sentences of the missing prerequisites, in the order they are reported: the workspace's identity (or why no workspace can be used), then the bundled JavaScript Debugger. Empty when both hold.
+ * @example
+ * editorPrerequisiteGaps('/repo') // => [] in the trusted window that still has /repo open
+ */
+function editorPrerequisiteGaps(workspace: string): string[] {
+  const missing: string[] = []
+  try {
+    if (requireWorkspace() !== workspace)
+      missing.push('Workspace identity changed; restart the agent server.')
+  } catch (error) {
+    missing.push(String(error))
+  }
+  if (!vscode.extensions.getExtension('ms-vscode.js-debug'))
+    missing.push('Enable the bundled JavaScript Debugger (ms-vscode.js-debug).')
+  return missing
+}
+
+/**
+ * Words the missing Chrome for the platform, when the prerequisite check of {@link createEnvironment} found no executable.
+ * @param platform - The platform of the extension host.
+ * @returns On Linux the names that were looked for on PATH and the install remedy; elsewhere the request to configure an installed Chrome.
+ * @example
+ * missingChromeText('darwin') // => 'codebook.chromeExecutable: configure an installed executable Chrome.'
+ */
+function missingChromeText(platform: NodeJS.Platform): string {
+  // An unset setting on Linux that found nothing on PATH gets the Linux remedy, not the generic one.
+  return platform === 'linux'
+    ? `codebook.chromeExecutable: no ${CHROME_LINUX_EXECUTABLE_NAMES.slice(0, -1).join(', ')} or ${CHROME_LINUX_EXECUTABLE_NAMES.at(-1)} is on PATH. Install Google Chrome for Linux (or Chromium), or set codebook.chromeExecutable to its executable path.`
+    : 'codebook.chromeExecutable: configure an installed executable Chrome.'
+}
+
+/**
+ * Takes the version a Chrome executable printed for `--version`, for the prerequisite check of {@link createEnvironment}, which reports an executable that prints none as not installed.
+ * @param output - The standard output of the executable.
+ * @returns The output without the surrounding white space.
+ * @throws When nothing but white space was printed.
+ * @example
+ * requireChromeVersion('Google Chrome 141.0.7390.54 \n') // => 'Google Chrome 141.0.7390.54'
+ */
+function requireChromeVersion(output: string): string {
+  const version = output.trim()
+  if (!version) throw new Error('Missing Chrome version')
+  return version
 }
 
 /** Installs tracking before creating any runtime; commands retain these observers until owned teardown completes. @example const environment = await createEnvironment(context) */
@@ -131,20 +179,12 @@ export async function createEnvironment(
       if (!run.view().cleaned && run.activeSessions.size)
         run.evidence.record('focus.changed', { sessionId: session?.id })
   })
+  // One lookup for the window's life: it remembers the last PATH search between prerequisite checks.
+  const lookUpChromeExecutable = createChromeExecutableLookup()
   const resolvePrerequisites = async () => {
-    const missing: string[] = []
+    const missing = editorPrerequisiteGaps(workspace)
     let nodeExecutable: string | undefined
     let chrome: HostConfiguration['chrome']
-    try {
-      if (requireWorkspace() !== workspace)
-        missing.push('Workspace identity changed; restart the agent server.')
-    } catch (error) {
-      missing.push(String(error))
-    }
-    if (!vscode.extensions.getExtension('ms-vscode.js-debug'))
-      missing.push(
-        'Enable the bundled JavaScript Debugger (ms-vscode.js-debug).',
-      )
     const configuration = vscode.workspace.getConfiguration('codebook')
     try {
       nodeExecutable = await resolveExternalNodeExecutable(
@@ -156,7 +196,7 @@ export async function createEnvironment(
       )
     }
     const nodeMissing = [...missing]
-    const binary = await resolveChromeExecutable(
+    const binary = await lookUpChromeExecutable(
       configuration.get<string>('chromeExecutable', ''),
       process.platform,
       process.env.PATH,
@@ -166,22 +206,17 @@ export async function createEnvironment(
           () => false,
         ),
     )
-    // An unset setting on Linux that found nothing on PATH gets the Linux remedy, not the generic one.
-    if (!binary)
-      missing.push(
-        process.platform === 'linux'
-          ? `codebook.chromeExecutable: no ${CHROME_LINUX_EXECUTABLE_NAMES.slice(0, -1).join(', ')} or ${CHROME_LINUX_EXECUTABLE_NAMES.at(-1)} is on PATH. Install Google Chrome for Linux (or Chromium), or set codebook.chromeExecutable to its executable path.`
-          : 'codebook.chromeExecutable: configure an installed executable Chrome.',
-      )
+    if (!binary) missing.push(missingChromeText(process.platform))
     else
       try {
         await access(binary, filesystemConstants.X_OK)
-        const version = (
-          await executeFile(binary, ['--version'], {
-            timeout: PREREQUISITE_TIMEOUT_MS,
-          })
-        ).stdout.trim()
-        if (!version) throw new Error('Missing Chrome version')
+        const version = requireChromeVersion(
+          (
+            await executeFile(binary, ['--version'], {
+              timeout: PREREQUISITE_TIMEOUT_MS,
+            })
+          ).stdout,
+        )
         chrome = { binary, version }
       } catch {
         missing.push(
@@ -199,6 +234,7 @@ export async function createEnvironment(
   return {
     workspace,
     host,
+    remoteName: vscode.env.remoteName,
     build,
     assertWorkspace(): void {
       if (requireWorkspace() !== workspace)

@@ -12,8 +12,13 @@ import type { NodeTestConfiguration } from '../nodeTestConfigSchemas'
 import type * as OwnedNodeTestRunModule from '../ownedNodeTestRun'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type {
+  ListVitestTestFilesRequest,
+  VitestListingReleaseFailure,
+} from '../utils/listVitestTestFiles'
 
 import { loadModule } from './utils/loadModule'
+import { sourceBreakpointRequest } from './utils/sourceBreakpointRequest'
 
 /** The adapter's DAP id for Codebook's own breakpoint, as its registration receipt reports it. */
 const OWNED_BREAKPOINT_ID = 7
@@ -35,6 +40,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.neverReachStop - The test keeps running after the entry pause without reaching a declared stop.
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
+ * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
  *
  * @example
  * ```ts
@@ -55,6 +61,8 @@ async function nodeRunHarness({
   budgetMs,
   acknowledgements,
   bindingReportedLater,
+  bindingReadUnanswered,
+  listingNotReleased,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -79,6 +87,9 @@ async function nodeRunHarness({
   }>
   /** What the adapter answers when it is asked where an owned breakpoint is bound, after a pending registration reply. */
   bindingReportedLater?: { verified: boolean; line: number; column: number }
+  /** The adapter never answers when it is asked where an owned breakpoint is bound. */
+  bindingReadUnanswered?: boolean
+  listingNotReleased?: VitestListingReleaseFailure
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -120,6 +131,11 @@ async function nodeRunHarness({
     pausedLine = observedLine,
     pausedFile = sourceFile
   let terminate: ((session: vscode.DebugSession) => void) | undefined
+  let bindingReadAsked = (): void => {}
+  /** Settles when the run asks an adapter that does not answer where its owned breakpoint is bound. */
+  const bindingReadStarted = new Promise<void>((resolve) => {
+    bindingReadAsked = resolve
+  })
   const stopped = (reason: string, hitBreakpointIds?: number[]) =>
     tracker?.onDidSendMessage?.({
       type: 'event',
@@ -144,10 +160,16 @@ async function nodeRunHarness({
     workspaceFolder: undefined,
     configuration: { type: 'pwa-node', name: '', request: 'attach' },
     // The adapter knows only breakpoints the editor still holds; a retired one is answered as gone.
-    getDebugProtocolBreakpoint: async (breakpoint: unknown) =>
-      editorBreakpoints.some((kept) => kept === breakpoint)
-        ? bindingReportedLater
-        : undefined,
+    getDebugProtocolBreakpoint: async (breakpoint: unknown) => {
+      if (!editorBreakpoints.some((kept) => kept === breakpoint))
+        return undefined
+      // An adapter that does not answer leaves the read open for as long as the caller waits.
+      if (bindingReadUnanswered) {
+        bindingReadAsked()
+        return new Promise<never>(() => {})
+      }
+      return bindingReportedLater
+    },
     async customRequest(command: string): Promise<unknown> {
       // The editor passes Codebook's own requests through the same tracker as the learner's.
       clientRequest(command)
@@ -257,10 +279,9 @@ async function nodeRunHarness({
       command: 'setBreakpoints',
       arguments: {
         source: { path: sourceFile },
-        breakpoints: editorBreakpoints.map((breakpoint) => ({
-          line: breakpoint.location.range.start.line + 1,
-          column: breakpoint.location.range.start.character + 1,
-        })),
+        breakpoints: editorBreakpoints.map((breakpoint) =>
+          sourceBreakpointRequest(breakpoint.location.range.start),
+        ),
       },
     })
     tracker?.onDidSendMessage?.({
@@ -366,7 +387,29 @@ async function nodeRunHarness({
       './ownedRepositoryBreakpoint': trackerModule,
       './nodeTestOutputTerminal': { NodeTestOutputTerminal: OutputTerminal },
       './utils/prepareNodeTestLaunch': {
-        prepareNodeTestLaunch: async () => launch,
+        prepareNodeTestLaunch: async (
+          _workspace: string,
+          _configuration: NodeTestConfiguration,
+          listTestFiles: (request: ListVitestTestFilesRequest) => unknown,
+        ) => {
+          // Only a test of the listing's release asks for the listing; every other test gets its launch at once.
+          if (listingNotReleased)
+            await listTestFiles({
+              program: 'vitest',
+              workspace: directory,
+              filter: 'theme.test.ts',
+              excludes: [],
+            })
+          return launch
+        },
+      },
+      './utils/listVitestTestFiles': {
+        listVitestTestFiles: async (request: {
+          onReleaseFailed?: (failure: VitestListingReleaseFailure) => void
+        }) => {
+          if (listingNotReleased) request.onReleaseFailed?.(listingNotReleased)
+          return []
+        },
       },
       './utils/launchNodeTest': {
         launchNodeTest: async () => ({
@@ -442,6 +485,7 @@ async function nodeRunHarness({
     launch,
     reportDirectory,
     sourceFile,
+    bindingReadStarted,
     cleanup: async (): Promise<void> => {
       await rm(directory, { recursive: true, force: true })
       await rm(reportDirectory, { recursive: true, force: true })
@@ -943,6 +987,42 @@ test('a cited test that ends before its first declared stop fails at once with t
   }
 })
 
+// Cycle 0045 (AD-12, C-L2): red while a failed release of the listing reached nobody.
+test('a Vitest listing whose process group could not be released is journaled by the run with the group, the folder it left and the reason', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    listingNotReleased: {
+      processGroup: 4141,
+      directory: '/tmp/codebook-vitest-list-left',
+      reason: 'Error: Timed out waiting for Vitest listing process group exit',
+    },
+  })
+  try {
+    // Act
+    await harness.run.prepare()
+    // Assert
+    assert.deepEqual(
+      harness.events.filter(
+        (event) => event.type === 'node-test.vitest-listing-not-released',
+      ),
+      [
+        {
+          type: 'node-test.vitest-listing-not-released',
+          detail: {
+            processGroup: 4141,
+            directory: '/tmp/codebook-vitest-list-left',
+            reason:
+              'Error: Timed out waiting for Vitest listing process group exit',
+          },
+        },
+      ],
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
 test('releasing a run removes its private Vitest report folder', async () => {
   // Arrange
   const harness = await nodeRunHarness()
@@ -1098,7 +1178,7 @@ for (const acknowledged of ['verified', 'pending'] as const)
       // Act / Assert
       await assert.rejects(
         harness.run.prepare(),
-        /Selected adapter did not acknowledge the declared breakpoint registration/,
+        /Selected adapter did not acknowledge the breakpoint registration/,
       )
       assert.equal(
         harness.calls.filter((call) => call === 'continue').length,
@@ -1175,8 +1255,55 @@ test('a second Node test stop acknowledged at another column is refused before t
     // Act / Assert
     await assert.rejects(
       harness.run.advance(),
-      /Selected adapter did not acknowledge the declared breakpoint registration/,
+      /Selected adapter did not acknowledge the breakpoint registration/,
     )
+    // Only the continuation from the entry pause to the first stop was sent.
+    assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0045 (CR-7): red while the read of the next stop's bound place took no cancellation: an adapter that never answered it held the continuation after the run was stopped.
+test('a run cancelled while the adapter does not answer the breakpoint read ends at once', async () => {
+  // Arrange: the first stop is acknowledged at its declared 1:14; the next one is answered pending, and the adapter never says where it is bound.
+  const harness = await nodeRunHarness({
+    declaredStops: 2,
+    acknowledgements: [
+      { verified: true, line: 1, column: 14 },
+      { verified: false },
+    ],
+    bindingReadUnanswered: true,
+  })
+  try {
+    await harness.run.prepare()
+    const advancing = harness.run.advance().then(
+      () => 'advanced',
+      (error: unknown) => String(error),
+    )
+    // Bounded: a run that never asks where its breakpoint is bound fails this test instead of hanging the file.
+    let hasBindingReadStarted = false
+    void harness.bindingReadStarted.then(() => {
+      hasBindingReadStarted = true
+    })
+    await waitUntil(
+      () => hasBindingReadStarted,
+      'the run’s read of its pending breakpoint’s binding',
+      2_000,
+    )
+
+    // Act
+    await harness.run.stop()
+    const outcome = await Promise.race([
+      advancing,
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve('still waiting for the adapter'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(outcome, 'Error: Cancelled owned breakpoint binding')
     // Only the continuation from the entry pause to the first stop was sent.
     assert.equal(harness.calls.filter((call) => call === 'continue').length, 1)
   } finally {

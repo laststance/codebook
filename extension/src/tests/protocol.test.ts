@@ -4,7 +4,7 @@ import { request } from 'node:http'
 import { connect as connectSocket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -15,6 +15,7 @@ import {
   SESSION_IDLE_TIMEOUT_MS,
 } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
+import * as protocolModule from '../protocol'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer, type ConnectionDescriptor } from '../server'
@@ -53,6 +54,58 @@ const receiptSchema = z.object({
   runId: z.string(),
   runUri: z.string(),
 })
+
+/**
+ * Hands every MCP session protocol the server creates to the test before the server uses it, so a test can hold or fail the `close` or the `connect` of one session; everything else stays the real protocol.
+ * @param context - The test, which gets the real factory back when it ends.
+ * @param adjust - Called with each new protocol and its number in creation order, from 0: the protocol of the first client that initializes is 0.
+ * @example
+ * adjustProtocols(context, (protocol, index) => {
+ *   if (index === 0) protocol.close = async () => { throw new Error('transport close failed') }
+ * })
+ */
+function adjustProtocols(
+  context: TestContext,
+  adjust: (
+    protocol: ReturnType<typeof protocolModule.createProtocol>,
+    index: number,
+  ) => void,
+): void {
+  const createProtocol = protocolModule.createProtocol
+  let created = 0
+  context.mock.method(
+    protocolModule,
+    'createProtocol',
+    (service: Parameters<typeof protocolModule.createProtocol>[0]) => {
+      const protocol = createProtocol(service)
+      adjust(protocol, created)
+      created += 1
+      return protocol
+    },
+  )
+}
+
+/**
+ * Asks one connected client for its tools and says in one word whether its session still exists, so a test can list which of its clients were replaced.
+ * @param connection - A client connected by {@link connect}.
+ * @returns
+ * - `'answers'` when the session answered with the tool list
+ * - `'unknown session'` when the server no longer knows the session
+ * - Otherwise the error as text
+ * @example
+ * await sessionAnswer(connections[0]) // => 'unknown session' after a ninth client replaced it
+ */
+async function sessionAnswer(
+  connection: Awaited<ReturnType<typeof connect>>,
+): Promise<string> {
+  return connection.client.listTools().then(
+    () => 'answers',
+    (error: unknown) =>
+      String(error).includes('Unknown MCP session')
+        ? 'unknown session'
+        : String(error),
+  )
+}
 
 test('MCP discovery declares application execution effects without broadening source reader or storage annotations', async () => {
   // Arrange
@@ -455,6 +508,164 @@ test('a ninth MCP client while eight sessions are idle replaces the least recent
     assert.equal(harness.runtimes[0]?.dispatches, 1)
     const result = await ninth.client.readResource({ uri: receipt.runUri })
     assert.match(JSON.stringify(result), /paused-browser/)
+  } finally {
+    await Promise.allSettled(
+      connections.map((connection) => connection.client.close()),
+    )
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
+// Cycle 0045 (A-L1, AD-13): red while the replaced session's slot was free during its close, so a second initialize was added without replacing anyone and nine sessions remained.
+test('two clients that initialize at the same moment while eight sessions are idle each replace one idle session, and eight sessions remain', async (context) => {
+  // Arrange: the close of the first client's session, the one the ninth client replaces, is held until the tenth client is connected.
+  let enterFirstClose!: () => void, releaseFirstClose!: () => void
+  const firstCloseEntered = new Promise<void>((resolve) => {
+    enterFirstClose = resolve
+  })
+  const firstCloseReleased = new Promise<void>((resolve) => {
+    releaseFirstClose = resolve
+  })
+  adjustProtocols(context, (protocol, index) => {
+    if (index !== 0) return
+    const close = protocol.close.bind(protocol)
+    protocol.close = async (): Promise<void> => {
+      enterFirstClose()
+      await firstCloseReleased
+      await close()
+    }
+  })
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now)
+  const connections: Awaited<ReturnType<typeof connect>>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      now = index * 1_000
+      connections.push(await connect(endpoint.descriptor))
+    }
+    const original = [...connections]
+    now = 8_000
+    // Act
+    const ninthConnecting = connect(endpoint.descriptor)
+    await firstCloseEntered
+    const tenth = await connect(endpoint.descriptor)
+    connections.push(tenth)
+    releaseFirstClose()
+    const ninth = await ninthConnecting
+    connections.push(ninth)
+    // Assert
+    assert.deepEqual(await Promise.all(original.map(sessionAnswer)), [
+      'unknown session',
+      'unknown session',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+    ])
+    assert.equal(await sessionAnswer(ninth), 'answers')
+    assert.equal(await sessionAnswer(tenth), 'answers')
+  } finally {
+    releaseFirstClose()
+    await Promise.allSettled(
+      connections.map((connection) => connection.client.close()),
+    )
+    await endpoint.close()
+    await harness.close()
+  }
+})
+
+// Cycle 0045 (A-L1): red while the rejected close of the replaced session reached the request's catch, so the new client got a 500 after the old session was gone.
+test('a ninth client is admitted although the session it replaces fails to close', async (context) => {
+  // Arrange
+  adjustProtocols(context, (protocol, index) => {
+    if (index !== 0) return
+    protocol.close = async (): Promise<void> => {
+      throw new Error('transport close failed')
+    }
+  })
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now)
+  const connections: Awaited<ReturnType<typeof connect>>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      now = index * 1_000
+      connections.push(await connect(endpoint.descriptor))
+    }
+    const original = [...connections]
+    now = 8_000
+    // Act
+    const ninth = await connect(endpoint.descriptor)
+    connections.push(ninth)
+    // Assert
+    assert.equal((await ninth.client.listTools()).tools.length, 16)
+    assert.deepEqual(await Promise.all(original.map(sessionAnswer)), [
+      'unknown session',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+    ])
+  } finally {
+    await Promise.allSettled(
+      connections.map((connection) => connection.client.close()),
+    )
+    await endpoint.close().catch(() => undefined)
+    await harness.close()
+  }
+})
+
+// Cycle 0045 (PC-4.13): the slot is reserved before the replaced session closes, so a connect that fails afterwards must give it back.
+test('a ninth client whose session cannot be connected is answered with the reconnect advice, and its reserved slot is free for the next client', async (context) => {
+  // Arrange: the ninth session's connect fails after it replaced the first client's session.
+  adjustProtocols(context, (protocol, index) => {
+    if (index !== 8) return
+    protocol.connect = async (): Promise<void> => {
+      throw new Error('transport connect failed')
+    }
+  })
+  let now = 0
+  const harness = await createHarness(),
+    endpoint = await startServer(harness.service, () => now)
+  const connections: Awaited<ReturnType<typeof connect>>[] = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      now = index * 1_000
+      connections.push(await connect(endpoint.descriptor))
+    }
+    const original = [...connections]
+    now = 8_000
+    // Act
+    const refused = await connect(endpoint.descriptor).then(
+      () => 'connected',
+      (error: unknown) => String(error),
+    )
+    const next = await connect(endpoint.descriptor)
+    connections.push(next)
+    // Assert
+    assert.match(
+      refused,
+      /MCP request failed; reconnect and inspect existing run state\./,
+    )
+    assert.equal((await next.client.listTools()).tools.length, 16)
+    // Seven sessions and no reservation were left, so the next client replaced nobody.
+    assert.deepEqual(await Promise.all(original.map(sessionAnswer)), [
+      'unknown session',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+      'answers',
+    ])
   } finally {
     await Promise.allSettled(
       connections.map((connection) => connection.client.close()),

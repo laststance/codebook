@@ -145,6 +145,8 @@ export interface PresentationState {
   requestedMode?: PresentationMode
   state: 'closed' | 'open' | 'applying'
   layoutConfirmed: boolean
+  /** `false` only on a read made while another editor part (an agent chat) has the keyboard focus: the main grid could not be measured again without taking that focus, and `layoutConfirmed` repeats the confirmation of the last arrangement, which holds while no tab or group changed since. Absent when the grid was measured. */
+  layoutMeasured?: false
   preference: {
     status: 'default' | 'saved' | 'saving' | 'failed' | 'unknown'
     mode?: PresentationMode

@@ -1,6 +1,6 @@
 # Cycle NNNN — Outcome
 
-Type: experiment | product-increment | hardening\
+Type: experiment | product-increment (feature cycle) | bug-fix cycle | hardening\
 Status: ready\
 Result: pending\
 Delivery: not-applicable\
@@ -48,7 +48,7 @@ A read receipt or file's existence cannot satisfy this audit. UNKNOWN requires a
 
 ## Carried defects
 
-Every defect the previous cycle left unfixed, copied in whole from its record under the [cycle rule](../../AGENTS.md#cycle-rule-every-carried-defect-is-fixed-in-the-next-cycle). None is optional; the cycle closes only when every row is closed.
+A bug-fix cycle only (a feature cycle starts with none and removes this section): every defect the previous cycle left unfixed, copied in whole from its record under the [cycle rule](../../AGENTS.md#cycle-rule-every-carried-defect-is-fixed-in-the-next-cycle), and every defect found while this cycle runs. None is optional and none is carried again; the cycle closes only when every row is closed.
 
 | Source (cycle, finding label) | Fix, or the evidence that closes it | Test that fails without the fix | Closed |
 | --- | --- | --- | --- |

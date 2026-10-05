@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  access,
   lstat,
   mkdir,
   mkdtemp,
@@ -10,7 +11,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import type { DebugAdapterTrackerFactory, DebugSession } from 'vscode'
 import { z } from 'zod'
@@ -221,6 +222,162 @@ for (const scenario of [
       )
     }
   })
+
+/**
+ * Creates the real environment of a Linux window whose `codebook.chromeExecutable` is unset, over two PATH directories the test fills, and records every executable check the environment makes and every binary it asks for its version.
+ * @param context - The test, which removes the temporary folder and disposes the environment when it ends.
+ * @returns The environment, the first PATH directory (kept empty), the second (where a test installs browsers), the checked paths and the binaries asked for a version, both in order.
+ * @example
+ * const linux = await linuxEnvironmentWithUnsetChrome(context)
+ * await writeFile(join(linux.installDirectory, 'chromium'), '#!/bin/sh\n', { mode: 0o755 })
+ * await linux.environment.prerequisites() // linux.checked => every path probed, then the found one once more
+ */
+async function linuxEnvironmentWithUnsetChrome(context: TestContext) {
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-chrome-lookup-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  await writeFile(
+    join(directory, 'product.json'),
+    JSON.stringify({ version: '1.140.0', commit: 'fixture' }),
+  )
+  await mkdir(join(directory, 'dist'))
+  await writeFile(
+    join(directory, 'dist/build.json'),
+    JSON.stringify({
+      revision: 'fixture',
+      dirty: false,
+      sourceHash: 'fixture',
+    }),
+  )
+  const emptyDirectory = join(directory, 'empty-bin'),
+    installDirectory = join(directory, 'bin')
+  await mkdir(emptyDirectory)
+  await mkdir(installDirectory)
+  const checked: string[] = [],
+    versionAsked: string[] = []
+  const disposable = { dispose(): void {} }
+  const boundary = await loadModule<typeof EnvironmentModule>(
+    resolve(__dirname, '../environment.js'),
+    {
+      './configuredBrowserRun': {},
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/external/node',
+      },
+      // The real filesystem answers; every executable check is recorded first.
+      'node:fs/promises': {
+        readFile,
+        access: (path: string, mode?: number) => {
+          checked.push(path)
+          return access(path, mode)
+        },
+      },
+      'node:util': {
+        promisify: () => async (binary: string) => {
+          versionAsked.push(binary)
+          return { stdout: 'Chromium 140.0' }
+        },
+      },
+      vscode: {
+        workspace: {
+          isTrusted: true,
+          workspaceFolders: [{ uri: { scheme: 'file', fsPath: directory } }],
+          getConfiguration: () => ({
+            get: (key: string, fallback: unknown) =>
+              key === 'chromeExecutable' ? '' : fallback,
+          }),
+        },
+        env: { appRoot: directory, appName: 'Visual Studio Code' },
+        version: '1.140.0',
+        extensions: { getExtension: () => ({}) },
+        debug: {
+          registerDebugAdapterTrackerFactory: () => disposable,
+          onDidTerminateDebugSession: () => disposable,
+          onDidChangeActiveDebugSession: () => disposable,
+        },
+      },
+    },
+    {
+      process: {
+        platform: 'linux',
+        env: { PATH: `${emptyDirectory}:${installDirectory}` },
+      },
+    },
+  )
+  const environment = await boundary.createEnvironment({
+    extensionPath: directory,
+  })
+  context.after(() => environment.dispose())
+  return {
+    environment,
+    emptyDirectory,
+    installDirectory,
+    checked,
+    versionAsked,
+  }
+}
+
+// Cycle 0045 (SP-4): red while every prerequisite check probed every Chrome name in every PATH directory again (98 ms on a host without Chrome).
+test('a second status read with the same setting and PATH does not search the PATH for Chrome again', async (context) => {
+  // Arrange: Chromium, the third name searched, is installed in the second PATH directory.
+  const linux = await linuxEnvironmentWithUnsetChrome(context)
+  const chromium = join(linux.installDirectory, 'chromium')
+  await writeFile(chromium, '#!/bin/sh\n', { mode: 0o755 })
+  const first = await linux.environment.prerequisites()
+  const checkedByFirstRead = linux.checked.splice(0)
+  // Act
+  const second = await linux.environment.prerequisites()
+  // Assert
+  assert.deepEqual(checkedByFirstRead, [
+    join(linux.emptyDirectory, 'google-chrome'),
+    join(linux.installDirectory, 'google-chrome'),
+    join(linux.emptyDirectory, 'google-chrome-stable'),
+    join(linux.installDirectory, 'google-chrome-stable'),
+    join(linux.emptyDirectory, 'chromium'),
+    chromium,
+    chromium,
+  ])
+  // The remembered executable is checked once by the lookup and once by the prerequisite itself; no other path is probed.
+  assert.deepEqual(linux.checked, [chromium, chromium])
+  assert.deepEqual([...first.missing], [])
+  assert.deepEqual([...second.missing], [])
+  assert.equal(second.ready, true)
+})
+
+test('a second status read after no Chrome was found on PATH answers the same remedy without probing the PATH again', async (context) => {
+  // Arrange
+  const linux = await linuxEnvironmentWithUnsetChrome(context)
+  await linux.environment.prerequisites()
+  const checkedByFirstRead = linux.checked.splice(0)
+  // Act
+  const second = await linux.environment.prerequisites()
+  // Assert
+  assert.equal(checkedByFirstRead.length, 8)
+  assert.deepEqual(linux.checked, [])
+  assert.equal(second.ready, false)
+  assert.deepEqual(
+    [...second.missing],
+    [
+      'codebook.chromeExecutable: no google-chrome, google-chrome-stable, chromium or chromium-browser is on PATH. Install Google Chrome for Linux (or Chromium), or set codebook.chromeExecutable to its executable path.',
+    ],
+  )
+})
+
+// Cycle 0045 (PC-3.6): a remembered executable that is gone must not become "configure an installed executable Chrome" while another browser is on the PATH.
+test('after the Chrome found on PATH is uninstalled and Chromium installed, the next status read is ready with Chromium', async (context) => {
+  // Arrange
+  const linux = await linuxEnvironmentWithUnsetChrome(context)
+  const chrome = join(linux.installDirectory, 'google-chrome'),
+    chromium = join(linux.installDirectory, 'chromium')
+  await writeFile(chrome, '#!/bin/sh\n', { mode: 0o755 })
+  await linux.environment.prerequisites()
+  await rm(chrome)
+  await writeFile(chromium, '#!/bin/sh\n', { mode: 0o755 })
+  // Act
+  const afterTheSwitch = await linux.environment.prerequisites()
+  // Assert
+  assert.deepEqual([...afterTheSwitch.missing], [])
+  assert.equal(afterTheSwitch.ready, true)
+  assert.deepEqual(linux.versionAsked, [chrome, chromium])
+})
 
 test('the configured environment routes only owned DAP responses and reveals immutable Study source without a demo or raw-tab fallback', async (context) => {
   // Arrange: constructor/host effects are controlled; the environment bridge and prerequisite decisions are real.

@@ -34,6 +34,13 @@ const stackArguments = z.object({
 })
 type RecordedFrame = ReplayDebugSnapshot['frames'][number]
 export type ReplaySourceDocument = { uri: string; hash: string }
+/** What a closed adapter answers the view requests native Run and Debug still sends after its `disconnect`: a success without rows, so the editor has nothing to cancel. */
+const CLOSED_SESSION_ANSWERS: ReadonlyMap<string, unknown> = new Map([
+  ['threads', { threads: [] }],
+  ['stackTrace', { stackFrames: [], totalFrames: 0 }],
+  ['scopes', { scopes: [] }],
+  ['variables', { variables: [] }],
+])
 
 /** Serves immutable recorded history to the native debugger; has no live session or execution transport. @example adapter.select(snapshot, 'Recorded at 00:42'); adapter.handleMessage(request) */
 export class ReplayDebugAdapter {
@@ -136,7 +143,7 @@ export class ReplayDebugAdapter {
 
   /**
    * Lets {@link ReplayDebugger.present} fail closed when the editor disposed this adapter before reporting termination.
-   * @returns Whether the editor ended this adapter; a disposed adapter ignores selections and requests.
+   * @returns Whether the editor ended this adapter; a disposed adapter ignores selections and serves no history.
    * @example adapter.dispose(); adapter.disposed // => true
    */
   get disposed(): boolean {
@@ -174,18 +181,34 @@ export class ReplayDebugAdapter {
     let index = 0
     for (const [frameId, frame] of this.frames) {
       // A source frame native Call Stack has not loaded yet cannot be focused once its first page is complete.
-      if (
-        index >= this.servedFrameCount &&
-        this.servedFrameCount >= REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES
-      )
-        return topFrameId
+      if (this.isBeyondLoadedFirstPage(index)) return topFrameId
       if (frame.source) return frameId
       index++
     }
     return topFrameId
   }
 
-  /** Replaces every handle on committed moment changes; an invalid snapshot first clears previous state. @example adapter.select(undefined, 'Not recorded at this moment') */
+  /**
+   * Tells {@link inspectionFrameId} whether a frame lies outside what native Call Stack loaded, once its first page is complete.
+   * @param index - Zero-based position of the frame in the recorded stack.
+   * @returns `true` when the frame was not served yet and the first page ({@link REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES}) was served in full; `false` for a served frame, and while the first page is still incomplete.
+   * @example this.isBeyondLoadedFirstPage(20) // => true once the first 20 frames were served
+   */
+  private isBeyondLoadedFirstPage(index: number): boolean {
+    return (
+      index >= this.servedFrameCount &&
+      this.servedFrameCount >= REPLAY_DEBUG_NATIVE_STACK_PAGE_FRAMES
+    )
+  }
+
+  /**
+   * Replaces every handle when {@link ReplayDebugger} presents another moment or retires the displayed one; an invalid snapshot first clears previous state.
+   * @param value - The recorded stop to serve, or `undefined` for a moment without history to show.
+   * @param label - What the thread and the stop description read: the recorded moment, or for `undefined` why no stack is shown ("Not recorded at this moment", or that the recorded application is covered).
+   * @param sourceDocument - The captured source document the native editor opens for the stop's frames.
+   * @throws When the snapshot is invalid or its source hash does not match; the session then shows "Not recorded at this moment".
+   * @example adapter.select(undefined, 'Not recorded at this moment')
+   */
   select(
     value: ReplayDebugSnapshot | undefined,
     label: string,
@@ -267,6 +290,8 @@ export class ReplayDebugAdapter {
           this.frameScopes.set(frameId, scopes)
         }
       }
+      // Without history to show, the label is the reason the caller gives for the empty stack.
+      else this.label = label
       this.selectionValid = true
     } finally {
       if (this.configured) {
@@ -276,9 +301,8 @@ export class ReplayDebugAdapter {
     }
   }
 
-  /** Handles only history inspection and session teardown; execution/evaluation/mutation requests fail closed. @example adapter.handleMessage({seq:1,type:'request',command:'threads'}) */
+  /** Handles only history inspection and session teardown for the editor's inline session; execution/evaluation/mutation requests fail closed, and a closed adapter answers `threads`, `stackTrace`, `scopes` and `variables` with no rows and nothing else. @example adapter.handleMessage({seq:1,type:'request',command:'threads'}) */
   handleMessage(message: unknown): void {
-    if (this.closed) return
     const parsed = requestSchema.safeParse(message)
     if (!parsed.success) return
     const request = parsed.data
@@ -291,6 +315,12 @@ export class ReplayDebugAdapter {
         success: true,
         ...(body === undefined ? {} : { body }),
       })
+    // A stop change retires the session, and the editor sends view requests within a millisecond of its disconnect: unanswered, it cancels them 500 ms later and Variables shows a red "Canceled".
+    if (this.closed) {
+      if (CLOSED_SESSION_ANSWERS.has(request.command))
+        respond(CLOSED_SESSION_ANSWERS.get(request.command))
+      return
+    }
     try {
       switch (request.command) {
         case 'initialize':

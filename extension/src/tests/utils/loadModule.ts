@@ -3,6 +3,9 @@ import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
 import { runInNewContext } from 'node:vm'
 
+/** The real `clearTimeout`, kept from before any test fakes timers, so a loaded module can still cancel a timer it armed before the clock was faked. */
+const realClearTimeout = clearTimeout
+
 /** Injects only editor effects into compiled boundary modules while preserving actual Node/SDK code. @example await loadModule<typeof import('../../environment')>(path, {vscode: stub}) */
 export async function loadModule<Module>(
   path: string,
@@ -31,8 +34,11 @@ export async function loadModule<Module>(
         delayMs?: number,
         ...values: unknown[]
       ) => globalThis.setTimeout(handler, delayMs, ...values),
-      clearTimeout: (timer?: Parameters<typeof clearTimeout>[0]) =>
-        globalThis.clearTimeout(timer),
+      // Both are called: the handle is a faked timer or a real one armed before the clock was faked, and each clearTimeout ignores a handle it does not know.
+      clearTimeout: (timer?: Parameters<typeof clearTimeout>[0]) => {
+        globalThis.clearTimeout(timer)
+        realClearTimeout(timer)
+      },
       AbortController,
       AbortSignal,
       ...globals,

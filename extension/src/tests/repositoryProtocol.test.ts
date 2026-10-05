@@ -479,3 +479,434 @@ test('foreign identities, changed workspace ownership and malformed repository U
     await harness.close()
   }
 })
+
+/** One article node that cites the tracked file of {@link repositoryProtocolHarness}; an agent's smallest valid node. @example citedNode('entry') */
+const citedNode = (id: string) => ({
+  id,
+  title: 'Price',
+  sections: [{ title: 'Value', text: 'The module exports the price.' }],
+  anchors: [{ path: 'module.ts', hash: sourceHash, startLine: 1, endLine: 1 }],
+  observations: [],
+})
+
+/** The text of a tool result an MCP client received, as an agent reads it. @example toolText(await harness.client.callTool({ name: 'codebook_publish_book', arguments })) */
+const toolText = (result: unknown): string =>
+  z
+    .object({ content: z.array(z.object({ text: z.string() })).min(1) })
+    .parse(result).content[0]!.text
+
+// Value: protects=an agent's first publish of an article that describes no relationships; fails_when=a document without the member edges is refused by the input validation, after which the VS Code agent of the second native round ran on an article it had not written; why_new=Cycle 0045 finding R2-F1 (DX-1 a); seam=none
+test('a document published without edges is published as one without relationships', async () => {
+  // Arrange: a complete document that has no member edges.
+  const harness = await repositoryProtocolHarness()
+  try {
+    const publication = {
+      instanceId: harness.service.instanceId,
+      bookId: 'price',
+      key: 'first',
+      expectedRevision: 0,
+      document: {
+        title: 'Price',
+        summary: 'Where the price comes from.',
+        nodes: [citedNode('entry')],
+      },
+    }
+
+    // Act
+    const published = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: publication,
+    })
+    const repeatedWithEmptyList = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        ...publication,
+        document: { ...publication.document, edges: [] },
+      },
+    })
+
+    // Assert: the revision is saved with an empty list, and the same publication with the list written out is the same one.
+    assert.equal(published.isError, undefined, JSON.stringify(published))
+    const saved = z
+      .object({
+        revisions: z.array(
+          z.object({
+            revision: z.number(),
+            document: z.object({ edges: z.array(z.unknown()) }),
+          }),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            join(harness.library.directory, 'price.book.v2.json'),
+            'utf8',
+          ),
+        ),
+      )
+    assert.deepEqual(saved.revisions, [
+      { revision: 1, document: { edges: [] } },
+    ])
+    assert.deepEqual(
+      repeatedWithEmptyList.structuredContent,
+      published.structuredContent,
+    )
+    assert.deepEqual(
+      (await harness.service.repository!.readDefinition('price', 1)).revision
+        .document.edges,
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the refusal of a relationship that names no node of its document, which a default for edges must not loosen; fails_when=such a document is published, or the refusal stops naming the relationship; why_new=Cycle 0045 finding R2-F1 (the guard of its tolerance); seam=none
+test('a document with a relationship whose endpoint names no node is still refused naming that relationship', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const refused = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'price',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Price',
+          summary: 'Where the price comes from.',
+          nodes: [citedNode('entry')],
+          edges: [
+            {
+              from: 'entry',
+              to: 'missing',
+              relationship: 'calls',
+              explanation:
+                'The entry calls a node this document does not have.',
+            },
+          ],
+        },
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(
+      toolText(refused),
+      'MCP error -32602: Input validation error: Invalid arguments for tool codebook_publish_book: Both relationship endpoints must name nodes in this document. at document.edges[0]',
+    )
+    await assert.rejects(
+      readFile(join(harness.library.directory, 'price.book.v2.json')),
+      /ENOENT/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent reading, where it reads last before it publishes, which members a document has and that edges may be left out; fails_when=the document of the publish tool's input schema carries no description, or still lists edges as required; why_new=Cycle 0045 finding R2-F1 (DX-1 b); seam=none
+test('the input schema of codebook_publish_book names the members of a document and does not require edges', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const tools = await harness.client.listTools()
+
+    // Assert
+    const document = z
+      .object({
+        properties: z.object({
+          document: z.object({
+            description: z.string(),
+            required: z.array(z.string()),
+          }),
+        }),
+      })
+      .parse(
+        tools.tools.find((tool) => tool.name === 'codebook_publish_book')
+          ?.inputSchema,
+      ).properties.document
+    assert.equal(
+      document.description,
+      'A document has the members title, summary, nodes (at least one) and edges, the relationships between its nodes; a document without relationships may leave edges out or give an empty list.',
+    )
+    assert.deepEqual(document.required, ['title', 'summary', 'nodes'])
+  } finally {
+    await harness.close()
+  }
+})
+
+/** Tracks one more file in the Git root of {@link repositoryProtocolHarness}, so a test can read a source of its own shape through the tools. @example await trackSource(harness.directory, 'form.ts', 'const a = 1\n') */
+async function trackSource(
+  directory: string,
+  path: string,
+  text: string,
+): Promise<void> {
+  await writeFile(join(directory, path), text)
+  await executeFile('git', ['add', '--', path], { cwd: directory })
+}
+
+// Value: protects=an agent taking the line of a citation or a stop from the source answer instead of counting by hand; fails_when=codebook_source answers no numbered copy, numbers a blank line or the last line without a line end wrongly, or changes the exact text; why_new=Cycle 0045 N14c-13 (DX-1 b): the VS Code agent counted lines by hand and declared every stop one line too high, one of them on a blank line, which refused its start; seam=none
+test('codebook_source answers each line after its one-based number beside the unchanged exact text, a blank line and a last line without a line end included', async () => {
+  // Arrange: line 2 is blank and line 3 has no line end.
+  const harness = await repositoryProtocolHarness()
+  try {
+    await trackSource(
+      harness.directory,
+      'form.ts',
+      'const email = read()\n\nexport const user = find(email)',
+    )
+
+    // Act
+    const answer = await harness.client.callTool({
+      name: 'codebook_source',
+      arguments: { instanceId: harness.service.instanceId, path: 'form.ts' },
+    })
+
+    // Assert
+    const structured = z
+      .object({
+        data: z.object({
+          text: z.string(),
+          lineCount: z.number(),
+          numberedText: z.string(),
+        }),
+      })
+      .parse(answer.structuredContent).data
+    assert.deepEqual(structured, {
+      text: 'const email = read()\n\nexport const user = find(email)',
+      lineCount: 3,
+      numberedText:
+        '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
+    })
+    assert.equal(
+      JSON.parse(toolText(answer)).numberedText,
+      '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent reading, in the tool it calls for source, that the numbered copy is where lines come from; fails_when=the description of codebook_source does not name numberedText or the rule; why_new=Cycle 0045 N14c-13 (DX-1 b); seam=none
+test('the description of codebook_source tells an agent to take every citation and stop line from the numbered copy', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const tools = await harness.client.listTools()
+
+    // Assert
+    assert.equal(
+      tools.tools.find((tool) => tool.name === 'codebook_source')?.description,
+      'Read exact UTF-8 source with a full-byte hash and line count. numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Use that path/hash and inclusive line ranges as article citations. Does not execute or navigate.',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that reads the help before it cites lines or declares a stop learning to take lines from the numbered copy; fails_when=the source-only help or the repository-browser help no longer says it; why_new=Cycle 0045 N14c-13 (DX-1 b); seam=none
+test('the source-only help and the repository-browser help tell an agent to take every citation and stop line from the numbered copy of codebook_source', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const repositoryHelp = await harness.client.callTool({
+      name: 'codebook_read_resource',
+      arguments: { uri: 'codebook://help/repository' },
+    })
+    const browserHelp = await harness.client.callTool({
+      name: 'codebook_read_resource',
+      arguments: { uri: 'codebook://help/repository-browser' },
+    })
+
+    // Assert
+    const repositoryEntry = z
+      .object({ data: z.object({ entry: z.string() }) })
+      .parse(repositoryHelp.structuredContent).data.entry
+    const sourceBinding = z
+      .object({ data: z.object({ sourceBinding: z.string() }) })
+      .parse(browserHelp.structuredContent).data.sourceBinding
+    assert.equal(
+      repositoryEntry.startsWith(
+        'Read codebook_status.repository, then codebook_sources and exact codebook_source paths. numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Author structured plain-text sections,',
+      ),
+      true,
+    )
+    assert.equal(
+      sourceBinding.startsWith(
+        'codebook_source answers the source text; numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Choose a one-based source line/column for an executable statement',
+      ),
+      true,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that reads a book's retained source before it declares a stop on that revision getting the same numbered copy; fails_when=the cited source answers no numbered copy through codebook_read_resource, or a plain MCP resource read stops answering the exact bytes alone; why_new=Cycle 0045 N14c-13 (DX-1 b), the other place an agent reads source text before it declares; seam=none
+test('a book’s cited source read through codebook_read_resource answers its numbered lines beside the exact text, and a resource read keeps the exact bytes alone', async () => {
+  // Arrange: a published revision cites a file whose line 2 is blank.
+  const harness = await repositoryProtocolHarness()
+  try {
+    await trackSource(
+      harness.directory,
+      'form.ts',
+      'const email = read()\n\nexport const user = find(email)',
+    )
+    const source = z.object({ data: z.object({ hash: z.string() }) }).parse(
+      (
+        await harness.client.callTool({
+          name: 'codebook_source',
+          arguments: {
+            instanceId: harness.service.instanceId,
+            path: 'form.ts',
+          },
+        })
+      ).structuredContent,
+    ).data
+    const published = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'form',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Form',
+          summary: 'Where the user comes from.',
+          nodes: [
+            {
+              id: 'lookup',
+              title: 'Lookup',
+              sections: [{ title: 'User', text: 'The form finds the user.' }],
+              anchors: [
+                {
+                  path: 'form.ts',
+                  hash: source.hash,
+                  startLine: 1,
+                  endLine: 3,
+                },
+              ],
+              observations: [],
+            },
+          ],
+        },
+      },
+    })
+    const bookUri = z
+      .object({ data: z.object({ uri: z.string() }) })
+      .parse(published.structuredContent).data.uri
+
+    // Act
+    const throughTool = await harness.client.callTool({
+      name: 'codebook_read_resource',
+      arguments: { uri: `${bookUri}/sources/0` },
+    })
+    const throughResource = await harness.client.readResource({
+      uri: `${bookUri}/sources/0`,
+    })
+
+    // Assert
+    assert.deepEqual(throughTool.structuredContent, {
+      ok: true,
+      uri: `${bookUri}/sources/0`,
+      mimeType: 'text/plain',
+      text: 'const email = read()\n\nexport const user = find(email)',
+      numberedText:
+        '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
+    })
+    assert.deepEqual(throughTool.content, [
+      {
+        type: 'text',
+        text: 'const email = read()\n\nexport const user = find(email)',
+      },
+      {
+        type: 'text',
+        text: '1\tconst email = read()\n2\t\n3\texport const user = find(email)',
+      },
+    ])
+    assert.deepEqual(throughResource.contents, [
+      {
+        uri: `${bookUri}/sources/0`,
+        mimeType: 'text/plain',
+        text: 'const email = read()\n\nexport const user = find(email)',
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that put a member of its document beside document learning where it belongs; fails_when=the refusal only says the key is unrecognized, or names no document.<member>; why_new=Cycle 0045 N14c-F1 (DX-1 c): the VS Code agent's first publish gave edges beside document and was answered "Unrecognized key: \"edges\""; seam=none
+test('a publish that gives a member of the document beside document is refused with a sentence that says it belongs inside document', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const refused = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'price',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Price',
+          summary: 'Where the price comes from.',
+          nodes: [citedNode('entry')],
+        },
+        edges: [],
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(
+      toolText(refused),
+      'MCP error -32602: Input validation error: Invalid arguments for tool codebook_publish_book: edges is a member of the published document, not of the call: give it inside document, as document.edges.',
+    )
+    await assert.rejects(
+      readFile(join(harness.library.directory, 'price.book.v2.json')),
+      /ENOENT/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the publish input staying strict for a key that belongs nowhere; fails_when=an unknown key that is no document member is accepted or loses the usual refusal; why_new=Cycle 0045 N14c-F1 (the guard of the new sentence); seam=none
+test('a publish with an unknown key that is no member of the document is still refused as an unrecognized key', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const refused = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'price',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Price',
+          summary: 'Where the price comes from.',
+          nodes: [citedNode('entry')],
+        },
+        draft: true,
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(
+      toolText(refused),
+      'MCP error -32602: Input validation error: Invalid arguments for tool codebook_publish_book: Unrecognized key: "draft"',
+    )
+  } finally {
+    await harness.close()
+  }
+})

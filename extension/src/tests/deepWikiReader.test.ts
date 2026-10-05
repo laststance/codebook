@@ -364,3 +364,189 @@ test('a failed editor-model answer reaches the browser reader as an error instea
     await rm(projectDirectory, { recursive: true, force: true })
   }
 })
+
+/**
+ * Serves a one-page Wiki whose question handler answers every question, for the tests of which page may ask.
+ *
+ * @returns The started reader, `ask` (posts a question the way the reader's page does, with the given `Origin` header or none, and returns the status) and `close`.
+ */
+async function serveWikiThatAnswers(): Promise<{
+  reader: Awaited<ReturnType<typeof startDeepWikiReader>>
+  ask(origin: string | undefined): Promise<number>
+  close(): Promise<void>
+}> {
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-origin-')),
+  )
+  const output = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(output, { recursive: true })
+  await writeFile(join(output, 'index.html'), '<!doctype html><body></body>')
+  await writeFile(
+    join(output, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  const reader = await startDeepWikiReader(output, projectRoot, async () => ({
+    answer: 'The source confirms it.',
+    citations: [],
+    sourceChanged: false,
+  }))
+  return {
+    reader,
+    async ask(origin) {
+      const response = await fetch(new URL('api/ask', reader.url), {
+        method: 'POST',
+        headers: {
+          ...(origin === undefined ? {} : { Origin: origin }),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ question: 'Where is it?' }),
+      })
+      return response.status
+    },
+    async close(): Promise<void> {
+      await reader.close()
+      await rm(projectRoot, { recursive: true, force: true })
+    },
+  }
+}
+
+test('a question from the address the editor forwarded the reader to is answered', async () => {
+  // Arrange: a remote window forwards the reader's port to another one of the learner's machine.
+  const wiki = await serveWikiThatAnswers()
+  try {
+    wiki.reader.acceptForwardedOrigin(
+      `http://localhost:54321${new URL(wiki.reader.url).pathname}`,
+    )
+
+    // Act
+    const status = await wiki.ask('http://localhost:54321')
+
+    // Assert
+    assert.equal(status, 200)
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a question from any other origin is refused', async () => {
+  // Arrange: one forwarded address on this machine was accepted, and one that is not on this machine was offered.
+  const wiki = await serveWikiThatAnswers()
+  try {
+    wiki.reader.acceptForwardedOrigin('http://localhost:54321/w/token/')
+    wiki.reader.acceptForwardedOrigin('https://tunnel.example/w/token/')
+
+    // Act
+    const statuses = [
+      await wiki.ask('https://tunnel.example'),
+      await wiki.ask('https://other.example'),
+      await wiki.ask('http://localhost:54322'),
+      await wiki.ask('http://evil.example:54321'),
+      await wiki.ask(undefined),
+    ]
+
+    // Assert
+    assert.deepEqual(statuses, [403, 403, 403, 403, 403])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('in a local window only the reader’s own origin is accepted', async () => {
+  // Arrange: a local window forwards nothing, so the editor resolves the reader's address to itself.
+  const wiki = await serveWikiThatAnswers()
+  try {
+    const ownOrigin = new URL(wiki.reader.url).origin
+    const statusWithoutAnOriginBeforeTheAddressWasResolved =
+      await wiki.ask(undefined)
+    wiki.reader.acceptForwardedOrigin(wiki.reader.url)
+
+    // Act
+    const statuses = [
+      statusWithoutAnOriginBeforeTheAddressWasResolved,
+      await wiki.ask(ownOrigin),
+      await wiki.ask(ownOrigin.replace('127.0.0.1', 'localhost')),
+      await wiki.ask('http://127.0.0.1:1'),
+      await wiki.ask(undefined),
+    ]
+
+    // Assert
+    assert.deepEqual(statuses, [403, 200, 403, 403, 403])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('closing the reader while a question is in flight stops the question and ends at once', async () => {
+  // Arrange: a question whose answer never comes by itself.
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-reader-close-')),
+  )
+  const output = join(projectRoot, '.codebook', 'wiki')
+  await mkdir(output, { recursive: true })
+  await writeFile(join(output, 'index.html'), '<!doctype html><body></body>')
+  await writeFile(
+    join(output, 'codebook-wiki.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      repositoryRoot: projectRoot,
+      pages: [],
+      assets: [],
+      includedSources: [],
+    }),
+  )
+  let questionSignal: AbortSignal | undefined
+  let noteQuestionArrived = (): void => {}
+  const questionArrived = new Promise<void>((resolveArrived) => {
+    noteQuestionArrived = resolveArrived
+  })
+  const reader = await startDeepWikiReader(
+    output,
+    projectRoot,
+    (_question, _sources, signal) =>
+      new Promise((_resolve, reject) => {
+        questionSignal = signal
+        signal.addEventListener('abort', () =>
+          reject(new Error('The question was stopped.')),
+        )
+        noteQuestionArrived()
+      }),
+  )
+  const browserTab = new AbortController()
+  const asking = fetch(new URL('api/ask', reader.url), {
+    method: 'POST',
+    headers: {
+      Origin: new URL(reader.url).origin,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ question: 'Where is it?' }),
+    signal: browserTab.signal,
+  }).catch(() => undefined)
+  try {
+    await questionArrived
+
+    // Act: "Open DeepWiki" closes the old reader before it starts a new one.
+    const closing = await Promise.race([
+      reader.close().then(() => 'closed'),
+      new Promise((resolveWait) =>
+        setTimeout(() => resolveWait('still waiting for the question'), 2_000),
+      ),
+    ])
+
+    // Assert
+    assert.equal(closing, 'closed')
+    // The tab's request ends with its connection; by then the reader has stopped the question.
+    await asking
+    assert.equal(questionSignal?.aborted, true)
+  } finally {
+    // Also when the close did not end: the tab's request is given up, so nothing keeps the test file open.
+    browserTab.abort()
+    await asking
+    await rm(projectRoot, { recursive: true, force: true })
+  }
+})

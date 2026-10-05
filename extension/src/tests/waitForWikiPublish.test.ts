@@ -30,6 +30,7 @@ test('a Wiki update ends as published when the publish token changes and the new
     },
     readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -55,6 +56,7 @@ test('a publish that keeps the same displayed identity is still seen, because th
     // The identity the page shows is the same before and after this publish.
     readPublished: async () => 'no-revision+0e819f59',
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -80,6 +82,7 @@ test('a changed manifest that cannot be read yet keeps the watch going until it 
     readToken: async () => 'new@2',
     readPublished: async () => manifests.shift(),
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -108,6 +111,7 @@ test('a Wiki update with no publish ends as timed out at the bound, not before',
     },
     readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 10_000,
     pollMs: 2_000,
     ...clock,
@@ -134,6 +138,7 @@ test('cancelling the watch ends it as cancelled without another look at the mani
     },
     readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
     signal: controller.signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
   })
@@ -153,6 +158,7 @@ test('a manifest that was unreadable when the update began counts any readable o
     readToken: async () => 'first@1',
     readPublished: async () => 'no-revision+0e819f59',
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -182,6 +188,7 @@ test(
       },
       readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
       signal: controller.signal,
+      unreadableGraceMs: 10_000,
       timeoutMs: 900_000,
       pollMs: 600_000,
     })
@@ -202,6 +209,7 @@ test('a learner file that blocks the publisher ends the watch as blocked with it
     readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
     findBlockingFiles: async () => ['pages/overview.html'],
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -228,6 +236,7 @@ test('a publish that lands while the conflict probe runs ends the watch as publi
     readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
     findBlockingFiles: async () => ['pages/new.html'],
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -260,6 +269,7 @@ test('a conflict probe that fails because a folder vanished does not end the wat
       )
     },
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -297,6 +307,7 @@ test('ten looks at a Wiki folder nobody wrote to read the manifest once and walk
       return []
     },
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 18_000,
     pollMs: 2_000,
     ...clock,
@@ -324,6 +335,7 @@ test('the watch looks again as soon as something was written, and sees the publi
     readToken: async () => tokens.shift(),
     readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -351,6 +363,7 @@ test('a new manifest that is not readable yet is looked at again although nothin
     readToken: async () => 'new@2',
     readPublished: async () => manifests.shift(),
     signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
     timeoutMs: 900_000,
     pollMs: 2_000,
     ...clock,
@@ -363,4 +376,86 @@ test('a new manifest that is not readable yet is looked at again although nothin
     published: 'a1b2c3d4e5f6+0f9e8d7c',
   })
   assert.equal(clock.now(), 2_000)
+})
+
+test(
+  'a watch cancelled between two looks ends at once, without waiting for the next look',
+  { timeout: 5_000 },
+  async () => {
+    // Arrange
+    const controller = new AbortController()
+    // The cancel arrives while the watch sleeps between two looks: its timer has started.
+    setTimeout(() => controller.abort(), 50)
+
+    // Act
+    const result = await Promise.race([
+      waitForWikiPublish({
+        startToken: 'old@1',
+        readToken: async () => 'old@1',
+        readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+        signal: controller.signal,
+        unreadableGraceMs: 10_000,
+        timeoutMs: 900_000,
+        pollMs: 600_000,
+      }),
+      new Promise((resolveWait) =>
+        setTimeout(() => resolveWait('still waiting for the next look'), 1_000),
+      ),
+    ])
+
+    // Assert
+    assert.deepEqual(result, { outcome: 'cancelled' })
+  },
+)
+
+test('a cancel that arrives while the new manifest is being read ends the watch as cancelled, not as published', async () => {
+  // Arrange
+  const clock = manualClock()
+  const controller = new AbortController()
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => 'new@2',
+    readPublished: async () => {
+      // Reading the manifest hashes every source; the learner cancels meanwhile.
+      controller.abort()
+      return 'a1b2c3d4e5f6+0f9e8d7c'
+    },
+    signal: controller.signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, { outcome: 'cancelled' })
+})
+
+test('a new manifest that stays unreadable ends the watch after its grace, not at the 15 minute bound', async () => {
+  // Arrange
+  const clock = manualClock()
+  let reads = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => 'new@2',
+    readPublished: async () => {
+      reads += 1
+      return undefined
+    },
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    ...clock,
+  })
+
+  // Assert
+  assert.deepEqual(result, { outcome: 'unreadable', token: 'new@2' })
+  // Looks at 0, 2, 4, 6, 8 and 10 seconds: the sixth one is past the grace.
+  assert.equal(reads, 6)
+  assert.equal(clock.now(), 10_000)
 })

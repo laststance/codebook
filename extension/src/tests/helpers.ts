@@ -80,6 +80,8 @@ export async function createHarness(
       directory: string,
       definition?: ConfiguredDefinition,
     ) => Promise<ControlledRuntime>
+    /** `vscode.env.remoteName` of the window the service runs in; `wsl` models a WSL remote window, which has no Trash. */
+    remoteName?: string
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-mcp-test-')),
@@ -123,6 +125,7 @@ export async function createHarness(
       apiVersion: 'test',
       commit: 'test',
     },
+    remoteName: options.remoteName,
     build: { revision: 'test', dirty: true, sourceHash: 'test' },
     prerequisites:
       options.prerequisites ?? (async () => ({ ready: true, missing: [] })),

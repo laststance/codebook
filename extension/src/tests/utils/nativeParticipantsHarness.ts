@@ -18,12 +18,34 @@ import { configuredDomExpression } from '../../utils/configuredDomExpression'
 import { configuredStops } from '../../utils/configuredStops'
 import { pausePlace } from '../../utils/pausePlace'
 
+import {
+  answerBreakLocationRequest,
+  type BreakLocationRange,
+  type GeneratedPlace,
+  type ScriptPlace,
+} from './breakLocationsInRange'
 import { createCrossRuntimeStudy } from './createCrossRuntimeStudy'
 import { createManualClock } from './createManualClock'
 import { createSourceBoundWaitHold } from './createSourceBoundWaitHold'
 import { debuggerPausedEvent } from './debuggerPausedEvent'
+import {
+  loadConstantsWith,
+  type RuntimeConstantOverrides,
+} from './loadConstantsWith'
 import { loadModule } from './loadModule'
 import { repositoryHarness } from './repositoryHarness'
+import { sourceBreakpointRequest } from './sourceBreakpointRequest'
+
+/** The adapter id of the first editor breakpoint a harness's adapter sees; later ones count up from it. */
+const FIRST_ADAPTER_BREAKPOINT_ID = 12
+/** How far the id of a breakpoint the adapter rebound at its pause lies from the acknowledged one. */
+const REBOUND_ID_OFFSET = 1_000
+
+/** The source of a participant's fixture that gives none: the one statement of {@link createCrossRuntimeStudy} on line 1 and an empty line 2, declared with `var` so that the participant's stop on line 1, which requires the binding it declares, stays on its declared line. */
+const FIXTURE_SOURCES: Record<Participant, string> = {
+  browser: 'var nextTheme = "dark";\n',
+  server: 'export var mode = "display";\n',
+}
 
 /** Exercises the real coordinator using two controlled native transports and inert source records; never native product proof. @example const harness = await nativeParticipantsHarness(context); await harness.run.prepare() */
 export async function nativeParticipantsHarness(
@@ -41,7 +63,7 @@ export async function nativeParticipantsHarness(
       Record<
         Participant,
         {
-          /** Replaces the participant's one-statement source; its default already has an empty line 2. */
+          /** Replaces the participant's one-statement source; its default ({@link FIXTURE_SOURCES}) already has an empty line 2. */
           source?: string
           /** Last line of the participant's citation instead of line 1. */
           citationEndLine?: number
@@ -54,6 +76,8 @@ export async function nativeParticipantsHarness(
     manualClock?: boolean
     /** Gives a participant's sealed map a second original, so a map such as 'AAAA;ACAA' puts generated line 1 in that other source. */
     otherOriginal?: Partial<Record<Participant, boolean>>
+    /** Replaces runtime bounds in the run's own module and in the constants it reads ({@link loadConstantsWith}), so a test can move one bound and see which other bound follows it. The modules the run requires (the owned breakpoint, `waitUntil`) keep the real bounds. */
+    runtimeConstants?: RuntimeConstantOverrides
   } = {},
 ) {
   let owned: ConfiguredBrowserRun | undefined
@@ -73,11 +97,11 @@ export async function nativeParticipantsHarness(
         (candidate) => candidate.path === stop.source.path,
       )!,
       anchor = described.anchors[stop.anchorIndex]!
-    if (fixture.source !== undefined) {
-      source.text = fixture.source
-      source.hash = anchor.hash = sha256(fixture.source)
-      source.lineCount = fixture.source.split(/\r\n?|\n/).length
-    }
+    // A fixture without its own source declares the stop's binding with `var`, which the run reads where it was declared: a `const` on the stop's own line would make the run request the stop on the next mapped line, as it does for an agent's declaration.
+    const text = fixture.source ?? FIXTURE_SOURCES[stop.participant]
+    source.text = text
+    source.hash = anchor.hash = sha256(text)
+    source.lineCount = text.split(/\r\n?|\n/).length
     anchor.endLine = fixture.citationEndLine ?? anchor.endLine
   }
   described.citationContext = citationContext(described.anchors)
@@ -134,9 +158,33 @@ export async function nativeParticipantsHarness(
     browser: { line: 1, column: 1 },
     server: { line: 1, column: 1 },
   }
-  let acknowledgedAt: { line: number; column: number } | undefined,
+  // Where the adapter acknowledges a later registration as verified, given the position the editor requested it at; without it a registration stays pending.
+  let acknowledgedAt:
+      | ((requested: { line: number; column: number }) => {
+          line: number
+          column: number
+        })
+      | undefined,
     browserLineRunsOnInput = false,
     reboundPauseId = false
+  // The one-based column of a requested breakpoint whose registration request the adapter leaves unanswered.
+  let unansweredColumn: number | undefined
+  // The generated places each participant's adapter lists as break locations of its module; without them it cannot answer.
+  const possibleBreakLocations: Partial<Record<Participant, GeneratedPlace[]>> =
+    {}
+  // Every range the run asked break locations for, in order, as it sent them.
+  const breakLocationRequests: (BreakLocationRange & {
+    participant: Participant
+  })[] = []
+  // The adapter's id of each editor breakpoint; every breakpoint has its own, as natively.
+  const adapterIds = new Map<string, number>()
+  const adapterId = (breakpoint: { id: string }): number => {
+    const known = adapterIds.get(breakpoint.id)
+    if (known !== undefined) return known
+    const assigned = FIRST_ADAPTER_BREAKPOINT_ID + adapterIds.size
+    adapterIds.set(breakpoint.id, assigned)
+    return assigned
+  }
   let inputResolve = (): void => {},
     heldResponse: (() => void) | undefined,
     holdResponse = false
@@ -150,6 +198,10 @@ export async function nativeParticipantsHarness(
   const sourceBoundWait = createSourceBoundWaitHold()
   // Every bounded wait the run entered, by its description, in order.
   const enteredWaits: string[] = []
+  // The bounded waits the run is inside now, by their descriptions; a wait leaves the list when it ends, however it ends.
+  const waitsInProgress: string[] = []
+  // Every wait the harness answered itself instead of handing it to the real wait, by its description.
+  const substitutedWaits: string[] = []
   // The run's timers under a manual clock: each fires only when the test advances the clock to its time.
   const manualClock = createManualClock()
   // Where each participant's declared pause is reported in the generated module; 0:0 maps to the declared 1:1.
@@ -168,6 +220,9 @@ export async function nativeParticipantsHarness(
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
+  // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
+  let earlierPauseReadFailure:
+    { participant: Participant; message: string } | undefined
   const afterExpression = configuredDomExpression(
     definition.configuration.action.after,
   )
@@ -301,7 +356,8 @@ export async function nativeParticipantsHarness(
       }
       return breakpoints.some((current) => current.id === breakpoint.id)
         ? {
-            id: breakpoint.id.length + (reboundPauseId ? 1 : 0),
+            id:
+              adapterId(breakpoint) + (reboundPauseId ? REBOUND_ID_OFFSET : 0),
             verified: !unboundPause,
             line: boundAt[name].line,
             column: boundAt[name].column,
@@ -397,7 +453,12 @@ export async function nativeParticipantsHarness(
     },
     async request(
       method: string,
-      parameters?: { expression?: string; type?: string },
+      parameters?: {
+        expression?: string
+        type?: string
+        start?: ScriptPlace
+        end?: ScriptPlace
+      },
     ) {
       commands.push({ participant: name, method })
       if (
@@ -413,6 +474,16 @@ export async function nativeParticipantsHarness(
         revokeDuringDom = false
         failedRegistration = true
         acknowledge(bundle('server').sourcePath)
+      }
+      // The round trip that reads a participant's earlier pauses fails once, as a channel that closed under it does.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === 'undefined' &&
+        earlierPauseReadFailure?.participant === name
+      ) {
+        const { message } = earlierPauseReadFailure
+        earlierPauseReadFailure = undefined
+        throw new Error(message)
       }
       // A round trip on the browser channel delivers the pause the page made before it.
       if (
@@ -452,6 +523,19 @@ export async function nativeParticipantsHarness(
         return {
           data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRFEAAAAASUVORK5CYII=',
         }
+      const listed = possibleBreakLocations[name]
+      if (
+        method === 'Debugger.getPossibleBreakpoints' &&
+        listed &&
+        parameters?.start
+      ) {
+        const { range, answer } = answerBreakLocationRequest(listed, name, {
+          start: parameters.start,
+          end: parameters.end,
+        })
+        breakLocationRequests.push({ participant: name, ...range })
+        return answer
+      }
       if (method === 'Input.dispatchMouseEvent') {
         if (parameters?.type === 'mousePressed') return {}
         const pending = new Promise<void>((resolve) => {
@@ -504,12 +588,19 @@ export async function nativeParticipantsHarness(
         command: 'setBreakpoints',
         arguments: {
           source: { path: sourcePath },
-          breakpoints: selected.map((breakpoint) => ({
-            line: breakpoint.location.range.start.line + 1,
-            column: breakpoint.location.range.start.character + 1,
-          })),
+          breakpoints: selected.map((breakpoint) =>
+            sourceBreakpointRequest(breakpoint.location.range.start),
+          ),
         },
       })
+      // A request the adapter never answers leaves the breakpoint without a current receipt.
+      if (
+        selected.some(
+          (breakpoint) =>
+            breakpoint.location.range.start.character + 1 === unansweredColumn,
+        )
+      )
+        continue
       run.onResponse(sessions[name], {
         type: 'response',
         seq: ++sequence,
@@ -518,10 +609,16 @@ export async function nativeParticipantsHarness(
         success: !failedRegistration,
         body: {
           breakpoints: selected.map((breakpoint) => ({
-            id: breakpoint.id.length,
+            id: adapterId(breakpoint),
             // A module that is already loaded is acknowledged as verified, at the position the adapter chose.
             ...(acknowledgedAt
-              ? { verified: true, ...acknowledgedAt }
+              ? {
+                  verified: true,
+                  ...acknowledgedAt({
+                    line: breakpoint.location.range.start.line + 1,
+                    column: breakpoint.location.range.start.character + 1,
+                  }),
+                }
               : { verified: false }),
           })),
         },
@@ -597,6 +694,9 @@ export async function nativeParticipantsHarness(
     resolve(__dirname, '../../configuredBrowserRun.js'),
     {
       vscode,
+      ...(options.runtimeConstants
+        ? await loadConstantsWith(options.runtimeConstants)
+        : {}),
       './ownedRepositoryBreakpoint': ownedBreakpoint,
       './runtimeSupport/cdp': {
         Cdp: {
@@ -650,20 +750,29 @@ export async function nativeParticipantsHarness(
           signal?: AbortSignal,
         ) => {
           enteredWaits.push(description)
-          // The capture bound is 3 s of real time; a test of its expiry looks once and then lets the real timeout contract end the wait.
-          if (
-            sourceBoundWaitExpired &&
-            description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION
-          ) {
-            signal?.throwIfAborted()
-            const value = await read()
-            signal?.throwIfAborted()
-            if (value) return value
-            return waitUntil(read, description, 0, signal)
+          waitsInProgress.push(description)
+          try {
+            // The capture bound is 3 s of real time; a test of its expiry looks once and then lets the real timeout contract end the wait.
+            if (
+              sourceBoundWaitExpired &&
+              description === SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION
+            ) {
+              substitutedWaits.push(description)
+              signal?.throwIfAborted()
+              const value = await read()
+              signal?.throwIfAborted()
+              if (value) return value
+              return await waitUntil(read, description, 0, signal)
+            }
+            if (sourceBoundWait.holds(description)) {
+              substitutedWaits.push(description)
+              return await sourceBoundWait.wait(read, description, signal)
+            }
+            return await waitUntil(read, description, timeoutMs, signal)
+          } finally {
+            // The wait ended, with a value or a failure: it is no longer one a test can act inside.
+            waitsInProgress.splice(waitsInProgress.indexOf(description), 1)
           }
-          if (sourceBoundWait.holds(description))
-            return sourceBoundWait.wait(read, description, signal)
-          return waitUntil(read, description, timeoutMs, signal)
         },
       },
       './utils/pausePlace': {
@@ -781,6 +890,10 @@ export async function nativeParticipantsHarness(
     pauseBrowserBeforeContinueRequest(): void {
       earlyBrowserPause = 'pending'
     },
+    /** Makes a participant's channel answer the run's next read of its earlier pauses (the round trip a continuation makes before it resumes) with this failure, once. @example harness.failEarlierPauseRead('browser', 'Inspector channel closed') */
+    failEarlierPauseRead(participant: Participant, message: string): void {
+      earlierPauseReadFailure = { participant, message }
+    },
     failRegistration(): void {
       failedRegistration = true
     },
@@ -792,6 +905,10 @@ export async function nativeParticipantsHarness(
     },
     bindForeignSource(): void {
       foreignBinding = true
+    },
+    /** Sends the editor's breakpoint list of the server stop's source once more, as the editor does when any breakpoint of that file changes. @example harness.leaveRegistrationUnansweredAtColumn(1); harness.resendServerRegistration() */
+    resendServerRegistration(): void {
+      acknowledge(bundle('server').sourcePath)
     },
     revokeServerRegistration(): void {
       failedRegistration = true
@@ -807,9 +924,17 @@ export async function nativeParticipantsHarness(
     emitResume(name: Participant): void {
       listeners[name].get('Debugger.resumed')?.({})
     },
-    /** Tells whether the run has entered a bounded wait with this description, so a test can act while the run is inside that wait. @example harness.waitEntered(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION) */
+    /** Tells whether the run has ever entered a bounded wait with this description; it stays true after that wait ended, so a test that acts while the run is inside a wait reads {@link waitInProgress} instead. @example harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) */
     waitEntered(description: string): boolean {
       return enteredWaits.includes(description)
+    },
+    /** Tells whether the run is inside a bounded wait with this description now, so a test can act while that wait is open; a wait that ended is no longer reported, so waiting for the next one of the same name does not pass at once. @example await waitUntil(() => harness.waitInProgress(ADAPTER_PAUSE_RETIREMENT_WAIT_DESCRIPTION), 'the wait') */
+    waitInProgress(description: string): boolean {
+      return waitsInProgress.includes(description)
+    },
+    /** Tells whether the harness answered a wait with this description itself ({@link expireSourceBoundWait}, {@link holdSourceBoundWait}) instead of handing it to the real wait. @example harness.waitSubstituted(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION) */
+    waitSubstituted(description: string): boolean {
+      return substitutedWaits.includes(description)
     },
     /** Keeps the next continuation from announcing the declared stop it reaches (that one stop only), so a test can send other events first and then release the stop's two notifications in the order it needs. @example const next = harness.holdNextPause(); next.stopped(); next.paused() */
     holdNextPause() {
@@ -908,7 +1033,7 @@ export async function nativeParticipantsHarness(
           body: {
             reason: 'changed',
             breakpoint: {
-              id: breakpoint.id.length,
+              id: adapterId(breakpoint),
               verified: true,
               line,
               column,
@@ -918,8 +1043,32 @@ export async function nativeParticipantsHarness(
     },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {
-      acknowledgedAt = { line, column }
+      acknowledgedAt = () => ({ line, column })
     },
+    /** Acknowledges later registrations as verified where this debugger model binds the position the editor requested, so a second request can bind elsewhere than the first. @example harness.acknowledgeRegistrationsWith((requested) => requested.column === 7 ? { line: 2, column: 1 } : requested) */
+    acknowledgeRegistrationsWith(
+      bind: (requested: { line: number; column: number }) => {
+        line: number
+        column: number
+      },
+    ): void {
+      acknowledgedAt = bind
+    },
+    /** Leaves every registration request unanswered that holds a breakpoint requested at this one-based column, as an adapter that has not replied yet does. @example harness.leaveRegistrationUnansweredAtColumn(1) */
+    leaveRegistrationUnansweredAtColumn(column: number): void {
+      unansweredColumn = column
+    },
+    /** Makes a participant's adapter answer `Debugger.getPossibleBreakpoints` with these zero-based generated places, within the range the run asks for. @example harness.listPossibleBreakLocations('server', [{ lineNumber: 0, columnNumber: 0 }]) */
+    listPossibleBreakLocations(
+      name: Participant,
+      locations: GeneratedPlace[],
+    ): void {
+      possibleBreakLocations[name] = locations
+    },
+    /** Every `Debugger.getPossibleBreakpoints` range the run asked for, in order, as the run sent it. */
+    breakLocationRequests,
+    /** The adapter's id of an editor breakpoint, as its registration reply and its `breakpoint` events name it. */
+    adapterId,
     /** Makes the click execute the browser stop's line before the first declared stop pauses. */
     runBrowserLineOnInput(): void {
       browserLineRunsOnInput = true

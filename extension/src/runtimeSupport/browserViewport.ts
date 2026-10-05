@@ -5,6 +5,8 @@ import { clearTimeout, setTimeout } from 'node:timers'
 
 import * as vscode from 'vscode'
 
+import { MILLISECONDS_PER_SECOND } from '../constants'
+
 import type { Cdp } from './cdp'
 import {
   ACTIVE_TIMEOUT_MS,
@@ -17,6 +19,8 @@ import {
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import { awaitResponse } from './utils/awaitResponse'
 import { sha256 } from './utils/sha256'
+import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
+import { ViewportAckTimeoutError } from './utils/viewportAckTimeoutError'
 import { viewportHtml } from './utils/viewportHtml'
 import { waitUntil } from './utils/waitUntil'
 
@@ -40,6 +44,32 @@ export interface ViewportRecordingObserver {
     browserTimestamp?: number
   }): void
   closed(input: { elapsedMs: number; expected: boolean }): void
+}
+
+/**
+ * Tells {@link BrowserViewport.coversEditorFocusedByPause} whether a tab group shows the text editor that is the editor's active one.
+ * @param group - The editor's active tab group.
+ * @returns `true` when the group's active tab is a text editor and the active text editor sits in the group's view column.
+ * @example showsActiveTextEditor(vscode.window.tabGroups.activeTabGroup) // => false while the group's active tab is the Application pane
+ */
+function showsActiveTextEditor(group: vscode.TabGroup): boolean {
+  return (
+    group.activeTab?.input instanceof vscode.TabInputText &&
+    vscode.window.activeTextEditor?.viewColumn === group.viewColumn
+  )
+}
+
+/**
+ * Tells {@link BrowserViewport.coversEditorFocusedByPause} whether the editor gives the paused file the keyboard focus at a breakpoint.
+ * @returns `true` unless the learner turned `debug.focusEditorOnBreak` off.
+ * @example isFocusEditorOnBreakOn() // => true with the editor's default settings
+ */
+function isFocusEditorOnBreakOn(): boolean {
+  return (
+    vscode.workspace
+      .getConfiguration('debug')
+      .get<boolean>('focusEditorOnBreak') !== false
+  )
 }
 
 /** Displays actual selected-page pixels for {@link HostBrowser}; it cannot select targets or resume the debugger. @example await viewport.attach(cdp, signal) */
@@ -436,13 +466,21 @@ export class BrowserViewport {
     if (vscode.debug.activeStackItem === undefined) return false
     const group = vscode.window.tabGroups.activeTabGroup
     return (
-      vscode.window.state.focused &&
-      group.viewColumn === this.panel.viewColumn &&
-      group.activeTab?.input instanceof vscode.TabInputText &&
-      vscode.window.activeTextEditor?.viewColumn === group.viewColumn &&
-      vscode.workspace
-        .getConfiguration('debug')
-        .get<boolean>('focusEditorOnBreak') !== false
+      this.isFocusedPaneGroup(group) &&
+      showsActiveTextEditor(group) &&
+      isFocusEditorOnBreakOn()
+    )
+  }
+
+  /**
+   * Tells {@link coversEditorFocusedByPause} whether the active editor group is the leased pane's own, in a window that has the focus.
+   * @param group - The editor's active tab group.
+   * @returns `true` when the window is focused and the group sits in the pane's view column.
+   * @example this.isFocusedPaneGroup(vscode.window.tabGroups.activeTabGroup) // => false while another window has the focus
+   */
+  private isFocusedPaneGroup(group: vscode.TabGroup): boolean {
+    return (
+      vscode.window.state.focused && group.viewColumn === this.panel.viewColumn
     )
   }
 
@@ -500,7 +538,17 @@ export class BrowserViewport {
         })
     }
     if (frame.delayAck) this.record('fault.viewport-ack-delayed', { phase })
-    return this.delivery.offer(frame)
+    // A replay keeps the delivery's own reason, which its same-frame retry reads.
+    if (this.mode === 'recording') return this.delivery.offer(frame)
+    // A live run ends with this capture, so its reason says what was observed and what the reader does next.
+    return this.delivery.offer(frame).catch((error: unknown) => {
+      if (!(error instanceof ViewportAckTimeoutError)) throw error
+      throw new Error(
+        unpaintedApplicationReason(
+          CAPTURE_TIMEOUT_MS / MILLISECONDS_PER_SECOND,
+        ),
+      )
+    })
   }
 
   /** Retires pause presentation before DAP continuation and invalidates delayed renderer work. @example viewport.resume() */

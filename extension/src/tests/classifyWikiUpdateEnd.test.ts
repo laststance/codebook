@@ -13,7 +13,10 @@ const NOTHING_HAPPENED: WikiUpdateEndFacts = {
   timedOut: false,
   tokenAtStart: 'old@1',
   tokenAtEnd: 'old@1',
+  publicationAtStart: 'old@7',
+  publicationAtEnd: 'old@7',
   published: undefined,
+  uncoveredAtStart: [],
   blockingPaths: [],
   failure: undefined,
 }
@@ -23,8 +26,11 @@ test('a new site that matches the source ends the run as succeeded with its iden
   const facts: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: { status: 'current', changedPaths: [], addedPaths: [] },
     },
   }
@@ -36,6 +42,8 @@ test('a new site that matches the source ends the run as succeeded with its iden
   assert.deepEqual(end, {
     state: 'succeeded',
     identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
   })
 })
 
@@ -44,8 +52,11 @@ test('a new site published while the source changed ends as failed, says the sit
   const facts: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: {
         status: 'changed',
         changedPaths: ['src/a.ts', 'src/b.ts'],
@@ -61,6 +72,7 @@ test('a new site published while the source changed ends as failed, says the sit
   assert.deepEqual(end, {
     state: 'failed',
     site: 'replaced',
+    isCodebookSentence: true,
     reason:
       'The editor agent published a new Wiki, but 3 source files changed while it worked (first: src/a.ts). Press Update LLM Wiki again.',
   })
@@ -72,8 +84,11 @@ test('one changed source file is counted in the singular', () => {
     ...NOTHING_HAPPENED,
     host: 'cursor',
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: {
         status: 'changed',
         changedPaths: [],
@@ -89,6 +104,7 @@ test('one changed source file is counted in the singular', () => {
   assert.deepEqual(end, {
     state: 'failed',
     site: 'replaced',
+    isCodebookSentence: true,
     reason:
       'Cursor Agent published a new Wiki, but 1 source file changed while it worked (first: src/new.ts). Press Update LLM Wiki again.',
   })
@@ -99,8 +115,11 @@ test('a new site Codebook cannot check against the source says why and that upda
   const facts: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: {
         status: 'unknown',
         changedPaths: [],
@@ -118,6 +137,7 @@ test('a new site Codebook cannot check against the source says why and that upda
   assert.deepEqual(end, {
     state: 'failed',
     site: 'replaced',
+    isCodebookSentence: true,
     reason:
       'The editor agent published a new Wiki, but Codebook cannot check it against the source: Added source files could not be checked against the generated revision. Updating again will not change this; ask the editor chat to republish with the full commit hash in generated.revision.',
   })
@@ -128,8 +148,11 @@ test('a new site with an indexed source Codebook cannot check names that file an
   const facts: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: {
         status: 'unknown',
         changedPaths: [],
@@ -147,6 +170,7 @@ test('a new site with an indexed source Codebook cannot check names that file an
   assert.deepEqual(end, {
     state: 'failed',
     site: 'replaced',
+    isCodebookSentence: true,
     reason:
       'The editor agent published a new Wiki, but Codebook cannot check it against the source: An indexed source could not be checked: ../shared/schema.ts. Updating again will not change this; ask the editor chat to republish with that file listed by a path inside the project and its full-file SHA-256, or without it.',
   })
@@ -158,6 +182,7 @@ test('a new site whose manifest cannot be read ends as failed with the site repl
     ...NOTHING_HAPPENED,
     host: 'cursor',
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
   }
 
   // Act
@@ -167,20 +192,56 @@ test('a new site whose manifest cannot be read ends as failed with the site repl
   assert.deepEqual(end, {
     state: 'failed',
     site: 'replaced',
+    isCodebookSentence: true,
     reason:
-      'Cursor Agent published a new Wiki, but Codebook cannot read its manifest. Press Update LLM Wiki again.',
+      'Cursor Agent published a new Wiki, but Codebook cannot read its manifest. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
   })
 })
 
-test('an agent error after a publish keeps the agent’s reason and says the site was replaced', () => {
+test('a Cursor publish that matches the source ends as Updated although the CLI also reported a failure', () => {
   // Arrange
   const facts: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
     host: 'cursor',
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: { status: 'current', changedPaths: [], addedPaths: [] },
+    },
+    failure: 'Cursor Agent stopped with exit code 1 before finishing.',
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'succeeded',
+    identity: 'a1b2c3d4e5f6+0f9e8d7c',
+    revision: 'a1b2c3d4e5f6',
+    index: '0f9e8d7c',
+  })
+})
+
+test('an agent error after a publish that does not match the source keeps the agent’s reason and says the site was replaced', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    host: 'cursor',
+    tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
+    published: {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+      freshness: {
+        status: 'changed',
+        changedPaths: ['src/a.ts'],
+        addedPaths: [],
+      },
     },
     failure: 'Cursor Agent stopped with exit code 1 before finishing.',
   }
@@ -215,6 +276,29 @@ test('an agent error with the site untouched ends as failed with the site kept',
   })
 })
 
+// Value: protects=the next step of a failure Codebook worded itself (a chat that did not open) on the Wiki page, which cuts a reason at 160 characters unless it is marked as Codebook's sentence; fails_when=a failure the host hands over can never be marked, so its next step moves into the disclosure; why_new=Cycle 0045 local review wiki-1 #9; seam=none
+test('a failure sentence Codebook wrote itself ends the run as failed with the reason marked as Codebook’s sentence', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    failure:
+      'The editor chat did not open within 30 seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.',
+    isFailureCodebookSentence: true,
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    reason:
+      'The editor chat did not open within 30 seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.',
+    isCodebookSentence: true,
+    site: 'kept',
+  })
+})
+
 test('a Cursor run past its bound ends as timed out, the state VS Code reports for the same event', () => {
   // Arrange
   const cursor: WikiUpdateEndFacts = {
@@ -240,8 +324,11 @@ test('a cancel that came after a publish is still a cancel, and says the site wa
     ...NOTHING_HAPPENED,
     cancelled: true,
     tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
     published: {
       identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
       freshness: { status: 'current', changedPaths: [], addedPaths: [] },
     },
   }
@@ -296,17 +383,54 @@ test('an agent that ends its turn without publishing and without an error is a f
   assert.deepEqual(end, {
     state: 'failed',
     site: 'kept',
+    isCodebookSentence: true,
     reason:
       'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.',
   })
 })
 
-test('a site that vanished during the run is not reported as kept', () => {
+test('a site missing at the run’s end is not called a newly published Wiki', () => {
   // Arrange
   const facts: WikiUpdateEndFacts = {
     ...NOTHING_HAPPENED,
+    // The watch was stopped while the publisher had moved the old folder away and not yet the new one in.
+    cancelled: true,
     tokenAtEnd: undefined,
-    failure: 'The watch could not read the Wiki folder.',
+    publicationAtEnd: undefined,
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    site: 'missing',
+    isCodebookSentence: true,
+    reason:
+      'The Wiki is missing after a publish that did not finish. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
+  })
+})
+
+test('a Git check that timed out asks for another press, not for a commit hash', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
+    published: {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+      freshness: {
+        status: 'unknown',
+        changedPaths: [],
+        addedPaths: [],
+        reason:
+          'Git did not answer in time, so added source files could not be checked.',
+        unknownCause: 'git-timeout',
+      },
+    },
   }
 
   // Act
@@ -316,6 +440,98 @@ test('a site that vanished during the run is not reported as kept', () => {
   assert.deepEqual(end, {
     state: 'failed',
     site: 'replaced',
-    reason: 'The watch could not read the Wiki folder.',
+    isCodebookSentence: true,
+    reason:
+      'The editor agent published a new Wiki, but Codebook cannot check it against the source: Git did not answer in time, so added source files could not be checked. Press Update LLM Wiki again.',
+  })
+})
+
+test('a publish in a project without a Git repository ends as Updated without a revision, since none was checked', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
+    published: {
+      identity: 'no-revision+0f9e8d7c',
+      index: '0f9e8d7c',
+      freshness: {
+        status: 'current',
+        changedPaths: [],
+        addedPaths: [],
+        addedFilesUnchecked: true,
+      },
+    },
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'succeeded',
+    identity: 'no-revision+0f9e8d7c',
+    index: '0f9e8d7c',
+  })
+})
+
+test('a file that was uncovered before the run is not reported as changed during it and does not ask for another press', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    tokenAtEnd: 'new@2',
+    publicationAtEnd: 'new@8',
+    uncoveredAtStart: ['src/new.ts', 'src/other.ts'],
+    published: {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+      freshness: {
+        status: 'changed',
+        changedPaths: [],
+        addedPaths: ['src/new.ts', 'src/other.ts'],
+      },
+    },
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    site: 'replaced',
+    isCodebookSentence: true,
+    reason:
+      'The editor agent published a new Wiki, but 2 source files are neither indexed nor excluded (first: src/new.ts). Ask the editor chat to index or exclude them.',
+  })
+})
+
+test('a manifest rewritten without a publish is not called a new site, however well it matches the source', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = {
+    ...NOTHING_HAPPENED,
+    host: 'cursor',
+    // The same bytes under a new inode: the old receipt still vouches for them, so the publication is the one the run started with.
+    tokenAtEnd: 'old@2',
+    publicationAtEnd: 'old@7',
+    published: {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+      freshness: { status: 'current', changedPaths: [], addedPaths: [] },
+    },
+  }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    site: 'replaced',
+    isCodebookSentence: true,
+    reason:
+      'The Wiki’s manifest changed during the update, but not through a publish of the Codebook publisher, so Codebook cannot call it a new site. Ask the editor chat "/codebook Recover the unfinished LLM Wiki publish for this project", then press Update LLM Wiki again.',
   })
 })

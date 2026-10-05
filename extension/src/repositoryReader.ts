@@ -30,6 +30,7 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { repositoryHtml } from './ui/repositoryHtml'
 import { citationLearningState } from './utils/citationLearningState'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
+import { showPlainNotice } from './utils/showPlainNotice'
 
 /** Separates the requested text and tab receipts so native notification order cannot admit another learner target. */
 export interface RepositoryFocusTarget {
@@ -988,7 +989,7 @@ export class RepositoryReader {
             ? 'Recording could not be opened. Refresh the article or ask your agent for a new recording.'
             : 'Observation could not be opened. Refresh the article or ask your agent for a new study.'
           : String(error)
-        if (evidence) void vscode.window.showErrorMessage(this.error)
+        if (evidence) void showPlainNotice(vscode.window, 'error', this.error)
         this.publish()
       })
     })

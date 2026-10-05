@@ -3,11 +3,11 @@ import { test } from 'node:test'
 
 import { studyHtml } from '../ui/studyHtml'
 
-// Value: protects=the Run and Debug hint working in Cursor, where expanding a collapsed Variables lists scopes without loading values; fails_when=the reader's hint stops naming the first scope; why_new=Cycle 0033 C1 / AC5 (the hint text had only the DOM harness case); seam=none
-test('the Run and Debug hint tells the learner to expand the first Variables scope when it stays closed', () => {
+// Value: protects=the learner reading the one-click control before the manual step, and the first scope still being named for Cursor, where expanding a collapsed Variables lists scopes without loading values; fails_when=the hint describes the manual steps first again, or stops naming Show Variables, the first scope or the recorded session; why_new=Cycle 0045 CX-D5 (it replaces the 0033 C1 test of the earlier sentence, which described only the manual steps); seam=none
+test('the Run and Debug hint names Show Variables before the manual steps', () => {
   // Arrange
   const expectedHint =
-    'Recorded values for this moment load in Run and Debug: open it, expand Variables, then expand its first scope if it stays closed. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.'
+    'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.'
 
   // Act
   const readerHtml = studyHtml('context')
@@ -34,3 +34,45 @@ for (const kind of ['context', 'moments'] as const)
       true,
     )
   })
+
+// Value: protects=the Study pane saying beside an explanation it shows ahead of its saved time when that explanation was saved; fails_when=the pane's document no longer carries one of the three sentences; why_new=Cycle 0045 cause 10 (rule 3; that a sentence is written under such an explanation is the Reader DOM check's case "an explanation shown before its saved time is followed by the note that says when it was saved, and Later annotations holds only the other explanations"); seam=none
+test('the Study pane carries the three sentences that say when an explanation shown before its saved time was saved', () => {
+  // Act
+  const readerHtml = studyHtml('context')
+
+  // Assert
+  assert.equal(
+    readerHtml.includes(
+      'This explanation was saved while this pause was held.',
+    ),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes('This explanation was saved after this pause ended.'),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes(
+      'This explanation was saved after the recording ended.',
+    ),
+    true,
+  )
+})
+
+// Value: protects=a recorded stop the agent never explained still saying so, and the later explanations keeping their own section; fails_when=the sentence for a stop without an explanation or the Later annotations section leaves the pane; why_new=Cycle 0045 cause 10 (rules 4 and 6, a guard: green before the change, its control is the mutation that removes either text); seam=none
+test('the Study pane still says that no explanation was available at a recorded time and keeps the Later annotations section', () => {
+  // Act
+  const readerHtml = studyHtml('context')
+
+  // Assert
+  assert.equal(
+    readerHtml.includes('No explanation was available by this recorded time.'),
+    true,
+  )
+  assert.equal(
+    readerHtml.includes(
+      '<details id="later-annotations" hidden><summary>Later annotations — not available at this recorded time</summary><p class="muted">These explanations were added later. They do not change what was observed in the recording.</p><div id="later-interpretations"></div></details>',
+    ),
+    true,
+  )
+})

@@ -948,3 +948,155 @@ test('a click target that matches no element is reported with counts of the page
   })
   assert.equal(serialized.includes('Secret'), false)
 })
+
+/**
+ * Reads what the owned page answers for one declared text condition whose selector `p` matches elements holding the given texts.
+ * @param elementTexts - The textContent of each element the selector matches, in document order.
+ * @param equals - The declared literal.
+ * @returns The page's serialized answer.
+ * @example
+ * readTextConditionOnElements(['Email', 'Invalid credentials'], 'Invalid credentials') // => { ready: true, textReadings: [...] }
+ */
+function readTextConditionOnElements(
+  elementTexts: string[],
+  equals: string,
+): unknown {
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector === 'p'
+          ? elementTexts.map((textContent) => ({ textContent }))
+          : [],
+    },
+  }
+  return JSON.parse(
+    JSON.stringify(
+      runInNewContext(
+        configuredDomExpression([{ kind: 'text', selector: 'p', equals }]),
+        environment,
+      ),
+    ),
+  )
+}
+
+// Value: protects=an after condition an agent declares on a selector that matches several elements holding when the element it means reads the text; fails_when=a text condition still needs a unique element, or holds on an element that does not read the text, or the answer carries page text; why_new=Cycle 0045 N14c-14 (DX-1 a): the VS Code agent's first admitted run reached its five stops and failed "Timed out waiting for configured after conditions: condition 1 (text) selector-not-unique." although one paragraph read the expected text; seam=none
+test('a text condition whose selector matches several elements holds when one of them reads the expected text, and says how many matched and how many read it', () => {
+  // Arrange: three paragraphs, of which the second, written with JSX whitespace, reads the text.
+  const oneReads = ['Email', '\n  Invalid credentials\n', 'Password']
+  const twoRead = ['Invalid credentials', 'Email', 'Invalid  credentials']
+  // Act
+  const oneReading = readTextConditionOnElements(
+    oneReads,
+    'Invalid credentials',
+  )
+  const twoReading = readTextConditionOnElements(twoRead, 'Invalid credentials')
+  // Assert: counts only, never page text.
+  assert.deepEqual(oneReading, {
+    ready: true,
+    textReadings: [
+      { conditionIndex: 0, matchedElements: 3, readingElements: 1 },
+    ],
+  })
+  assert.deepEqual(twoReading, {
+    ready: true,
+    textReadings: [
+      { conditionIndex: 0, matchedElements: 3, readingElements: 2 },
+    ],
+  })
+  assert.equal(JSON.stringify(oneReading).includes('Email'), false)
+})
+
+// Value: protects=the timeout of a text condition on several elements naming how many matched instead of a uniqueness the rule no longer asks; fails_when=it is reported as selector-not-unique, or without the count; why_new=Cycle 0045 N14c-14 (DX-1 c); seam=none
+test('a text condition whose selector matches several elements, none of which reads the expected text, fails as a text mismatch with the number of matched elements', () => {
+  // Arrange
+  const noneReads = ['Email', 'Password']
+  // Act
+  const answer = readTextConditionOnElements(noneReads, 'Invalid credentials')
+  // Assert
+  assert.deepEqual(answer, {
+    ready: false,
+    failure: {
+      conditionIndex: 0,
+      reason: 'text-mismatch',
+      matchedElements: 2,
+    },
+  })
+})
+
+// Value: protects=a text condition on one element staying exactly as before the rule for several elements; fails_when=one element answers counts, or loses its beside-other-text relation; why_new=Cycle 0045 N14c-14 (the guard of its tolerance); seam=none
+test('a text condition whose selector matches one element is judged on that element alone, with no counts in the answer', () => {
+  // Arrange
+  const onlyElement = ['Invalid credentials']
+  const onlyElementBesideOtherText = ['Invalid credentials, try again']
+  // Act
+  const holds = readTextConditionOnElements(onlyElement, 'Invalid credentials')
+  const besideOtherText = readTextConditionOnElements(
+    onlyElementBesideOtherText,
+    'Invalid credentials',
+  )
+  // Assert
+  assert.deepEqual(holds, { ready: true })
+  assert.deepEqual(besideOtherText, {
+    ready: false,
+    failure: {
+      conditionIndex: 0,
+      reason: 'text-mismatch',
+      textDifference: 'surrounding-text',
+    },
+  })
+})
+
+// Value: protects=visible and attribute conditions and the click target keeping their uniqueness rule beside the new rule for text conditions; fails_when=either condition or the click target accepts one of several elements; why_new=Cycle 0045 N14c-14 (the rule is for text conditions only); seam=none
+test('a visible condition, an attribute condition and the click target still refuse a selector that matches several elements', () => {
+  // Arrange: two equal visible buttons.
+  const button = {
+    isConnected: true,
+    textContent: 'Log in',
+    getAttribute: () => 'submit',
+    matches: () => false,
+    contains: () => false,
+    getBoundingClientRect: () => ({ x: 0, y: 0, width: 40, height: 20 }),
+  }
+  const environment = {
+    document: {
+      querySelectorAll: (selector: string) =>
+        selector === 'button' ? [button, button] : [],
+      elementFromPoint: () => button,
+    },
+    getComputedStyle: () => ({
+      display: 'block',
+      visibility: 'visible',
+      opacity: '1',
+    }),
+  }
+  const read = (expression: string) =>
+    JSON.parse(JSON.stringify(runInNewContext(expression, environment)))
+  // Act
+  const visible = read(
+    configuredDomExpression([{ kind: 'visible', selector: 'button' }]),
+  )
+  const attribute = read(
+    configuredDomExpression([
+      {
+        kind: 'attribute',
+        selector: 'button',
+        attribute: 'type',
+        equals: 'submit',
+      },
+    ]),
+  )
+  const clickTarget = read(configuredDomExpression([], 'button'))
+  // Assert
+  assert.deepEqual(visible, {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'selector-not-unique' },
+  })
+  assert.deepEqual(attribute, {
+    ready: false,
+    failure: { conditionIndex: 0, reason: 'selector-not-unique' },
+  })
+  assert.deepEqual(clickTarget, {
+    ready: false,
+    failure: { reason: 'click-target-not-unique' },
+  })
+})

@@ -178,6 +178,21 @@ test('same-key recovery survives unavailable checkpoints while public reads labe
   assert.equal(unavailable.latestRevision, 1)
 })
 
+// Value: protects=a storage failure while a linked study is read reaches the agent as that failure; fails_when=the store recognises a missing archive by the sentence of the error, so any failure worded the same way is reported as a deleted study (SM-3); why_new=the only failure tested was the library's own missing archive; seam=the library's checkpoint read, replaced by one that rejects with a plain error
+test('a linked study whose read fails for another reason that words itself like a missing archive is passed on as it is, not reported as deleted', async (context) => {
+  // Arrange: a publication that links a saved study; the checkpoint read fails with a plain error that carries the missing-archive sentence.
+  const harness = await bookHarness(context)
+  await linkCheckpoint(harness)
+  const readFailure = new Error('Study archive is unavailable.')
+  context.mock.method(harness.library, 'readCheckpoint', async () => {
+    throw readFailure
+  })
+  // Act
+  const publication = harness.books.publish(harness.intent)
+  // Assert
+  await assert.rejects(publication, (error) => error === readFailure)
+})
+
 test('slow source preparation lets another learner writer finish before publication enters the shared queue', async (context) => {
   // Arrange
   const { books, intent, sources, library } = await bookHarness(context)
@@ -236,6 +251,52 @@ test('simultaneous same-key publishers recover one receipt and different keys ca
     1,
   )
   assert.equal(JSON.parse(await readFile(path, 'utf8')).revisions.length, 2)
+})
+
+// Value: protects=an agent whose book id is already taken learning what exists and the two ways on; fails_when=the conflict answers "Expected book revision 0, current 1; read the current book before retrying.", after which the Cursor agent of the baseline round read the existing article and ran on it; why_new=Cycle 0045 cause 5; seam=none
+test('a publication that expects another revision than the current one is refused saying which revision exists, how to replace the book and how to keep it', async (context) => {
+  // Arrange: the book "architecture" holds revision 1, then revision 2.
+  const { books, intent, path } = await bookHarness(context)
+  await books.publish(intent)
+  const createAgain = books.publish({ ...intent, key: 'create-again' })
+  await assert.rejects(createAgain, {
+    code: 'BOOK_CONFLICT',
+    message:
+      "Book architecture exists at revision 1. To replace it, publish the complete document again with expectedRevision 1; to keep it, publish under another book id. A run stops only on lines its article's node cites, so publish your own citations before you start.",
+  })
+  await books.publish({ ...intent, key: 'second', expectedRevision: 1 })
+  const before = await readFile(path)
+
+  // Act
+  const staleRevision = books.publish({
+    ...intent,
+    key: 'stale',
+    expectedRevision: 1,
+  })
+
+  // Assert
+  await assert.rejects(staleRevision, {
+    code: 'BOOK_CONFLICT',
+    message:
+      "Book architecture exists at revision 2. To replace it, publish the complete document again with expectedRevision 2; to keep it, publish under another book id. A run stops only on lines its article's node cites, so publish your own citations before you start.",
+  })
+  assert.deepEqual(await readFile(path), before)
+})
+
+// The sentence above would be false for a book that does not exist, so that case keeps its text (recorded as a conflict with the plan).
+test('a publication that expects a revision of a book that does not exist keeps the answer that names both numbers', async (context) => {
+  // Arrange: no book is stored under "architecture".
+  const { books, intent } = await bookHarness(context)
+
+  // Act
+  const expectingRevision = books.publish({ ...intent, expectedRevision: 3 })
+
+  // Assert
+  await assert.rejects(expectingRevision, {
+    code: 'BOOK_CONFLICT',
+    message:
+      'Expected book revision 3, current 0; read the current book before retrying.',
+  })
 })
 
 test('invalid ranges, stale hashes and mismatched observation references preserve the previous entire book', async (context) => {

@@ -12,14 +12,19 @@ import {
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
+  CURSOR_SKILL_RECONNECT_ATTEMPTS,
+  CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS,
   EXTENSION_VERSION,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
+import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
+import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 
 const SKILL_RELATIVE_PATH = join('skills', 'codebook', 'SKILL.md')
@@ -29,6 +34,12 @@ const WIKI_PUBLISHER_RELATIVE_PATH = join(
   'publish-wiki.mjs',
 )
 const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
+/** What a reconnect answers for a skill it will not touch; {@link verifyManagedCursorSkill} decides it under the storage lock. */
+const CHANGED_SKILL_REFUSAL =
+  'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
+
+/** The publisher a deployed skill names, as its receipt records it: the deploying installation's `publish-wiki.mjs`. Absent for a skill that names no publisher and in a record written before the path was recorded. */
+type RecordedPublisher = { publisherPath?: string }
 
 type SkillReceipt = {
   schemaVersion: 1
@@ -39,7 +50,7 @@ type SkillReceipt = {
   installed: boolean
   device: number
   inode: number
-}
+} & RecordedPublisher
 
 type PendingSkill = {
   schemaVersion: 1
@@ -53,7 +64,7 @@ type PendingSkill = {
   previous?: SkillReceipt
   displacedPath?: string
   retiredPath?: string
-}
+} & RecordedPublisher
 
 type PendingRemoval = {
   schemaVersion: 1
@@ -62,6 +73,11 @@ type PendingRemoval = {
   retiredPath: string
   owner: SkillReceipt
 }
+
+/** What a reconnect finds when it compares the receipt, the deployed file and this installation's packaged skill. */
+type ManagedSkillState =
+  | { kind: 'changed' }
+  | { kind: 'current' | 'newer' | 'outdated'; receipt: SkillReceipt }
 
 export type CursorSkillResult = {
   status: 'installed' | 'updated' | 'restored' | 'current' | 'removed'
@@ -167,7 +183,22 @@ function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
     installed: value.installed,
     device: value.device,
     inode: value.inode,
+    ...recordedPublisher(value),
   }
+}
+
+/**
+ * Reads the publisher path a receipt or a pending record holds, for {@link parseReceipt} and for the receipt {@link deploySkill} adopts from an interrupted setup.
+ * @param record - The parsed record; one written before the path was recorded has none.
+ * @returns `{ publisherPath }` for a record that names the path as text, otherwise `{}`, so the key is absent from every receipt built from it.
+ * @example
+ * recordedPublisher({ publisherPath: '/extensions/laststance.codebook-0.2.29/skills/codebook/publish-wiki.mjs' }) // => { publisherPath: '/extensions/…/publish-wiki.mjs' }
+ * recordedPublisher({ schemaVersion: 1 }) // => {}
+ */
+function recordedPublisher(record: object): RecordedPublisher {
+  return 'publisherPath' in record && typeof record.publisherPath === 'string'
+    ? { publisherPath: record.publisherPath }
+    : {}
 }
 
 /** Loads an optional private receipt for {@link deployCursorSkill} without treating missing as corruption. @param path - Receipt path. @param targetPath - Expected skill path. @returns A validated receipt, or undefined. @example await readReceipt('/private/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md') // => undefined when absent */
@@ -426,10 +457,13 @@ async function recoverRemoval(
   return { owner: pending.owner, completed: !target }
 }
 
-/** Binds the installed publisher path into Cursor's owned skill when {@link deployCursorSkill} starts setup. @param extensionPath - Installed VSIX root. @returns Deployable bytes, version and digest. @example await packageSkill('/extensions/laststance.codebook-0.2.3') // => { bytes, version, sha256 } */
-async function packageSkill(
-  extensionPath: string,
-): Promise<{ bytes: Buffer; version: string; sha256: string }> {
+/** Binds the installed publisher path into Cursor's owned skill when {@link deployCursorSkill} starts setup. @param extensionPath - Installed VSIX root. @returns Deployable bytes, version and digest, and in `recorded` the publisher path those bytes name (`{}` for a skill that names none), which the receipt keeps. @example await packageSkill('/extensions/laststance.codebook-0.2.3') // => { bytes, version, sha256, recorded: { publisherPath: '/extensions/laststance.codebook-0.2.3/skills/codebook/publish-wiki.mjs' } } */
+async function packageSkill(extensionPath: string): Promise<{
+  bytes: Buffer
+  version: string
+  sha256: string
+  recorded: RecordedPublisher
+}> {
   const path = join(extensionPath, SKILL_RELATIVE_PATH),
     canonicalBytes = await regularFile(path)
   if (!canonicalBytes)
@@ -456,14 +490,183 @@ async function packageSkill(
   const bytes = Buffer.from(
     canonicalText.replaceAll(WIKI_PUBLISHER_PATH_MARKER, publisherPath),
   )
-  return { bytes, version, sha256: sha256(bytes) }
+  return {
+    bytes,
+    version,
+    sha256: sha256(bytes),
+    recorded: publisherNamedBy(canonicalText, publisherPath),
+  }
 }
 
-/** Installs or updates only a receipted user skill when Cursor setup is requested; another skill or later edit is preserved. @example await deployCursorSkill('/ext', '/private', '/home') */
+/**
+ * Says which publisher path the receipt of a packaged skill records, so a window of another extension version can tell whether the installation that deployed the skill still exists ({@link isRecordedPublisherGone}); called by {@link packageSkill}.
+ * @param canonicalText - The bundled skill text, before the publisher path is bound into it.
+ * @param publisherPath - This installation's publisher.
+ * @returns `{ publisherPath }` for a skill that names the publisher, `{}` for one that does not.
+ * @example publisherNamedBy('Publish with node {{CODEBOOK_PUBLISHER_PATH}}.', '/extensions/laststance.codebook-0.2.29/skills/codebook/publish-wiki.mjs') // => { publisherPath: '/extensions/…/publish-wiki.mjs' }
+ */
+function publisherNamedBy(
+  canonicalText: string,
+  publisherPath: string,
+): RecordedPublisher {
+  return canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER)
+    ? { publisherPath }
+    : {}
+}
+
+/**
+ * Reads the receipt and the deployed skill once and says how they stand to this installation, for {@link verifyManagedCursorSkill}: first without the lock, then again under it inside {@link deploySkill}.
+ *
+ * @param receiptPath - The private owner receipt.
+ * @param targetPath - The managed skill file in Cursor's user skills.
+ * @param packagedSha256 - Digest of the skill this installation packages.
+ * @returns
+ * - `changed`: no installed receipt, or the file is missing, replaced (another inode) or edited (other bytes)
+ * - `current`: the receipted, unedited file holds this installation's bytes
+ * - `newer`: the receipted, unedited file was deployed by a later extension version than the running one, and the publisher it names is not known to be gone
+ * - `outdated`: the receipted, unedited file holds other bytes and was deployed by this or an earlier version, or by a later one whose publisher no longer exists ({@link isRecordedPublisherGone}: that installation was removed, as after a rollback)
+ * @throws When the skill path is no regular file, or a read fails for another reason than a missing file.
+ * @example await inspectManagedSkill('/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md', packaged.sha256) // => { kind: 'current', receipt }
+ */
+async function inspectManagedSkill(
+  receiptPath: string,
+  targetPath: string,
+  packagedSha256: string,
+): Promise<ManagedSkillState> {
+  const receipt = await readReceipt(receiptPath, targetPath)
+  // A file another window replaces right now can vanish between two reads; that is a missing file, not a failed read.
+  const current = await regularFile(targetPath).catch((error: unknown) => {
+    if (isMissing(error)) return undefined
+    throw error
+  })
+  const currentStatus = current ? await inspectedPath(targetPath) : undefined
+  if (!isReceiptedSkillUnedited(receipt, current, currentStatus))
+    return { kind: 'changed' }
+  return receiptedSkillState(
+    receipt,
+    packagedSha256,
+    await isRecordedPublisherGone(receipt),
+  )
+}
+
+/**
+ * Says whether the publisher a deployed skill names no longer exists, so a skill of a later extension version is left alone only while its installation is still there; called by {@link inspectManagedSkill} for the receipted, unedited file, at each of a reconnect's looks.
+ * @param receipt - The installed receipt of the deployed skill.
+ * @returns
+ * - `true` when the receipt records a publisher path and nothing, or no file, is at that path: the installation that deployed the skill was removed
+ * - `false` when the publisher is a file, when the receipt records no path (a skill without a publisher, or a receipt from before the path was recorded), and when the path cannot be inspected: nothing proves that the installation is gone
+ * @example await isRecordedPublisherGone({ ...receipt, publisherPath: '/extensions/laststance.codebook-0.2.29/skills/codebook/publish-wiki.mjs' }) // => true after 0.2.29 was uninstalled
+ */
+async function isRecordedPublisherGone(
+  receipt: SkillReceipt,
+): Promise<boolean> {
+  if (receipt.publisherPath === undefined) return false
+  try {
+    return !(await lstat(receipt.publisherPath)).isFile()
+  } catch (error) {
+    // Only a path that is not there proves the removal; another failure decides nothing.
+    return isMissing(error)
+  }
+}
+
+/**
+ * Says whether the deployed skill is the installed, unedited file of its receipt, for {@link inspectManagedSkill} right after it read both.
+ * @param receipt - The owner receipt, or `undefined` when none is stored.
+ * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
+ * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @returns `true` for an installed receipt whose file is still there with its inode and bytes ({@link holdsReceiptedBytes}); `false` without an installed receipt and for a missing, replaced or edited file.
+ * @example isReceiptedSkillUnedited(undefined, bytes, status) // => false
+ */
+function isReceiptedSkillUnedited(
+  receipt: SkillReceipt | undefined,
+  current: Buffer | undefined,
+  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+): receipt is SkillReceipt {
+  if (!receipt?.installed) return false
+  return holdsReceiptedBytes(receipt, current, currentStatus)
+}
+
+/**
+ * Compares the deployed skill file with what its receipt recorded, for {@link isReceiptedSkillUnedited}: the inode first, and the digest only for the same file.
+ * @param receipt - The installed owner receipt.
+ * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
+ * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @returns `true` when the file exists, is the receipted inode and holds the receipted bytes; `false` when it is missing, replaced (another inode) or edited (other bytes).
+ * @example holdsReceiptedBytes(receipt, undefined, undefined) // => false
+ */
+function holdsReceiptedBytes(
+  receipt: SkillReceipt,
+  current: Buffer | undefined,
+  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+): boolean {
+  if (!current || !currentStatus) return false
+  return (
+    currentStatus.ino === receipt.inode &&
+    sha256(current) === receipt.skillSha256
+  )
+}
+
+/**
+ * Says how a receipted, unedited skill stands to this installation, for {@link inspectManagedSkill} once the file is known to be the receipt's.
+ * @param receipt - The installed receipt of the unedited file.
+ * @param packagedSha256 - Digest of the skill this installation packages.
+ * @param isPublisherGone - Whether the publisher the deployed skill names no longer exists ({@link isRecordedPublisherGone}).
+ * @returns
+ * - `current`: the file holds this installation's bytes
+ * - `newer`: a later extension version than the running one deployed it, and its publisher is not known to be gone
+ * - `outdated`: other bytes that this or an earlier version deployed, or a later version whose publisher is gone: a skill that names a removed publisher is updated, not left to a window that no longer exists
+ * @example receiptedSkillState(receipt, receipt.skillSha256, false) // => { kind: 'current', receipt }
+ */
+function receiptedSkillState(
+  receipt: SkillReceipt,
+  packagedSha256: string,
+  isPublisherGone: boolean,
+): ManagedSkillState {
+  if (receipt.skillSha256 === packagedSha256)
+    return { kind: 'current', receipt }
+  const isLeftToNewerWindow =
+    !isPublisherGone &&
+    isNewerExtensionVersion(receipt.extensionVersion, EXTENSION_VERSION)
+  return { kind: isLeftToNewerWindow ? 'newer' : 'outdated', receipt }
+}
+
+/**
+ * Installs or updates only a receipted user skill when Cursor setup is requested; another skill or later edit is preserved. Called by the setup command of {@link activate}; the work is {@link deploySkill} with the `setup` entry.
+ *
+ * @param extensionPath - The running installation, whose bundled skill is deployed.
+ * @param storageRoot - Codebook's private storage, which holds the receipt and the storage lock.
+ * @param homeRoot - The home folder whose `.cursor/skills/codebook/SKILL.md` is managed; tests pass a temporary one.
+ * @returns
+ * - `installed`: no skill was there
+ * - `updated`: the receipted, unedited skill held other bytes
+ * - `restored`: the receipted skill was missing
+ * - `current`: the receipted skill already holds this installation's bytes
+ * @throws When a skill Codebook does not own, or a later edit or replacement, is in the way (nothing is changed), and when the storage lock is held by another writer.
+ * @example await deployCursorSkill('/ext', '/private', '/home') // => { status: 'installed', path, sha256, version }
+ */
 export async function deployCursorSkill(
   extensionPath: string,
   storageRoot: string,
   homeRoot = homedir(),
+): Promise<CursorSkillResult> {
+  return deploySkill(extensionPath, storageRoot, homeRoot, 'setup')
+}
+
+/**
+ * Runs one skill deployment under the storage lock, for the learner's setup ({@link deployCursorSkill}) and for the implicit update of a reconnect ({@link verifyManagedCursorSkill}).
+ *
+ * A reconnect decides inside the lock, from the receipt and the file read again there, because another window can update or remove the shared skill between the reconnect's first look and its lock: it repairs nothing, and it never writes this installation's skill over one a newer window deployed.
+ *
+ * @param entry - `setup` installs, updates or restores as the learner asked; `reconnect` only updates the receipted, unedited skill of this or an earlier extension version, or of a later version whose installation was removed.
+ * @returns What was done; for a reconnect that found this installation's or a newer window's skill, `current` with the deployed skill's digest and version.
+ * @throws When another skill or a later edit is in the way, when the storage lock is held by another writer (the error's `cause` carries `EEXIST`), and for a reconnect when the skill is missing or was changed.
+ * @example await deploySkill('/ext', '/private', '/home', 'reconnect') // => { status: 'updated', path, sha256, version }
+ */
+async function deploySkill(
+  extensionPath: string,
+  storageRoot: string,
+  homeRoot: string,
+  entry: 'setup' | 'reconnect',
 ): Promise<CursorSkillResult> {
   const targetDirectory = join(homeRoot, '.cursor', 'skills', 'codebook')
   const targetPath = join(targetDirectory, 'SKILL.md')
@@ -474,6 +677,23 @@ export async function deployCursorSkill(
   const removalPath = join(receiptDirectory, 'removal.json')
   const packaged = await packageSkill(extensionPath)
   return withStorageLock(receiptDirectory, async () => {
+    if (entry === 'reconnect') {
+      // What the reconnect saw before the lock may be another window's finished update by now, so it is read again here.
+      const held = await inspectManagedSkill(
+        receiptPath,
+        targetPath,
+        packaged.sha256,
+      )
+      if (held.kind === 'changed') throw new Error(CHANGED_SKILL_REFUSAL)
+      // This installation's bytes, or those of a newer window: nothing is written.
+      if (held.kind !== 'outdated')
+        return {
+          status: 'current',
+          path: targetPath,
+          sha256: held.receipt.skillSha256,
+          version: held.receipt.skillVersion,
+        }
+    }
     await ensureDirectory(join(homeRoot, '.cursor'))
     await ensureDirectory(skillParent)
     const initialDirectory = await inspectedPath(targetDirectory)
@@ -499,6 +719,7 @@ export async function deployCursorSkill(
           installed: true,
           device: pending.device,
           inode: pending.inode,
+          ...recordedPublisher(pending),
         }
         await atomicPrivateWrite(
           receiptPath,
@@ -616,6 +837,7 @@ export async function deployCursorSkill(
       extensionVersion: EXTENSION_VERSION,
       device: stagedStatus.dev,
       inode: stagedStatus.ino,
+      ...packaged.recorded,
       ...(current && receipt
         ? {
             previous: receipt,
@@ -672,6 +894,7 @@ export async function deployCursorSkill(
         installed: true,
         device: next.device,
         inode: next.inode,
+        ...packaged.recorded,
       },
       CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
     )
@@ -687,7 +910,15 @@ export async function deployCursorSkill(
   })
 }
 
-/** Checks a prior Cursor setup before reconnecting on editor restart. A skill that is missing, replaced or edited is never repaired implicitly; the receipted, unedited skill of an earlier installation is updated to this installation's bytes through {@link deployCursorSkill}. @example await verifyManagedCursorSkill('/ext', '/private', '/home') */
+/**
+ * Checks a prior Cursor setup before reconnecting on editor restart. A skill that is missing, replaced or edited is never repaired implicitly; the receipted, unedited skill of this or an earlier extension version is updated to this installation's bytes through {@link deploySkill}, and the skill a newer window deployed is left as it is while the publisher it names exists. After a rollback removed that newer installation the skill names a publisher that is gone, and it is updated like an outdated one.
+ *
+ * Several windows reconnect at once after an extension update. The file that matches its receipt is accepted without the lock; everything else is decided under the storage lock, and a window that finds the lock held by another window's update waits and checks again, a bounded number of times.
+ *
+ * @returns `current` for this installation's or a newer window's skill, `updated` after the implicit update.
+ * @throws When the skill is missing or was changed, and when the storage lock stays held through every attempt.
+ * @example await verifyManagedCursorSkill('/ext', '/private', '/home')
+ */
 export async function verifyManagedCursorSkill(
   extensionPath: string,
   storageRoot: string,
@@ -695,33 +926,92 @@ export async function verifyManagedCursorSkill(
 ): Promise<CursorSkillResult> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
   await assertSkillParents(homeRoot)
-  const receipt = await readReceipt(
-    join(storageRoot, 'cursor-skill', 'receipt.json'),
-    targetPath,
-  )
-  const packaged = await packageSkill(extensionPath),
-    current = await regularFile(targetPath)
-  const currentStatus = current ? await lstat(targetPath) : undefined
-  if (
-    !receipt?.installed ||
-    !current ||
-    !currentStatus ||
-    currentStatus.ino !== receipt.inode ||
-    sha256(current) !== receipt.skillSha256
-  ) {
-    throw new Error(
-      'Cursor skill is missing, changed or outdated. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+  const receiptPath = join(storageRoot, 'cursor-skill', 'receipt.json')
+  const packaged = await packageSkill(extensionPath)
+  for (let attempt = 1; ; attempt += 1) {
+    const seen = await inspectManagedSkill(
+      receiptPath,
+      targetPath,
+      packaged.sha256,
     )
+    const accepted = skillAcceptedWithoutLock(seen, targetPath, packaged)
+    if (accepted) return accepted
+    try {
+      // An outdated skill is updated and a mismatch is confirmed under the lock, where no other window's update is half done.
+      return await deploySkill(
+        extensionPath,
+        storageRoot,
+        homeRoot,
+        'reconnect',
+      )
+    } catch (error) {
+      rethrowUnlessLockHeldElsewhere(error, attempt)
+      // The other window's update leaves the receipt current; the next look then needs no lock.
+      await delay(CURSOR_SKILL_RECONNECT_RETRY_DELAY_MS)
+    }
   }
-  // The deployed file is still the receipted one, unedited, but this installation packages other bytes (an update moved the extension directory the skill names, or changed the skill): the owned file is updated without another manual setup.
-  if (receipt.skillSha256 !== packaged.sha256)
-    return deployCursorSkill(extensionPath, storageRoot, homeRoot)
-  return {
-    status: 'current',
-    path: targetPath,
-    sha256: packaged.sha256,
-    version: packaged.version,
-  }
+}
+
+/**
+ * Gives the reconnect's answer for a skill that needs no lock and no write, for {@link verifyManagedCursorSkill} after every look at the receipt and the file.
+ * @param seen - How the receipt and the deployed file stand to this installation ({@link inspectManagedSkill}).
+ * @param targetPath - The managed skill file in Cursor's user skills.
+ * @param packaged - Digest and version of the skill this installation packages.
+ * @returns
+ * - `current` with this installation's digest and version, for the file that holds its bytes
+ * - `current` with the receipt's digest and version, for the skill a newer window deployed
+ * - `undefined` for an outdated or changed skill, which is decided under the storage lock
+ * @example skillAcceptedWithoutLock({ kind: 'changed' }, '/home/user/.cursor/skills/codebook/SKILL.md', packaged) // => undefined
+ */
+function skillAcceptedWithoutLock(
+  seen: ManagedSkillState,
+  targetPath: string,
+  packaged: { sha256: string; version: string },
+): CursorSkillResult | undefined {
+  if (seen.kind === 'current')
+    return {
+      status: 'current',
+      path: targetPath,
+      sha256: packaged.sha256,
+      version: packaged.version,
+    }
+  // A window still running an earlier extension leaves the newer window's skill and reconnects with it.
+  if (seen.kind === 'newer')
+    return {
+      status: 'current',
+      path: targetPath,
+      sha256: seen.receipt.skillSha256,
+      version: seen.receipt.skillVersion,
+    }
+  return undefined
+}
+
+/**
+ * Says whether a failed deployment was refused because another window holds the storage lock, for {@link rethrowUnlessLockHeldElsewhere}.
+ * @param error - What {@link deploySkill} threw.
+ * @returns `true` when the error's cause is the `EEXIST` of the lock file; `false` for every other failure.
+ * @example isLockHeldElsewhere(new Error('changed')) // => false
+ */
+function isLockHeldElsewhere(error: unknown): boolean {
+  // The cause is read by its shape: the lock's refusal carries the `EEXIST` of the lock file.
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'cause' in error &&
+    systemErrorCode(error.cause) === 'EEXIST'
+  )
+}
+
+/**
+ * Ends the reconnect with a deployment's failure unless waiting can help, for {@link verifyManagedCursorSkill} when {@link deploySkill} threw: only a lock another window holds is waited for, and only while attempts are left.
+ * @param error - What the deployment threw.
+ * @param attempt - The number of this attempt, from 1.
+ * @throws `error` itself when it is no held lock, and at the last of {@link CURSOR_SKILL_RECONNECT_ATTEMPTS}.
+ * @example rethrowUnlessLockHeldElsewhere(new Error('changed'), 1) // throws that error
+ */
+function rethrowUnlessLockHeldElsewhere(error: unknown, attempt: number): void {
+  if (!isLockHeldElsewhere(error) || attempt >= CURSOR_SKILL_RECONNECT_ATTEMPTS)
+    throw error
 }
 
 /** Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. @example await removeManagedCursorSkill('/private', '/home') */

@@ -1,4 +1,5 @@
-import { CAPTURE_TIMEOUT_MS, VIEWPORT_ACK_TIMEOUT_REASON } from './constants'
+import { CAPTURE_TIMEOUT_MS } from './constants'
+import { ViewportAckTimeoutError } from './utils/viewportAckTimeoutError'
 
 export interface ViewFrame {
   data: string
@@ -155,7 +156,7 @@ export class FrameDelivery {
       remainingMs = entry.deadlineMs - clockTimeMs
     // A recording clock stops while Chromium suspends painting; ordinary live clocks still expire in wall time.
     if (remainingMs <= 0) {
-      this.reject(entry, VIEWPORT_ACK_TIMEOUT_REASON)
+      this.reject(entry, new ViewportAckTimeoutError())
       this.flush()
       return
     }
@@ -199,16 +200,18 @@ export class FrameDelivery {
       })
   }
 
-  /** Clears just the entry's slot and timer on timeout, replacement or disposal. @example this.reject(entry, 'replaced') */
-  private reject(entry: PendingFrame, reason: string): void {
+  /** Clears just the entry's slot and timer on timeout, replacement or disposal, and rejects the frame's promise. @param failure - The reason in words, or the error to reject with: an expired deadline passes a {@link ViewportAckTimeoutError}. @example this.reject(entry, 'replaced') */
+  private reject(entry: PendingFrame, failure: string | Error): void {
     clearTimeout(entry.timer)
     if (this.inFlight === entry) this.inFlight = undefined
     if (this.pending === entry) this.pending = undefined
+    // A reason in words becomes a plain error; the acknowledgement timeout arrives as its own type, which the frame's owner reads.
+    const error = typeof failure === 'string' ? new Error(failure) : failure
     this.record('viewport.delivery-rejected', {
       id: entry.message.id,
       phase: entry.message.phase,
-      reason,
+      reason: error.message,
     })
-    entry.reject(new Error(reason))
+    entry.reject(error)
   }
 }

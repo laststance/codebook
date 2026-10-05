@@ -11,6 +11,8 @@ import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
+import { runFlowKeepingCases } from './utils/runFlowKeepingCases.mjs'
+
 const [
   mode = 'verify',
   outputPath = 'artifacts/cycle-0018/bootstrap-renderer',
@@ -54,13 +56,21 @@ const message = {
   studies: [],
 }
 
-/** Records each owned CLI operation for delayed-snapshot renderer verification. @example await command(['open', 'about:blank'], 'open') */
+/** How long one call of the browser CLI may take. */
+const COMMAND_TIMEOUT_MS = 30_000
+/** How long the call that runs the whole flow may take: every case of the check, with its viewport changes and screenshots, runs inside this one call, and the job that runs it ends after ten minutes. */
+const FLOW_TIMEOUT_MS = 300_000
+
+/** Records each owned CLI operation for delayed-snapshot renderer verification; the call labelled `flow` gets the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise((resolve) =>
     execFile(
       'playwright-cli',
       [`-s=${session}`, ...arguments_],
-      { timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+      {
+        timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+      },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
@@ -75,20 +85,39 @@ async function command(arguments_, label) {
   return result.stdout
 }
 
-/** Exercises initial paint and replacement without host state, then releases an actual typed product model. @example await check(page, options) */
-async function check(page, options) {
+/** Exercises initial paint and replacement without host state, then releases an actual typed product model. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. @example await check(page, options, { cases: [], errors: [] }) */
+async function check(page, options, collected) {
   /** Derives a Study message's revision from the first message's by its distance in the flow, so no case carries a bare revision number of its own. @example revisionAt(1) // the second message's revision */
   const revisionAt = (step) => options.message.revision + step
-  const errors = []
+  /** Waits until the pane reports that it rendered the Study message of this revision. The number enters the page as an argument, because a callback evaluated in the page cannot call {@link revisionAt}. @example await waitUntilRendered(revisionAt(2)) */
+  const waitUntilRendered = (revision) =>
+    page.waitForFunction(
+      (awaitedRevision) =>
+        window.sent.some(
+          (message) =>
+            message.type === 'rendered' && message.revision === awaitedRevision,
+        ),
+      revision,
+    )
+  const { errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
-  const cases = [],
+  const { cases } = collected,
     publish = (message) =>
       page.evaluate(
         (message) =>
           window.dispatchEvent(new MessageEvent('message', { data: message })),
         message,
       )
+  /** Reads where the replay transport's controls stand in the viewport. */
+  const transportTops = () =>
+    page.evaluate(() =>
+      ['playback-toggle', 'previous-moment', 'next-moment', 'playhead']
+        .map((id) =>
+          Math.round(document.getElementById(id).getBoundingClientRect().top),
+        )
+        .join(','),
+    )
   const inspect = () =>
     page.evaluate(() => ({
       text: document.body.innerText,
@@ -181,7 +210,9 @@ async function check(page, options) {
         cases.push({
           name: `${phase} enables an explicit source action with the loaded revision`,
           actual: action,
-          passed: action?.action === 'current-file' && action.revision === 1,
+          passed:
+            action?.action === 'current-file' &&
+            action.revision === revisionAt(0),
         })
         if (phase === 'initial') {
           // Arrange: reproduce a narrow Study column when a followed runtime pause arrives.
@@ -211,19 +242,9 @@ async function check(page, options) {
           }
           // Act: a host loading update precedes the complete pause, as it does during a native run.
           await publish({ ...observed, loading: true })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 2,
-            ),
-          )
+          await waitUntilRendered(revisionAt(1))
           await publish({ ...observed, revision: revisionAt(2) })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 3,
-            ),
-          )
+          await waitUntilRendered(revisionAt(2))
           const revealed = await page.evaluate(() => ({
             scrollY: window.scrollY,
             interpretationTop: document
@@ -256,12 +277,7 @@ async function check(page, options) {
           })
           await page.evaluate(() => window.scrollTo(0, 0))
           await publish({ ...observed, revision: revisionAt(3) })
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 4,
-            ),
-          )
+          await waitUntilRendered(revisionAt(3))
           cases.push({
             name: 'refresh of the same pause preserves the learner reading position',
             passed: await page.evaluate(() => window.scrollY === 0),
@@ -286,12 +302,7 @@ async function check(page, options) {
           }
           // A new long explanation must remain keyboard-readable while preserving native debugger ownership of values.
           await publish(longExplanation)
-          await page.waitForFunction(() =>
-            window.sent.some(
-              (message) =>
-                message.type === 'rendered' && message.revision === 5,
-            ),
-          )
+          await waitUntilRendered(revisionAt(4))
           const longReading = await page.evaluate(() => ({
             interpretationTop: document
               .querySelector('#live-content h2')
@@ -633,8 +644,8 @@ async function check(page, options) {
           steps.every(
             (value) =>
               value.action === 'seek' &&
-              value.expectedRevision === 7 &&
-              value.revision === 6,
+              value.expectedRevision === revisionAt(6) &&
+              value.revision === revisionAt(5),
           ),
       })
       await page.locator('#understood').focus()
@@ -684,17 +695,14 @@ async function check(page, options) {
         recording: { ...replay.recording, nativeValuesUninspected: true },
       })
       cases.push({
-        name: 'a moment committed without native values names where Run and Debug loads them in a polite status',
+        name: 'a moment committed without native values names Show Variables first and the manual step after it, in a polite status',
+        actual: await page.locator('#playback-hint').textContent(),
         passed:
           (await page.locator('#playback-hint').isVisible()) &&
           (await page.locator('#playback-hint').getAttribute('role')) ===
             'status' &&
-          (await page.locator('#playback-hint').textContent()).includes(
-            'expand Variables, then expand its first scope if it stays closed',
-          ) &&
-          (await page.locator('#playback-hint').textContent()).includes(
-            'Codebook · Recorded learning',
-          ),
+          (await page.locator('#playback-hint').textContent()) ===
+            'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.',
       })
       await page.screenshot({
         path: `${options.output}/replay-native-values-hint.png`,
@@ -778,9 +786,8 @@ async function check(page, options) {
         passed:
           nodeWithoutValues.position ===
             'Debugger stop 1 · 1.20 s · output shown through this event.' &&
-          nodeWithoutValues.hint.startsWith(
-            'Recorded values for this moment load in Run and Debug',
-          ) &&
+          nodeWithoutValues.hint ===
+            'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.' &&
           nodeWithoutValues.role === 'status' &&
           nodeWithoutValues.muted &&
           nodeWithValues.position ===
@@ -1035,6 +1042,151 @@ async function check(page, options) {
           nodePlayheadAfterStep.value === '198630' &&
           nodePlayheadAfterStep.valueText === '198.63 s of recorded test time',
       })
+      // Arrange: the thumb of the Node playhead is moved and the host has not answered yet (SD-5).
+      await publish(nodeTimeline)
+      await page.locator('#node-history-playhead').evaluate((playhead) => {
+        playhead.value = '150000'
+        playhead.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      const spokenUnderThumb = await page
+        .locator('#node-history-playhead')
+        .getAttribute('aria-valuetext')
+      // Act: a Study message for another reason arrives while the thumb is still held.
+      await publish({ ...nodeTimeline, busy: true })
+      const spokenDuringScrub = await page
+        .locator('#node-history-playhead')
+        .getAttribute('aria-valuetext')
+      // What Chrome's own accessibility tree holds for the same thumb, beside the attribute (row NF-18, 0031-U6).
+      // The tree a debugging client is given carries the role, the name and the range, and has no field for `aria-valuetext`
+      // (a plain `<input type="range" aria-valuetext="…">` reads the same there), so the spoken sentence stays pinned by the case above.
+      const accessibility = await page.context().newCDPSession(page)
+      const { root } = await accessibility.send('DOM.getDocument')
+      const { nodeId: playheadNodeId } = await accessibility.send(
+        'DOM.querySelector',
+        { nodeId: root.nodeId, selector: '#node-history-playhead' },
+      )
+      const { nodes: playheadAccessibility } = await accessibility.send(
+        'Accessibility.getPartialAXTree',
+        { nodeId: playheadNodeId, fetchRelatives: false },
+      )
+      await accessibility.detach()
+      const rangeProperty = (name) =>
+        playheadAccessibility[0]?.properties?.find(
+          (property) => property.name === name,
+        )?.value?.value
+      const readFromAccessibilityTree = {
+        role: playheadAccessibility[0]?.role?.value,
+        name: playheadAccessibility[0]?.name?.value,
+        value: playheadAccessibility[0]?.value?.value,
+        minimum: rangeProperty('valuemin'),
+        maximum: rangeProperty('valuemax'),
+      }
+      await page
+        .locator('#node-history-playhead')
+        .dispatchEvent('pointercancel', { bubbles: true })
+      // Assert
+      cases.push({
+        name: 'dragging the Node playhead speaks the time under the thumb before the host answers',
+        actual: { spokenUnderThumb, spokenDuringScrub },
+        passed:
+          spokenUnderThumb === '150.00 s of recorded test time' &&
+          spokenDuringScrub === '150.00 s of recorded test time',
+      })
+      cases.push({
+        name: 'Chrome’s accessibility tree gives the Node playhead as a slider named Recorded test time whose value is the time under the thumb',
+        actual: readFromAccessibilityTree,
+        passed:
+          readFromAccessibilityTree.role === 'slider' &&
+          readFromAccessibilityTree.name === 'Recorded test time' &&
+          readFromAccessibilityTree.value === 150000 &&
+          readFromAccessibilityTree.minimum === 0 &&
+          readFromAccessibilityTree.maximum === 400000,
+      })
+      // Arrange: two events, the second one unselected, with keyboard focus on its Select event (SD-1).
+      await publish({ ...twoStops, nodeHistoryPosition: nodeStop })
+      const selectSecond = page.locator(
+        '[data-node-history-sequence="3"]:not([data-inspect-node-history-stop])',
+      )
+      await selectSecond.focus()
+      const eventRequestsBefore = await page.evaluate(
+        () =>
+          window.sent.filter((message) => message.type === 'node-history-event')
+            .length,
+      )
+      // Act: the learner presses it, the host answers with that event selected, and the learner presses again.
+      await page.keyboard.press('Enter')
+      await publish({
+        ...twoStops,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          sequence: 3,
+          index: 1,
+          eventIndex: 1,
+          debuggerAvailable: false,
+        },
+      })
+      const afterSelect = await page.evaluate(() => ({
+        focusedSequence: document.activeElement?.dataset?.nodeHistorySequence,
+        focusedIsInspect:
+          document.activeElement?.dataset?.inspectNodeHistoryStop === 'true',
+        label: document.activeElement?.textContent,
+        ariaDisabled: document.activeElement?.getAttribute('aria-disabled'),
+        disabled: document.activeElement?.disabled,
+      }))
+      await page.keyboard.press('Enter')
+      const eventRequestsAfter = await page.evaluate(
+        () =>
+          window.sent.filter((message) => message.type === 'node-history-event')
+            .length,
+      )
+      // Assert
+      cases.push({
+        name: "pressing Select event by keyboard keeps focus on that event's control and a second press sends nothing",
+        actual: { afterSelect, eventRequestsBefore, eventRequestsAfter },
+        passed:
+          afterSelect.focusedSequence === '3' &&
+          afterSelect.focusedIsInspect === false &&
+          afterSelect.label === 'Selected event' &&
+          afterSelect.ariaDisabled === 'true' &&
+          afterSelect.disabled === false &&
+          eventRequestsAfter === eventRequestsBefore + 1,
+      })
+      // Arrange: an output event whose text is one unbroken line of 400 characters (SD-9).
+      await page.setViewportSize({ width: 300, height: 720 })
+      await publish({
+        ...nodeReader,
+        nodeHistoryEventCount: 2,
+        nodeHistory: {
+          ...nodeReader.nodeHistory,
+          entries: [
+            {
+              type: 'output',
+              sequence: 1,
+              channel: 'stdout',
+              elapsedMs: 500,
+              text: 'x'.repeat(400),
+            },
+            nodeReader.nodeHistory.entries[0],
+          ],
+        },
+        nodeHistoryPosition: nodeStop,
+      })
+      // Act
+      const cardOverflow = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        cardTextLength: document.querySelector('.node-history-event pre')
+          .textContent.length,
+      }))
+      await page.setViewportSize({ width: 600, height: 800 })
+      // Assert
+      cases.push({
+        name: 'a Node event card with one 400-character line does not widen the pane',
+        actual: cardOverflow,
+        passed:
+          cardOverflow.cardTextLength === 400 &&
+          cardOverflow.scrollWidth === cardOverflow.clientWidth,
+      })
       await publish({
         ...replay,
         recording: {
@@ -1272,6 +1424,246 @@ async function check(page, options) {
           summaryDensity.sequenceTop < summaryDensity.transportTop &&
           !summaryDensity.pageOverflow,
       })
+      /** Measures a title: its rendered lines, whether its text is cut, and whether the keyboard reaches it. */
+      const titleReading = (id) =>
+        page.evaluate((titleId) => {
+          const title = document.getElementById(titleId),
+            range = document.createRange()
+          range.selectNodeContents(title)
+          return {
+            lines: new Set(
+              [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+            ).size,
+            // How many line heights the heading's box is tall: two while the clamp holds.
+            shownLines: Math.round(
+              title.getBoundingClientRect().height /
+                Number.parseFloat(getComputedStyle(title).lineHeight),
+            ),
+            cut: title.scrollHeight > title.clientHeight,
+            tabIndex: title.getAttribute('tabindex'),
+            tooltip: title.getAttribute('title'),
+            focused: document.activeElement === title,
+          }
+        }, id)
+      // Act: the long title in the narrow side bar, reached from the control before it with Tab (SD-4, DR-11).
+      const clampedSummaryTitle = await titleReading('learning-title')
+      await page.locator('#reader-options > summary').focus()
+      await page.keyboard.press('Tab')
+      const focusedSummaryTitle = await titleReading('learning-title')
+      await page.locator('#reader-options > summary').focus()
+      // A title that fits in two lines, in the same side bar.
+      await publish(learning)
+      const fittingSummaryTitle = await titleReading('learning-title')
+      // Assert
+      cases.push({
+        name: 'in a 300 px side bar a Learning summary title longer than two lines is reached with Tab and shown whole while focused, and a title that fits is not a tab stop',
+        actual: {
+          clampedSummaryTitle,
+          focusedSummaryTitle,
+          fittingSummaryTitle,
+        },
+        passed:
+          clampedSummaryTitle.lines > 2 &&
+          clampedSummaryTitle.shownLines === 2 &&
+          clampedSummaryTitle.cut &&
+          clampedSummaryTitle.tabIndex === '0' &&
+          focusedSummaryTitle.focused &&
+          focusedSummaryTitle.shownLines === focusedSummaryTitle.lines &&
+          !focusedSummaryTitle.cut &&
+          fittingSummaryTitle.tabIndex === null &&
+          !fittingSummaryTitle.cut,
+      })
+
+      // Arrange: a replay whose article title is longer than two lines of its heading (SD-4, the replay heading).
+      const longArticleTitle =
+          'How submitting the invoice form reaches the server action and updates the saved invoice',
+        longHeading = {
+          ...learning,
+          model: {
+            ...learning.model,
+            progressByItem: learning.model.progressByItem.map((item) => ({
+              ...item,
+              title: longArticleTitle,
+            })),
+          },
+        }
+      // Act
+      await publish(longHeading)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const clampedHeading = await titleReading('title')
+      await page.locator('#title').focus()
+      const focusedHeading = await titleReading('title')
+      await page.locator('#reader-options > summary').focus()
+      // Assert
+      cases.push({
+        name: 'the clamped replay heading carries its whole title as a tooltip and opens the same way',
+        actual: { clampedHeading, focusedHeading },
+        passed:
+          clampedHeading.tooltip === longArticleTitle &&
+          clampedHeading.shownLines === 2 &&
+          clampedHeading.cut &&
+          clampedHeading.tabIndex === '0' &&
+          focusedHeading.focused &&
+          focusedHeading.shownLines === focusedHeading.lines &&
+          !focusedHeading.cut,
+      })
+
+      // Act: the same long Learning summary title in a wider side bar.
+      await page.setViewportSize({ width: 480, height: 720 })
+      const longerLearning = JSON.parse(JSON.stringify(learning))
+      longerLearning.recording.learningSummary.content.title =
+        'How submitting the invoice form reaches the server action, validates the amount, writes the invoice to the database and updates the saved invoice list'
+      await publish(longerLearning)
+      const wideSummaryTitle = await titleReading('learning-title')
+      // Assert
+      cases.push({
+        name: 'in a side bar 480 px wide a long Learning summary title is shown whole',
+        actual: wideSummaryTitle,
+        passed:
+          wideSummaryTitle.lines > 2 &&
+          wideSummaryTitle.shownLines === wideSummaryTitle.lines &&
+          !wideSummaryTitle.cut &&
+          wideSummaryTitle.tabIndex === null &&
+          wideSummaryTitle.tooltip ===
+            'How submitting the invoice form reaches the server action, validates the amount, writes the invoice to the database and updates the saved invoice list',
+      })
+
+      // Arrange: another tab is in front of the recorded application; the moment is recorded and only hidden (NF-31, DR-19).
+      await page.setViewportSize({ width: 600, height: 800 })
+      const coveredLearning = {
+        ...learning,
+        recording: {
+          ...learning.recording,
+          cleared: true,
+          applicationCovered: true,
+        },
+      }
+      // Act
+      await publish(coveredLearning)
+      const whileCovered = await page.evaluate(() => {
+        const shownText = (id) =>
+          document.getElementById(id).getClientRects().length
+            ? document.getElementById(id).textContent
+            : null
+        return {
+          line: shownText('loading'),
+          selectedShown:
+            document.getElementById('selected').getClientRects().length > 0,
+          transportStatus: shownText('recording-status'),
+        }
+      })
+      await publish(learning)
+      const afterReturnToFront = await page.evaluate(() => ({
+        lineShown:
+          document.getElementById('loading').getClientRects().length > 0,
+        transportStatus:
+          document.getElementById('recording-status').textContent,
+      }))
+      // Assert
+      cases.push({
+        name: 'while another tab covers the recorded application the Learning summary says so and names the remedy, not that the observation is loading',
+        actual: { whileCovered, afterReturnToFront },
+        passed:
+          whileCovered.line ===
+            'Recorded application is covered by another tab. Bring the Recorded application tab to the front to show this moment again.' &&
+          whileCovered.selectedShown &&
+          whileCovered.transportStatus ===
+            'Paused · finalized · Not recorded at this moment · Recorded application is covered by another tab' &&
+          !afterReturnToFront.lineShown &&
+          afterReturnToFront.transportStatus ===
+            'Paused · finalized · Not recorded at this moment',
+      })
+
+      // Arrange: a recorded stop declared on line 73 that the debugger bound on line 75 (SD-16, DR-28).
+      const movedStop = {
+        ...learning,
+        model: {
+          ...learning.model,
+          source: {
+            ...learning.model.source,
+            hash: 'b'.repeat(64),
+            line: 75,
+          },
+          sourceDeclaredLine: 73,
+        },
+      }
+      // Act
+      await publish(movedStop)
+      const movedStopLabel = await page.locator('#source-version').textContent()
+      await publish({
+        ...movedStop,
+        model: { ...movedStop.model, sourceDeclaredLine: undefined },
+      })
+      const unmovedStopLabel = await page
+        .locator('#source-version')
+        .textContent()
+      // Assert
+      cases.push({
+        name: 'a stop the debugger moved names both its declared and its bound line',
+        actual: { movedStopLabel, unmovedStopLabel },
+        passed:
+          movedStopLabel ===
+            'Captured source · line 75 (declared on line 73) · bbbbbbbbbbbb' &&
+          unmovedStopLabel === 'Captured source · line 75 · bbbbbbbbbbbb',
+      })
+
+      // Arrange: a recorded stop whose explanations are shown ahead of their saved times, beside a later annotation (Cycle 0045 cause 10).
+      const explainedAhead = {
+        ...learning,
+        model: {
+          ...learning.model,
+          observation: {
+            ...learning.model.observation,
+            interpretations: [
+              { text: 'Saved while paused.', savedLater: 'while-pause-held' },
+              {
+                text: 'Saved after the pause.',
+                savedLater: 'after-pause-ended',
+              },
+              {
+                text: 'Saved after the film.',
+                savedLater: 'after-recording-ended',
+              },
+              { text: 'Saved before this time.' },
+            ],
+          },
+        },
+        recording: {
+          ...learning.recording,
+          laterInterpretations: [
+            { text: 'A revision saved later.', availableMs: 7000 },
+          ],
+        },
+      }
+      // Act
+      await publish(explainedAhead)
+      const explanationNotes = await page.evaluate(() => ({
+        shown: [...document.getElementById('interpretations').children].map(
+          (paragraph) => `${paragraph.className}: ${paragraph.textContent}`,
+        ),
+        later: [
+          ...document.getElementById('later-interpretations').children,
+        ].map((paragraph) => paragraph.textContent),
+      }))
+      await publish(learning)
+      // Assert
+      cases.push({
+        name: 'an explanation shown before its saved time is followed by the note that says when it was saved, and Later annotations holds only the other explanations',
+        actual: explanationNotes,
+        passed:
+          JSON.stringify(explanationNotes.shown) ===
+            JSON.stringify([
+              'interpretation: Saved while paused.',
+              'muted: This explanation was saved while this pause was held.',
+              'interpretation: Saved after the pause.',
+              'muted: This explanation was saved after this pause ended.',
+              'interpretation: Saved after the film.',
+              'muted: This explanation was saved after the recording ended.',
+              'interpretation: Saved before this time.',
+            ]) &&
+          JSON.stringify(explanationNotes.later) ===
+            JSON.stringify(['Added at 7.00 s · A revision saved later.']),
+      })
       await page.setViewportSize({ width: 600, height: 800 })
       await publish(learning)
 
@@ -1286,8 +1678,8 @@ async function check(page, options) {
         passed:
           inspection.action === 'seek' &&
           inspection.positionMs === 2000 &&
-          inspection.expectedRevision === 7 &&
-          inspection.revision === 8,
+          inspection.expectedRevision === revisionAt(6) &&
+          inspection.revision === revisionAt(7),
       })
       await page.locator('[data-summary-step="derive"]').focus()
       await publish({
@@ -1328,6 +1720,291 @@ async function check(page, options) {
           !(await page.locator('#learning-material').isVisible()) &&
           (await page.locator('#learning-unavailable').isVisible()),
       })
+
+      // Arrange: one replay moment without its native values and the same moment with them (SD-8, T-3, SD-15).
+      const withoutValues = {
+          ...replay,
+          revision: revisionAt(11),
+          recording: { ...replay.recording, nativeValuesUninspected: true },
+        },
+        withValues = { ...replay, revision: revisionAt(12) }
+      /** Names the element that holds the pane's focus by its id, or by its tag when it has none. */
+      const focusedControl = () =>
+        page.evaluate(
+          () => document.activeElement.id || document.activeElement.tagName,
+        )
+      // Act
+      await publish(withoutValues)
+      const footerButton = await page.evaluate(() => {
+        const style = (id) => getComputedStyle(document.getElementById(id)),
+          height = (id) =>
+            Math.round(
+              document.getElementById(id).getBoundingClientRect().height,
+            )
+        return {
+          showVariablesHeight: height('playback-show-variables'),
+          showVariablesMinHeight: style('playback-show-variables').minHeight,
+          showVariablesFontSize: style('playback-show-variables').fontSize,
+          // The transport's buttons share the 32 px rule; their 16 px text makes them two pixels taller.
+          playHeight: height('playback-toggle'),
+          playMinHeight: style('playback-toggle').minHeight,
+          hintFontSize: style('playback-hint').fontSize,
+        }
+      })
+      // Assert
+      cases.push({
+        name: "Show Variables in the replay footer is as tall as the transport buttons and set in the hint's text size",
+        actual: footerButton,
+        passed:
+          footerButton.showVariablesHeight === 32 &&
+          footerButton.showVariablesMinHeight === '32px' &&
+          footerButton.playMinHeight === '32px' &&
+          footerButton.playHeight === 34 &&
+          footerButton.showVariablesFontSize === '12px' &&
+          footerButton.hintFontSize === '12px',
+      })
+
+      // Act: the same moment with and without the hint, in a side bar at two widths (T-3, ER-18).
+      // The playback details opened earlier in this flow are closed again: a learner's footer starts without them.
+      await page.locator('#playback-options').evaluate((details) => {
+        details.open = false
+      })
+      const sideBarTops = {}
+      for (const width of [600, 300]) {
+        await page.setViewportSize({ width, height: 720 })
+        await publish(withValues)
+        const before = await transportTops()
+        await publish(withoutValues)
+        sideBarTops[width] = {
+          before,
+          withHint: await transportTops(),
+          // The footer scrolls inside itself once it reaches its greatest height; a hint that makes it scroll would hide controls.
+          footerScrolls: await page
+            .locator('#recording-transport')
+            .evaluate((footer) => footer.scrollHeight > footer.clientHeight),
+          hintShown: await page.locator('#playback-hint').isVisible(),
+          footerHeight: await page
+            .locator('#recording-transport')
+            .evaluate((footer) =>
+              Math.round(footer.getBoundingClientRect().height),
+            ),
+        }
+      }
+      await page.setViewportSize({ width: 600, height: 800 })
+      // Assert
+      cases.push({
+        name: "the transport's buttons do not move when the values hint appears",
+        actual: sideBarTops,
+        passed:
+          sideBarTops[600].before === sideBarTops[600].withHint &&
+          sideBarTops[600].hintShown &&
+          !sideBarTops[600].footerScrolls &&
+          sideBarTops[300].before === sideBarTops[300].withHint &&
+          sideBarTops[300].hintShown &&
+          !sideBarTops[300].footerScrolls,
+      })
+
+      // Arrange: a press on the replay thumb that moves nothing fires neither input nor change (SD-17).
+      await publish(withValues)
+      const playheadValue = () =>
+        page.locator('#playhead').evaluate((playhead) => playhead.value)
+      await page
+        .locator('#playhead')
+        .dispatchEvent('pointerdown', { bubbles: true })
+      // Act: the host answers a keyboard seek with a new presented position.
+      await publish({
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 3000 },
+      })
+      const afterPressWithoutDrag = await playheadValue()
+      // A drag holds the thumb under the pointer until it ends, also when it ends without a change event.
+      await page.locator('#playhead').evaluate((playhead) => {
+        playhead.value = '5000'
+        playhead.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await publish({
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 3500 },
+      })
+      const whileDragging = await playheadValue()
+      await page
+        .locator('#playhead')
+        .dispatchEvent('pointercancel', { bubbles: true })
+      await publish({
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 3600 },
+      })
+      const afterCancelledDrag = await playheadValue()
+      // Assert
+      cases.push({
+        name: 'a press on the replay thumb without a drag does not stop the playhead from following a keyboard seek',
+        actual: { afterPressWithoutDrag, whileDragging, afterCancelledDrag },
+        passed:
+          afterPressWithoutDrag === '3000' &&
+          whileDragging === '5000' &&
+          afterCancelledDrag === '3600',
+      })
+
+      // Arrange: keyboard focus on Show Variables (SD-15).
+      await publish(withoutValues)
+      await page.locator('#playback-show-variables').focus()
+      // Act: the learner presses it, and the values load.
+      await page.keyboard.press('Enter')
+      await publish(withValues)
+      // Assert
+      cases.push({
+        name: 'after Show Variables is pressed by keyboard and the values load, focus rests on Play, not on the document body (replay)',
+        actual: await focusedControl(),
+        passed: (await focusedControl()) === 'playback-toggle',
+      })
+
+      // Arrange: the same press, but the editor moved the focus to Run and Debug, so this document has none (DR-24).
+      await publish(withoutValues)
+      await page.locator('#playback-show-variables').focus()
+      await page.keyboard.press('Enter')
+      await page.evaluate(() => {
+        document.hasFocus = () => false
+      })
+      // Act: the values load while the learner is in Run and Debug; later the learner returns to the pane.
+      await publish(withValues)
+      const focusWhileAway = await focusedControl()
+      await page.evaluate(() => {
+        delete document.hasFocus
+        window.dispatchEvent(new Event('focus'))
+      })
+      const focusOnReturn = await focusedControl()
+      // Assert
+      cases.push({
+        name: "when Show Variables is hidden while the pane does not have the focus, the pane's focus is on Play when the learner returns",
+        actual: { focusWhileAway, focusOnReturn },
+        passed:
+          focusWhileAway !== 'playback-toggle' &&
+          focusOnReturn === 'playback-toggle',
+      })
+
+      // Arrange: a Node test history of two stops whose first, selected stop has no native values (SD-15, the Node button).
+      const nodeWithoutNativeValues = {
+          ...twoStops,
+          revision: revisionAt(13),
+          nodeHistoryPosition: {
+            ...nodeStop,
+            eventIndex: 0,
+            nativeValuesUninspected: true,
+          },
+          nodeHistoryPlayback: {
+            mode: 'paused',
+            sequence: 2,
+            positionMs: 1200,
+            startMs: 0,
+            endMs: 1500,
+            loading: false,
+          },
+        },
+        nodeWithNativeValues = {
+          ...nodeWithoutNativeValues,
+          revision: revisionAt(14),
+          nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+        }
+      await publish(nodeWithoutNativeValues)
+      await page.locator('#node-history-show-variables').focus()
+      // Act
+      await page.keyboard.press('Enter')
+      await publish(nodeWithNativeValues)
+      // Assert
+      cases.push({
+        name: 'after Show Variables is pressed by keyboard and the values load, focus rests on Play, not on the document body (Node test history)',
+        actual: await focusedControl(),
+        passed: (await focusedControl()) === 'node-history-playback-toggle',
+      })
+
+      // Act: Play cannot take the focus at the end of a recording (PC-3.7).
+      const atRecordingEnd = {
+        ...withValues,
+        recording: { ...replay.recording, presentedMs: 8000 },
+      }
+      await publish({
+        ...atRecordingEnd,
+        recording: {
+          ...atRecordingEnd.recording,
+          nativeValuesUninspected: true,
+        },
+      })
+      await page.locator('#playback-show-variables').focus()
+      await publish(atRecordingEnd)
+      const focusAtRecordingEnd = await page.evaluate(() => ({
+        playDisabled: document.getElementById('playback-toggle').disabled,
+        focused: document.activeElement.getAttribute('aria-label'),
+      }))
+      // Act: while the replay loads its next moment the toggle is Pause and stays usable.
+      await publish(withoutValues)
+      await page.locator('#playback-show-variables').focus()
+      await publish({
+        ...withValues,
+        recording: {
+          ...replay.recording,
+          cleared: true,
+          readiness: 'loading',
+          requestedMs: 4000,
+        },
+      })
+      const focusWhileLoading = await page.evaluate(() => ({
+        focused: document.activeElement.id,
+        label: document.activeElement.textContent,
+      }))
+      // Act: a Node test history with a single event, whose transport has no usable control.
+      const singleEvent = {
+        ...nodeReader,
+        revision: revisionAt(15),
+        nodeHistoryPlayback: {
+          mode: 'paused',
+          sequence: 2,
+          positionMs: 1200,
+          startMs: 1200,
+          endMs: 1200,
+          loading: false,
+        },
+      }
+      await publish({
+        ...singleEvent,
+        nodeHistoryPosition: {
+          ...nodeStop,
+          eventIndex: 0,
+          nativeValuesUninspected: true,
+        },
+      })
+      await page.locator('#node-history-show-variables').focus()
+      await publish({
+        ...singleEvent,
+        nodeHistoryPosition: { ...nodeStop, eventIndex: 0 },
+      })
+      const focusWithSingleEvent = await page.evaluate(() => ({
+        transportDisabled: [
+          'node-history-playback-toggle',
+          'node-history-playhead',
+          'node-history-moment-previous',
+          'node-history-moment-next',
+        ].every((id) => document.getElementById(id).disabled),
+        focused: document.activeElement.textContent,
+        focusedSequence: document.activeElement.dataset.nodeHistorySequence,
+      }))
+      // Assert
+      cases.push({
+        name: "when Play cannot be used as Show Variables leaves, focus goes to the first transport control that can: at the end of a recording and while a moment loads; in a history with a single event it goes to that event's own control",
+        actual: {
+          focusAtRecordingEnd,
+          focusWhileLoading,
+          focusWithSingleEvent,
+        },
+        passed:
+          focusAtRecordingEnd.playDisabled &&
+          focusAtRecordingEnd.focused === 'Replay from start' &&
+          focusWhileLoading.focused === 'playback-toggle' &&
+          focusWhileLoading.label === 'Pause' &&
+          focusWithSingleEvent.transportDisabled &&
+          focusWithSingleEvent.focused === 'Selected event' &&
+          focusWithSingleEvent.focusedSequence === '2',
+      })
+      await publish({ ...replay, revision: revisionAt(10) })
     } else {
       await page.setViewportSize({ width: 1200, height: 180 })
       await publish({
@@ -1389,8 +2066,8 @@ async function check(page, options) {
         name: 'bottom panel uses the current recording revision for playback',
         passed:
           play.action === 'play' &&
-          play.revision === 6 &&
-          play.expectedRevision === 7,
+          play.revision === revisionAt(5) &&
+          play.expectedRevision === revisionAt(6),
       })
       await publish({
         ...options.message,
@@ -1440,6 +2117,44 @@ async function check(page, options) {
       await page.screenshot({
         path: `${options.output}/bottom-playback-panel.png`,
       })
+      // Arrange: the bottom panel's transport starts at the panel's top, so its hint stands below the controls (T-3, ER-18).
+      const panelReplay = {
+        ...options.message,
+        revision: revisionAt(7),
+        contentTab: 'recording',
+        playbackPanelVisible: true,
+        recording: {
+          revision: revisionAt(6),
+          mode: 'paused',
+          readiness: 'ready',
+          cleared: false,
+          presentedMs: 2000,
+          range: { startMs: 0, endMs: 5000, endKnown: true },
+          recordingStatus: 'finalized',
+        },
+      }
+      await publish(panelReplay)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const panelTopsBefore = await transportTops()
+      // Act
+      await publish({
+        ...panelReplay,
+        recording: { ...panelReplay.recording, nativeValuesUninspected: true },
+      })
+      const panelTopsWithHint = await transportTops(),
+        panelHintBelowControls = await page.evaluate(
+          () =>
+            document.getElementById('playback-hint').getBoundingClientRect()
+              .top >
+            document.getElementById('playback-toggle').getBoundingClientRect()
+              .bottom,
+        )
+      // Assert
+      cases.push({
+        name: "in the bottom panel the transport's buttons do not move when the values hint appears",
+        actual: { panelTopsBefore, panelTopsWithHint, panelHintBelowControls },
+        passed: panelTopsBefore === panelTopsWithHint && panelHintBelowControls,
+      })
     }
   }
   // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
@@ -1457,6 +2172,29 @@ async function check(page, options) {
   await page.waitForFunction(() =>
     window.sent.some((message) => message.type === 'ready'),
   )
+  // Arrange: a fresh document in a page that has the focus (NF-17: the host has no other way to learn the pane's focus).
+  const focusReports = () =>
+    page.evaluate(() =>
+      window.sent
+        .filter((message) => message.type === 'pane-focus')
+        .map((message) => message.focused),
+    )
+  const reportsAtLoad = await focusReports()
+  // Act: the document loses the focus (the learner goes to another part of the editor) and gains it again.
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+  const reportsAfterLeaving = await focusReports()
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const reportsAfterReturning = await focusReports()
+  // Assert
+  cases.push({
+    name: 'the pane reports to the host when its document gains and when it loses the keyboard focus',
+    actual: { reportsAtLoad, reportsAfterLeaving, reportsAfterReturning },
+    passed:
+      JSON.stringify(reportsAtLoad) === JSON.stringify([true]) &&
+      JSON.stringify(reportsAfterLeaving) === JSON.stringify([true, false]) &&
+      JSON.stringify(reportsAfterReturning) ===
+        JSON.stringify([true, false, true]),
+  })
   const savedStudy = (id, overrides = {}) => ({
       id,
       savedAt: '2026-09-20T00:00:10.000Z',
@@ -1525,8 +2263,18 @@ async function check(page, options) {
         ariaDisabled: control.getAttribute('aria-disabled'),
         disabledAttribute: control.hasAttribute('disabled'),
         describedBy: control.getAttribute('aria-describedby'),
+        listDescribedBy: list.getAttribute('aria-describedby'),
         reason: shownText('delete-study-reason'),
         note: shownText('study-unopenable'),
+        repairNote: shownText('study-repairable'),
+        newerNote: shownText('study-newer'),
+        repairVisible: visible('repair-study'),
+        // The files a window without a Trash lists for removal by hand; null while the list is hidden.
+        files: visible('study-files')
+          ? [...document.querySelectorAll('#study-files-list li')].map(
+              (item) => item.textContent,
+            )
+          : null,
         status: status.textContent,
         statusIsError: status.classList.contains('error'),
         statusRole: `${status.getAttribute('role')}/${status.getAttribute('aria-live')}`,
@@ -1536,8 +2284,26 @@ async function check(page, options) {
           message.revision,
         ]),
         histories: sent('history').length,
+        removalRequests: sent('delete-study').map(
+          (message) => message.removalRequest,
+        ),
+        copies: sent('copy-study-files').map((message) => message.studyId),
+        retries: sent('action').filter((message) => message.action === 'retry')
+          .length,
       }
     })
+  /** Reads the number the pane gave its last delete request. */
+  const lastRemovalRequest = () =>
+    page.evaluate(
+      () =>
+        window.sent.findLast((message) => message.type === 'delete-study')
+          ?.removalRequest,
+    )
+  /** Gives a removal state the number of the pane's last delete request, as the host does in every state of the removal that request started or was refused with. */
+  const answering = async (removal) => ({
+    ...removal,
+    request: await lastRemovalRequest(),
+  })
   const deleteButton = page.getByRole('button', {
     name: 'Delete saved study…',
     exact: true,
@@ -1692,6 +2458,7 @@ async function check(page, options) {
     passed:
       JSON.stringify(choseUnopenable.options) ===
         JSON.stringify([
+          ['', true],
           [shownStudy.id, false],
           [staleStudy.id, false],
           [legacyStudy.id, false],
@@ -1769,12 +2536,14 @@ async function check(page, options) {
   await library([shownStudy, otherStudy], shownStudy.id)
   await deleteButton.click()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: confirming,
+    studyRemoval: await answering(confirming),
   })
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: movingShown,
+    studyRemoval: await answering(movingShown),
   })
-  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
   const afterOwnRemoval = await removalControl()
   await page
     .locator('#saved-studies')
@@ -1783,7 +2552,7 @@ async function check(page, options) {
   await library([shownStudy, otherStudy], shownStudy.id)
   await deleteButton.click()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: confirming,
+    studyRemoval: await answering(confirming),
   })
   await library([shownStudy, otherStudy], shownStudy.id)
   const afterCancel = await removalControl()
@@ -1791,11 +2560,11 @@ async function check(page, options) {
   await deleteButton.click()
   await page.evaluate(() => document.activeElement.blur())
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: {
+    studyRemoval: await answering({
       status: 'refused',
       studyId: shownStudy.id,
       text: 'Stop the run before deleting its study.',
-    },
+    }),
   })
   const afterRefusal = await removalControl()
   // Another pane asked: this pane shows the outcome and moves no focus.
@@ -1814,9 +2583,11 @@ async function check(page, options) {
   await deleteButton.click()
   await page.locator('#overview-tab').focus()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: confirming,
+    studyRemoval: await answering(confirming),
   })
-  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
   const afterMovingOn = await removalControl()
   cases.push({
     name: 'after its own delete request a pane moves focus once: to the list after a removal, to the button after Cancel or a refusal, and nowhere when the learner moved on or another pane asked',
@@ -2065,9 +2836,11 @@ async function check(page, options) {
   })
   const whileNewRequestWaits = await removalControl()
   await library([shownStudy, otherStudy], shownStudy.id, {
-    studyRemoval: movingShown,
+    studyRemoval: await answering(movingShown),
   })
-  await library([otherStudy], otherStudy.id, { studyRemoval: movedShown })
+  await library([otherStudy], otherStudy.id, {
+    studyRemoval: await answering(movedShown),
+  })
   const afterNewRequestWasAnswered = await removalControl()
   cases.push({
     name: 'a refusal that was already shown does not answer a new delete request: focus moves to the list only when the new removal has ended',
@@ -2078,7 +2851,7 @@ async function check(page, options) {
       afterNewRequestWasAnswered.chosen === otherStudy.id,
   })
 
-  // A current-format entry whose catalog checkpoint is stale can be repaired by Retry storage; the delete-only note is for files no Retry can repair.
+  // Arrange: a current-format entry whose catalog checkpoint is stale can be repaired; the delete-only note is for files no repair reaches (CX-D1, DR-25).
   const repairableReason =
       'Catalog unavailable; retry storage. Error: Archive changed after its catalog checkpoint.',
     repairableStudy = savedStudy('window_run-repair7', {
@@ -2086,46 +2859,359 @@ async function check(page, options) {
       outcome: 'unverified',
       metadata: 'unavailable',
       reason: repairableReason,
+    }),
+    repairButton = page.getByRole('button', {
+      name: 'Repair saved study',
+      exact: true,
     })
   await library([shownStudy, repairableStudy, legacyStudy], shownStudy.id, {
     errors: [repairableReason],
   })
   await page.selectOption('#studies', repairableStudy.id)
-  const repairableChosen = await page.evaluate(() => {
-    const shownText = (id) =>
-      document.getElementById(id)?.getClientRects().length
-        ? document.getElementById(id).textContent
-        : null
+  const repairableChosen = await removalControl(),
+    repairButtons = await repairButton.count()
+  const repairLayout = await page.evaluate(() => {
+    const box = (id) => document.getElementById(id).getBoundingClientRect()
     return {
-      deleteOnlyNote: shownText('study-unopenable'),
-      repairNote: shownText('study-repairable'),
-      retryVisible:
-        document.querySelector('[data-action="retry"]').getClientRects()
-          .length > 0,
+      // The repair button stands in the row directly under its note, before the delete button.
+      noteToRowGap: Math.round(
+        box('delete-study-row').top - box('study-repairable').bottom,
+      ),
+      repairBeforeDelete: box('repair-study').left < box('delete-study').left,
+      sameRow: box('repair-study').top === box('delete-study').top,
+      repairDescribedBy: document
+        .getElementById('repair-study')
+        .getAttribute('aria-describedby'),
     }
   })
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-repair.png` })
+  // Act: the learner presses the repair button by keyboard, and the host answers with the repaired entry.
+  // Focused by its id, so a button that is not offered is a failed case instead of a harness timeout.
+  await page.locator('#repair-study').focus()
+  await page.keyboard.press('Enter')
+  const afterRepairPress = await removalControl()
+  await library(
+    [
+      shownStudy,
+      { ...repairableStudy, metadata: 'validated', reason: undefined },
+      legacyStudy,
+    ],
+    shownStudy.id,
+  )
+  const afterRepair = await removalControl()
   await page.selectOption('#studies', legacyStudy.id)
-  const legacyChosen = await page.evaluate(() => {
-    const shownText = (id) =>
-      document.getElementById(id)?.getClientRects().length
-        ? document.getElementById(id).textContent
-        : null
-    return {
-      deleteOnlyNote: shownText('study-unopenable'),
-      repairNote: shownText('study-repairable'),
-    }
-  })
+  const legacyChosen = await removalControl()
+  // Assert
   cases.push({
-    name: 'a saved study whose catalog checkpoint is stale names Retry storage as its repair, and only a file no Retry can repair gets the delete-only note',
-    actual: { repairableChosen, legacyChosen },
+    name: 'a saved study whose checkpoint can be repaired offers Repair saved study under its note, and pressing it asks the host to retry',
+    actual: {
+      repairableChosen,
+      repairButtons,
+      repairLayout,
+      afterRepairPress,
+      afterRepair,
+      legacyChosen,
+    },
     passed:
-      repairableChosen.deleteOnlyNote === null &&
+      repairButtons === 1 &&
+      repairableChosen.note === null &&
       repairableChosen.repairNote ===
-        "This saved study's catalog checkpoint is missing or out of date. Use Retry storage / refresh to repair it; it can also be deleted." &&
-      repairableChosen.retryVisible &&
-      legacyChosen.deleteOnlyNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study." &&
+      repairableChosen.repairVisible &&
+      repairLayout.repairBeforeDelete &&
+      repairLayout.sameRow &&
+      repairLayout.repairDescribedBy === 'study-repairable' &&
+      afterRepairPress.retries === repairableChosen.retries + 1 &&
+      afterRepairPress.focus === 'repair-study' &&
+      // The button left with its note: the keyboard focus is on the list, not on the document body (PC-3.10).
+      afterRepair.repairNote === null &&
+      !afterRepair.repairVisible &&
+      afterRepair.focus === 'studies' &&
+      legacyChosen.note ===
         'This saved study cannot be opened. It can still be deleted.' &&
-      legacyChosen.repairNote === null,
+      legacyChosen.repairNote === null &&
+      !legacyChosen.repairVisible,
+  })
+
+  // Arrange: the same three entries, to measure the notes above the delete row (SD-3).
+  await library([shownStudy, repairableStudy, legacyStudy], shownStudy.id)
+  const gapAboveDeleteRow = (noteId) =>
+    page.evaluate(
+      (id) =>
+        Math.round(
+          document.getElementById('delete-study-row').getBoundingClientRect()
+            .top - document.getElementById(id).getBoundingClientRect().bottom,
+        ),
+      noteId,
+    )
+  // Act
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairNoteGap = await gapAboveDeleteRow('study-repairable')
+  await page.selectOption('#studies', legacyStudy.id)
+  const deleteOnlyNoteGap = await gapAboveDeleteRow('study-unopenable')
+  // Assert
+  cases.push({
+    name: 'the repair note of a saved study sits 8 px above the delete row, like the delete-only note',
+    actual: { repairNoteGap, deleteOnlyNoteGap },
+    passed: repairNoteGap === 8 && deleteOnlyNoteGap === 8,
+  })
+
+  // Act: each kind of chosen entry, read for what describes the list and the delete button (SD-7).
+  await page.selectOption('#studies', repairableStudy.id)
+  const describedWhileRepairable = await removalControl()
+  await page.selectOption('#studies', legacyStudy.id)
+  const describedWhileUnopenable = await removalControl()
+  await library([shownStudy, repairableStudy], shownStudy.id)
+  const describedWhileOpenable = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a saved study that can be repaired or cannot be opened is described to the list and to the delete button by its note',
+    actual: {
+      describedWhileRepairable,
+      describedWhileUnopenable,
+      describedWhileOpenable,
+    },
+    passed:
+      describedWhileRepairable.listDescribedBy === 'study-repairable' &&
+      describedWhileRepairable.describedBy ===
+        'study-repairable delete-study-reason delete-study-status' &&
+      describedWhileUnopenable.listDescribedBy === 'study-unopenable' &&
+      describedWhileUnopenable.describedBy ===
+        'study-unopenable delete-study-reason delete-study-status' &&
+      describedWhileOpenable.chosen === shownStudy.id &&
+      describedWhileOpenable.listDescribedBy === null &&
+      describedWhileOpenable.describedBy ===
+        'delete-study-reason delete-study-status',
+  })
+
+  // Arrange: a study a newer Codebook saved, listed with the catalog's sentence as its reason (RT-1, DX-15).
+  const newerSentence =
+      'This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+    newerStudy = savedStudy('window_run-newer08', {
+      profile: undefined,
+      format: 'newer',
+      outcome: 'Saved by a newer Codebook; kept as it is',
+      metadata: 'unavailable',
+      reason: newerSentence,
+    })
+  await library([shownStudy, newerStudy], shownStudy.id)
+  const deletesBeforeNewer = (await removalControl()).deletes.length
+  // Act
+  await page.selectOption('#studies', newerStudy.id)
+  await deleteButton.click({ force: true })
+  const newerChosen = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a saved study of a newer format is listed with the sentence that names both formats as its note, offers no repair and says why it cannot be deleted here',
+    actual: newerChosen,
+    passed:
+      newerChosen.chosen === newerStudy.id &&
+      newerChosen.newerNote === newerSentence &&
+      newerChosen.note === null &&
+      newerChosen.repairNote === null &&
+      !newerChosen.repairVisible &&
+      newerChosen.listDescribedBy === 'study-newer' &&
+      newerChosen.describedBy ===
+        'study-newer delete-study-reason delete-study-status' &&
+      newerChosen.ariaDisabled === 'true' &&
+      newerChosen.reason ===
+        'This study was saved by a newer Codebook and is kept as it is. Update the extension, then delete it there.' &&
+      newerChosen.deletes.length === deletesBeforeNewer,
+  })
+
+  // Arrange: a removal that leaves other studies while the host shows none of them (SD-6).
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.click()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: await answering(movingShown),
+  })
+  // Act
+  await library([otherStudy], undefined, {
+    studyRemoval: await answering(movedShown),
+  })
+  const noneChosenAfterRemoval = await removalControl()
+  const promptOption = await page
+    .locator('#studies option')
+    .first()
+    .evaluate((option) => ({
+      value: option.value,
+      disabled: option.disabled,
+      // Left out of the open list.
+      rendered: getComputedStyle(option).display !== 'none',
+    }))
+  // Assert
+  cases.push({
+    name: 'after a removal that leaves other studies and none chosen, the list reads Choose a saved study instead of a blank',
+    actual: { noneChosenAfterRemoval, promptOption },
+    passed:
+      noneChosenAfterRemoval.chosen === '' &&
+      noneChosenAfterRemoval.shownText === 'Choose a saved study' &&
+      noneChosenAfterRemoval.focus === 'studies' &&
+      JSON.stringify(noneChosenAfterRemoval.options) ===
+        JSON.stringify([
+          ['', true],
+          [otherStudy.id, false],
+        ]) &&
+      promptOption.value === '' &&
+      promptOption.disabled &&
+      !promptOption.rendered,
+  })
+
+  // Arrange: a delete request the host refuses, shown under the button (A-L5, AD-14, DR-26).
+  const sameRefusal = {
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: 'Stop the run before deleting its study.',
+  }
+  await library([shownStudy, otherStudy], shownStudy.id)
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  const firstRemovalRequest = await lastRemovalRequest()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: firstRemovalRequest },
+  })
+  // Act: the learner asks again and leaves the button; the host refuses with the same sentence under the new number.
+  await page.keyboard.press('Enter')
+  const secondRemovalRequest = await lastRemovalRequest()
+  await page.evaluate(() => document.activeElement.blur())
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: firstRemovalRequest },
+    busy: true,
+  })
+  const whileSecondRequestWaits = await removalControl()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: secondRemovalRequest },
+  })
+  const afterSecondRefusal = await removalControl()
+  // A refusal for that study that answers another pane's request arrives later.
+  await page.evaluate(() => document.activeElement.blur())
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    studyRemoval: { ...sameRefusal, request: secondRemovalRequest + 1 },
+  })
+  const afterLaterRefusal = await removalControl()
+  // Assert
+  cases.push({
+    name: 'a second refusal with the same sentence answers the new delete request: a later refusal for that study moves no focus',
+    actual: {
+      firstRemovalRequest,
+      secondRemovalRequest,
+      whileSecondRequestWaits,
+      afterSecondRefusal,
+      afterLaterRefusal,
+    },
+    passed:
+      Number.isInteger(firstRemovalRequest) &&
+      secondRemovalRequest === firstRemovalRequest + 1 &&
+      whileSecondRequestWaits.focus === '' &&
+      afterSecondRefusal.focus === 'delete-study' &&
+      afterSecondRefusal.status === 'Stop the run before deleting its study.' &&
+      afterLaterRefusal.focus === '' &&
+      afterLaterRefusal.status === 'Stop the run before deleting its study.',
+  })
+
+  // Arrange: a window without a Trash (a WSL remote window); the host names a study's files only in its answer to a delete request (RT-7, DR-14).
+  const withoutTrash = { removalWithoutTrash: true },
+    withoutTrashSentence =
+      "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh.",
+    studyFiles = [
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/recordings/window_run-shown01',
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.json',
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.meta.json',
+    ],
+    otherStudyFile =
+      '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-other02.study.v4.json'
+  await library([otherStudy], undefined, withoutTrash)
+  const withoutTrashNothingChosen = await removalControl()
+  // Act: the host shows a study; the pane asks once for its files, and the host answers.
+  await library([shownStudy, otherStudy], shownStudy.id, withoutTrash)
+  const askedForFiles = await removalControl()
+  const filesAnswer = await answering({
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: withoutTrashSentence,
+    files: studyFiles,
+  })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    studyRemoval: filesAnswer,
+    studyFiles: { [shownStudy.id]: studyFiles },
+  })
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    studyRemoval: filesAnswer,
+    studyFiles: { [shownStudy.id]: studyFiles },
+    busy: true,
+  })
+  const filesListed = await removalControl()
+  // Another pane asked for the other study's files: the removal state answers that request, and the host keeps both lists by study.
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    studyRemoval: {
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: withoutTrashSentence,
+      files: [otherStudyFile],
+      request: 1,
+    },
+    studyFiles: {
+      [shownStudy.id]: studyFiles,
+      [otherStudy.id]: [otherStudyFile],
+    },
+  })
+  const besideAnotherPanesAnswer = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-without-trash.png` })
+  await page.getByRole('button', { name: 'Copy path', exact: true }).click()
+  await page.locator('#study-files [data-action="retry"]').click()
+  const afterCopyAndRetry = await removalControl()
+  const retryBesideFiles = await page
+    .locator('#study-files [data-action="retry"]')
+    .evaluate((control) => ({
+      label: control.textContent,
+      visible: control.getClientRects().length > 0,
+    }))
+  // Assert
+  cases.push({
+    name: "in a window without a Trash, Saved studies names the chosen study's files, offers Copy path and shows no delete button",
+    actual: {
+      withoutTrashNothingChosen,
+      askedForFiles,
+      filesListed,
+      besideAnotherPanesAnswer,
+      afterCopyAndRetry,
+      retryBesideFiles,
+    },
+    passed:
+      !withoutTrashNothingChosen.buttonVisible &&
+      withoutTrashNothingChosen.reason ===
+        'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study to list its files for removal by hand.' &&
+      withoutTrashNothingChosen.files === null &&
+      withoutTrashNothingChosen.deletes.length ===
+        afterLaterRefusal.deletes.length &&
+      // One numbered request for the shown study's files, sent by the pane itself.
+      askedForFiles.deletes.length === afterLaterRefusal.deletes.length + 1 &&
+      askedForFiles.deletes.at(-1)[0] === shownStudy.id &&
+      Number.isInteger(askedForFiles.removalRequests?.at(-1)) &&
+      !filesListed.buttonVisible &&
+      filesListed.reason === null &&
+      filesListed.status === withoutTrashSentence &&
+      !filesListed.statusIsError &&
+      JSON.stringify(filesListed.files) === JSON.stringify(studyFiles) &&
+      // A later Study message with the answer asks nothing again.
+      filesListed.deletes.length === askedForFiles.deletes.length &&
+      // The answer to another pane's request leaves this pane's list as it is, and this pane asks nothing again.
+      JSON.stringify(besideAnotherPanesAnswer.files) ===
+        JSON.stringify(studyFiles) &&
+      besideAnotherPanesAnswer.deletes.length ===
+        askedForFiles.deletes.length &&
+      JSON.stringify(afterCopyAndRetry.copies) ===
+        JSON.stringify([shownStudy.id]) &&
+      afterCopyAndRetry.retries === filesListed.retries + 1 &&
+      retryBesideFiles.label === 'Retry storage / refresh' &&
+      retryBesideFiles.visible,
   })
 
   // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
@@ -2190,7 +3276,108 @@ async function check(page, options) {
       Number.isInteger(firstRequestOfSecondDocument) &&
       firstRequestOfSecondDocument > lastRequestOfFirstDocument,
   })
-  return { cases, errors }
+  // Arrange: a page of the Wiki reader at 720 px, where its right rail is a row (701 to 1000 px) and an outline entry that cannot break leaves the row short of room.
+  await page.setViewportSize({ width: 720, height: 720 })
+  await page.goto(options.url)
+  await page.setContent(options.wikiShell)
+  // Act: the open control's label is measured line by line, the outline by its width.
+  const railRow = await page.evaluate(() => {
+    const openLink = document.querySelector('.open-in-editor a')
+    const label = document.createRange()
+    label.selectNodeContents(openLink)
+    return {
+      railDisplay: getComputedStyle(document.querySelector('.right-rail'))
+        .display,
+      // A range answers one box per line of its text.
+      openLabelLines: label.getClientRects().length,
+      openControlWidth: Math.round(openLink.getBoundingClientRect().width),
+      outlineWidth: Math.round(
+        document.querySelector('.right-rail nav').getBoundingClientRect().width,
+      ),
+    }
+  })
+  await page
+    .locator('.right-rail')
+    .screenshot({ path: `${options.output}/wiki-rail-row.png` })
+  // Assert
+  cases.push({
+    name: 'in the Wiki reader at 720 px the open control of the right rail keeps its label on one line, and the outline is no narrower than it',
+    actual: railRow,
+    passed:
+      railRow.railDisplay === 'flex' &&
+      railRow.openLabelLines === 1 &&
+      railRow.outlineWidth >= railRow.openControlWidth,
+  })
+  // Arrange: the same page at 960 px with the sentence of a refused update in the panel, as the owned clone's native check W-3 showed it (about 300 characters in a 288 px panel).
+  await page.setViewportSize({ width: 960, height: 720 })
+  await page.goto(options.url)
+  await page.setContent(options.wikiShell)
+  // Act: the rail's content is measured against the rail's own box.
+  const railStrip = await page.evaluate(() => {
+    document.querySelector('[data-codebook-update-status]').innerHTML =
+      '<strong>Update failed</strong> at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.'
+    const rail = document.querySelector('.right-rail')
+    const railBox = rail.getBoundingClientRect()
+    const groupBox = document
+      .querySelector('[data-codebook-update-group]')
+      .getBoundingClientRect()
+    return {
+      railDisplay: getComputedStyle(rail).display,
+      railHeight: Math.round(railBox.height),
+      railScrollHeight: rail.scrollHeight,
+      groupBottomBelowRailBottom: Math.round(groupBox.bottom - railBox.bottom),
+    }
+  })
+  await page
+    .locator('.right-rail')
+    .screenshot({ path: `${options.output}/wiki-rail-refusal-960.png` })
+  // Assert
+  cases.push({
+    name: 'in the Wiki reader at 960 px the update panel shows the whole sentence of a refused update, with no scroll in the right rail',
+    actual: railStrip,
+    passed:
+      railStrip.railDisplay === 'flex' &&
+      railStrip.railScrollHeight <= railStrip.railHeight &&
+      railStrip.groupBottomBelowRailBottom <= 0,
+  })
+}
+
+/**
+ * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
+ * @param shell - The text of `skills/codebook/reader-shell.html`.
+ * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control the publisher prints.
+ * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
+ * @example
+ * wikiShellPage('<title>{{TITLE}}</title>') // => '<title>Overview</title>'
+ */
+function wikiShellPage(shell) {
+  const fields = {
+    TITLE: 'Overview',
+    REPOSITORY: 'sample',
+    DATE: '5 Oct 2026',
+    REVISION: 'a1b2c3d',
+    ROOT: '/home/learner/sample',
+    FULL_REVISION: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+    INDEX_TIME: '5 Oct 2026, 12:00',
+    SOURCE_COUNT: '12',
+    EXCLUSIONS: 'none',
+    OUTPUT: '/home/learner/sample/.codebook/wiki',
+    OUTPUT_LABEL: '.codebook/wiki',
+    NAVIGATION:
+      '<ul><li><a href="index.html" aria-current="page">Overview</a></li></ul>',
+    SOURCES: '<li>src/a.ts</li>',
+    ARTICLE: '<h2 id="rendering">Rendering</h2><p>How a page is rendered.</p>',
+    UPDATE: '#update',
+    OUTLINE:
+      '<li><a href="#rendering">Rendering</a></li><li><a href="#preparation">createConfiguredBrowserRunPreparationForReplay</a></li>',
+    OPEN_SOURCE:
+      '<p class="open-in-editor"><a href="#source">Open in VS Code</a></p>',
+    SETTINGS: '#settings',
+  }
+  return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
+    assert.ok(Object.hasOwn(fields, name), `no text for the field ${field}`)
+    return fields[name]
+  })
 }
 
 const report = {
@@ -2198,31 +3385,37 @@ const report = {
   qualification:
     'Real Chromium/compiled product HTML; delayed simulated host snapshots, not native acceptance.',
   compiledSha256: createHash('sha256')
-    .update(await readFile('extension/dist/ui/studyHtml.js'))
+    .update(await readFile(new URL('../dist/ui/studyHtml.js', import.meta.url)))
     .digest('hex'),
   cases: [],
 }
-// The check and its fixtures are served to the page instead of being passed as one command argument: together they exceed the size a single argument may have on Linux (E2BIG).
-const flow = {
-  check: check.toString(),
-  options: {
-    html: { context: studyHtml('context'), moments: studyHtml('moments') },
-    message,
-    output,
-  },
-}
+// The server only gives the page an address to load: the check navigates to it before it sets each document.
 const server = createServer((request, response) => {
-  if (request.url === '/flow.json') {
-    response.setHeader('Content-Type', 'application/json')
-    response.end(JSON.stringify(flow))
-    return
-  }
   response.setHeader('Content-Type', 'text/html')
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. The check runs inside {@link runFlowKeepingCases}, whose text is written into the same file: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
+const flowPath = `${output}/flow.js`
 let recording = false
 try {
+  await writeFile(
+    flowPath,
+    `async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(
+      {
+        html: { context: studyHtml('context'), moments: studyHtml('moments') },
+        wikiShell: wikiShellPage(
+          await readFile(
+            new URL('../skills/codebook/reader-shell.html', import.meta.url),
+            'utf8',
+          ),
+        ),
+        message,
+        output,
+        url: `http://127.0.0.1:${server.address().port}/`,
+      },
+    )})\n`,
+  )
   await command(['open', 'about:blank'], 'open')
   await command(
     [
@@ -2232,13 +3425,7 @@ try {
     'video-start',
   )
   recording = true
-  const result = await command(
-    [
-      'run-code',
-      `async page => { const url = ${JSON.stringify(`http://127.0.0.1:${server.address().port}/`)}; await page.goto(url); const flow = await page.evaluate(async () => (await fetch('/flow.json')).json()); return (0, eval)('(' + flow.check + ')')(page, { ...flow.options, url }) }`,
-    ],
-    'flow',
-  )
+  const result = await command(['run-code', `--filename=${flowPath}`], 'flow')
   Object.assign(
     report,
     JSON.parse(result.split('### Result\n')[1].split('\n###')[0]),

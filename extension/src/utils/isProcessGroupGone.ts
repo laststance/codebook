@@ -6,7 +6,8 @@ import { systemErrorCode } from './systemErrorCode'
  * Tells whether an owned process group has no member left, so that its release can end.
  *
  * Probes the group with signal 0. A group whose last members have exited but are not reaped yet still exists; the caller keeps waiting inside
- * its own bound instead of failing the release with the probe's error. Called by the release of the owned Vitest listing in {@link listVitestTestFiles}.
+ * its own bound instead of failing the release with the probe's error. Called by the release of the owned Vitest listing in {@link listVitestTestFiles} and by the closers of
+ * {@link launchNodeTest} and {@link launchDevelopmentServer}.
  *
  * @param processGroup - Process group id, the pid of the detached group leader.
  * @returns

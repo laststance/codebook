@@ -1,11 +1,138 @@
 import { RECORDING_FRAME_PAGE_SIZE } from '../constants'
 import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
+import type { RecordingContext } from '../recordingSchemas'
 import type { ResourceContent } from '../resources'
 import type { StudyService } from '../service'
 
-import { configuredStops } from './configuredStops'
+import { declaredStopOfSnapshot } from './declaredStopOfSnapshot'
+import { describeBoundPlace, type BoundPlace } from './describeBoundPlace'
+import { explanationPlace, type ExplanationPlace } from './explanationPlace'
 import { readJsonPage } from './readJsonPage'
+
+/** A saved study as a recording context retains it. */
+type SavedStudy = RecordingContext['study']
+
+/** One observation of a saved study. */
+type SavedObservation = SavedStudy['observations'][number]
+
+/**
+ * Puts a saved observation's declared, requested and bound places together; called by {@link savedObservationResource}.
+ * Saved observations follow the declared stop order, so an observation's index names the stop it answers.
+ * @param study - The saved study, with all of its observations in commit order.
+ * @param observation - The observation.
+ * @returns The places of {@link describeBoundPlace}, with the requested line when the saved receipt keeps one, or `undefined` when no stop is declared for the observation.
+ * @example
+ * savedBoundPlace(context.study, context.study.observations[0])?.isMoved // => true for a stop declared on line 22 that paused on line 23
+ */
+function savedBoundPlace(
+  study: SavedStudy,
+  observation: SavedObservation,
+): BoundPlace | undefined {
+  // Saved observations follow the declared stop order, so an observation's index names the stop it answers.
+  const declared = declaredStopOfSnapshot(
+      study.configuration,
+      study.observations,
+      observation.id,
+    ),
+    requestedLine = observation.source.binding?.requestedLine
+  return (
+    declared &&
+    describeBoundPlace({
+      declared,
+      bound: observation.source,
+      // The saved receipt keeps the requested line only, and only when it differs from the declared line.
+      ...(requestedLine !== undefined && {
+        armed: { line: requestedLine },
+      }),
+    })
+  )
+}
+
+/**
+ * Reads the declared position out of a stop's places; called by {@link savedObservationResource} for `requestedSource` and `declaredSource`.
+ * @param boundPlace - The places of the observation's stop, if a stop is declared for it.
+ * @returns The declared line and column, or `undefined` without a declared stop.
+ * @example
+ * declaredPlaceOf(boundPlace) // => { line: 22, column: 3 }
+ */
+function declaredPlaceOf(
+  boundPlace: BoundPlace | undefined,
+): { line: number; column: number } | undefined {
+  return (
+    boundPlace && {
+      line: boundPlace.declaredLine,
+      column: boundPlace.declaredColumn,
+    }
+  )
+}
+
+/**
+ * Puts Codebook's own place of a moved stop beside each of its explanations, whatever their text says; called by {@link savedObservationResource}.
+ * @param interpretations - The observation's saved explanations.
+ * @param movedPlace - The place of a stop the debugger bound on another line than declared, or `undefined` for a stop that paused where it was declared.
+ * @returns The explanations, each with `boundPlace` for a moved stop; the same list otherwise.
+ * @example
+ * interpretationsBesidePlace(observation.interpretations, undefined) === observation.interpretations // => true
+ */
+function interpretationsBesidePlace(
+  interpretations: SavedObservation['interpretations'],
+  movedPlace: ExplanationPlace | undefined,
+): Array<
+  SavedObservation['interpretations'][number] & {
+    boundPlace?: ExplanationPlace
+  }
+> {
+  return movedPlace
+    ? interpretations.map((interpretation) => ({
+        ...interpretation,
+        boundPlace: movedPlace,
+      }))
+    : interpretations
+}
+
+/**
+ * Builds what the learning resource of a saved recording says about one observation; called by {@link readRecordingResource} for every observation of the saved study.
+ * @param study - The saved study, with all of its observations in commit order.
+ * @param observation - The observation.
+ * @returns The observation's id, time, bound source, declared source (also under its earlier name `requestedSource`), values and explanations; `place` and `armed` only for a stop whose places differ.
+ * @example
+ * savedObservationResource(context.study, context.study.observations[0]).source // => { hash: 'a1b2…', line: 23, column: 5 }
+ */
+function savedObservationResource(
+  study: SavedStudy,
+  observation: SavedObservation,
+) {
+  const boundPlace = savedBoundPlace(study, observation),
+    declaredPlace = declaredPlaceOf(boundPlace),
+    // Codebook's own place of a moved stop stands beside each of its explanations, whatever their text says.
+    movedPlace = explanationPlace(boundPlace)
+  return {
+    id: observation.id,
+    elapsedMs: observation.elapsedMs,
+    // Only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
+    place: boundPlace?.place,
+    // The position the debugger bound and paused at, as the live inspection resource reports it; cite this one.
+    source: {
+      hash: observation.source.hash,
+      line: observation.source.line,
+      column: observation.source.column,
+    },
+    // requestedSource keeps its meaning (the declared position); declaredSource says it under its own name.
+    requestedSource: declaredPlace,
+    declaredSource: declaredPlace,
+    armed: boundPlace?.armed,
+    values: observation.values,
+    unavailableValues:
+      'unavailableValues' in observation
+        ? observation.unavailableValues
+        : undefined,
+    interpretations: interpretationsBesidePlace(
+      observation.interpretations,
+      movedPlace,
+    ),
+  }
+}
 
 /** Resolves only current-instance canonical library/recording resources, using bounded pages and pinned context hashes. @example await readRecordingResource(service, recordingUri) */
 export async function readRecordingResource(
@@ -103,7 +230,6 @@ export async function readRecordingResource(
       const [, contextHash, selection, ...page] = suffix.split('/')
       const { context } = await store.readContext(studyId, contextHash)
       if (!selection) return json(context)
-      const declaredStops = configuredStops(context.study.configuration)
       return readJsonPage(
         `${base}/context/${contextHash}/learning`,
         {
@@ -117,28 +243,8 @@ export async function readRecordingResource(
             'learningSummary' in context.study
               ? context.study.learningSummary
               : undefined,
-          observations: context.study.observations.map(
-            (observation, index) => ({
-              id: observation.id,
-              elapsedMs: observation.elapsedMs,
-              // The position the debugger bound and paused at, as the live inspection resource reports it; cite this one.
-              source: {
-                hash: observation.source.hash,
-                line: observation.source.line,
-                column: observation.source.column,
-              },
-              // Saved observations follow the declared stop order, so an observation's index names the stop it answers.
-              requestedSource: declaredStops[index] && {
-                line: declaredStops[index].source.line,
-                column: declaredStops[index].source.column,
-              },
-              values: observation.values,
-              unavailableValues:
-                'unavailableValues' in observation
-                  ? observation.unavailableValues
-                  : undefined,
-              interpretations: observation.interpretations,
-            }),
+          observations: context.study.observations.map((observation) =>
+            savedObservationResource(context.study, observation),
           ),
           interpretationAvailability: context.interpretationAvailability,
           pausedIntervals: context.pausedIntervals,

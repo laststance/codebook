@@ -16,8 +16,10 @@ test('a Wiki identity does not depend on the order the generator listed its sour
   const backward = wikiManifestIdentity(listedBackward, 'a1b2c3d4e5f6a7b8')
 
   // Assert
-  assert.equal(forward, backward)
-  assert.match(forward, /^a1b2c3d4e5f6\+[0-9a-f]{8}$/)
+  assert.deepEqual(forward, backward)
+  assert.match(forward.identity, /^a1b2c3d4e5f6\+[0-9a-f]{8}$/)
+  assert.equal(forward.revision, 'a1b2c3d4e5f6')
+  assert.equal(forward.identity, `a1b2c3d4e5f6+${forward.index}`)
 })
 
 test('an edited included source changes the Wiki identity even when the revision stays', () => {
@@ -31,7 +33,7 @@ test('an edited included source changes the Wiki identity even when the revision
   )
 
   // Assert
-  assert.notEqual(before, after)
+  assert.notEqual(before.identity, after.identity)
 })
 
 test('a project without a git revision still gets an identity that names the missing revision', () => {
@@ -42,5 +44,6 @@ test('a project without a git revision still gets an identity that names the mis
   const identity = wikiManifestIdentity(sources)
 
   // Assert
-  assert.match(identity, /^no-revision\+[0-9a-f]{8}$/)
+  assert.match(identity.identity, /^no-revision\+[0-9a-f]{8}$/)
+  assert.equal(identity.revision, undefined)
 })

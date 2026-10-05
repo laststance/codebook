@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
-import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
+import {
+  WIKI_MANIFEST_FILE,
+  WIKI_PUBLICATION_RECEIPT_FILE,
+  WIKI_PUBLISH_BACKUP_INFIX,
+} from '../constants'
 
 import { readWikiOwnedPaths } from './readWikiOwnedPaths'
+import { readWikiRegularFile } from './readWikiRegularFile'
 import { systemErrorCode } from './systemErrorCode'
 
 /** A prepared update of a Wiki that the publisher would still accept for it. */
@@ -17,23 +22,55 @@ export type WikiCandidate = {
   ownedPaths: string[]
 }
 
-/** Reads the output and baseline a candidate's receipt is bound to; undefined when the folder has no readable receipt. */
-async function readReceiptBinding(
-  receiptPath: string,
-): Promise<{ output: unknown; baselineSha256: unknown } | undefined> {
+/** What a candidate's receipt says it was prepared for: the output folder and the hash of the manifest it started from, each whatever its type. */
+type ReceiptBinding = { output: unknown; baselineSha256: unknown }
+
+/**
+ * Reads the hash of the manifest a candidate was prepared from; called by {@link bindingOfReceipt} with the receipt's `baseline`.
+ * @param baseline - The value of the receipt's `baseline` key, or `undefined` when the receipt has none.
+ * @returns The value of `manifestSha256` whatever its type, or `undefined` when the baseline is no object or has no such key.
+ * @example
+ * baselineManifestHash({ manifestSha256: 'a1b2…' }) // => 'a1b2…'
+ * baselineManifestHash('a1b2…')                     // => undefined
+ */
+function baselineManifestHash(baseline: unknown): unknown {
+  return typeof baseline === 'object' &&
+    baseline !== null &&
+    'manifestSha256' in baseline
+    ? baseline.manifestSha256
+    : undefined
+}
+
+/**
+ * Picks the two values that bind a candidate out of its parsed receipt; called by {@link readReceiptBinding} for a receipt that is a JSON object.
+ * @param receipt - The parsed receipt.
+ * @returns The receipt's `output` and its `baseline.manifestSha256`, each `undefined` when the receipt does not name it.
+ * @example
+ * bindingOfReceipt({ output: '/repo/.codebook/wiki', baseline: { manifestSha256: 'a1b2…' } })
+ * // => { output: '/repo/.codebook/wiki', baselineSha256: 'a1b2…' }
+ */
+function bindingOfReceipt(receipt: object): ReceiptBinding {
+  const baseline = 'baseline' in receipt ? receipt.baseline : undefined
+  return {
+    output: 'output' in receipt ? receipt.output : undefined,
+    baselineSha256: baselineManifestHash(baseline),
+  }
+}
+
+/**
+ * Reads the output and baseline a candidate's receipt is bound to; called by {@link listWikiCandidates} with the bytes of each sibling folder's receipt file.
+ * @param receiptBytes - The bytes of the candidate's receipt.
+ * @returns The binding of {@link bindingOfReceipt}; `undefined` when the bytes are no JSON or the receipt is no JSON object.
+ * @example
+ * readReceiptBinding(Buffer.from('{"output":"/repo/.codebook/wiki","baseline":{"manifestSha256":"a1b2…"}}'))
+ * // => { output: '/repo/.codebook/wiki', baselineSha256: 'a1b2…' }
+ * readReceiptBinding(Buffer.from('not json')) // => undefined
+ */
+function readReceiptBinding(receiptBytes: Buffer): ReceiptBinding | undefined {
   try {
-    const receipt: unknown = JSON.parse(await readFile(receiptPath, 'utf8'))
+    const receipt: unknown = JSON.parse(receiptBytes.toString('utf8'))
     if (typeof receipt !== 'object' || receipt === null) return undefined
-    const baseline = 'baseline' in receipt ? receipt.baseline : undefined
-    return {
-      output: 'output' in receipt ? receipt.output : undefined,
-      baselineSha256:
-        typeof baseline === 'object' &&
-        baseline !== null &&
-        'manifestSha256' in baseline
-          ? baseline.manifestSha256
-          : undefined,
-    }
+    return bindingOfReceipt(receipt)
   } catch {
     return undefined
   }
@@ -46,7 +83,7 @@ async function readReceiptBinding(
  * Trigger: the extension calls it before an update starts (is someone else updating?) and on each look of a run (did the agent stage something, does it collide with a learner file?).
  *
  * @param outputDirectory - Resolved Wiki output folder.
- * @returns Candidates bound to this output and prepared from the currently published manifest, in folder-name order; empty when the Wiki or its parent folder cannot be read.
+ * @returns Candidates bound to this output and prepared from the currently published manifest, in folder-name order; empty when the Wiki or its parent folder cannot be read. A backup the publisher kept (`<output>.previous-<uuid>`) is never one, and a receipt or manifest that is not a regular file ({@link readWikiRegularFile}) is not read.
  *
  * @example
  * ```ts
@@ -58,8 +95,12 @@ export async function listWikiCandidates(
   outputDirectory: string,
 ): Promise<WikiCandidate[]> {
   try {
+    const published = await readWikiRegularFile(
+      join(outputDirectory, WIKI_MANIFEST_FILE),
+    )
+    if (!published) return []
     const publishedSha256 = createHash('sha256')
-      .update(await readFile(join(outputDirectory, WIKI_MANIFEST_FILE)))
+      .update(published.bytes)
       .digest('hex')
     // The publisher records the output with its parent folder resolved, so the comparison uses the same form.
     const parent = await realpath(dirname(outputDirectory))
@@ -68,12 +109,15 @@ export async function listWikiCandidates(
     const candidates: WikiCandidate[] = []
     for (const sibling of await readdir(parent, { withFileTypes: true })) {
       if (!sibling.isDirectory() || sibling.name === outputName) continue
-      const receiptPath = join(
-        parent,
-        sibling.name,
-        WIKI_PUBLICATION_RECEIPT_FILE,
+      // A backup the publisher kept is never accepted as a stage; reading each one's receipt would grow with every update.
+      if (sibling.name.startsWith(outputName + WIKI_PUBLISH_BACKUP_INFIX))
+        continue
+      const receipt = await readWikiRegularFile(
+        join(parent, sibling.name, WIKI_PUBLICATION_RECEIPT_FILE),
       )
-      const binding = await readReceiptBinding(receiptPath)
+      // A folder without a regular receipt file was never prepared by the publisher, or vanished meanwhile.
+      if (!receipt) continue
+      const binding = readReceiptBinding(receipt.bytes)
       // A candidate prepared from an older generation is refused by the publisher, so it is nobody's update any more.
       if (
         binding?.output !== boundOutput ||
@@ -81,13 +125,10 @@ export async function listWikiCandidates(
       )
         continue
       const manifestPath = join(parent, sibling.name, WIKI_MANIFEST_FILE)
-      // A folder that vanished after its receipt was read is no candidate.
-      const receiptStat = await stat(receiptPath).catch(() => undefined)
-      if (!receiptStat) continue
-      const manifestStat = await stat(manifestPath).catch(() => undefined)
+      const manifestStat = await lstat(manifestPath).catch(() => undefined)
       candidates.push({
         name: sibling.name,
-        writtenAtMs: Math.max(receiptStat.mtimeMs, manifestStat?.mtimeMs ?? 0),
+        writtenAtMs: Math.max(receipt.modifiedAtMs, manifestStat?.mtimeMs ?? 0),
         ownedPaths: [...((await readWikiOwnedPaths(manifestPath)) ?? [])],
       })
     }

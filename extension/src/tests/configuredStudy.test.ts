@@ -36,6 +36,21 @@ test('configured offline history retains exact source, complete citations and ac
   assert.equal(JSON.stringify(archive), before)
 })
 
+// Value: protects=after a rollback, a study the newer release saved is refused with the step that helps and the assurance that it is kept; fails_when=its unknown format number ends in a schema error that names neither (RT-1, DX-15); why_new=no format number above the known ones was ever read; seam=none
+test('a study saved in a newer format is refused as saved by a newer Codebook, not with a schema error', () => {
+  // Arrange: a valid study whose format number is one above the highest this Codebook reads.
+  const study = createConfiguredStudy(),
+    savedByNewerCodebook = { ...study, version: 5 }
+  // Act
+  const decode = (): unknown =>
+    decodeConfiguredStudy(savedByNewerCodebook, study.workspaceKey)
+  // Assert
+  assert.throws(decode, {
+    message:
+      'This study was saved in format 5 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  })
+})
+
 test('preparation failure can retain configured intent without fabricating an article binding or observed pause', () => {
   // Arrange
   const archive = createConfiguredStudy()
@@ -277,6 +292,21 @@ test('a saved stop at another column of its declared line is rejected when it ha
         'Configured observation source differs from its sealed definition.',
     },
   )
+})
+
+// Cycle 0045 (AD-2, class B): pins that the rule "a saved observation's column lies at most one past its line's end" needs no allowance for older studies: a run could always commit a stop one past its line's end, and such a study still opens. Green today; its control lowers the bound by one.
+test('a study saved by 0.2.27 whose stop sits one past its line’s end still opens', () => {
+  // Arrange: line 1 of the cited source holds 25 characters; the stop was declared and committed at column 26, and its observation carries no binding receipt, as in every study saved by 0.2.27 and older.
+  const archive = createConfiguredStudy()
+  archive.configuration.source.column = 26
+  archive.configurationHash = sha256(JSON.stringify(archive.configuration))
+  archive.observations[0]!.source.column = 26
+  // Act
+  const decoded = decodeConfiguredStudy(archive, workspaceKey)
+  // Assert
+  assert.equal(archive.observations[0]!.source.binding, undefined)
+  assert.equal(decoded.observations[0]?.source.line, 1)
+  assert.equal(decoded.observations[0]?.source.column, 26)
 })
 
 test('undeclared, missing, unavailable or invented interpretation facts are rejected instead of becoming observed values', () => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -7,14 +8,22 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod'
 
 import type { PresentationPoseCapture } from '../presentationSchemas'
+import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { startServer } from '../server'
+import { withStorageLock } from '../utils/withStorageLock'
 
 import {
   workspaceHarness,
   openRetainedStudy,
+  readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntil,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 for (const stage of [
   'capture-presentation-pose',
   'restore-presentation-pose',
@@ -1431,22 +1440,45 @@ for (const dirty of [false, true])
     }
   })
 
-// Value: protects=closing the reader while learning storage holds a lock; fails_when=close() awaits the library queue without a bound and never finishes; why_new=Cycle 0044 (0033-O4); seam=LearningLibrary.flush held by the test
+// Value: protects=closing the reader while learning storage holds a lock, and the learner's write that was accepted before the close still reaching the disk; fails_when=close() awaits the library queue without a bound and never finishes, or the close drops the write that was waiting for the storage lock; why_new=Cycle 0044 (0033-O4), and Cycle 0045 X7-E1.3: the landing was asserted on a promise of the test itself, so a close that dropped a pending save passed; seam=the storage lock of the library's directory, held by the test as another writer of this process
 test('closing the reader finishes after the storage bound while a library write is still held, and that write still lands', async (context) => {
-  // Arrange: an opened reader whose library queue holds a write that does not return.
+  // Arrange: an opened reader, and a learner decision the library accepted but cannot write: another writer holds the storage lock of its directory.
   const harness = await workspaceHarness()
-  let releaseWrite = (): void => {},
-    writeLanded = false
+  let releaseLock = (): void => {}
   try {
     await harness.reader.open()
     const library = harness.reader['library']
     assert.ok(library)
-    const heldWrite = new Promise<void>((resolve) => {
-      releaseWrite = resolve
-    }).then(() => {
-      writeLanded = true
-    })
-    library.flush = (): Promise<void> => heldWrite
+    const progressFile = join(library.directory, 'progress.repository.v4.json')
+    /** Reads the learner decisions the progress file on disk holds; a file that was never written holds none. */
+    const savedDecisionIds = async (): Promise<string[]> => {
+      const saved = await readFile(progressFile, 'utf8').catch(() => undefined)
+      return saved === undefined
+        ? []
+        : z
+            .object({ decisions: z.array(z.object({ id: z.string() })) })
+            .parse(JSON.parse(saved))
+            .decisions.map((decision) => decision.id)
+    }
+    let lockTaken = false
+    const lockHeld = withStorageLock(
+      library.directory,
+      () =>
+        new Promise<void>((resolve) => {
+          lockTaken = true
+          releaseLock = resolve
+        }),
+    )
+    await waitUntil(() => lockTaken, 'the held storage lock', 1_000)
+    const decision = {
+      id: '0d0c1f6e-6f0b-4e0e-9f43-7f6f2f1c9a11',
+      item: 'repository/interface/theme',
+      sourceHash: 'a'.repeat(64),
+      understood: true,
+      at: '2026-10-04T09:00:00.000Z',
+    }
+    const written = library.decide(decision)
+    void written.catch(() => undefined)
     context.mock.timers.enable({ apis: ['setTimeout'] })
     let closed = false
 
@@ -1464,20 +1496,457 @@ test('closing the reader finishes after the storage bound while a library write 
     }
     const closedWhileWriteHeld = closed
     context.mock.timers.reset()
-    const landedWhenClosed = writeLanded
-    releaseWrite()
-    await heldWrite
+    const savedWhenClosed = await savedDecisionIds()
+    releaseLock()
+    await lockHeld
+    await written
     await closing
 
-    // Assert
+    // Assert: the decision is read back from the file on disk.
     assert.equal(closedWhileWriteHeld, true)
     assert.equal(elapsedMs, 5_000)
-    assert.equal(landedWhenClosed, false)
-    assert.equal(writeLanded, true)
+    assert.deepEqual(savedWhenClosed, [])
+    assert.deepEqual(await savedDecisionIds(), [
+      '0d0c1f6e-6f0b-4e0e-9f43-7f6f2f1c9a11',
+    ])
     assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
     context.mock.timers.reset()
-    releaseWrite()
+    releaseLock()
+    await harness.close()
+  }
+})
+
+// Value: protects=Close Study Workspace ending while a run is still alive and learning storage does not answer, and the workspace opening again afterwards; fails_when=close() awaits the run's final checkpoint without a bound, so a write that never returns leaves the reader closing for good and every later Open is refused; why_new=Cycle 0045 X7-A.2 (the code half of row DOC-4: the 5 s bound did not cover the forced checkpoint before it); seam=the storage lock of the library's directory, held by the test as another writer of this process
+test('closing the Study workspace during a run whose checkpoint write never returns ends within the close bound and the workspace opens again', async (context) => {
+  // Arrange: the reader follows a run that has not stopped; another writer holds the storage lock, so the run's final checkpoint cannot be written.
+  const harness = await workspaceHarness()
+  let releaseLock = (): void => {}
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'run-alive-at-close',
+    })
+    await [...harness.service.records.values()][0]!.preparation
+    await harness.reader.open()
+    const library = harness.reader['library']
+    assert.ok(library)
+    let lockTaken = false
+    const lockHeld = withStorageLock(
+      library.directory,
+      () =>
+        new Promise<void>((resolve) => {
+          lockTaken = true
+          releaseLock = resolve
+        }),
+    )
+    await waitUntil(() => lockTaken, 'the held storage lock', 1_000)
+    let closed = false
+
+    // Act: the close bound passes on a faked clock.
+    const closing = harness.reader.close().then(() => {
+      closed = true
+    })
+    enableFakeClock(context)
+    const closedAfterMs = await advanceClockUntil(context, () => closed, 60_000)
+    resetFakeClock(context)
+    releaseLock()
+    await lockHeld
+    await closing
+    await harness.reader.open()
+
+    // Assert: closed while the write was still held, at the one 5 s bound; the rest of the close takes a few 50 ms steps of the faked clock, far from a second bound.
+    assert.equal(
+      closedAfterMs !== undefined &&
+        closedAfterMs >= 5_000 &&
+        closedAfterMs <= 5_500,
+      true,
+    )
+    assert.equal(harness.reader.presentationState().state, 'open')
+  } finally {
+    resetFakeClock(context)
+    releaseLock()
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who closed the Application pane of a live run and then follows the current run; fails_when=the reader asks the released lease to show the run, reports "Viewport lease is released" under a line the same render clears again, and leaves no pane and no word of what happened; why_new=Cycle 0045 H2-F1 (the harness's fake viewport accepted showLive on a released lease until D-M3, which hid this); seam=WorkspaceViewport refuses showLive after its panel closed, like the real viewport
+test('following the current run after its Application pane was closed says that the run ended and how to see the application again, in a line that stays', async () => {
+  // Arrange: the Application pane of a live run shows the history of a selected item, and the learner closes that pane, which ends the run's lease on it.
+  const harness = await workspaceHarness()
+  const leaseFailures: string[] = []
+  try {
+    await harness.reader.open()
+    const lease = harness.reader.presentation.createViewport(
+      'live-run',
+      () => {},
+      (reason) => leaseFailures.push(reason),
+      'normal',
+    )
+    await harness.reader.select('repository/workspace/overview')
+    const closedPane = harness.reader['app']!,
+      historyPage = closedPane.webview.html
+    closedPane.dispose()
+    const messagesBeforeReturn = harness.postedMessages().length
+
+    // Act: the learner follows the current run, and the reader's timer runs once more.
+    await harness.reader.action('return-current')
+    await readerSeams(harness).refresh()
+
+    // Assert: one line was shown during the return and is still there; the released lease was not asked and the closed pane kept its page.
+    const errorLinesShown = new Set(
+      harness
+        .postedMessages()
+        .slice(messagesBeforeReturn)
+        .flatMap((message) => message.errors),
+    )
+    assert.deepEqual(leaseFailures, ['Owned viewport closed before cleanup'])
+    assert.deepEqual(
+      [...errorLinesShown],
+      [
+        'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+      ],
+    )
+    assert.deepEqual(
+      [...harness.postedMessages().at(-1)!.errors],
+      [
+        'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+      ],
+    )
+    assert.equal(harness.postedMessages().at(-1)!.unretryableErrorCount, 1)
+    assert.equal(closedPane.webview.html, historyPage)
+    // The fake lease still refuses like the real viewport (Cycle 0045 D-M3), which is what made the old behavior visible.
+    await assert.rejects(
+      lease.showLive(new AbortController().signal),
+      /Viewport lease is released/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the line about a closed Application pane leaving once a pane exists again; fails_when=the line stays through the next run, although that run's pane shows the application; why_new=Cycle 0045 H2-F1 (the line is kept under its own kind, which no render retires); seam=WorkspaceViewport
+test('a new run that opens the Application pane again retires the line about the closed one', async () => {
+  // Arrange: the learner closed the Application pane of a live run and followed the current run, which left the line.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.reader.presentation.createViewport(
+      'live-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+    await harness.reader.select('repository/workspace/overview')
+    harness.reader['app']!.dispose()
+    await harness.reader.action('return-current')
+    const linesBeforeTheNewRun = [...harness.postedMessages().at(-1)!.errors]
+
+    // Act: a new run takes its viewport lease, which opens the pane again.
+    harness.reader.presentation.createViewport(
+      'next-run',
+      () => {},
+      () => {},
+      'normal',
+    )
+
+    // Assert
+    assert.deepEqual(linesBeforeTheNewRun, [
+      'Error: The Application pane of the current run was closed, which ended that run. Ask your agent for a new run to see the application again.',
+    ])
+    assert.deepEqual([...harness.postedMessages().at(-1)!.errors], [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests of Show Variables meeting the real debugger owner when the learner stops the recorded session during a wait; fails_when=the fake debugger keeps a wait for native Variables open after its session ended, or lets the view's refresh, 400 ms later, answer a wait as retrieved; why_new=Cycle 0045 X7-D.2 (the fake's wait read only the fake view, never the session); seam=the workspace harness's fake historical debugger and its fake Variables view
+test('the workspace harness historical debugger ends a wait for native Variables when its session ends, and the view refreshing later no longer answers one, like the real owner', async () => {
+  // Arrange: a recorded stop is presented while the host's Variables view was hidden; the learner shows the view, which refreshes 400 ms later.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('missed-the-stop')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const debuggerView = harness.historicalDebuggers.at(-1)!
+    await harness.editor.commands.executeCommand(
+      'workbench.debug.action.focusVariablesView',
+    )
+
+    // Act: the learner stops the recorded session while a wait for the stop's scopes is open; the view refreshes afterwards.
+    const waitOpenAtTheEnd = debuggerView.awaitRetrieval('scopes', 2_000)
+    harness.endHistoricalDebugSession()
+    // One turn of the event loop is the bound: the real owner answers an open wait as the session ends.
+    const answerAtTheEnd = await Promise.race([
+      waitOpenAtTheEnd,
+      new Promise<string>((resolve) => {
+        setImmediate(resolve, 'still waiting')
+      }),
+    ])
+    await waitUntil(
+      () => harness.nativeVariablesView().valuesListed,
+      'the Variables view refreshed',
+      2_000,
+    )
+    const answerAfterTheRefresh = await debuggerView.awaitRetrieval(
+      'values',
+      2_000,
+    )
+
+    // Assert
+    assert.equal(answerAtTheEnd, false)
+    assert.equal(answerAfterTheRefresh, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests of Show Variables meeting the real debugger owner when the reader is closed during a wait; fails_when=the fake debugger keeps a wait for native Variables open after it was disposed, until the wait's own deadline; why_new=Cycle 0045 X7-D.2 (the fake's dispose woke no wait); seam=the workspace harness's fake historical debugger and its fake Variables view
+test('the workspace harness historical debugger ends a wait for native Variables when the reader is closed, like the real owner', async () => {
+  // Arrange: a recorded stop is presented while the host's Variables view shows another session, so the view never asks for the stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    harness.setHistoricalDebugInspection('uninspected')
+    harness.hideNativeVariables('shows-another-session')
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+    const debuggerView = harness.historicalDebuggers.at(-1)!
+
+    // Act: the reader is closed, which disposes its debugger, while a wait for the stop's scopes is open.
+    const waitOpenAtTheClose = debuggerView.awaitRetrieval('scopes', 2_000)
+    await harness.reader.close()
+    // One turn of the event loop is the bound: the real owner answers an open wait as it is disposed.
+    const answerAtTheClose = await Promise.race([
+      waitOpenAtTheClose,
+      new Promise<string>((resolve) => {
+        setImmediate(resolve, 'still waiting')
+      }),
+    ])
+
+    // Assert
+    assert.equal(answerAtTheClose, false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a click on "Open replay" in the status bar opening the recording; fails_when=every publish of the reader assigns a new command object to the status entry, so the host disposes the command the entry was drawn with and a click between two publishes ends in the host's "Actual command not found"; why_new=Cycle 0045 NF-23 (Cursor showed that toast on one Open replay click); seam=the harness's status item counts the assignments of its command
+test('the Open replay entry keeps its command while the reader publishes again without a change, so a click between two publishes still opens the recording', async () => {
+  // Arrange: a saved recording, whose status bar entry offers Open replay.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.saveLearningReplay(harness.studyId)
+    const openReplayCommand = harness.saveStatus.command
+    const assignmentsAtSave = harness.saveStatus.commandAssignments
+
+    // Act: the reader publishes three more times while nothing about the entry changes.
+    for (let publishCount = 0; publishCount < 3; publishCount++)
+      readerSeams(harness).publish()
+
+    // Assert: the host was handed no new command object, so the entry drawn with the first one still runs it.
+    assert.deepEqual(structuredClone(openReplayCommand), {
+      title: 'Open learning replay',
+      command: 'codebook.openLearningReplay',
+      arguments: [harness.studyId],
+    })
+    assert.equal(harness.saveStatus.commandAssignments - assignmentsAtSave, 0)
+    assert.equal(harness.saveStatus.command, openReplayCommand)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=design decision 2A, one recording control in the status bar: Save learning replay during the run, Open replay after the save; fails_when=the reader offers the run's recording while it is unsaved, or creates a second status bar item for it, which would put a replay session beside a paused live session in Call Stack; why_new=Cycle 0045 NF-2 as DR-6 (closed as no defect, pinned); seam=the harness records every status bar item the reader creates
+test('while a run records the status bar offers Save learning replay and no second recording control, and after the save the same item offers Open replay', async () => {
+  // Arrange: a run that is paused at its first stop and still recording.
+  const harness = await workspaceHarness(true, true)
+  try {
+    harness.acknowledgeContext()
+    harness.service.environment.build.sourceHash = sha256(
+      'recording-control-pin-build',
+    )
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: 'recording-control-pin',
+    })
+    const record = [...harness.service.records.values()][0]!
+    await record.preparation
+    harness.clock(100)
+    await harness.reader.action('click')
+    const studyId = `${harness.service.instanceId}_${record.id}`
+    const whileRecording = {
+      runStopped: record.stopped,
+      text: harness.saveStatus.text,
+      command: structuredClone(harness.saveStatus.command),
+      visible: harness.saveStatus.visible,
+      statusItems: [...harness.createdStatusItemIds],
+    }
+
+    // Act
+    await harness.reader.saveLearningReplay(studyId)
+
+    // Assert
+    assert.deepEqual(whileRecording, {
+      runStopped: false,
+      text: '$(record) Recording explanation · Save learning replay',
+      command: {
+        title: 'Save learning replay',
+        command: 'codebook.saveLearningReplay',
+        arguments: [studyId],
+      },
+      visible: true,
+      statusItems: ['codebook.learningSave'],
+    })
+    assert.deepEqual(
+      {
+        text: harness.saveStatus.text,
+        command: structuredClone(harness.saveStatus.command),
+        visible: harness.saveStatus.visible,
+        statusItems: [...harness.createdStatusItemIds],
+      },
+      {
+        text: '$(warning) Learning partially saved · Open replay',
+        command: {
+          title: 'Open learning replay',
+          command: 'codebook.openLearningReplay',
+          arguments: [studyId],
+        },
+        visible: true,
+        statusItems: ['codebook.learningSave'],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const holder of ['the captured source', 'the Study pane'] as const)
+  // Value: protects=the keyboard after Close Study Workspace when a Codebook pane or the captured source had it: the editor group that remains gets it; fails_when=the tabs are closed without moving the focus and nothing is focused afterwards, so the keyboard is on the page body until the learner clicks; why_new=Cycle 0045 cause 12 (f) (obs15 P4: `document.activeElement` was the page body after Close, twice); seam=the workspace harness's keyboardOnBody, focusMutableDraft
+  test(`Close Study Workspace made with the keyboard in ${holder} leaves the keyboard in the editor group that remains`, async () => {
+    // Arrange: the learner's file is a tab of the first group; the reader is open and the keyboard is in one of its panes.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      if (holder === 'the captured source')
+        await harness.editor.window.showTextDocument(
+          harness.editor.window.visibleTextEditors.find(
+            (editor) => editor.viewColumn === 2,
+          )!.document,
+          { viewColumn: 2, preserveFocus: false },
+        )
+      const before = {
+        keyboardInSource:
+          harness.editor.window.activeTextEditor?.viewColumn === 2,
+        keyboardInStudyPane: harness.focusedPanel() === 'codebook.studyContext',
+      }
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.deepEqual(before, {
+        keyboardInSource: holder === 'the captured source',
+        keyboardInStudyPane: holder === 'the Study pane',
+      })
+      assert.equal(harness.reader.presentationState().state, 'closed')
+      assert.equal(harness.keyboardOnBody(), false)
+      assert.equal(
+        harness.commands.at(-1),
+        'workbench.action.focusActiveEditorGroup',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard after Close Study Workspace in an editor that closes a disposed pane's tab a moment after the disposal, as Cursor and VS Code do: the group that remains gets the keyboard once the panes' tabs are gone; fails_when=the focus command runs right after the disposal, reaches the group that still shows the closing Application pane, and the keyboard goes with that tab to the page body; why_new=Cycle 0045 cause 12 (f), second native result (obs15 R, `e-after.dom.json`: `document.activeElement` is the page body after Close with the caret in the captured source; the first fix passed its test because the fake editor closed the panes' tabs at once); seam=the workspace harness's closeDisposedPanelTabsLater and keyboardOnBody
+test("Close Study Workspace made with the keyboard in the captured source leaves the keyboard in the editor group that remains when the editor closes the panes' tabs a moment later", async () => {
+  // Arrange: the learner's file is a tab of the first group; the reader is open, the keyboard is in the captured source, and the editor closes a disposed pane's tab 20 ms after the disposal and removes a group its last tab left empty.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    await harness.editor.window.showTextDocument(
+      harness.editor.window.visibleTextEditors.find(
+        (editor) => editor.viewColumn === 2,
+      )!.document,
+      { viewColumn: 2, preserveFocus: false },
+    )
+    const keyboardInSource =
+      harness.editor.window.activeTextEditor?.viewColumn === 2
+
+    // Act
+    await harness.reader.close()
+    // Longer than the fake editor's delay for a disposed pane's tab.
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    // Assert
+    assert.equal(keyboardInSource, true)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+    assert.equal(harness.counts().panels, 0)
+    assert.deepEqual(
+      harness.groups.map((group) => group.viewColumn),
+      [1],
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.commands.at(-1),
+      'workbench.action.focusActiveEditorGroup',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner who types in their own file while the Study workspace is closed: Close focuses nothing; fails_when=Close runs a focus command although no pane of Codebook had the keyboard, which can move the keyboard away from where the learner is; why_new=Cycle 0045 cause 12 (f), the counterpart of the cases above; seam=the workspace harness's command log, focusMutableDraft
+test("Close Study Workspace made with the keyboard in the learner's own file runs no focus command", async () => {
+  // Arrange
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .some((command) => /^workbench\.action\.focus/.test(command)),
+      false,
+    )
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.editor.window.activeTextEditor?.document,
+      learnerFile.document,
+    )
+  } finally {
     await harness.close()
   }
 })

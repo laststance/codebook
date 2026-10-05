@@ -2,10 +2,11 @@ import { spawn } from 'node:child_process'
 
 import {
   WIKI_CURSOR_PROMPT_LIMIT_BYTES,
+  WIKI_CURSOR_SHUTDOWN_GRACE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES,
-  WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
+  WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
 } from '../constants'
 
 import { terminateCursorAgentProcess } from './requestCursorWikiText'
@@ -41,17 +42,50 @@ export function parseCursorWikiUpdateResult(output: string): string {
   return envelope.result
 }
 
-/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window. @param timeoutMs - Bound after which the agent is stopped. @returns The agent's reply, once the agent process has closed. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel, a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal) */
+/**
+ * Refuses to go on with a Cursor update that was already cancelled; called by {@link runCursorWikiUpdate} before it looks up the executable and again before it starts the agent, because an abort that arrives in between has no listener to fire.
+ * @param signal - The run's abort, if the caller has one.
+ * @throws A plain error saying that the Wiki update was cancelled, when the signal is aborted.
+ * @example
+ * throwIfWikiUpdateCancelled(controller.signal) // returns while the learner has not cancelled
+ */
+function throwIfWikiUpdateCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
+}
+
+/**
+ * Words the failure of an agent process that closed without a clean exit and that Codebook did not stop; called by the `close` handler of {@link runCursorWikiUpdate}.
+ * @param code - The exit code, or `null` when a signal ended the process.
+ * @param exitSignal - The signal that ended the process, or `null`.
+ * @returns The error whose sentence says how the agent stopped and where its own message can be read; the page alone says what was kept.
+ * @example
+ * unfinishedExitError(1, null).message
+ * // => 'Cursor Agent stopped with exit code 1 before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.'
+ * unfinishedExitError(null, 'SIGTERM').message
+ * // => 'Cursor Agent stopped on signal SIGTERM before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.'
+ */
+function unfinishedExitError(
+  code: number | null,
+  exitSignal: NodeJS.Signals | null,
+): Error {
+  return new Error(
+    `Cursor Agent stopped ${code === null ? `on signal ${exitSignal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
+  )
+}
+
+/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window, which aborts with {@link WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON} and so gets the shorter grace before the hard stop. @param timeoutMs - Bound after which the agent is stopped; the caller passes the bound it announced. @returns The agent's reply, once the agent process has closed. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel (also one that arrives while the executable is looked up, which starts no process), a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed, and after a stop nothing of the agent's process group is left running. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal, 900_000) */
 export async function runCursorWikiUpdate(
   projectRoot: string,
   prompt: string,
-  signal?: AbortSignal,
-  timeoutMs: number = WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<string> {
   if (Buffer.byteLength(prompt, 'utf8') > WIKI_CURSOR_PROMPT_LIMIT_BYTES)
     throw new Error('The Wiki update request is too large.')
-  if (signal?.aborted) throw new Error('The Wiki update was cancelled.')
+  throwIfWikiUpdateCancelled(signal)
   const executable = await resolveCursorAgentExecutable()
+  // An abort that arrived while the executable was being resolved has no listener to fire; no agent may start after it.
+  throwIfWikiUpdateCancelled(signal)
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn(
       executable,
@@ -76,21 +110,29 @@ export async function runCursorWikiUpdate(
     let outputBytes = 0
     let failure: Error | undefined
     let killTimer: NodeJS.Timeout | undefined
+    /** Hard-stops the agent's whole process group, also the children the CLI started. */
+    const killProcessGroup = (): void => {
+      if (child.pid && process.platform !== 'win32') {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+          return
+        } catch {
+          /* The process may have exited already. */
+        }
+      }
+      child.kill('SIGKILL')
+    }
     const stop = (error: Error): void => {
       if (failure) return
       failure = error
       terminateCursorAgentProcess(child)
-      killTimer = setTimeout(() => {
-        if (child.pid && process.platform !== 'win32') {
-          try {
-            process.kill(-child.pid, 'SIGKILL')
-            return
-          } catch {
-            /* The process may have exited already. */
-          }
-        }
-        child.kill('SIGKILL')
-      }, WIKI_CURSOR_TERMINATION_GRACE_MS)
+      killTimer = setTimeout(
+        killProcessGroup,
+        // The extension host exits a few seconds after a window starts to close, so the hard stop must come well before that.
+        signal?.reason === WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON
+          ? WIKI_CURSOR_SHUTDOWN_GRACE_MS
+          : WIKI_CURSOR_TERMINATION_GRACE_MS,
+      )
     }
     const timeout = setTimeout(() => {
       const timedOut = new Error('Cursor Agent timed out updating the Wiki.')
@@ -100,8 +142,6 @@ export async function runCursorWikiUpdate(
     }, timeoutMs)
     const cancel = (): void => stop(new Error('The Wiki update was cancelled.'))
     signal?.addEventListener('abort', cancel, { once: true })
-    // An abort that arrived while the executable was being resolved has no listener to fire.
-    if (signal?.aborted) cancel()
     child.stdout.on('data', (chunk: Buffer) => {
       outputBytes += chunk.length
       if (outputBytes > WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES) {
@@ -132,7 +172,11 @@ export async function runCursorWikiUpdate(
     })
     child.on('close', (code, exitSignal) => {
       clearTimeout(timeout)
-      if (killTimer) clearTimeout(killTimer)
+      if (killTimer) {
+        clearTimeout(killTimer)
+        // The CLI's own exit does not stop a child of its group that ignored the stop request; nothing may keep writing after the update is reported stopped.
+        killProcessGroup()
+      }
       signal?.removeEventListener('abort', cancel)
       if (failure) {
         reject(failure)
@@ -140,11 +184,7 @@ export async function runCursorWikiUpdate(
       }
       if (code !== 0) {
         // A reason says what happened and what to do; the page alone says what was kept.
-        reject(
-          new Error(
-            `Cursor Agent stopped ${code === null ? `on signal ${exitSignal ?? 'unknown'}` : `with exit code ${code}`} before finishing. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`,
-          ),
-        )
+        reject(unfinishedExitError(code, exitSignal))
         return
       }
       resolve(Buffer.concat(chunks).toString('utf8'))

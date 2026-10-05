@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import { isUnreapedProcessGroupError } from '../utils/isUnreapedProcessGroupError'
 import { signalProcessGroup } from '../utils/signalProcessGroup'
 
 test('a signal for an owned process group is sent to the whole group', (context) => {
@@ -58,6 +59,18 @@ test('signalling a process group with a member the user may not signal fails the
   const signalling = (): void => signalProcessGroup(4242, 'SIGTERM')
   // Assert
   assert.throws(signalling, { message: 'kill EPERM', code: 'EPERM' })
+})
+
+// Cycle 0045 (SS-8): the judgement had a platform parameter no caller passed. The directive below fails the type check when that parameter comes back.
+test('a failed group signal is judged by the platform Codebook runs on, never by one a caller names', (context) => {
+  // Arrange
+  context.mock.property(process, 'platform', 'linux')
+  const refusal = Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+  // Act
+  // @ts-expect-error The judgement takes the error alone: a platform given as a second argument does not compile.
+  const isUnreaped = isUnreapedProcessGroupError(refusal, 'darwin')
+  // Assert
+  assert.equal(isUnreaped, false)
 })
 
 // Cycle 0044 (0041-F8 / 0041-OCR1): red while any number reached process.kill, where -1 signals every process of the user and -0 the caller's group.

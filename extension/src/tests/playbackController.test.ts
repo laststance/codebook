@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
+import * as constants from '../constants'
 import {
   PlaybackController,
   type PlaybackBundle,
   type PlaybackData,
   type PlaybackDependencies,
 } from '../playbackController'
+import type * as PlaybackSchemasModule from '../playbackSchemas'
 import type {
   RecordingContext,
   RecordingFrame,
@@ -16,6 +19,7 @@ import type {
 import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { loadModule } from './utils/loadModule'
 
 /** Supplies deterministic recorded identities to control-concurrency tests, without live browser/debugger effects. @example const data = playbackFixture() */
 function playbackFixture(): PlaybackData {
@@ -1302,4 +1306,504 @@ test('once the recording has arrived and before its first frame is presented, a 
   assert.equal(player.controller.state().readiness, 'ready')
   assert.equal(player.controller.state().presentedMs, 100)
   await player.controller.dispose()
+})
+
+// Value: protects=the recorded application image and the Run and Debug session staying on screen while Play passes the time an explanation was saved; fails_when=an explanation that becomes available for the stop on screen retires the displayed moment, so the image blanks and Run and Debug is emptied until the same stop is presented again; why_new=Cycle 0045 NF-13 (Cursor: the image blanked for about 0.6 s at 99.90 s of a Play); seam=none
+test('Play keeps the recorded image and the recorded session on screen when an explanation becomes available while the same stop stays selected', async () => {
+  // Arrange: the stop committed at 100 ms stays selected to the end of the recording, and its explanation was saved at 150 ms.
+  let invalidations = 0
+  let clearedWhilePresentingExplanation: boolean | undefined
+  const player = playbackHarness({
+    invalidate: () => {
+      invalidations++
+    },
+    // Every publication while the explanation's time is requested reads the controller's state as the workspace does; one cleared reading is kept.
+    changed: () => {
+      if (player.controller.state().requestedMs === 150)
+        clearedWhilePresentingExplanation =
+          Boolean(clearedWhilePresentingExplanation) ||
+          player.controller.state().cleared
+    },
+  })
+  const explanationId = '44444444-4444-4444-8444-444444444444'
+  player.data.context!.study.observations[0]!.interpretations = [
+    {
+      id: explanationId,
+      text: 'The form state is still pending at this stop.',
+      createdAt: '2026-09-19T00:00:03.000Z',
+      facts: [],
+    },
+  ]
+  player.data.context!.interpretationAvailability = [
+    { id: explanationId, snapshotId: 'browser-session:1', elapsedMs: 150 },
+  ]
+  player.open()
+  await player.controller.settle()
+  player.seek(120)
+  await player.controller.settle()
+  const explanationsBeforePlay = player.controller
+    .bundle()
+    ?.projection.observation?.interpretations.map(
+      (interpretation) => interpretation.id,
+    )
+  const invalidationsBeforePlay = invalidations
+
+  // Act: Play reaches the time the explanation was saved.
+  player.play()
+  player.clock(30)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(explanationsBeforePlay, [])
+  assert.equal(player.controller.state().presentedMs, 150)
+  assert.deepEqual(
+    player.controller
+      .bundle()
+      ?.projection.observation?.interpretations.map(
+        (interpretation) => interpretation.id,
+      ),
+    ['44444444-4444-4444-8444-444444444444'],
+  )
+  assert.equal(clearedWhilePresentingExplanation, false)
+  assert.equal(invalidations - invalidationsBeforePlay, 0)
+  assert.equal(player.controller.state().cleared, false)
+  assert.equal(player.controller.state().mode, 'playing')
+  await player.controller.dispose()
+})
+
+// Value: protects=the recorded image and Run and Debug staying as they are while Play passes the time an explanation of the stop on screen was saved; fails_when=a change of the explanations shown makes the controller present the same frame and stop again, which re-sends the image to the Application pane and presents the stop to the historical debugger once more; why_new=Cycle 0045 FXU (native check F18 of NF-13); seam=none
+test('Play across the time an explanation becomes available for the stop on screen presents no second moment and publishes the explanation', async () => {
+  // Arrange: the stop committed at 100 ms has no recorded debugger state, so it stays selected to the end of the recording; its explanation was saved at 150 ms.
+  const presentedPositions: number[] = []
+  let invalidations = 0,
+    publicationsOfTheExplainedMoment = 0
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+    invalidate: () => {
+      invalidations++
+    },
+    // Counts only the publications that hand the Study pane the moment of 150 ms with its explanation, as the workspace reads it from the presented bundle.
+    changed: () => {
+      const presented = player.controller.bundle()?.projection
+      if (
+        presented?.positionMs === 150 &&
+        presented.observation?.interpretations.some(
+          (interpretation) => interpretation.id === explanationId,
+        )
+      )
+        publicationsOfTheExplainedMoment++
+    },
+  })
+  const explanationId = '55555555-5555-4555-8555-555555555555'
+  player.data.context!.study.observations[0]!.interpretations = [
+    {
+      id: explanationId,
+      text: 'The theme is read before the click applies it.',
+      createdAt: '2026-09-19T00:00:03.000Z',
+      facts: [],
+    },
+  ]
+  player.data.context!.interpretationAvailability = [
+    { id: explanationId, snapshotId: 'browser-session:1', elapsedMs: 150 },
+  ]
+  player.open()
+  await player.controller.settle()
+  player.seek(120)
+  await player.controller.settle()
+  const explanationsBeforePlay = player.controller
+    .bundle()
+    ?.projection.observation?.interpretations.map(
+      (interpretation) => interpretation.id,
+    )
+  const invalidationsBeforePlay = invalidations
+  player.play()
+
+  // Act: Play reaches the time the explanation was saved.
+  player.clock(30)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.deepEqual(explanationsBeforePlay, [])
+  assert.equal(player.controller.state().presentedMs, 150)
+  assert.deepEqual(
+    player.controller
+      .bundle()
+      ?.projection.observation?.interpretations.map(
+        (interpretation) => interpretation.id,
+      ),
+    ['55555555-5555-4555-8555-555555555555'],
+  )
+  assert.deepEqual(presentedPositions, [0, 120])
+  assert.equal(invalidations - invalidationsBeforePlay, 0)
+  assert.equal(publicationsOfTheExplainedMoment, 1)
+  assert.equal(player.controller.state().mode, 'playing')
+  await player.controller.dispose()
+})
+
+// Value: protects=Play still painting each new recorded image of the stop on screen; fails_when=the presentation key loses the frame hash, so the Application pane keeps the previous image while the playhead moves on; why_new=Cycle 0045 FXU narrowed the presentation key; seam=none
+test('Play across a new recorded frame of the stop on screen presents that frame', async () => {
+  // Arrange: the stop committed at 100 ms stays selected; the next recorded frame arrives at 200 ms.
+  const presentedPositions: number[] = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(120)
+  await player.controller.settle()
+  player.play()
+
+  // Act: Play moves 100 ms on, past the frame of 200 ms.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 220)
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-200'))
+  assert.deepEqual(presentedPositions, [0, 120, 220])
+  await player.controller.dispose()
+})
+
+// Value: protects=Play retiring the moment before a recorded stop and presenting the stop when it reaches it; fails_when=the controller treats the stop as the same moment, so the Application pane and Run and Debug keep the moment before it, or keeps the previous image while the stop's new frame loads; why_new=Cycle 0045 FXU narrowed the presentation key and keeps the image only where a stop's pause ends; seam=none
+test('Play that reaches a recorded stop retires the moment before it, clears its image and presents the stop', async () => {
+  // Arrange: the playhead stands at 50 ms, before the stop committed at 100 ms with a frame of its own.
+  const presentedPositions: number[] = []
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(50)
+  await player.controller.settle()
+  player.play()
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
+
+  // Act: Play moves 100 ms on and stops at the stop's time.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 100)
+  assert.equal(player.controller.state().observationId, 'browser-session:1')
+  assert.deepEqual(presentedPositions, [0, 50, 100])
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    false,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=a stop entered on the frame already on screen still showing its loading state until its values are presented; fails_when=the kept image extends from a pause end to a stop entry; why_new=Cycle 0045 NF-13c keeps the image only where a stop's pause ends; seam=none
+test('Play that reaches a recorded stop on the frame already on screen still clears the image until the stop is presented', async () => {
+  // Arrange: the stop was committed at 70 ms, while the frame of 50 ms was still the latest; the playhead stands at 60 ms.
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.data.context!.study.observations[0]!.elapsedMs = 70
+  player.open()
+  await player.controller.settle()
+  player.seek(60)
+  await player.controller.settle()
+  player.play()
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
+
+  // Act: Play moves 100 ms on and stops at the stop's time.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 70)
+  assert.equal(player.controller.state().observationId, 'browser-session:1')
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-50'))
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    false,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=the recorded image staying on screen when a stop's recorded pause ends on the same frame, while the stop's values retire; fails_when=the pause end clears the Application pane to its loading state (native check F18: 17 to 35 dark frames at 153.24, 168.80 and 183.56 s), or keeps the stop and its debugger snapshot after the recording says the application continued; why_new=Cycle 0045 NF-13c; seam=none
+test('Play that reaches the end of a stop’s recorded pause on the same frame keeps the image, retires the stop’s values and presents the moment without a stop', async () => {
+  // Arrange: the stop committed at 100 ms carries recorded debugger state and its pause ended at 150 ms, before the next frame (200 ms).
+  const presentedPositions: number[] = []
+  const presentedSnapshots: boolean[] = []
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+      presentedSnapshots.push(Boolean(bundle.projection.debugger))
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  const context = player.data.context!
+  const stop = context.study.observations[0]!
+  stop.debugger = {
+    version: 1,
+    frames: [
+      {
+        name: 'applyTheme',
+        line: 1,
+        column: 1,
+        source: {
+          name: 'theme.ts',
+          text: stop.source.text,
+          hash: stop.source.hash,
+          line: 1,
+        },
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [{ name: 'nextTheme', value: 'dark', children: [] }],
+    limitations: [],
+  }
+  context.pausedIntervals = [{ snapshotId: stop.id, startMs: 100, endMs: 150 }]
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.play()
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
+
+  // Act: Play moves 100 ms on and stops at the end of the pause.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 150)
+  assert.equal(player.controller.state().observationId, undefined)
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-100'))
+  assert.deepEqual(presentedPositions, [0, 100, 150])
+  assert.deepEqual(presentedSnapshots, [false, true, false])
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    true,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=the recorded image staying on screen when a stop's recorded pause ends and the application has already sent a newer frame, until that frame paints; fails_when=the pause end clears the Application pane because the next moment's frame hash differs (native check F18 on candidate 20: 0.6 s dark at 153.19 and 183.46 s, where the next frame arrived 49 and 14 ms after the pause ended); why_new=Cycle 0045 NF-13d; seam=none
+test('Play that reaches the end of a stop’s recorded pause on a newer frame keeps the image until that frame is presented', async () => {
+  // Arrange: the stop committed at 100 ms carries recorded debugger state and its pause ended at 200 ms, when the next frame arrived.
+  const presentedPositions: number[] = []
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  const context = player.data.context!
+  const stop = context.study.observations[0]!
+  stop.debugger = {
+    version: 1,
+    frames: [
+      {
+        name: 'applyTheme',
+        line: 1,
+        column: 1,
+        source: {
+          name: 'theme.ts',
+          text: stop.source.text,
+          hash: stop.source.hash,
+          line: 1,
+        },
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [{ name: 'nextTheme', value: 'dark', children: [] }],
+    limitations: [],
+  }
+  context.pausedIntervals = [{ snapshotId: stop.id, startMs: 100, endMs: 200 }]
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.play()
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
+
+  // Act: Play moves 100 ms on and stops at the end of the pause.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 200)
+  assert.equal(player.controller.state().observationId, undefined)
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-200'))
+  assert.deepEqual(presentedPositions, [0, 100, 200])
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    true,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=the recorded image staying on screen when the learner pauses Play between two frames; fails_when=Pause clears the Application pane although no newer frame is in flight, so it blinks dark while the same moment is restored (native check F18 on candidate 20: 3 dark frames at each Pause); why_new=Cycle 0045 NF-13d; seam=none
+test('Pause between two Play steps keeps the image on screen while the paused moment is restored', async () => {
+  // Arrange: Play has presented the frame of 100 ms at 120 ms and nothing is in flight.
+  const presentedPositions: number[] = []
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.play()
+  player.clock(20)
+  player.controller.tick()
+  await player.controller.settle()
+  const invalidationsBeforePause = invalidationsKeepingPixels.length
+
+  // Act
+  player.pause()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().mode, 'paused')
+  assert.equal(player.controller.state().presentedMs, 120)
+  assert.deepEqual(presentedPositions, [0, 100, 120])
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsBeforePause), [
+    true,
+    true,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=a frame that was sent but not confirmed never staying on screen after Pause; fails_when=Pause keeps the pixels while a newer frame is still being presented, so the pane may show that frame although the paused moment is the earlier one; why_new=Cycle 0045 NF-13d keeps the pixels at Pause only with no frame in flight; seam=the fake presentation of the newer frame is held
+test('Pause while Play is still presenting a newer frame clears the image until the paused moment is restored', async () => {
+  // Arrange: Play stands at 120 ms on the frame of 100 ms; the frame of 200 ms is being presented and not yet confirmed.
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  let releaseNewerFrame: () => void = () => undefined,
+    enteredNewerFrame: () => void = () => undefined
+  const newerFrameHeld = new Promise<void>((resolve) => {
+      releaseNewerFrame = resolve
+    }),
+    newerFrameEntered = new Promise<void>((resolve) => {
+      enteredNewerFrame = resolve
+    })
+  const player = playbackHarness({
+    present: async (bundle) => {
+      if (bundle.projection.positionMs === 220) {
+        enteredNewerFrame()
+        await newerFrameHeld
+      }
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(120)
+  await player.controller.settle()
+  player.play()
+  player.clock(100)
+  player.controller.tick()
+  await newerFrameEntered
+  const invalidationsBeforePause = invalidationsKeepingPixels.length
+
+  // Act
+  player.pause()
+  releaseNewerFrame()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().mode, 'paused')
+  assert.equal(player.controller.state().presentedMs, 120)
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsBeforePause), [
+    false,
+    false,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=Play painting a new reason when one recorded gap follows another; fails_when=the presentation key loses the missing-history reason, so the Application pane keeps the first gap's sentence; why_new=Cycle 0045 FXU narrowed the presentation key; seam=none
+test('Play from one recorded gap into another presents the second gap’s reason', async () => {
+  // Arrange: the recording lost its frames at 120 ms for one reason and at 180 ms for another.
+  const presentedMissing: Array<string | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedMissing.push(bundle.projection.missing)
+    },
+  })
+  const entries = player.data.index.entries
+  entries.splice(
+    3,
+    0,
+    {
+      type: 'gap',
+      sequence: 4,
+      elapsedMs: 120,
+      reason: 'The renderer stopped sending frames.',
+    },
+    {
+      type: 'gap',
+      sequence: 5,
+      elapsedMs: 180,
+      reason: 'The capture lost its connection.',
+    },
+  )
+  player.open()
+  await player.controller.settle()
+  player.seek(130)
+  await player.controller.settle()
+  player.play()
+
+  // Act: Play moves 60 ms on, into the second gap.
+  player.clock(60)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 190)
+  assert.deepEqual(presentedMissing, [
+    undefined,
+    'The renderer stopped sending frames.',
+    'The capture lost its connection.',
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=an agent reading in the seek description the snap distance the seek really applies; fails_when=the description states the distance as a literal beside PLAYBACK_SEEK_STOP_SNAP_MS, so a changed constant leaves the published sentence wrong; why_new=Cycle 0045 SM-5; seam=the schema module is loaded with a constants module whose snap distance is 5 ms
+test('the seek description names the snap distance the seek applies', async () => {
+  // Arrange
+  const schemas = await loadModule<typeof PlaybackSchemasModule>(
+    resolve(__dirname, '../playbackSchemas.js'),
+    { './constants': { ...constants, PLAYBACK_SEEK_STOP_SNAP_MS: 5 } },
+  )
+
+  // Act
+  const description = schemas.playbackToolSchema.shape.positionMs.description
+
+  // Assert
+  assert.equal(
+    description,
+    'Required only for seek; use a position within the returned recording range. A position less than 5 ms before a recorded stop presents that stop. Omit for open, play and pause.',
+  )
 })

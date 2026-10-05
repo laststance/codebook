@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
 import {
@@ -6,10 +7,14 @@ import {
   REPOSITORY_JAVASCRIPT_LIMIT_BYTES,
 } from '../constants'
 import type { BundleSource } from '../repositoryBundle'
+import type * as CreateBundleVerifierModule from '../utils/createBundleVerifier'
 import { createBundleVerifier } from '../utils/createBundleVerifier'
 import { extractDevelopmentModule } from '../utils/extractDevelopmentModule'
+import { isSourcePosition } from '../utils/isSourcePosition'
 import { sameScriptUrl } from '../utils/sameScriptUrl'
 import { sourceMapMappedPositions } from '../utils/sourceMapMappedPositions'
+
+import { loadModule } from './utils/loadModule'
 
 const source = 'setTheme(otherTheme);\n'
 const javascript = 'setTheme(otherTheme);'
@@ -500,6 +505,62 @@ test('the sealed map gives no source line for generated code after a segment wit
     pastEndOfLine: undefined,
     pastEndOfModule: undefined,
   })
+})
+
+// Cycle 0045 (SP-3): red while every lookup scanned the generated text from its start (`isSourcePosition`), 2.1 s for the break locations of an 8,000-line module.
+test('the sealed map places generated locations on the module’s once-split lines, without another pass over the module text for each location', async () => {
+  // Arrange: the verifier is loaded with a position check that counts how often the module text is scanned.
+  let moduleTextScans = 0
+  const javascript = 'setTheme(otherTheme);\nnext();\nlast();'
+  const verifierModule = await loadModule<typeof CreateBundleVerifierModule>(
+    resolve(__dirname, '../utils/createBundleVerifier.js'),
+    {
+      './isSourcePosition': {
+        isSourcePosition: (text: string, line: number, column: number) => {
+          if (text === javascript) moduleTextScans++
+          return isSourcePosition(text, line, column)
+        },
+      },
+    },
+  )
+  const verifier = verifierModule.createBundleVerifier({
+    ...bundle,
+    javascript,
+    sourceMap: JSON.stringify({ ...payload, mappings: 'ICAA;AACA;AACA' }),
+  })
+  // Act
+  const lines = [
+    verifier.originalLine({ lineNumber: 0, columnNumber: 4 }),
+    verifier.originalLine({ lineNumber: 1, columnNumber: 7 }),
+    verifier.originalLine({ lineNumber: 2, columnNumber: 0 }),
+    verifier.originalLine({ lineNumber: 2, columnNumber: 8 }),
+    verifier.originalLine({ lineNumber: 3, columnNumber: 0 }),
+    verifier.originalLine({ lineNumber: 0, columnNumber: -1 }),
+  ]
+  // Assert: a place on a line, at its end, past its end, past the module and before the line are told apart as before.
+  assert.deepEqual(lines, [1, 2, 3, undefined, undefined, undefined])
+  assert.equal(moduleTextScans, 0)
+})
+
+test('the sealed map gives the generated range of a cited line for a break location request', () => {
+  // Arrange: generated line 0 holds line 1 of the cited source from column 4 on, generated line 1 its line 2.
+  const verifier = createBundleVerifier({
+    ...bundle,
+    javascript: 'setTheme(otherTheme);\nnext();',
+    sourceMap: JSON.stringify({ ...payload, mappings: 'ICAA;AACA' }),
+  })
+  // Act
+  const firstLine = verifier.generatedRangeOfLine(1),
+    unmappedLine = verifier.generatedRangeOfLine(3)
+  // Assert
+  assert.deepEqual(firstLine, {
+    range: {
+      start: { lineNumber: 0, columnNumber: 4 },
+      end: { lineNumber: 1, columnNumber: 0 },
+    },
+    complete: true,
+  })
+  assert.deepEqual(unmappedLine, { range: undefined, complete: true })
 })
 
 // Value: protects=the binding rule and the declared-line check telling a comment the development build kept from code; fails_when=a mapping onto a `//` comment of the generated module is reported as a mapped position; why_new=Cycle 0043 N-2 (Next's webpack build maps `// Auth.js error messages…`); seam=none

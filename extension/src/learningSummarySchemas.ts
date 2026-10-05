@@ -5,6 +5,7 @@ import {
   REFERENCE_LENGTH_LIMIT,
   LEARNING_SUMMARY_LIMITS,
 } from './constants'
+import { learningSummaryIssues } from './utils/learningSummaryIssues'
 
 export const learningStepIdSchema = z
   .string()
@@ -47,27 +48,25 @@ export const learningSummarySchema = z
           label: z.string().min(1).max(LEARNING_SUMMARY_LIMITS.stepLabelChars),
           explanation: z.string().min(1).max(MAX_EXPLANATION_CHARS),
           evidence: z.enum(['observed', 'source-derived', 'unknown']),
-          reference: reference.optional(),
+          reference: reference
+            .optional()
+            .describe(
+              "Required for an observed or source-derived step: the snapshotUri and sourceHash of a committed observation of this run, or after the result the run's terminalReference; omit it only for an unknown step.",
+            ),
         }),
       )
       .min(1)
       .max(LEARNING_SUMMARY_LIMITS.steps),
   })
-  .refine((value) => {
-    const participants = new Set(
-      value.participants.map((participant) => participant.id),
-    )
-    return (
-      participants.size === value.participants.length &&
-      new Set(value.steps.map((step) => step.id)).size === value.steps.length &&
-      value.steps.every(
-        (step) =>
-          participants.has(step.from) &&
-          participants.has(step.to) &&
-          (step.evidence === 'unknown' || step.reference),
-      )
-    )
-  }, 'Use unique participant/step IDs, declared participants and a verified reference for every observed or source-derived step.')
+  .superRefine((value, context) => {
+    // Each broken rule is its own issue at the offending element, so an agent corrects that element instead of dropping the summary.
+    for (const issue of learningSummaryIssues(
+      value,
+      'learningSummary',
+      'Give it the reference {snapshotUri, sourceHash} of a committed observation of this run, or label it unknown.',
+    ))
+      context.addIssue({ code: 'custom', ...issue })
+  })
   .refine(
     (value) =>
       Buffer.byteLength(JSON.stringify(value), 'utf8') <=

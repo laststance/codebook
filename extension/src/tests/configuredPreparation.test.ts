@@ -3,6 +3,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { RepositoryBookStore } from '../repositoryBook'
 import type { BookDocument } from '../repositorySchemas'
@@ -11,10 +12,13 @@ import { prepareRepositoryStudy } from '../utils/prepareRepositoryStudy'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
 import { repositoryHarness } from './utils/repositoryHarness'
 
-/** Supplies real tracked files and an immutable book while leaving all application effects absent. @example const { books, configuration } = await preparationHarness(context) */
-async function preparationHarness(context: TestContext) {
+/** Supplies real tracked files and an immutable book while leaving all application effects absent; `fixture` replaces the cited browser source and widens its citation. @example const { books, configuration } = await preparationHarness(context) */
+async function preparationHarness(
+  context: TestContext,
+  fixture?: { source: string; citationEndLine: number },
+) {
   const repository = await repositoryHarness(context),
-    reference = createConfiguredStudy()
+    reference = createConfiguredStudy(fixture?.source, fixture?.citationEndLine)
   for (const source of reference.descriptor!.sources)
     await repository.track(source.path, source.text)
   await repository.track('src/unrelated.ts', 'export const unrelated = true;\n')
@@ -135,7 +139,7 @@ test('missing book revisions or nodes cannot silently select another article bef
     {
       code: 'BOOK_UNAVAILABLE',
       message:
-        'configuration.book.nodeId does not exist in the exact selected revision.',
+        'configuration.book.nodeId absent does not exist in revision 1 of book interface, which has the nodes: theme, unrelated. Use one of them, or publish your own document under its own book id and start on that revision.',
     },
   )
 })
@@ -207,6 +211,104 @@ test('a start whose anchor index selects a citation without its source line name
         'configuration.book.anchorIndex 0 selects citation src/theme.ts:1-1, which does not contain configuration.source src/theme.ts:2. Node "theme" has citations 0..1; no citation covers src/theme.ts:2; publish a revision that cites it or choose a cited line.',
     },
   )
+})
+
+// Cycle 0045 (ST-11): the sentences of a later stop were not asserted; green on 6a7a0b8, its controls are the index and the two version branches of describeCitationMismatch.
+test('a later stop whose anchor index selects a citation without its line is named by its additionalStops field: the entry itself in version 1, its source and anchorIndex in version 2', async (context) => {
+  // Arrange: node "theme" cites src/theme.ts:1-1 (index 0) and src/mode.ts:1-1 (index 1).
+  const { books, configuration, control } = await preparationHarness(context)
+  const inspections = configuration.inspections
+  // Act / Assert: a version 1 later stop shares the first stop's file and index, so only its line can leave the citation.
+  await assert.rejects(
+    prepareRepositoryStudy(
+      {
+        ...configuration,
+        additionalStops: [{ line: 2, column: 1, inspections }],
+      },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.book.anchorIndex 0 selects citation src/theme.ts:1-1, which does not contain configuration.additionalStops[0] src/theme.ts:2. Node "theme" has citations 0..1; no citation covers src/theme.ts:2; publish a revision that cites it or choose a cited line.',
+    },
+  )
+  // A version 2 later stop declares its own source and index.
+  await assert.rejects(
+    prepareRepositoryStudy(
+      {
+        ...configuration,
+        version: 2,
+        participant: 'browser',
+        additionalStops: [
+          {
+            participant: 'browser',
+            source: configuration.source,
+            anchorIndex: 1,
+            inspections,
+          },
+        ],
+      },
+      books,
+      control,
+    ),
+    {
+      code: 'INVALID_CONFIGURATION',
+      message:
+        'configuration.additionalStops[0].anchorIndex 1 selects citation src/mode.ts:1-1, which does not contain configuration.additionalStops[0].source src/theme.ts:1. Node "theme" has citations 0..1; index 0 (src/theme.ts:1-1) covers src/theme.ts:1.',
+    },
+  )
+})
+
+// Cycle 0045 (NF-28, DX-9, ER-10): red while a column past its line's end answered "configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation."
+// Cycle 0045 (N14c-13): the blank-line half of this test moved to the next one, because a column on a blank line is now admitted; the refusal of a line with characters stays word for word.
+test('a stop declared past the end of a line with characters is refused with the field, the line’s length and the highest accepted column', async (context) => {
+  // Arrange: src/theme.ts holds a statement on line 1 (25 characters), a blank line 2 and a statement on line 3, all cited.
+  const { books, configuration, control } = await preparationHarness(context, {
+    source: 'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
+    citationEndLine: 3,
+  })
+  // Act
+  const pastLineEnd = await prepareRepositoryStudy(
+    { ...configuration, source: { ...configuration.source, column: 100 } },
+    books,
+    control,
+  ).catch((error: unknown) => error)
+  // Assert: the agent reads the message; the cause keeps the rule that refused.
+  assert.ok(pastLineEnd instanceof StudyError)
+  assert.deepEqual(
+    [pastLineEnd.code, pastLineEnd.message, pastLineEnd.causeDetail],
+    [
+      'INVALID_CONFIGURATION',
+      'configuration.source.column 100 lies past the end of its line: src/theme.ts:1 has a length of 25, so the highest column accepted is 26. Declare a column from 1 to 26.',
+      'Error: Configured position differs from its selected citation.',
+    ],
+  )
+})
+
+// Value: protects=the first admitted run of an agent that declared a stop with a column on a blank line, meaning that line; fails_when=preparation refuses the column of a line without characters; why_new=Cycle 0045 N14c-13 (DX-1 a): the VS Code agent declared auth.ts 38:9 on a blank line and its start ended "configuration.additionalStops[0].source.column 9 lies past the end of its line: auth.ts:38 has a length of 0 (a blank line), so the highest column accepted is 1. Declare column 1."; seam=none
+test('a stop declared with a column on a blank line is admitted by preparation with its declaration unchanged', async (context) => {
+  // Arrange: line 2 of src/theme.ts is blank, and the citation covers lines 1 to 3.
+  const { books, configuration, control } = await preparationHarness(context, {
+    source: 'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
+    citationEndLine: 3,
+  })
+  const declared = {
+    ...configuration,
+    source: { ...configuration.source, line: 2, column: 9 },
+  }
+  // Act
+  const definition = await prepareRepositoryStudy(declared, books, control)
+  // Assert: the frozen configuration is the one the agent sent; the run takes the column at the line's start.
+  assert.deepEqual(
+    {
+      line: definition.configuration.source.line,
+      column: definition.configuration.source.column,
+    },
+    { line: 2, column: 9 },
+  )
+  assert.equal(definition.descriptor.itemId, 'repository/interface/theme')
 })
 
 test('a secondary citation edit rejects preparation even when the selected breakpoint file has not changed', async (context) => {

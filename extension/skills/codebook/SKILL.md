@@ -2,7 +2,7 @@
 name: codebook
 description: Explain live code paths, save or replay learning, or generate and update a DeepWiki for the current editor workspace.
 metadata:
-  version: "1.0.41"
+  version: "1.0.42"
 ---
 
 # Codebook
@@ -50,7 +50,7 @@ Bounded evidence resources return `content`, `contentHash`, byte offsets and `ne
 
 This branch reproduces DeepWiki for the opened repository. Use the editor agent's normal file and source tools. Keep it independent of Codebook runtime/debug MCP; do not run an app to infer how source works. A Wiki request must remain actionable when `codebook_status` is unavailable. If the editor cannot write the output or answer reader questions, explain that exact limit instead of claiming a completed Wiki.
 
-Before terminal commands, identify the active shell from the host's environment information. Use that shell's syntax; for code containing loops, regular expressions, HTML quotes or template literals, write a temporary script outside project source and invoke its interpreter explicitly, including read-only scans. Do not embed that code in shell one-liners. A command left at continuation input has not executed. Inspect its state and cancel only your own incomplete input before retrying with corrected syntax.
+Before terminal commands, identify the active shell from the host's environment information. Use that shell's syntax; for code containing loops, regular expressions, HTML quotes or template literals, write a temporary script into the project's hidden `.codebook/scratch/` folder (inside the workspace, never indexed by the Wiki, so the editor asks for no approval of a path outside it), invoke its interpreter explicitly, including read-only scans, and remove that folder once the Wiki is published. Never write a temporary script into project source or outside the workspace. Do not embed that code in shell one-liners. A command left at continuation input has not executed. Inspect its state and cancel only your own incomplete input before retrying with corrected syntax.
 
 Published output is read-only input, including its manifest and publication record. Before writing Wiki content, locate the installed extension's `skills/codebook/publish-wiki.mjs`, not the copied Cursor user-skill directory. Cursor setup records that publisher here: `{{CODEBOOK_PUBLISHER_PATH}}`; in VS Code it is beside this installed skill. Run `node <publisher> --prepare --project <canonical-root> --output <resolved-output>`. It creates a distinct sibling candidate and returns its exact stage and manifest paths, copying current semantic content and owned assets when present. Edit only that candidate manifest/content. Do not edit, recreate, or add the publisher's `codebook-publication.json` to the authored asset inventory. Never transform the published manifest in place, even temporarily, and never reset ownership hashes to make an update pass.
 

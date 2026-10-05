@@ -19,6 +19,8 @@ import {
   REPOSITORY_SOURCE_LIMIT_BYTES,
   ACTIVE_TIMEOUT_MS,
   API_VERSION,
+  CONTINUE_ANSWER_CALL_BUDGET_MS,
+  CONTINUE_ANSWER_GRACE_MS,
   MAINTENANCE_INTERVAL_MS,
   MAX_EXPLANATIONS,
   MAX_RUNS,
@@ -67,6 +69,7 @@ import type { RetainedStudy } from './retainedStudySchemas'
 import type {
   NodeTestRuntime,
   RuntimeSnapshot,
+  RuntimeView,
   StudyEnvironment,
   StudyRuntime,
 } from './runtime'
@@ -86,15 +89,40 @@ import {
 } from './schemas'
 import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
-import { fullLibraryMessage } from './utils/fullLibraryMessage'
+import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
+import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
+import { describeMissingBookNode } from './utils/describeMissingBookNode'
+import {
+  explanationPlace,
+  type ExplanationPlace,
+} from './utils/explanationPlace'
+import {
+  fullLibraryMessage,
+  type StudyRemovalAvailability,
+} from './utils/fullLibraryMessage'
 import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
+import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
+import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { namesLineNumber } from './utils/namesLineNumber'
+import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
+import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
+import { resolveCapturedFactPaths } from './utils/resolveCapturedFactPaths'
 import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 import { thrownMessage } from './utils/thrownMessage'
+import { waitForNextRunState } from './utils/waitForNextRunState'
+
+/** What the run resource tells an agent after the result while no explanation of the run carries a learning summary; `codebook://help/studies` describes the step in the last entry of its sequence. */
+const SAVE_LEARNING_SUMMARY_ADVICE =
+  "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it."
+
+/** What the run resource tells an agent beside a browser profile folder that the run's cleanup could not remove: the run is released, and nobody is asked to delete anything. */
+const BROWSER_PROFILE_LEFT_ADVICE =
+  'The run is released and its outcome is unchanged; only the folder of its own browser profile could not be removed. Do nothing: Codebook removes the folder at the start of a later run, after this editor window was closed or reloaded.'
 
 export interface Explanation {
   id: string
@@ -103,10 +131,17 @@ export interface Explanation {
   snapshotUri: string
   sourceHash: string
   capturedFacts: { path: string; value: ConfiguredFactValue }[]
+  /** Codebook's own place of the stop, present when the debugger bound it on another line than declared; taken from the snapshot and the declared stop, never from {@link Explanation.agentInterpretation}. */
+  boundPlace?: ExplanationPlace
   learningSummary?: LearningSummary
   agentInterpretation: string
   createdAt: string
   learnerUnderstandingChanged: false
+}
+/** What `codebook_explain` answers: where the committed explanation is read, and the captured keys it was saved under (a path sent without its prefix appears here with it). */
+interface ExplanationReceipt {
+  explanationUri: string
+  valuePaths: string[]
 }
 export type StudyRecord = StudyRecordState &
   StartIntent & {
@@ -147,9 +182,11 @@ interface StudyRecordState {
   explanations: Map<string, Explanation>
   explanationKeys: Map<
     string,
-    { signature: string; result: Promise<{ explanationUri: string }> }
+    { signature: string; result: Promise<ExplanationReceipt> }
   >
   sourceReveals: Set<Promise<void>>
+  /** Per committed snapshot of a moved stop, how far {@link StudyService.explain}'s one check of the paused line has gone: `refused` after the one refusal, `explained` once an explanation was accepted, after which none is checked. */
+  placeGuards: Map<string, 'refused' | 'explained'>
   historyReceipt?: {
     revision: number
     signature: string
@@ -181,16 +218,31 @@ interface StudyRecordState {
   nodeHistoryFailure?: string
 }
 
+/**
+ * Tells {@link StudyService.selectPresentation} whether a command selects a layout that is retired, so that only a reader already in that layout may keep it.
+ * @param input - The presentation command.
+ * @returns `true` for a `select` of any mode but {@link SELECTABLE_PRESENTATION_MODE}; `false` for that mode and for every other action.
+ * @example
+ * selectsRetiredMode({ ...identity, action: 'select', mode: 'living-book' }) // => true
+ * selectsRetiredMode({ ...identity, action: 'restore', mode: 'living-book' }) // => false
+ */
+function selectsRetiredMode(input: PresentationCommand): boolean {
+  return (
+    input.action === 'select' && input.mode !== SELECTABLE_PRESENTATION_MODE
+  )
+}
+
 /** Owns MCP intent/history independently of transport sessions; commands construct it once per editor instance. @example service.start({instanceId, profile: REPOSITORY_BROWSER_PROFILE, key: "study-1", configuration}) */
 export class StudyService {
   readonly instanceId = randomUUID()
   readonly records = new Map<string, StudyRecord>()
   recordings?: RecordingStore
-  /** Cleared by {@link StudyWorkspace} once this editor's Trash refused to move a saved study in this session, so a full-library refusal stops naming a removal that cannot work here. */
-  isStudyRemovalAvailable = true
+  /** Whether this window can remove a saved study: what the window itself says at first (a remote window has no Trash), then what its last removal told; written only by {@link recordStudyRemoval}. */
+  private removalAvailability: StudyRemovalAvailability
   playbackController?: PlaybackController
   presentationController?: Pick<
     StudyWorkspace,
+    | 'presentationState'
     | 'readPresentationState'
     | 'changePresentation'
     | 'returnToCurrent'
@@ -231,12 +283,38 @@ export class StudyService {
     readonly storageRoot: string,
     private readonly now = Date.now,
   ) {
+    this.removalAvailability = initialStudyRemovalAvailability(
+      environment.remoteName,
+    )
     // MCP transports -> one service -> owned runtime. Transport close never replays input.
     this.maintenance = setInterval(
       () => this.maintain(),
       MAINTENANCE_INTERVAL_MS,
     )
     this.maintenance.unref()
+  }
+
+  /**
+   * Tells whether this window can remove a saved study, so every full-library refusal names a removal only while one can work here; read by the run admission and, through {@link StudyWorkspace}, by the study library and the recording store.
+   * @returns `no-trash` in a window without a Trash, where no removal is started; otherwise `available` until a removal left its study in the library, then `trash-refused` until a later removal moves one.
+   * @example
+   * service.studyRemovalAvailability // => 'available'
+   */
+  get studyRemovalAvailability(): StudyRemovalAvailability {
+    return this.removalAvailability
+  }
+
+  /**
+   * Records once per removal whether the study left the library; called by {@link StudyWorkspace} when {@link LearningLibrary.removeStudy} has settled.
+   * A path the Trash rejected inside a removal that still moved the study does not count against the Trash.
+   * @param hasStudyLeftLibrary - `true` for a removal that ended `moved`, `false` for `nothing-moved` and `partly-moved`.
+   * @example
+   * service.recordStudyRemoval(removal.outcome === 'moved')
+   */
+  recordStudyRemoval(hasStudyLeftLibrary: boolean): void {
+    this.removalAvailability = hasStudyLeftLibrary
+      ? 'available'
+      : 'trash-refused'
   }
 
   /** Describes actual capabilities before an agent chooses an operation; called by discovery. @example await service.status() */
@@ -381,7 +459,7 @@ export class StudyService {
         ? {
             ...(await this.presentationState(this.instanceId)),
             instructions:
-              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. Study workspace is the only layout that can be selected; the retired Living book and Guided walkthrough layouts stay only where a saved preference still names one. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
+              'Before runtime application input, open a closed learner workspace by selecting its reported current mode; preserve its saved preference. Confirm state open and layoutConfirmed true, or follow the reported recovery before proceeding. A read made while the chat has the keyboard focus cannot measure the main editor grid without taking that focus: it answers the confirmation of the last arrangement with layoutMeasured false while no tab or group changed since, and layoutConfirmed false once one did. Study workspace is the only layout that can be selected; the retired Living book and Guided walkthrough layouts stay only where a saved preference still names one. Copy presentationId and presentationControlRevision as expectedRevision for mode changes. Before a new run, if reader.contentTab is not live or reader.followingCurrentRun is false, use codebook_return_current with reader.contentRevision as expectedRevision; verify both live and followingCurrentRun true so captured values and explanations are visible. A run started while an open reader has followingCurrentRun false is not started: it ends before any application input and names this step; start again with a new key after it. It preserves saved history and never sends application input. Selection pauses replay at its confirmed position. Read state after response loss; restore repairs layout, save-preference retries only the current confirmed preference. No runtime or understanding mutation.',
           }
         : undefined,
       repository: {
@@ -431,14 +509,27 @@ export class StudyService {
     return { instanceId: this.instanceId, ...result }
   }
 
-  /** Reads one exact tracked source without navigating or running the application. @example await service.source({instanceId,path:'src/main.ts'}) */
+  /**
+   * Reads one exact tracked source without navigating or running the application; the answer of `codebook_source`, which an agent reads before it cites lines or declares a stop.
+   * @param input - The instance and the tracked path, with the hash the agent expects when it rereads a cited file.
+   * @returns The exact text with its hash and line count, and `numberedText`: the same lines, each after its one-based number and a tab ({@link numberSourceLines}), so the agent takes a line from the answer instead of counting.
+   * @throws When the instance is stale, the path is not an eligible tracked file or its hash differs from `expectedHash`.
+   * @example
+   * ```ts
+   * (await service.source({ instanceId, path: 'src/main.ts' })).numberedText // => '1\tconst a = 1\n2\t'
+   * ```
+   */
   async source(input: SourceReadInput) {
     const result = await this.repositoryStore(input.instanceId).sources.read(
       input.path,
       input.expectedHash,
     )
     this.repositoryStore(input.instanceId)
-    return { instanceId: this.instanceId, ...result }
+    return {
+      instanceId: this.instanceId,
+      ...result,
+      numberedText: numberSourceLines(result.text),
+    }
   }
 
   /** Publishes/retrieves an immutable intent receipt; connection lifetime never becomes persisted book identity. @example await service.publishBook(input) */
@@ -508,16 +599,32 @@ export class StudyService {
     } catch (error) {
       // A closed reader is recovered only by open; reading the playback resource again would not change the answer.
       const readerClosed = !this.playbackController.state().readerOpen
-      throw new StudyError(
-        String(error).includes('Stale playback revision')
-          ? 'STALE_PLAYBACK'
-          : 'PLAYBACK_UNAVAILABLE',
-        String(error),
-        readerClosed
-          ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
-          : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
-      )
+      throw this.playbackRefusal(error, readerClosed, input)
     }
+  }
+
+  /**
+   * Words the refusal of a historical control the shared controller rejected; called by {@link playback} with what the controller threw.
+   * @param error - What the controller threw; its text is the refusal's message.
+   * @param readerClosed - Whether the replay reader is closed, which only `open` recovers.
+   * @param input - The refused command; its study is named in the recovery for a closed reader.
+   * @returns A `STALE_PLAYBACK` error for a stale revision, otherwise `PLAYBACK_UNAVAILABLE`, with the recovery for a closed reader or the playback resource to read first.
+   * @example throw this.playbackRefusal(new Error('Stale playback revision'), false, input) // code 'STALE_PLAYBACK'
+   */
+  private playbackRefusal(
+    error: unknown,
+    readerClosed: boolean,
+    input: PlaybackCommand,
+  ): StudyError {
+    return new StudyError(
+      String(error).includes('Stale playback revision')
+        ? 'STALE_PLAYBACK'
+        : 'PLAYBACK_UNAVAILABLE',
+      String(error),
+      readerClosed
+        ? `The replay reader is closed (readerOpen is false). Send codebook_playback with action open and studyId ${input.studyId} to reopen it before another control. No application input was sent.`
+        : `Read codebook://${this.instanceId}/playback before retrying. No application input was sent.`,
+    )
   }
 
   /** Discovers the reader lifetime separately from the server without opening a view; called by MCP resources. @example (await service.presentationState(instanceId)).presentationId */
@@ -528,11 +635,15 @@ export class StudyService {
         'PRESENTATION_UNAVAILABLE',
         'The Study reader is unavailable in this host.',
       )
+    const state = await this.presentationController.readPresentationState()
     return {
       instanceId: this.instanceId,
-      ...(await this.presentationController.readPresentationState()),
+      ...state,
       uri: `codebook://${this.instanceId}/presentation`,
-      modes: PRESENTATION_MODE_IDS.map((mode) => ({
+      // Only layouts {@link selectPresentation} accepts are offered: Study workspace, and a retired layout while the reader is still in it.
+      modes: PRESENTATION_MODE_IDS.filter(
+        (mode) => mode === SELECTABLE_PRESENTATION_MODE || mode === state.mode,
+      ).map((mode) => ({
         mode,
         title: STUDY_PRESENTATIONS[mode].title,
         description: STUDY_PRESENTATIONS[mode].description,
@@ -543,7 +654,7 @@ export class StudyService {
   /** Routes explicit mode intent to the shared reader after checking server identity, without runtime input. @example await service.selectPresentation(input) */
   async selectPresentation(input: PresentationCommand) {
     this.assertMutable(input.instanceId)
-    this.environment.assertWorkspace?.()
+    this.assertWorkspace()
     if (!this.presentationController)
       throw new StudyError(
         'PRESENTATION_UNAVAILABLE',
@@ -551,8 +662,7 @@ export class StudyService {
       )
     // Living book and Guided walkthrough are retired: a reader whose saved preference still names one keeps it, but nothing selects one anew.
     if (
-      input.action === 'select' &&
-      input.mode !== SELECTABLE_PRESENTATION_MODE &&
+      selectsRetiredMode(input) &&
       (await this.presentationController.readPresentationState()).mode !==
         input.mode
     )
@@ -562,6 +672,15 @@ export class StudyService {
       )
     await this.presentationController.changePresentation(input)
     return this.presentationState(input.instanceId)
+  }
+
+  /**
+   * Runs the host's workspace check when it has one; called by {@link selectPresentation} before the reader is asked for anything.
+   * @throws What the environment's check throws for a workspace that may not be changed.
+   * @example this.assertWorkspace()
+   */
+  private assertWorkspace(): void {
+    this.environment.assertWorkspace?.()
   }
 
   /** Returns only the current reader from selected history to live execution through a versioned native control. @example await service.returnToCurrent({instanceId,presentationId,expectedRevision:4}) */
@@ -575,6 +694,79 @@ export class StudyService {
       )
     await this.presentationController.returnToCurrent(input)
     return this.presentationState(input.instanceId)
+  }
+
+  /**
+   * Starts a run only on a node its selected book revision has, so a start on a node id or a revision that does not exist is refused in the answer of `codebook_start` itself instead of being accepted and ending without a runtime; the `codebook_start` tool calls it, and it then reserves the run with {@link StudyService.start}.
+   * @param input - The start as the tool received it.
+   * @returns The receipt of {@link StudyService.start}.
+   * @throws A `BOOK_UNAVAILABLE` {@link StudyError} for a selected revision that does not exist or a node id it does not have ({@link describeMissingBookNode}); what {@link StudyService.start} throws otherwise.
+   * @example
+   * await service.startOnStoredBook(input) // throws 'configuration.book.nodeId mode does not exist in revision 1 of book interface, which has the node: theme. …'
+   */
+  async startOnStoredBook(input: StartInput) {
+    await this.refuseMissingBookNode(input)
+    return this.start(input)
+  }
+
+  /**
+   * Reads the book revision a start selects and refuses a node id it does not have, before {@link StudyService.startOnStoredBook} reserves the run.
+   * @param input - The start as the tool received it.
+   * @throws A `STALE_INSTANCE` error for another instance; a `BOOK_UNAVAILABLE` {@link StudyError} for a revision that does not exist, a stored book the store cannot read, or a node id the revision does not have. Arguments that do not parse, a repeat of an accepted start's key, an editor without book storage and a read that fails with any other error are left to {@link StudyService.start} and the run's preparation, which answer them as before.
+   * @example
+   * await this.refuseMissingBookNode(input) // resolves for a node the revision has
+   */
+  private async refuseMissingBookNode(input: StartInput): Promise<void> {
+    this.assertMutable(input.instanceId)
+    const book = this.bookOfNewStart(input)
+    // A repeated key answers its original run, and the other cases are answered by start itself.
+    if (!book) return
+    const nodeIds = await this.storedNodeIds(book)
+    if (nodeIds && !nodeIds.includes(book.nodeId))
+      throw new StudyError(
+        'BOOK_UNAVAILABLE',
+        describeMissingBookNode(book, nodeIds),
+      )
+  }
+
+  /**
+   * Reads the node ids of the book revision a start selects, for {@link StudyService.refuseMissingBookNode}.
+   * @param book - The start's book selection.
+   * @returns The revision's node ids in document order; `undefined` without book storage and for a read that failed with an error that is not a {@link StudyError}, which the run's preparation then meets and names in the run.
+   * @throws The store's {@link StudyError} (`BOOK_UNAVAILABLE` for a revision that does not exist or a stored book it cannot read), so the start is refused in its own answer.
+   * @example
+   * await this.storedNodeIds({ bookId: 'interface', revision: 1, nodeId: 'theme' }) // => ['theme']
+   */
+  private async storedNodeIds(book: {
+    bookId: string
+    revision: number
+  }): Promise<string[] | undefined> {
+    if (!this.repository) return undefined
+    try {
+      const selected = await this.repository.readDefinition(
+        book.bookId,
+        book.revision,
+      )
+      return selected.revision.document.nodes.map((node) => node.id)
+    } catch (error) {
+      // Only the store's own refusal is an answer to the start; any other failure is left to preparation, which names it in the run.
+      if (error instanceof StudyError) throw error
+      return undefined
+    }
+  }
+
+  /**
+   * Gives the book selection of a start that would begin a new run, for {@link StudyService.refuseMissingBookNode}.
+   * @param input - The start as the tool received it.
+   * @returns The configuration's `book` for arguments that parse under a key no accepted run holds; `undefined` for arguments that do not parse and for a repeat of an accepted start, which {@link StudyService.start} answers.
+   * @example
+   * this.bookOfNewStart(input) // => { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 }
+   */
+  private bookOfNewStart(input: StartInput) {
+    const parsed = startIntentSchema.safeParse(input)
+    return parsed.success && !this.retainedStart(input.key).previous
+      ? parsed.data.configuration.book
+      : undefined
   }
 
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
@@ -633,6 +825,7 @@ export class StudyService {
       explanations: new Map(),
       explanationKeys: new Map(),
       sourceReveals: new Set(),
+      placeGuards: new Map(),
       ...(intent.profile === NODE_TEST_PROFILE
         ? { nodeStops: [], nodeEvents: [], nodePhase: 'preparing' as const }
         : {}),
@@ -776,7 +969,160 @@ export class StudyService {
     return receipt
   }
 
-  /** Uses the existing atomic pause reservation, never a focused debug session. @example await service.continue(runState.participants.server.continueArguments) */
+  /**
+   * Continues the current pause for the `codebook_continue` tool and, when the arguments carry `answer: "next"` as the run resource's continueArguments do, answers with the run's next state, so an agent needs no poll after a continuation.
+   * The wait is one promise ({@link waitForNextRunState}) that settles on the run's next state change after the continuation was acknowledged. Its one bound is the earlier of the acknowledgement plus {@link ACTIVE_TIMEOUT_MS} and {@link CONTINUE_ANSWER_GRACE_MS}, and the call's start plus {@link CONTINUE_ANSWER_CALL_BUDGET_MS}. It never passes the run's own deadline: that deadline is one of the state changes that end it ({@link StudyService.nextRunState}).
+   * @param input - The current pause's continuation arguments, as the run resource gave them.
+   * @param signal - The request's cancellation; an abandoned request releases its wait.
+   * @returns
+   * - Without `answer` and for a Node test run: what {@link StudyService.continue} answers
+   * - With `answer: "next"`: `accepted`, `runUri`, the run's `state` (the run resource) and `next`, which names what ended the wait: `observation` (the next pause is committed and can be continued), `result` (the result was observed), `failure` (the run failed, also at its deadlines) or `stopped` (the run was stopped or the service is shutting down)
+   * - At the bound, and for an abandoned request: the same without `next`, with the latest state; the agent then polls
+   * @throws What {@link StudyService.continue} throws; nothing is awaited after a refused continuation.
+   * @example
+   * const answer = await service.continueToNextState(runState.participants.browser.continueArguments)
+   * // => { accepted: true, runUri, next: 'observation', state: { observations: [..., { inspectionUri }], ... } }
+   */
+  async continueToNextState(input: ContinueInput, signal?: AbortSignal) {
+    const startedAtMs = this.now()
+    // The snapshots committed before the continuation tell the next observation from the one being continued.
+    const committedBefore = new Set(
+      this.records
+        .get(input.runId)
+        ?.runtime?.view()
+        .snapshots.map((snapshot) => snapshot.id),
+    )
+    const receipt = await this.continue(input)
+    const record = this.record(input)
+    // A Node test continuation already answers at its next stop or its result.
+    if (input.answer !== 'next' || record.profile === NODE_TEST_PROFILE)
+      return receipt
+    const waitEndsAtMs = Math.min(
+      this.now() + ACTIVE_TIMEOUT_MS + CONTINUE_ANSWER_GRACE_MS,
+      startedAtMs + CONTINUE_ANSWER_CALL_BUDGET_MS,
+    )
+    const next = await waitForNextRunState(
+      () => this.nextRunState(record, committedBefore),
+      () => this.now() >= waitEndsAtMs,
+      signal,
+    )
+    return { ...receipt, ...(next && { next }), state: this.state(record) }
+  }
+
+  /**
+   * Names what ended the step a continuation began, read by {@link StudyService.continueToNextState} at every turn of its wait.
+   * @param record - The run that was continued.
+   * @param committedBefore - The ids of the snapshots committed before the continuation.
+   * @returns
+   * - `'failure'` once the run has an error, a runtime or evidence failure, or passed its whole-run deadline ({@link StudyService.expireAtDeadline} applies it at once instead of at the next maintenance turn)
+   * - `'result'` once the runtime completed, also while the service already cleans the completed run up
+   * - `'stopped'` once a run that did not complete is being stopped or was cancelled, or the service is shutting down
+   * - `'observation'` once a participant is paused at a snapshot committed after the continuation
+   * - `undefined` while the run is still on its way; a snapshot that was committed and then failed its inspection is no observation to continue, and the failure that follows it is what ends the wait
+   * @example this.nextRunState(record, new Set(['browser-session:1'])) // => 'observation' once browser-session:2 is committed and paused
+   */
+  private nextRunState(
+    record: StudyRecord,
+    committedBefore: ReadonlySet<string>,
+  ): 'failure' | 'stopped' | 'result' | 'observation' | undefined {
+    // The whole-run deadline is the run's own end: apply it now, so the answer carries it.
+    this.expireAtDeadline(record)
+    const runtime = record.runtime?.view()
+    return (
+      this.endedRunState(record, runtime, runtime?.status) ??
+      this.nextObservationState(runtime, committedBefore)
+    )
+  }
+
+  /**
+   * Names how a continued run ended, in the order that decides between two ends that both hold; the first half of {@link StudyService.nextRunState}, asked before the next observation is looked for.
+   * @param record - The run that was continued.
+   * @param runtime - The runtime's view read at this turn; `undefined` for a run without a runtime.
+   * @param status - The status of that view; `undefined` without a runtime.
+   * @returns
+   * - `'failure'` for a failed run ({@link StudyService.hasRunFailed})
+   * - `'result'` for a completed runtime, also while the service already cleans the completed run up
+   * - `'stopped'` for a run that is being stopped or was cancelled ({@link StudyService.isRunBeingStopped})
+   * - `undefined` while the run is still on its way
+   * @example this.endedRunState(record, runtime, 'completed') // => 'result'
+   */
+  private endedRunState(
+    record: StudyRecord,
+    runtime: RuntimeView | undefined,
+    status: RuntimeView['status'] | undefined,
+  ): 'failure' | 'stopped' | 'result' | undefined {
+    if (this.hasRunFailed(record, runtime, status)) return 'failure'
+    // Before the stop check: the service cleans a completed run up by itself, and that cleanup is no stop of the run.
+    if (status === 'completed') return 'result'
+    return this.isRunBeingStopped(record, status) ? 'stopped' : undefined
+  }
+
+  /**
+   * Says whether a continued run failed, for the first check of {@link StudyService.endedRunState}.
+   * @param record - The run that was continued.
+   * @param runtime - The runtime's view read at this turn; `undefined` for a run without a runtime.
+   * @param status - The status of that view; `undefined` without a runtime.
+   * @returns `true` once the run has an error (the passed whole-run deadline among them), the runtime lists a failure, its evidence failed, or its status is `failed`; `false` otherwise.
+   * @example this.hasRunFailed(record, runtime, 'failed') // => true
+   */
+  private hasRunFailed(
+    record: StudyRecord,
+    runtime: RuntimeView | undefined,
+    status: RuntimeView['status'] | undefined,
+  ): boolean {
+    return (
+      Boolean(
+        record.error ||
+        runtime?.failures.length ||
+        record.runtime?.evidence.failure,
+      ) || status === 'failed'
+    )
+  }
+
+  /**
+   * Says whether a run that did not complete is being stopped, for the last check of {@link StudyService.endedRunState}.
+   * @param record - The run that was continued.
+   * @param status - The status of the runtime's view; `undefined` without a runtime.
+   * @returns `true` while the service is shutting down, while the run is being stopped or once it is stopped, and for a cancelled runtime; `false` otherwise.
+   * @example this.isRunBeingStopped(record, 'cancelled') // => true
+   */
+  private isRunBeingStopped(
+    record: StudyRecord,
+    status: RuntimeView['status'] | undefined,
+  ): boolean {
+    return (
+      this.stopping ||
+      record.stopping ||
+      record.stopped ||
+      status === 'cancelled'
+    )
+  }
+
+  /**
+   * Names the next observation of a continued run that has not ended; the second half of {@link StudyService.nextRunState}.
+   * @param runtime - The runtime's view read at this turn; `undefined` for a run without a runtime.
+   * @param committedBefore - The ids of the snapshots committed before the continuation.
+   * @returns `'observation'` once a participant is paused at a snapshot committed after the continuation, otherwise `undefined`.
+   * @example this.nextObservationState(runtime, new Set(['browser-session:1'])) // => 'observation' once browser-session:2 is committed and paused
+   */
+  private nextObservationState(
+    runtime: RuntimeView | undefined,
+    committedBefore: ReadonlySet<string>,
+  ): 'observation' | undefined {
+    const isAtNextObservation = Object.values(runtime?.participants ?? {}).some(
+      (participant) =>
+        participant.snapshot !== undefined &&
+        !committedBefore.has(participant.snapshot.id) &&
+        isPausedAtSnapshot(participant, participant.snapshot),
+    )
+    return isAtNextObservation ? 'observation' : undefined
+  }
+
+  /**
+   * Continues the current pause through the runtime's atomic pause reservation, never a focused debug session, and answers once the continuation is acknowledged; called by {@link StudyService.continueToNextState} for the tool and by the Study pane's Continue.
+   * `answer` in the arguments is not read here: the pane sends the run resource's arguments as they are and needs the acknowledgement only.
+   * @example await service.continue(runState.participants.server.continueArguments)
+   */
   async continue(input: ContinueInput) {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
@@ -864,8 +1210,15 @@ export class StudyService {
     return this.state(record)
   }
 
-  /** Commits labeled interpretation only after the referenced evidence and atomic write succeed. @example await service.explain({...run, snapshotUri, sourceHash, valuePaths:['price'], interpretation:'Price is 24.', key:'explain-1'}) */
-  explain(input: ExplainInput): Promise<{ explanationUri: string }> {
+  /**
+   * Commits a labeled interpretation of one committed snapshot only after the referenced evidence and the atomic write succeed; called by the `codebook_explain` tool.
+   * A value path sent without its `value:` or `type:` prefix is saved under the one captured key that has it ({@link resolveCapturedFactPaths}). The first explanation of a stop the debugger bound on another line than declared is refused once when its interpretation lacks the paused line's number ({@link namesLineNumber}); that check is a bounded guard on prose and no proof of the place, which is why every explanation of such a stop is saved with Codebook's own {@link Explanation.boundPlace}.
+   * @param input - The run, an explanation key, the snapshot URI with its TypeScript hash, the captured fact paths and the interpretation, optionally with a complete learning summary.
+   * @returns The explanation's resource URI and the captured keys it was saved under; a repeated key with the same content returns the first receipt.
+   * @throws An `INVALID_REFERENCE` {@link StudyError} for an unknown snapshot, a wrong hash, an uncaptured or ambiguous path, an unverified summary reference, and once for a moved stop whose first interpretation does not name the paused line; `IDEMPOTENCY_CONFLICT` for a key that names other content; `BUSY` during cleanup or a removal; `LIMIT_EXCEEDED` past the explanation limit.
+   * @example await service.explain({...run, snapshotUri, sourceHash, valuePaths:['value:price'], interpretation:'Price is 24.', key:'explain-1'})
+   */
+  explain(input: ExplainInput): Promise<ExplanationReceipt> {
     this.assertMutable(input.instanceId)
     const record = this.record(input)
     // An explanation after the removal would be written into a directory that is in the Trash.
@@ -879,10 +1232,14 @@ export class StudyService {
     const learningSummary =
       input.learningSummary &&
       learningSummarySchema.parse(input.learningSummary)
+    const snapshot = this.snapshot(record, input.snapshotUri)
+    // A path sent without its value: or type: prefix is saved under the one captured key that has it; the signature holds the keys as saved, so a retry in either spelling names the same content.
+    const { paths: valuePaths, rewritten: rewrittenPaths } =
+      resolveCapturedFactPaths(input.valuePaths, snapshot.values)
     const signature = JSON.stringify([
       input.snapshotUri,
       input.sourceHash,
-      input.valuePaths,
+      valuePaths,
       input.interpretation,
       learningSummary,
     ])
@@ -905,10 +1262,9 @@ export class StudyService {
         'BUSY',
         "The learner is deleting this run's saved study; wait for it to finish.",
       )
-    const snapshot = this.snapshot(record, input.snapshotUri)
     if (
       snapshotSourceHashes(snapshot).typescript !== input.sourceHash ||
-      new Set(input.valuePaths).size !== input.valuePaths.length
+      new Set(valuePaths).size !== valuePaths.length
     )
       throw new StudyError(
         'INVALID_REFERENCE',
@@ -954,7 +1310,7 @@ export class StudyService {
     const captured = new Map<string, ConfiguredFactValue>(
       Object.entries(snapshot.values),
     )
-    const capturedFacts = input.valuePaths.map((path) => {
+    const capturedFacts = valuePaths.map((path) => {
       const value = captured.get(path)
       if (value === undefined)
         throw new StudyError(
@@ -963,6 +1319,25 @@ export class StudyService {
         )
       return { path, value }
     })
+    // Codebook's own place of a moved stop is saved with every explanation of it, whatever the interpretation says.
+    const movedPlace = explanationPlace(
+        this.boundPlace(record, snapshot, false),
+      ),
+      placeGuard = record.placeGuards.get(snapshot.id)
+    // Only the first explanation of a moved stop is checked: a later one (the one after the result) is about something else.
+    const placeNamed =
+      movedPlace && placeGuard !== 'explained'
+        ? namesLineNumber(input.interpretation, movedPlace.boundLine)
+        : undefined
+    // The last check before the key is reserved, so the one refusal is never spent on a call that is invalid for another reason.
+    if (movedPlace && placeNamed === false && placeGuard !== 'refused') {
+      record.placeGuards.set(snapshot.id, 'refused')
+      throw new StudyError(
+        'INVALID_REFERENCE',
+        `This stop paused on line ${movedPlace.boundLine} of ${movedPlace.path}; you declared line ${movedPlace.declaredLine}. Name line ${movedPlace.boundLine} as the place of the pause in the interpretation and send codebook_explain again; the same key is free.`,
+      )
+    }
+    if (movedPlace) record.placeGuards.set(snapshot.id, 'explained')
     const explanation: Explanation = {
       id: randomUUID(),
       instanceId: this.instanceId,
@@ -970,6 +1345,7 @@ export class StudyService {
       snapshotUri: input.snapshotUri,
       sourceHash: input.sourceHash,
       capturedFacts,
+      ...(movedPlace && { boundPlace: movedPlace }),
       learningSummary,
       agentInterpretation: input.interpretation,
       createdAt: new Date(this.now()).toISOString(),
@@ -986,11 +1362,16 @@ export class StudyService {
         record.runtime!.evidence.record('agent.explanation-saved', {
           id: explanation.id,
           snapshotId: snapshot.id,
+          // Recorded for the first saved explanation of a moved stop only: whether its interpretation holds the paused line's number.
+          ...(placeNamed !== undefined && { placeNamed }),
+          // Every path the agent sent without its prefix, with the captured key it was saved under.
+          ...(rewrittenPaths.length > 0 && { rewrittenPaths }),
         })
         await record.runtime!.evidence.flush()
         record.explanations.set(explanation.id, explanation)
         return {
           explanationUri: this.uri(record.id, `explanations/${explanation.id}`),
+          valuePaths,
         }
       } catch (error) {
         record.error = new StudyError(
@@ -1136,6 +1517,57 @@ export class StudyService {
     throw new StudyError(
       'INVALID_REFERENCE',
       'Snapshot is absent, uncommitted, or belongs to another run.',
+    )
+  }
+
+  /**
+   * Gives the declared, requested and bound places of a committed snapshot's stop from the run itself, so every text and field about a moved stop has one source; called by {@link readResource} for the inspection resource, by {@link StudyService.state} for the run resource's observation entries and by {@link StudyService.explain} for its check and the place it saves.
+   * @param record - The run the snapshot belongs to.
+   * @param snapshot - A committed snapshot of that run.
+   * @param readsJournal - Whether the requested place and the time the binding became known are read from the run's journal ({@link journaledBindingOfSnapshot}); a caller that needs only the lines or the sentence passes `false`.
+   * @returns
+   * - The places, with `place` (the sentence) only for a stop the debugger bound on another line than declared
+   * - `undefined` when the run has no frozen definition or no stop is declared for the snapshot
+   * @example
+   * service.boundPlace(record, snapshot)?.place // => 'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); ...'
+   * service.boundPlace(record, snapshot)?.armed // => { line: 2, column: 1 } for a stop declared on an unmapped line 1
+   */
+  boundPlace(
+    record: StudyRecord,
+    snapshot: RuntimeSnapshot,
+    readsJournal = true,
+  ): BoundPlace | undefined {
+    const runtime = record.runtime?.view()
+    if (!record.definition || !runtime) return undefined
+    const declared = declaredStopOfSnapshot(
+      record.definition.configuration,
+      runtime.snapshots,
+      snapshot.id,
+    )
+    if (!declared) return undefined
+    return describeBoundPlace({
+      declared,
+      bound: { line: snapshot.source.line, column: snapshot.source.column },
+      ...this.journaledBinding(runtime, snapshot.id, readsJournal),
+    })
+  }
+
+  /**
+   * Reads what the run's journal says about a stop's binding, for {@link StudyService.boundPlace} to add to the places it describes; a caller that needs only the lines or the sentence has the journal left unread.
+   * @param runtime - The view of the run the snapshot belongs to.
+   * @param snapshotId - The committed snapshot of the stop.
+   * @param readsJournal - Whether the journal is read at all.
+   * @returns What {@link journaledBindingOfSnapshot} gives (the requested place and the time the binding became known, as far as journaled); `false` when the journal is not read.
+   * @example this.journaledBinding(runtime, 'browser-session:1', false) // => false
+   */
+  private journaledBinding(
+    runtime: RuntimeView,
+    snapshotId: string,
+    readsJournal: boolean,
+  ) {
+    return (
+      readsJournal &&
+      journaledBindingOfSnapshot(runtime.events, runtime.snapshots, snapshotId)
     )
   }
 
@@ -1380,22 +1812,29 @@ export class StudyService {
       const resumable = Boolean(
         canControl && snapshot && isPausedAtSnapshot(participant, snapshot),
       )
+      const continueArguments: ContinueInput | undefined =
+        resumable && snapshot
+          ? {
+              instanceId: this.instanceId,
+              runId: record.id,
+              participant: name,
+              ...snapshot.pause,
+              // Sent back to codebook_continue, it makes the call answer with the run's next state.
+              answer: 'next',
+            }
+          : undefined
       return {
         snapshotUri,
         sourceUri: snapshotUri && `${snapshotUri}/source/typescript`,
         itemId: snapshot?.itemId,
         actionId: snapshot?.actionId,
-        phase: participant?.phase,
+        // A debugger that has stopped is reported as paused only with its committed observation: while the stop is still inspected, the participant reads as running, like the run's state.
+        phase:
+          participant?.phase === 'paused' && !snapshot
+            ? 'running'
+            : participant?.phase,
         resumable,
-        continueArguments:
-          resumable && snapshot
-            ? {
-                instanceId: this.instanceId,
-                runId: record.id,
-                participant: name,
-                ...snapshot.pause,
-              }
-            : undefined,
+        continueArguments,
       }
     }
     const participants = {
@@ -1405,6 +1844,24 @@ export class StudyService {
       ...(nodeParticipants ?? {}),
       browser: participantView('browser'),
     }
+    const finalOutcome =
+      nodeOutcome ??
+      (terminalReason
+        ? 'not-demonstrated'
+        : (runtime?.finalOutcome ?? 'pending-teardown'))
+    // A refused or removed run has no history to read or to add to.
+    const holdsHistory =
+      historyExclusionState(record.historyExcluded) !== 'ended'
+    // A run that reached its result and saved no learning summary would be saved without a summary and a sequence: say so where the agent reads after the result.
+    // Only once the run is released: until then this resource has no terminalReference to cite, and an explanation is refused as busy.
+    const lacksLearningSummary =
+      holdsHistory &&
+      record.stopped &&
+      runtime?.status === 'completed' &&
+      finalOutcome === 'demonstrated' &&
+      ![...record.explanations.values()].some(
+        (explanation) => explanation.learningSummary,
+      )
     const nextActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
@@ -1412,10 +1869,8 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      // A refused or removed run has no history to read.
-      historyExclusionState(record.historyExcluded) === 'ended'
-        ? undefined
-        : 'read-history',
+      lacksLearningSummary ? 'save-learning-summary' : undefined,
+      holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     const material = {
       instanceId: this.instanceId,
@@ -1512,6 +1967,8 @@ export class StudyService {
           actionId: snapshot.actionId,
           participant: snapshot.participant,
           capturePhase: snapshot.capturePhase,
+          // Present only for a stop the debugger bound on another line than declared: the sentence that names the paused line.
+          place: this.boundPlace(record, snapshot, false)?.place,
           snapshotUri: this.uri(
             record.id,
             `snapshots/${encodeURIComponent(snapshot.id)}`,
@@ -1534,11 +1991,7 @@ export class StudyService {
         })) ?? [],
       runtimeOutcome: runtime?.runtimeOutcome,
       captureOutcome: runtime?.captureOutcome,
-      finalOutcome:
-        nodeOutcome ??
-        (terminalReason
-          ? 'not-demonstrated'
-          : (runtime?.finalOutcome ?? 'pending-teardown')),
+      finalOutcome,
       terminalReason,
       // A failure inside the runtime has no tool error of its own; its text becomes the cause an agent can quote.
       error:
@@ -1553,6 +2006,11 @@ export class StudyService {
       cleanupError: record.cleanupError?.describe(),
       cleaned: record.stopped,
       resourcesReleased: runtime?.resourcesReleased ?? record.stopped,
+      // Present only when the run's own browser profile folder could not be removed; the run is released all the same.
+      browserProfileLeft: runtime?.browserProfileLeft && {
+        ...runtime.browserProfileLeft,
+        advice: BROWSER_PROFILE_LEFT_ADVICE,
+      },
       activeSessionIds: runtime?.activeSessionIds ?? [],
       captures: Object.entries(runtime?.captures ?? {}).map(
         ([phase, capture]) => ({
@@ -1705,6 +2163,10 @@ export class StudyService {
           )
     return {
       ...material,
+      // Present only while nextActions names save-learning-summary; gone once an explanation with a learning summary is saved.
+      saveLearningSummary: lacksLearningSummary
+        ? SAVE_LEARNING_SUMMARY_ADVICE
+        : undefined,
       observedAt:
         observedAtMs === undefined
           ? undefined
@@ -1762,15 +2224,7 @@ export class StudyService {
         )
         record.runtime?.fail(record.error.message)
       }
-      if (this.now() >= record.deadlineAt) {
-        record.error ??= new StudyError(
-          'RUNTIME_FAILED',
-          'Study wall deadline expired; history only.',
-        )
-        record.runtime?.fail(record.error.message)
-        if (record.nodePhase && record.nodePhase !== 'completed')
-          record.nodePhase = 'failed'
-      }
+      this.expireAtDeadline(record)
       const runtimeState = record.runtime?.view().status
       if (
         record.error ||
@@ -1785,6 +2239,48 @@ export class StudyService {
     }
   }
 
+  /**
+   * Ends a run whose whole-run deadline has passed with the deadline's error, so every reader names the same end; called by {@link StudyService.maintain} at each maintenance turn and by {@link StudyService.nextRunState} while a continuation waits, which must not answer past the run's own deadline.
+   * It releases nothing itself: the next maintenance turn stops the run it marked. A run that already ended on its own ({@link StudyService.hasRunEnded}) is left as it is, whichever caller asks.
+   * @param record - The run whose deadline is compared with the clock.
+   * @example this.expireAtDeadline(record) // record.error?.message === 'Study wall deadline expired; history only.' once now() >= record.deadlineAt
+   */
+  private expireAtDeadline(record: StudyRecord): void {
+    if (this.now() < record.deadlineAt) return
+    // The deadline bounds a run that is still on its way; a result that was observed is not turned into a failure while the run waits for its release.
+    if (this.hasRunEnded(record)) return
+    record.error ??= new StudyError(
+      'RUNTIME_FAILED',
+      'Study wall deadline expired; history only.',
+    )
+    record.runtime?.fail(record.error.message)
+    this.failUnfinishedNodePhase(record)
+  }
+
+  /**
+   * Says whether a run ended before its whole-run deadline could apply, so the deadline's error is never added to it; the guard of {@link StudyService.expireAtDeadline} for both of its callers.
+   * @param record - The run whose deadline passed.
+   * @returns `true` for a run that is stopped or being stopped, and for one whose runtime completed (its result was observed and only the release is left); `false` for a run that is still on its way.
+   * @example this.hasRunEnded(record) // => true once record.runtime.view().status === 'completed'
+   */
+  private hasRunEnded(record: StudyRecord): boolean {
+    return (
+      record.stopped ||
+      record.stopping ||
+      record.runtime?.view().status === 'completed'
+    )
+  }
+
+  /**
+   * Marks the Node test of a run that passed its whole-run deadline as failed, unless the test already completed; the last step of {@link StudyService.expireAtDeadline}.
+   * @param record - The run whose deadline passed; a run of another profile has no Node phase and is left as it is.
+   * @example this.failUnfinishedNodePhase(record) // record.nodePhase: 'paused' becomes 'failed', 'completed' stays
+   */
+  private failUnfinishedNodePhase(record: StudyRecord): void {
+    if (record.nodePhase && record.nodePhase !== 'completed')
+      record.nodePhase = 'failed'
+  }
+
   /** Acquires the adapter once; cancellation after an await drains rather than abandons it. @example await this.prepare(record) */
   private async prepare(record: StudyRecord): Promise<void> {
     try {
@@ -1796,6 +2292,19 @@ export class StudyService {
             'PREREQUISITE_MISSING',
             'Repository source/book storage is unavailable in this editor.',
           )
+        // An open reader that shows saved history displays none of this run's captures, so the run would fail at its first one, after the application was started: it ends here, before any input.
+        const presentation = this.presentationController?.presentationState()
+        if (
+          presentation?.state === 'open' &&
+          !presentation.reader.followingCurrentRun
+        ) {
+          // The run had no effect: no study is saved for it, as for a run the library refused.
+          record.historyExcluded = 'refused-at-admission'
+          throw new StudyError(
+            'PRESENTATION_UNAVAILABLE',
+            readerNotFollowingRunRefusal(presentation.reader.contentRevision),
+          )
+        }
         // The admission precedes every awaited read, so no reader checkpoint captures a run the library will refuse.
         await this.admitStudy(record)
         if (this.stopping || record.stopping) return
@@ -2207,7 +2716,7 @@ export class StudyService {
     if (limit === undefined) return INVALID_SAVED_STUDY_LIMIT_MESSAGE
     return (await recordings.admitsStudy(`${this.instanceId}_${record.id}`))
       ? undefined
-      : fullLibraryMessage('run', limit, this.isStudyRemovalAvailable)
+      : fullLibraryMessage('run', limit, this.removalAvailability)
   }
 
   /** Serializes release after acquisitions and accepted explanation writes settle. @example await this.stopRecord(record) */

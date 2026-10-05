@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { RECORDING_VERSION } from './constants'
+import { PLAYBACK_SEEK_STOP_SNAP_MS, RECORDING_VERSION } from './constants'
 import { studyIdSchema } from './legacyStudySchemas'
 import { recordingHashSchema } from './recordingSchemas'
 
@@ -23,7 +23,7 @@ export const playbackToolSchema = z
     positionMs: positionMs
       .optional()
       .describe(
-        'Required only for seek; use a position within the returned recording range. A position less than 1 ms before a recorded stop presents that stop. Omit for open, play and pause.',
+        `Required only for seek; use a position within the returned recording range. A position less than ${PLAYBACK_SEEK_STOP_SNAP_MS} ms before a recorded stop presents that stop. Omit for open, play and pause.`,
       ),
   })
   .superRefine((input, context) => {

@@ -2893,6 +2893,102 @@ test('the Study header Restore exits a maximized pane while keeping the settled 
   }
 })
 
+// Value: protects=the Study pane leaving its loading line after the editor failed to show a captured source, and showing the source by itself once the editor can; fails_when=a failed render keeps the loading state, so the pane reads "Loading the selected observation…" beside the error for good, or keeps the failed selection as already shown, so no refresh ever shows it; why_new=Cycle 0045 NF-8 with DR-8 and PC-1.3 (each of the two fixes alone leaves the other half); seam=the harness's editor refuses to open captured-source documents until it is restored
+test("the Study pane leaves 'Loading the selected observation…' at the next refresh after showing the captured source failed once", async () => {
+  // Arrange: an open reader, and an editor that cannot open captured-source documents for now.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.failCurrentSourceOpen()
+
+    // Act: the learner selects another item, whose captured source fails to show; then the editor recovers and the reader's timer runs once.
+    await harness.reader.select('repository/workspace/overview')
+    const afterFailure = harness.postedMessages().at(-1)!
+    harness.restoreCurrentSourceOpen()
+    await readerSeams(harness).refresh()
+    const afterRefresh = harness.postedMessages().at(-1)!
+
+    // Assert: first the reason with Retry (the line is one Retry storage / refresh answers) and no loading line, then the selected source without either.
+    assert.deepEqual(
+      {
+        loading: afterFailure.loading,
+        errors: [...afterFailure.errors],
+        unretryableErrorCount: afterFailure.unretryableErrorCount,
+      },
+      {
+        loading: false,
+        errors: ['Error: Injected current source open failure'],
+        unretryableErrorCount: 0,
+      },
+    )
+    assert.deepEqual(
+      {
+        loading: afterRefresh.loading,
+        errors: [...afterRefresh.errors],
+        selectedItem: afterRefresh.model.selection.itemId,
+        sourceShown: readerSeams(harness).isSourceShown(),
+      },
+      {
+        loading: false,
+        errors: [],
+        selectedItem: 'repository/workspace/overview',
+        sourceShown: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's tabs while a captured source keeps failing to show; fails_when=every failed render forgets its selection, so the reader's timer renders the same source again four times a second and each attempt brings its tab to the front of the learner's group; why_new=Cycle 0045 NF-8 with PC-1.3 (the failed render now forgets its selection once, which needs this bound); seam=the harness's editor refuses to open captured-source documents until it is restored
+test('a captured source that failed to show twice in a row is left to Retry storage / refresh instead of being tried again at every refresh', async () => {
+  // Arrange: the selected item's captured source failed to show, and failed again at the reader's next refresh.
+  const harness = await workspaceHarness()
+  try {
+    await harness.reader.open()
+    harness.failCurrentSourceOpen()
+    await harness.reader.select('repository/workspace/overview')
+    await readerSeams(harness).refresh()
+    const afterSecondFailure = harness.postedMessages().at(-1)!
+    harness.restoreCurrentSourceOpen()
+
+    // Act: further refreshes of the reader's timer, then the learner presses Retry storage / refresh.
+    await readerSeams(harness).refresh()
+    await readerSeams(harness).refresh()
+    const sourceShownByTheTimer = readerSeams(harness).isSourceShown()
+    const afterTimerRefreshes = harness.postedMessages().at(-1)!
+    await harness.reader.action('retry')
+    const afterRetry = harness.postedMessages().at(-1)!
+
+    // Assert
+    assert.deepEqual(
+      {
+        loading: afterSecondFailure.loading,
+        errors: [...afterSecondFailure.errors],
+      },
+      {
+        loading: false,
+        errors: ['Error: Injected current source open failure'],
+      },
+    )
+    assert.equal(sourceShownByTheTimer, false)
+    assert.deepEqual(
+      [...afterTimerRefreshes.errors],
+      ['Error: Injected current source open failure'],
+    )
+    assert.deepEqual(
+      {
+        loading: afterRetry.loading,
+        errors: [...afterRetry.errors],
+        sourceShown: readerSeams(harness).isSourceShown(),
+      },
+      { loading: false, errors: [], sourceShown: true },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 test('reading the sidebar beside an enlarged application preserves replay and restores the same source', async () => {
   // Arrange
   const harness = await recordedReaderHarness(true)
@@ -3672,6 +3768,108 @@ test('after a saved study was chosen with the bottom panel maximized, restoring 
   }
 })
 
+// Value: protects=the editor being asked for its layout once at a time while a saved study waits for the hidden editor area; fails_when=every 250 ms refresh sends another layout request while the one before it is still unanswered; why_new=Cycle 0045 SP-6 (read from code: `showStudyAwaitingEditorArea` asked on every tick, with no guard against a request in flight); seam=the workspace harness holding one editor command, the reader's refresh
+test('while a saved study waits for the hidden editor area, a refresh that finds a layout request unanswered sends no second one', async (context) => {
+  // Arrange: a saved study was chosen with the bottom panel maximized; the editor does not answer the next layout request.
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const layoutRequestsBefore = harness.commands.filter(
+      (command) => command === 'vscode.getEditorLayout',
+    ).length
+    const unanswered = harness.holdNextCommand('vscode.getEditorLayout')
+
+    // Act: the reader's timer runs again two seconds later, and the editor still has not answered the first request.
+    const startedAtMs = performance.now()
+    let waitedMs = 0
+    context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
+    const firstTick = readerSeams(harness).refresh()
+    await unanswered.started
+    waitedMs = 2_000
+    await readerSeams(harness).refresh()
+    const layoutRequestsWhileUnanswered =
+      harness.commands.filter((command) => command === 'vscode.getEditorLayout')
+        .length - layoutRequestsBefore
+    unanswered.release()
+    await firstTick
+
+    // Assert
+    assert.equal(layoutRequestsWhileUnanswered, 1)
+    assert.equal(harness.isPanelMaximized(), true)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=a saved study chosen with the bottom panel maximized being shown whenever the learner brings the editor area back, however late, while the editor is asked for its layout at most once a second meanwhile; fails_when=the wait gets an end bound and the learner has to choose the study again, or every 250 ms refresh asks the editor; why_new=Cycle 0045 SP-6 as DR-10 (the wait has no end bound, only the polling is bounded); seam=the workspace harness, the reader's refresh, and performance.now() moved by the test
+test('a saved study chosen with the bottom panel maximized is shown when the panel is restored ten minutes later', async (context) => {
+  // Arrange
+  const { harness, second } = await studyLayoutWithSecondSavedStudy()
+  try {
+    harness.maximizePanel()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: second.id,
+      },
+      'moments',
+    )
+    const startedAtMs = performance.now()
+    let waitedMs = 0
+    context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
+    /** Runs the reader's timer once at a moment of the wait and counts the layout requests it sent. */
+    const layoutRequestsOfTickAt = async (atMs: number): Promise<number> => {
+      waitedMs = atMs
+      const before = harness.commands.filter(
+        (command) => command === 'vscode.getEditorLayout',
+      ).length
+      await readerSeams(harness).refresh()
+      return (
+        harness.commands.filter(
+          (command) => command === 'vscode.getEditorLayout',
+        ).length - before
+      )
+    }
+
+    // Act: four ticks of the first second, one a second later, and one ten minutes after the choice, when the learner has restored the panel.
+    const requestsInTheFirstSecond = [
+      await layoutRequestsOfTickAt(0),
+      await layoutRequestsOfTickAt(250),
+      await layoutRequestsOfTickAt(500),
+      await layoutRequestsOfTickAt(750),
+    ]
+    const requestsAfterOneSecond = await layoutRequestsOfTickAt(1_000)
+    const shownWhileMaximized = harness.reader
+      .inspect()
+      .sourceUri?.includes(second.id)
+    harness.restorePanel()
+    waitedMs = 600_000
+    await readerSeams(harness).refresh()
+
+    // Assert
+    assert.deepEqual(requestsInTheFirstSecond, [1, 0, 0, 0])
+    assert.equal(requestsAfterOneSecond, 1)
+    assert.equal(shownWhileMaximized, false)
+    assert.equal(harness.reader.inspect().sourceUri!.includes(second.id), true)
+    assert.equal(harness.reader.inspect().view!.loading, false)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized (0039-N8-b / 0040-N9-img, second occurrence); fails_when=the seek reveals its source into the hidden editor area, the editor expands the source group and brings the area back, and nothing gives the Application group its height back: it stays a 70 px strip with the layout unconfirmed until Restore; why_new=native run of 2026-10-04 (u18-max-seek.png, repaired only by Restore, u25-restored.png); seam=workspace harness with a maximized bottom panel
 test('a recorded seek made while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
   // Arrange
@@ -3703,6 +3901,715 @@ test('a recorded seek made while the bottom panel is maximized leaves the Applic
     assert.equal(harness.isPanelMaximized(), false)
     assert.equal(harness.groupHeightPx(1), 420)
     assert.equal(state.layoutConfirmed, true)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Opens a fake editor whose editor area holds two stacked groups, the window in which VS Code 1.140.0 was observed bringing a hidden editor area back; the tests of the fake editor's own triggers start here.
+ * @returns The harness with a reader that is not open: the first group shows `article-source.ts`, the second group lies below it, and each is 420 px high.
+ * @example const harness = await twoStackedGroupsEditor(); harness.maximizePanel()
+ */
+async function twoStackedGroupsEditor() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [{ size: 0.5 }, { size: 0.5 }],
+  })
+  return harness
+}
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when a pane is created behind the panel; fails_when=the fake editor keeps the editor area hidden for a new webview panel, so a product change that creates a pane while the panel is maximized passes although VS Code takes the panel out of its maximized state; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for a panel created without focus, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a webview panel created without the keyboard focus', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    harness.editor.window.createWebviewPanel('qa.probe', 'QA probe', {
+      viewColumn: 2,
+      preserveFocus: true,
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when a pane is created with the focus; fails_when=the fake editor keeps the editor area hidden for a new webview panel that takes the focus; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for a panel created with focus, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a webview panel created with the keyboard focus', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    harness.editor.window.createWebviewPanel('qa.probe', 'QA probe', {
+      viewColumn: 2,
+      preserveFocus: false,
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader focuses the first group; fails_when=the fake editor keeps the editor area hidden for the focus-first-group command, so a focus hand-off behind a maximized panel passes although VS Code brings the area back with the first group as a 70 px strip; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned, the focused first row 70 px and the second 617 px); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the command that focuses the first editor group', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusFirstEditorGroup',
+    )
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader focuses the group that is already the active one; fails_when=the fake editor keeps the area hidden for that command, or brings it back with the first group as a 70 px strip as it does for a command that activates another group, so a focus hand-off that leaves the rows as they were looks like a collapse; why_new=Cycle 0045 D-M2, open again after the second native round (VS Code 1.140.0 on 2026-10-04, owed check 5: the area returned with the rows at 344 and 343 px, the sizes they had before the panel was maximized); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the command that focuses the active editor group', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.focusActiveEditorGroup',
+    )
+
+    // Assert: the rows have the heights they had before the panel was maximized.
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(harness.groupHeightPx(2), 420)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader applies a layout; fails_when=the fake editor keeps the editor area hidden for vscode.setEditorLayout, so an arrangement made behind a maximized panel passes although VS Code brings the area back; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for a layout of the same shape, with the sizes of that layout); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: an editor layout of the same shape', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(harness.groupHeightPx(2), 420)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader applies another layout; fails_when=the fake editor keeps the editor area hidden for a vscode.setEditorLayout that changes the shape of the grid; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for two columns in place of two rows, both columns at the full height); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: an editor layout of another shape', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand('vscode.setEditorLayout', {
+      orientation: 0,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 840)
+    assert.equal(harness.groupHeightPx(2), 840)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the reader closes the tab a group shows; fails_when=the fake editor keeps the editor area hidden for a close of a group's active tab, so a tab the reader closes behind a maximized panel passes although VS Code brings the area back; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned when the API closed the active tab of the first group, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a close request for the tab a group shows', async () => {
+  // Arrange: the first group holds a second tab behind the one it shows.
+  const harness = await twoStackedGroupsEditor()
+  try {
+    const shownTab = harness.groups.find(
+      (group) => group.viewColumn === 1,
+    )!.activeTab!
+    harness.addTextPreview(join(harness.directory, 'second-source.ts'), 1)
+    harness.maximizePanel()
+
+    // Act
+    const closed = await harness.editor.window.tabGroups.close([shownTab])
+
+    // Assert
+    assert.equal(closed, true)
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests with a maximized bottom panel meeting the editor as it is when the learner closes the editor in front; fails_when=the fake editor has no Close Editor command or keeps the editor area hidden for it; why_new=Cycle 0045 D-M2 (VS Code 1.140.0 on 2026-10-04: the area returned for workbench.action.closeActiveEditor in the first group, rows 70 px and the rest); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: the Close Editor command', async () => {
+  // Arrange: the focused first group holds a second tab behind the one it shows.
+  const harness = await twoStackedGroupsEditor()
+  try {
+    const firstGroup = harness.groups.find((group) => group.viewColumn === 1)!,
+      shownTab = firstGroup.activeTab!
+    harness.addTextPreview(join(harness.directory, 'second-source.ts'), 1)
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.commands.executeCommand(
+      'workbench.action.closeActiveEditor',
+    )
+
+    // Assert
+    assert.equal(firstGroup.tabs.includes(shownTab), false)
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the trigger the fake editor already had, kept with the sizes VS Code gives the returned area; fails_when=a revealed pane no longer brings the hidden editor area back; why_new=Cycle 0045 D-M2 (the case of the revealed pane beside the new triggers, so the whole set is pinned); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a webview panel revealed with the keyboard focus', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    const probe = harness.editor.window.createWebviewPanel(
+      'qa.probe',
+      'QA probe',
+      { viewColumn: 2, preserveFocus: true },
+    )
+    harness.maximizePanel()
+
+    // Act
+    probe.reveal(2, false)
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the trigger the fake editor already had, kept with the sizes VS Code gives the returned area; fails_when=a text document shown in a group no longer brings the hidden editor area back; why_new=Cycle 0045 D-M2 (the case of the shown document beside the new triggers, so the whole set is pinned); seam=the workspace harness's fake editor
+test('the fake editor brings the editor area back for every trigger VS Code brings it back for: a text document shown in a group', async () => {
+  // Arrange
+  const harness = await twoStackedGroupsEditor()
+  try {
+    harness.maximizePanel()
+
+    // Act
+    await harness.editor.window.showTextDocument(
+      {
+        uri: harness.editor.Uri.file(join(harness.directory, 'shown.ts')),
+        getText: () => '',
+      },
+      { viewColumn: 2, preserveFocus: true },
+    )
+
+    // Assert
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 70)
+    assert.equal(harness.groupHeightPx(2), 770)
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Opens a fake editor with one group in the first row and two groups side by side in the second, the last of them empty; the tests of an emptied group's removal start here.
+ * @returns The harness with a reader that is not open and three native groups: column 1 above columns 2 and 3.
+ * @example const harness = await twoRowEditorWithSplitSecondRow()
+ */
+async function twoRowEditorWithSplitSecondRow() {
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({
+    orientation: 1,
+    groups: [
+      { size: 0.5 },
+      { size: 0.5, groups: [{ size: 0.5 }, { size: 0.5 }] },
+    ],
+  })
+  return harness
+}
+
+// Value: protects=reader tests after a closed dead pane seeing the grid the editor leaves; fails_when=the fake editor rebuilds the grid as columns when a tab close empties a group, so two rows become two columns in one path and stay rows in another; why_new=Cycle 0045 D-M4 (three copies of the removal of an emptied group gave different layouts); seam=the workspace harness's fake editor
+test('a group emptied by a tab close in a two-row layout leaves the same layout as one emptied by a disposed pane', async () => {
+  // Arrange: in each editor the third group, beside the second in the lower row, holds one pane.
+  const closedByRequest = await twoRowEditorWithSplitSecondRow(),
+    closedByDisposal = await twoRowEditorWithSplitSecondRow()
+  try {
+    const deadPane = closedByRequest.leaveDeadCodebookPane(
+      'codebook.studyContext',
+      3,
+    )
+    closedByDisposal.closeDisposedPanelTabsLater()
+    const disposedPane = closedByDisposal.editor.window.createWebviewPanel(
+      'qa.probe',
+      'QA probe',
+      { viewColumn: 3, preserveFocus: true },
+    )
+
+    // Act: one pane's tab is closed by request; the other pane is disposed and the editor closes its tab after the next layout read.
+    await closedByRequest.editor.window.tabGroups.close([deadPane])
+    disposedPane.dispose()
+    await closedByDisposal.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    // Assert
+    assert.equal(closedByRequest.groups.length, 2)
+    assert.equal(closedByDisposal.groups.length, 2)
+    assert.deepEqual(closedByRequest.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+    assert.deepEqual(closedByDisposal.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+  } finally {
+    await closedByRequest.close()
+    await closedByDisposal.close()
+  }
+})
+
+// Value: protects=reader tests in Cursor after an extension-host restart that left dead panes in two groups: the fake editor ends with the groups the editor ends with; fails_when=the fake Cursor removes the first emptied group, answers that removal with new group objects and then no longer finds the second emptied group, which stays as an empty group no editor would keep; why_new=local CodeRabbit review of Cycle 0045 (the loop held the group objects of before the first removal); seam=none
+test('the fake Cursor removes every group that dead panes leave empty in one close, although each removal gives the remaining groups new objects', async () => {
+  // Arrange: four native groups side by side; the third and the fourth hold one dead pane each, and the editor answers tab changes as Cursor does.
+  const harness = await workspaceHarness(false)
+  try {
+    harness.useNativeLayout({
+      orientation: 0,
+      groups: [{ size: 0.25 }, { size: 0.25 }, { size: 0.25 }, { size: 0.25 }],
+    })
+    const deadApplication = harness.leaveDeadCodebookPane(
+        'codebook.scopedBrowser',
+        3,
+      ),
+      deadStudy = harness.leaveDeadCodebookPane('codebook.studyContext', 4)
+    harness.replaceGroupObjectsOnTabChanges()
+    const groupsBefore = harness.groups.map((group) => ({
+      column: group.viewColumn,
+      tabs: group.tabs.length,
+    }))
+
+    // Act: one request closes both dead panes.
+    await harness.editor.window.tabGroups.close([deadApplication, deadStudy])
+
+    // Assert: both emptied groups are gone, and the two groups that stay keep their columns.
+    assert.deepEqual(
+      groupsBefore.map((group) => group.column),
+      [1, 2, 3, 4],
+    )
+    assert.deepEqual(
+      harness.groups.map((group) => group.viewColumn),
+      [1, 2],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=reader tests after a moved pane seeing the grid the editor leaves; fails_when=the fake editor rebuilds the grid as columns when a pane's move empties its group, so two rows become two columns; why_new=Cycle 0045 D-M4 (the pane-move copy of the removal of an emptied group flattened the layout too); seam=the workspace harness's fake editor
+test('a group emptied by a moved pane in a two-row layout leaves the same layout as one emptied by a disposed pane', async () => {
+  // Arrange: the third group, beside the second in the lower row, holds one pane.
+  const harness = await twoRowEditorWithSplitSecondRow()
+  try {
+    harness.closeEmptyGroupsAfterPanelMove()
+    const movedPane = harness.editor.window.createWebviewPanel(
+      'qa.probe',
+      'QA probe',
+      { viewColumn: 3, preserveFocus: true },
+    )
+
+    // Act
+    movedPane.reveal(1, true)
+
+    // Assert
+    assert.deepEqual(harness.automaticallyClosedColumns(), [3])
+    assert.equal(harness.groups.length, 2)
+    assert.deepEqual(harness.editorLayout(), {
+      orientation: 1,
+      groups: [{ size: 0.5 }, { size: 0.5 }],
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Opens a recording in an editor that behaves like Cursor 3.23.12: the Agent chat is a tab of its own editor part, and every tab that opens, closes or comes to the front gives all editor groups new objects.
+ * @returns The recorded reader harness with the recording at its first position and the chat part.
+ * @example const { harness, chat } = await recordingInCursor()
+ */
+async function recordingInCursor() {
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  const chat = harness.addSeparateEditorPart()
+  harness.replaceGroupObjectsOnTabChanges()
+  await harness.reader.openRecording(harness.studyId)
+  await harness.controller.settle()
+  return { harness, chat }
+}
+
+// Value: protects=the confirmed layout of a recording in Cursor across a seek that shows another source tab; fails_when=the group objects Cursor replaces with that tab change count as other groups (the Agent chat's group holds no tab Codebook knows), so the next status read answers layoutConfirmed false with "The Study arrangement is not confirmed. …" although no pixel of the grid changed; why_new=Cycle 0045 NF-5, normal panel height (observed on candidate 13: 2 of 2 seeks that changed the source tab); seam=workspace harness with a separate editor part and the fake editor's group object replacement
+test('a recorded seek in Cursor that shows another source tab leaves the layout confirmed', async () => {
+  // Arrange
+  const { harness, chat } = await recordingInCursor()
+  try {
+    const before = await harness.reader.readPresentationState(),
+      sourceBefore = harness.reader.inspect().sourceUri,
+      groupsBefore = [...harness.groups],
+      layoutBefore = harness.editorLayout()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(before.layoutConfirmed, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    // The seek showed another source tab, and the editor answered it with new group objects in the same columns and the same grid.
+    assert.notEqual(harness.reader.inspect().sourceUri, sourceBefore)
+    assert.equal(
+      harness.groups.some((group) => groupsBefore.includes(group)),
+      false,
+    )
+    assert.deepEqual(harness.editorLayout(), layoutBefore)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+    assert.equal(
+      harness.groups.find((group) => group.tabs.includes(chat.tab))?.viewColumn,
+      3,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Application group's height after a recorded seek made in Cursor with the bottom panel maximized; fails_when=the seek brings the hidden editor area back with the Application group at its 70 px minimum and the confirmed grid is not applied again, because the group objects Cursor replaced no longer count as the confirmed groups: a strip and layoutConfirmed false until Restore; why_new=Cycle 0045 NF-5, maximized panel (observed on candidate 13: 70 / 587 after 2 of 2 seeks); seam=workspace harness with a maximized bottom panel, a separate editor part and the fake editor's group object replacement
+test('a recorded seek made in Cursor while the bottom panel is maximized leaves the Application group at its normal height and the layout confirmed', async () => {
+  // Arrange
+  const { harness } = await recordingInCursor()
+  try {
+    const applicationHeightBefore = harness.groupHeightPx(1),
+      confirmedBefore = (await harness.reader.readPresentationState())
+        .layoutConfirmed
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    const state = await harness.reader.readPresentationState()
+    assert.equal(applicationHeightBefore, 420)
+    assert.equal(confirmedBefore, true)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.isPanelMaximized(), false)
+    assert.equal(harness.groupHeightPx(1), 420)
+    assert.equal(state.layoutConfirmed, true)
+    assert.equal(state.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=Restore of a recording's layout in Cursor ending confirmed although the editor names the Application group as the active group for one event while Codebook measures the main editor; fails_when=that announced detour of the focus is read as the learner choosing another tab, and Restore ends with "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved."; why_new=Cycle 0045 NF-7 (Cycle 0044 saw 2 of 5 presses fail; on candidate 13 six of six presses were confirmed, each with the Application group active for 25 to 46 ms before the source group); seam=workspace harness with a separate editor part, the fake editor's group object replacement and its split focus notifications
+test('Restore in Recording is confirmed when Cursor reports another active group for one event while the layout is applied', async () => {
+  // Arrange: the recorded source has the keyboard focus; the editor reports a group's activation before the text editor that goes with it.
+  const { harness } = await recordingInCursor()
+  try {
+    harness.usePrimaryFocusNotificationOrder('group first')
+    await harness.reader.action('source')
+    const state = harness.reader.presentationState(),
+      focusedBefore = harness.editor.window.tabGroups.activeTabGroup.viewColumn,
+      commandsBefore = harness.commands.length
+
+    // Act
+    const restored = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+
+    // Assert
+    assert.equal(focusedBefore, 2)
+    // The measurement focused the first group, where the Application pane is, and gave the focus back to the source.
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .includes('workbench.action.focusFirstEditorGroup'),
+      true,
+    )
+    assert.equal(harness.editor.window.tabGroups.activeTabGroup.viewColumn, 2)
+    assert.equal(restored.layoutConfirmed, true)
+    assert.equal(restored.reason, undefined)
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const [change, changedPart] of [
+  [
+    'the grid changed',
+    'the editor grid no longer has the sizes of the confirmed layout',
+  ],
+  [
+    'an editor group was replaced',
+    'an editor group was opened, closed, moved or replaced since the layout was confirmed',
+  ],
+] as const)
+  // Value: protects=a learner or an agent reading, after a status read unconfirmed the Study layout, which comparison failed; fails_when=the reason is the same sentence for a resized grid and for a replaced editor group, so a report of an unconfirmed layout does not say what changed; why_new=Cycle 0045 NF-5 (in Cursor nobody could tell from "The Study arrangement is not confirmed. …" that no pixel of the grid had changed); seam=workspace harness with the fake editor
+  test(`a status read after ${change} says which part of the confirmed layout differs`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      await harness.reader.open()
+      const before = await harness.reader.readPresentationState()
+      if (change === 'the grid changed')
+        harness.changeEditorLayout({
+          orientation: 0,
+          groups: [
+            { size: 0.3, groups: [{ size: 0.5 }, { size: 0.5 }] },
+            { size: 0.7 },
+          ],
+        })
+      else harness.replaceEditorGroup('opened', 1)
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(before.layoutConfirmed, true)
+      assert.equal(before.reason, undefined)
+      assert.equal(state.layoutConfirmed, false)
+      assert.equal(
+        state.reason,
+        `The Study arrangement is not confirmed: ${changedPart}. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.`,
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+for (const keyboard of ['in the chat input', "on the chat's tab"] as const) {
+  // Value: protects=an agent that reads the presentation state after its own select, from the chat, being told the layout it just got confirmed still stands; fails_when=the read answers layoutConfirmed false with "Main editor layout could not be checked without changing focus. …" although no tab or group changed since the arrangement, so the agent reports the layout as unconfirmed or restores it again; why_new=Cycle 0045 finding S1a-F1 (first part of package S1); seam=workspace harness with a separate editor part that has the keyboard
+  test(`a status read made while the chat has the focus answers the confirmation of the last arrangement when nothing changed since (keyboard ${keyboard})`, async () => {
+    // Arrange: the Study layout is confirmed; then the keyboard is in Cursor's chat part, where a layout read is answered for that part.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const arranged = await harness.reader.readPresentationState()
+      if (keyboard === 'in the chat input') chat.focus()
+      else chat.focusTab()
+      const commandsBefore = harness.commands.length
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(arranged.layoutConfirmed, true)
+      assert.equal(arranged.layoutMeasured, undefined)
+      assert.equal(state.layoutConfirmed, true)
+      assert.equal(state.layoutMeasured, false)
+      assert.equal(state.reason, undefined)
+      // The read took no focus: it sent the one layout request, and the chat still has the keyboard.
+      assert.deepEqual(harness.commands.slice(commandsBefore), [
+        'vscode.getEditorLayout',
+      ])
+      assert.equal(chat.focused(), true)
+    } finally {
+      await harness.close()
+    }
+  })
+
+  // Value: protects=the same read not certifying a layout that changed while it could not be measured; fails_when=a group that opened since the arrangement is answered with the old confirmation; why_new=Cycle 0045 finding S1a-F1, the counterpart of the case above; seam=workspace harness with a separate editor part that has the keyboard, replaceEditorGroup
+  test(`a status read made while the chat has the focus answers that the layout is not confirmed after a group changed since the last arrangement (keyboard ${keyboard})`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    const chat = harness.addSeparateEditorPart()
+    try {
+      await harness.reader.open()
+      const arranged = await harness.reader.readPresentationState()
+      if (keyboard === 'in the chat input') chat.focus()
+      else chat.focusTab()
+      harness.replaceEditorGroup('opened', 1)
+
+      // Act
+      const state = await harness.reader.readPresentationState()
+
+      // Assert
+      assert.equal(arranged.layoutConfirmed, true)
+      assert.equal(state.layoutConfirmed, false)
+      assert.equal(state.layoutMeasured, undefined)
+      assert.equal(
+        state.reason,
+        'Main editor layout could not be checked without changing focus. Focus a Codebook pane or main text editor and read again.',
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
+// Value: protects=the Application group's height after a recorded seek made with the bottom panel maximized while the layout was no longer confirmed; fails_when=only a confirmed layout is given its grid back, so the returned editor area leaves the Application group a 70 px strip above the source until Restore; why_new=Cycle 0045 NF-5 with PC-1.1 (the second maximized seek of the observation: the first had left the layout unconfirmed); seam=workspace harness with a maximized bottom panel
+test('a recorded seek made while the bottom panel is maximized gives a collapsed Application group its height back also when the layout was no longer confirmed', async () => {
+  // Arrange: a status read found the grid resized, so the recording's layout is unconfirmed; then the learner maximizes the bottom panel.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    harness.changeEditorLayout({
+      orientation: 1,
+      groups: [{ size: 0.4 }, { size: 0.6 }],
+    })
+    const unconfirmed = await harness.reader.readPresentationState(),
+      applicationHeightBefore = harness.groupHeightPx(1)
+    harness.maximizePanel()
+
+    // Act
+    harness.controller.command({
+      action: 'seek',
+      studyId: harness.studyId,
+      expectedRevision: harness.controller.state().revision,
+      positionMs: 100,
+    })
+    await harness.controller.settle()
+
+    // Assert
+    assert.equal(unconfirmed.layoutConfirmed, false)
+    assert.equal(applicationHeightBefore, 336)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(harness.isPanelMaximized(), false)
+    // The last confirmed grid is applied again: the Application group is no strip of 70 px.
+    assert.equal(harness.groupHeightPx(1), 420)
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const command of [
+  'Arrange Study Workspace',
+  'Open Study Workspace',
+] as const)
+  for (const layout of ['a recording', 'the Study layout'] as const)
+    // Value: protects=the two commands a learner reaches for when the Application pane is a strip giving that pane its height back; fails_when=Arrange restores without applying a grid, or Open returns because a layout receipt of the same mode exists, so the Application group stays at the 70 px of its tab row above a tall source; why_new=Cycle 0045 NF-10 with PC-1.1 (Cursor: neither command repaired the collapse a maximized seek left; the collapse is that of the Application group alone, the source group is tall); seam=workspace harness with a native layout whose rows the test sets in pixels
+    test(`${command} gives a collapsed Application group its normal height, in ${layout}`, async () => {
+      // Arrange: the editor area is visible; the Application group sits at the height of its tab row above a tall source group, as a maximized bottom panel leaves it when it is restored.
+      const harness = await recordedReaderHarness(true)
+      harness.useNativeLayout({ orientation: 0, groups: [{}] })
+      try {
+        if (layout === 'a recording') {
+          await harness.reader.openRecording(harness.studyId)
+          await harness.controller.settle()
+        } else await harness.reader.open()
+        const arranged = await harness.reader.readPresentationState(),
+          applicationHeightArranged = harness.groupHeightPx(1)
+        harness.maximizePanel()
+        await harness.editor.commands.executeCommand(
+          'workbench.action.focusFirstEditorGroup',
+        )
+        const collapsed = {
+          application: harness.groupHeightPx(1),
+          source: harness.groupHeightPx(2),
+        }
+
+        // Act
+        if (command === 'Arrange Study Workspace')
+          await harness.reader.action('arrange')
+        else await harness.reader.open()
+
+        // Assert
+        const state = await harness.reader.readPresentationState()
+        assert.equal(arranged.layoutConfirmed, true)
+        assert.equal(applicationHeightArranged, 420)
+        assert.deepEqual(collapsed, { application: 70, source: 770 })
+        assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+        assert.equal(harness.groupHeightPx(1), 420)
+        assert.equal(harness.groupHeightPx(2), 420)
+        assert.equal(state.layoutConfirmed, true)
+        assert.equal(state.reason, undefined)
+      } finally {
+        await harness.close()
+      }
+    })
+
+// Value: protects=the line a learner reads when the editor did not keep the Study layout naming the command that applies it again, and that command clearing the line; fails_when=the pane reads "The editor did not retain the requested Codebook layout. Use the focus commands or arrange the Codebook panes manually.", which names no step that repairs it; why_new=Cycle 0045 finding OBS-2 (native observation round: the line stood in red in the Study pane after Restore Panel Size in Cursor); seam=workspace harness whose editor refuses one layout command
+test('a Study layout the editor did not keep is reported with the command that applies it again, and that command clears the report', async () => {
+  // Arrange: the editor refuses the layout of the first arrangement once.
+  const harness = await workspaceHarness(false)
+  harness.showTransientNativeSizes()
+  harness.failNextCommand('vscode.setEditorLayout')
+  try {
+    await harness.reader.open()
+    const reported = harness.reader.inspect().view!.errors.join(' | ')
+
+    // Act: the learner runs the command the line names.
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(
+      reported,
+      'Error: The Codebook panes were not arranged: the editor did not keep the layout Codebook applied. Run "Codebook: Arrange Study Workspace" to apply it again.',
+    )
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(
+      (await harness.reader.readPresentationState()).layoutConfirmed,
+      true,
+    )
   } finally {
     await harness.close()
   }

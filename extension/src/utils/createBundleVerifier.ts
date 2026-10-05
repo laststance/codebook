@@ -1,4 +1,4 @@
-import { SourceMap } from 'node:module'
+import { SourceMap, type SourceMapping } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -9,6 +9,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { isCommentAt } from './isCommentAt'
 import { isSourcePosition } from './isSourcePosition'
+import { sourceMapGeneratedRange } from './sourceMapGeneratedRange'
 import { sourceMapMappedPositions } from './sourceMapMappedPositions'
 
 /** Seals one parsed map for {@link ConfiguredBrowserRun} before input, rejecting ambiguous originals without changing legacy verification. @example createBundleVerifier(bundle).hashes.sourceMap.length // 64 */
@@ -30,37 +31,37 @@ export function createBundleVerifier(input: BundleSource) {
   if (canonicalSource(bundle.sourcePath) !== originalPath)
     throw new Error('Map original differs from native source path')
   const sourceMap = new SourceMap(payload)
+  // Split once on first use: a scan asks the generated text at every mapping in its range, and a list of break locations asks it for every location.
+  let splitGeneratedLines: string[] | undefined
+  const generatedLines = (): string[] =>
+    (splitGeneratedLines ??= bundle.javascript.split(/\r\n|\r|\n/))
   /** Reads the sealed original position of a generated location for `originalLine` and `originalColumn`; unmapped generated code has none. */
   const originalPosition = (
     location: Pick<Protocol.Debugger.Location, 'lineNumber' | 'columnNumber'>,
   ): { line: number; column: number } | undefined => {
     const generatedColumn = location.columnNumber ?? 0
-    // A location past the end of the executed module is no place of it.
+    // A location past the end of the executed module is no place of it; the once-split lines answer without another pass over the module text.
     if (
-      !isSourcePosition(bundle.javascript, location.lineNumber, generatedColumn)
+      !isColumnOfGeneratedLine(
+        generatedLines()[location.lineNumber],
+        generatedColumn,
+      )
     )
       return undefined
-    const mapping = sourceMap.findEntry(location.lineNumber, generatedColumn)
-    // The map answers the nearest earlier mapping, also one of an earlier generated line or a segment without an original: either means the location itself is unmapped code.
-    if (
-      !('originalSource' in mapping) ||
-      typeof mapping.originalSource !== 'string' ||
-      mapping.generatedLine !== location.lineNumber ||
-      !isSameOriginal(mapping.originalSource, originalPath)
+    const mapping = originalMappingOfLine(
+      sourceMap,
+      location.lineNumber,
+      generatedColumn,
+      originalPath,
     )
-      return undefined
+    if (!mapping) return undefined
     return {
       line: mapping.originalLine + 1,
       column: mapping.originalColumn + 1,
     }
   }
-  // Split once on first use: a scan asks the generated text at every mapping in its range.
-  let generatedLines: string[] | undefined
   const isCodeAt = (generatedLine: number, generatedColumn: number): boolean =>
-    !isCommentAt(
-      (generatedLines ??= bundle.javascript.split(/\r\n|\r|\n/))[generatedLine],
-      generatedColumn,
-    )
+    !isCommentAt(generatedLines()[generatedLine], generatedColumn)
   const hashes = Object.freeze({
     typescript: sha256(bundle.source),
     javascript: sha256(bundle.javascript),
@@ -77,6 +78,16 @@ export function createBundleVerifier(input: BundleSource) {
         endLine,
         isCodeAt,
       )
+    },
+    /**
+     * Gives the generated range that holds every place the sealed map puts on one line of the cited source, so {@link ConfiguredBrowserRun} asks the debugger for the break locations of that line instead of the whole module's.
+     * @param line - One-based line of the sealed original.
+     * @returns The range ({@link sourceMapGeneratedRange}: an exclusive `end` at the end of the span the line's last mapping governs), absent when the scan found no mapping of the line, and whether the scan read the whole map.
+     * @example
+     * verifier.generatedRangeOfLine(2) // => { range: { start: { lineNumber: 1, columnNumber: 0 }, end: { lineNumber: 2, columnNumber: 0 } }, complete: true }
+     */
+    generatedRangeOfLine(line: number) {
+      return sourceMapGeneratedRange(payload.mappings, matches[0]!, line)
     },
     /**
      * Maps a generated location of this module back to a line of the sealed original, so a pause can be placed in source terms before any debugger frame exists.
@@ -166,6 +177,77 @@ export function createBundleVerifier(input: BundleSource) {
       return { ...hashes, scriptId, scriptLocation: location, mapping }
     },
   }
+}
+
+/**
+ * Says whether a generated column lies on a generated line of the executed module; called by the `originalPosition` reader of {@link createBundleVerifier} before the map is asked.
+ * @param generatedLineText - The text of the generated line, `undefined` for a line past the end of the module.
+ * @param generatedColumn - The zero-based generated column; the column right after the last character still counts.
+ * @returns
+ * - `true` for a safe integer from 0 to the line's length on a line the module has
+ * - `false` otherwise: the location is no place of the module
+ * @example
+ * isColumnOfGeneratedLine('const a = 1', 11) // => true
+ * isColumnOfGeneratedLine(undefined, 0)      // => false
+ */
+function isColumnOfGeneratedLine(
+  generatedLineText: string | undefined,
+  generatedColumn: number,
+): boolean {
+  return (
+    generatedLineText !== undefined &&
+    Number.isSafeInteger(generatedColumn) &&
+    generatedColumn >= 0 &&
+    generatedColumn <= generatedLineText.length
+  )
+}
+
+/**
+ * Narrows what the map answered to a mapping that names an original; called by {@link originalMappingOfLine}.
+ * @param entry - The answer of {@link SourceMap.findEntry}: a mapping, or an empty object where the map has none.
+ * @returns
+ * - The mapping when it carries an original source as a string
+ * - `undefined` for an empty answer and for a segment without an original
+ * @example
+ * sourceMappingOf({}) // => undefined
+ */
+function sourceMappingOf(
+  entry: ReturnType<SourceMap['findEntry']>,
+): SourceMapping | undefined {
+  return 'originalSource' in entry && typeof entry.originalSource === 'string'
+    ? entry
+    : undefined
+}
+
+/**
+ * Reads the mapping of a generated location onto this module's original; called by the `originalPosition` reader of {@link createBundleVerifier}.
+ * @param sourceMap - The sealed map.
+ * @param generatedLine - The zero-based generated line of the location.
+ * @param generatedColumn - The zero-based generated column of the location.
+ * @param originalPath - The canonical path of this module's original.
+ * @returns
+ * - The mapping when it lies on the same generated line and names this module's original
+ * - `undefined` otherwise: the map answers the nearest earlier mapping, also one of an earlier generated line or a segment without an original, and either means the location itself is unmapped code
+ * @example
+ * originalMappingOfLine(sourceMap, 0, 4, '/src/theme.tsx') // => { generatedLine: 0, generatedColumn: 0, originalSource: '/src/theme.tsx', originalLine: 0, originalColumn: 0 }
+ */
+function originalMappingOfLine(
+  sourceMap: SourceMap,
+  generatedLine: number,
+  generatedColumn: number,
+  originalPath: string,
+): SourceMapping | undefined {
+  const mapping = sourceMappingOf(
+    sourceMap.findEntry(generatedLine, generatedColumn),
+  )
+  // The map answers the nearest earlier mapping, also one of an earlier generated line or a segment without an original: either means the location itself is unmapped code.
+  if (
+    !mapping ||
+    mapping.generatedLine !== generatedLine ||
+    !isSameOriginal(mapping.originalSource, originalPath)
+  )
+    return undefined
+  return mapping
 }
 
 /** Compares a mapping's original with this module's for {@link createBundleVerifier}; an original that cannot be canonicalized is another one, so a pause handler that asks never throws. @example isSameOriginal('/src/./theme.tsx', '/src/theme.tsx') // true */

@@ -1,17 +1,15 @@
 import {
-  REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES,
-  REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS,
-  REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT,
-  SOURCE_MAP_NAMED_SEGMENT_FIELDS,
-  SOURCE_MAP_SOURCE_SEGMENT_FIELDS,
-  SOURCE_MAP_UNMAPPED_SEGMENT_FIELDS,
-  SOURCE_MAP_VLQ_CONTINUATION_MASK,
-  SOURCE_MAP_VLQ_SHIFT_BITS,
-  SOURCE_MAP_VLQ_SIGN_DIVISOR,
-  SOURCE_MAP_VLQ_VALUE_MASK,
-} from '../constants'
+  walkSourceMapSegments,
+  type SourceMapSegment,
+} from './walkSourceMapSegments'
 
 type MappedPosition = { line: number; column: number }
+
+/** One scan of a sealed map over a range of original lines: the first mapped column of each line the scan found, in line order, and whether the scan read the whole map. A position it found is a position; a line it did not find is unmapped only when the scan is complete. {@link ConfiguredBrowserRun} keeps one per stop and hands it to {@link resolveArmedPlace}, {@link createBindingLineRule} and {@link findUnmappedDeclaredStop}. */
+export interface MappedPositionsScan {
+  positions: readonly MappedPosition[]
+  complete: boolean
+}
 
 /**
  * Finds the first mapped column of each original line in a range, for the declared-line check before input, the binding rule and the hints of a binding failure; {@link createBundleVerifier} calls it only for a sealed map.
@@ -34,103 +32,61 @@ export function sourceMapMappedPositions(
     true,
 ): { positions: MappedPosition[]; complete: boolean } {
   const columns = new Map<number, number>()
-  let sourceIndex = 0,
-    originalLine = 0,
-    originalColumn = 0,
-    segmentsRead = 0,
-    generatedLinesRead = 1
-  for (
-    let cursor = 0, segmentStart = 0, generatedColumn = 0;
-    cursor <= mappings.length;
-    cursor++
-  ) {
-    // Empty delimiters consume the same bounded scan as mapped segments; no split arrays are allocated.
-    if (
-      cursor === REPOSITORY_MAPPED_POSITION_MAX_SCANNED_CHARS &&
-      cursor < mappings.length
-    )
-      return { positions: orderedPositions(columns), complete: false }
-    const delimiter = cursor === mappings.length ? undefined : mappings[cursor]
-    if (delimiter !== ',' && delimiter !== ';' && cursor !== mappings.length)
-      continue
-    if (++segmentsRead > REPOSITORY_MAPPED_POSITION_SEGMENT_LIMIT)
-      return { positions: orderedPositions(columns), complete: false }
-    if (cursor > segmentStart) {
-      const segment = mappings.slice(segmentStart, cursor)
-      const fields = decodeSegment(segment)
-      generatedColumn += fields[0]!
-      if (!Number.isSafeInteger(generatedColumn) || generatedColumn < 0)
-        throw new Error('Invalid generated map column')
-      if (fields.length !== SOURCE_MAP_UNMAPPED_SEGMENT_FIELDS) {
-        if (
-          fields.length !== SOURCE_MAP_SOURCE_SEGMENT_FIELDS &&
-          fields.length !== SOURCE_MAP_NAMED_SEGMENT_FIELDS
-        )
-          throw new Error('Invalid source map segment')
-        sourceIndex += fields[1]!
-        originalLine += fields[2]!
-        originalColumn += fields[3]!
-        if (
-          ![sourceIndex, originalLine, originalColumn].every(
-            Number.isSafeInteger,
-          ) ||
-          sourceIndex < 0 ||
-          originalLine < 0 ||
-          originalColumn < 0
-        )
-          throw new Error('Invalid original map position')
-        const line = originalLine + 1,
-          column = originalColumn + 1
-        // Mappings are hints, not proof that the debugger can bind or that the user's action reaches this line.
-        if (
-          sourceIndex === selectedSourceIndex &&
-          line >= startLine &&
-          line <= endLine &&
-          (columns.get(line) ?? Infinity) > column &&
-          isCodeAt(generatedLinesRead - 1, generatedColumn)
-        )
-          columns.set(line, column)
-      }
-    }
-    if (delimiter === ';') {
-      if (++generatedLinesRead > REPOSITORY_MAPPED_POSITION_MAX_GENERATED_LINES)
-        return { positions: orderedPositions(columns), complete: false }
-      generatedColumn = 0
-    }
-    segmentStart = cursor + 1
-  }
-  return { positions: orderedPositions(columns), complete: true }
+  const complete = walkSourceMapSegments(
+    mappings,
+    ({ generatedLine, generatedColumn, original }) => {
+      const position = mappedPositionOf(original, selectedSourceIndex)
+      // Mappings are hints, not proof that the debugger can bind or that the user's action reaches this line.
+      if (
+        position &&
+        isEarlierColumnInRange(columns, position, startLine, endLine) &&
+        isCodeAt(generatedLine, generatedColumn)
+      )
+        columns.set(position.line, position.column)
+    },
+  )
+  return { positions: orderedPositions(columns), complete }
 }
 
-/** Decodes signed Base64 VLQ fields for {@link sourceMapMappedPositions} so map hints use exact one-based source coordinates. @example decodeSegment('AAAA') // [0, 0, 0, 0] */
-function decodeSegment(segment: string): number[] {
-  const values: number[] = []
-  let encoded = 0,
-    shift = 0
-  for (const character of segment) {
-    const digit =
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.indexOf(
-        character,
-      )
-    if (digit < 0) throw new Error('Invalid source map digit')
-    encoded +=
-      (digit & SOURCE_MAP_VLQ_VALUE_MASK) * SOURCE_MAP_VLQ_SIGN_DIVISOR ** shift
-    if (!Number.isSafeInteger(encoded))
-      throw new Error('Oversized source map field')
-    if (digit & SOURCE_MAP_VLQ_CONTINUATION_MASK) {
-      shift += SOURCE_MAP_VLQ_SHIFT_BITS
-      continue
-    }
-    values.push(
-      (encoded % SOURCE_MAP_VLQ_SIGN_DIVISOR ? -1 : 1) *
-        Math.floor(encoded / SOURCE_MAP_VLQ_SIGN_DIVISOR),
-    )
-    encoded = 0
-    shift = 0
-  }
-  if (shift !== 0 || !values.length)
-    throw new Error('Incomplete source map segment')
-  return values
+/**
+ * Reads the one-based original position a segment maps to in the cited source; called by {@link sourceMapMappedPositions} for every segment.
+ * @param original - The segment's zero-based original position, absent for a segment without an original.
+ * @param selectedSourceIndex - Index of the cited original in the map's `sources`.
+ * @returns The position, or `undefined` for a segment without an original and for one of another source.
+ * @example
+ * mappedPositionOf({ sourceIndex: 0, line: 1, column: 0 }, 0) // => { line: 2, column: 1 }
+ * mappedPositionOf({ sourceIndex: 1, line: 1, column: 0 }, 0) // => undefined
+ */
+function mappedPositionOf(
+  original: SourceMapSegment['original'],
+  selectedSourceIndex: number,
+): MappedPosition | undefined {
+  if (original?.sourceIndex !== selectedSourceIndex) return undefined
+  return { line: original.line + 1, column: original.column + 1 }
+}
+
+/**
+ * Says whether a mapped position lies in the asked lines and before the column found for its line so far; called by {@link sourceMapMappedPositions} before it asks whether the generated text there can run.
+ * @param columns - The first mapped column found so far, by one-based original line.
+ * @param position - The one-based original position of a segment.
+ * @param startLine - First one-based original line to report.
+ * @param endLine - Last one-based original line to report.
+ * @returns Whether the line is in the range and has no column yet or a later one.
+ * @example
+ * isEarlierColumnInRange(new Map([[1, 5]]), { line: 1, column: 3 }, 1, 2) // => true
+ * isEarlierColumnInRange(new Map([[1, 5]]), { line: 3, column: 1 }, 1, 2) // => false
+ */
+function isEarlierColumnInRange(
+  columns: ReadonlyMap<number, number>,
+  position: MappedPosition,
+  startLine: number,
+  endLine: number,
+): boolean {
+  return (
+    position.line >= startLine &&
+    position.line <= endLine &&
+    (columns.get(position.line) ?? Infinity) > position.column
+  )
 }
 
 /** Orders bounded line hints for {@link sourceMapMappedPositions} before a failed run reports them. @example orderedPositions(new Map([[2, 3], [1, 1]])) // [{ line: 1, column: 1 }, { line: 2, column: 3 }] */

@@ -22,9 +22,11 @@ import {
   REPOSITORY_STORAGE_VALUE_LIMIT_CHARS,
   REPOSITORY_ENTRY_PATH_LIMIT_CHARS,
   REPOSITORY_INPUT_LIMIT,
+  SELF_DECLARED_BINDING_HELP,
 } from './constants'
 import { bookIdSchema } from './identitySchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
+import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
 
 const selectorSchema = z
   .string()
@@ -74,11 +76,26 @@ export const inspectionPathSchema = z
       segments.every((segment) => !forbiddenSegments.has(segment))
     )
   }, `Use up to ${REPOSITORY_INSPECTION_SEGMENT_LIMIT} identifier segments without reserved roots or prototype access.`)
-export const repositoryInspectionSchema = z.strictObject({
+const repositoryInspectionSchema = z.strictObject({
   path: inspectionPathSchema,
   mode: z.enum(['value', 'type']),
   required: z.boolean(),
 })
+/** The rule every stop's inspections follow, said where an agent reads last before it declares a run: the description of each `inspections` field in the input schema of `codebook_start`, for both profiles, each followed by what that profile does with a binding the stop's own line declares. */
+const INSPECTIONS_RULE =
+  'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
+/** The inspection rule of a repository-browser stop, which Codebook requests after its own line when that line declares a binding the stop requires ({@link ConfiguredBrowserRun}). */
+const INSPECTIONS_RULE_DESCRIPTION = `${INSPECTIONS_RULE} ${SELF_DECLARED_BINDING_HELP}`
+/** The inspections of one declared repository-browser stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of that profile is this schema. */
+const stopInspectionsSchema = z
+  .array(repositoryInspectionSchema)
+  .min(1)
+  .max(REPOSITORY_INSPECTION_LIMIT)
+  .describe(INSPECTIONS_RULE_DESCRIPTION)
+/** The inspections of one node-test stop: the same schema, described with the rule for a stop Codebook requests where it was declared; every `inspections` field of that profile is this schema. */
+export const nodeTestStopInspectionsSchema = stopInspectionsSchema.describe(
+  `${INSPECTIONS_RULE} A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.`,
+)
 export const repositoryConditionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('visible'), selector: selectorSchema }),
   z.strictObject({
@@ -99,15 +116,18 @@ export const repositoryConditionSchema = z.discriminatedUnion('kind', [
 ])
 /** Where a page failure is: a declared condition by its index, or the click target when absent. */
 const conditionIndexSchema = z.number().int().nonnegative().optional()
+/** How many elements a text condition's selector matched when it matched several; one element is the ordinary case and is not reported. */
+const severalElementsSchema = z.number().int().min(2)
 /**
  * What the owned page reports for the declared DOM condition or click target that does not hold, read by {@link ConfiguredBrowserRun} and handed to {@link configuredConditionHint}.
- * `textDifference` is a relation to the declared literal, never page text, and only a text mismatch may carry it; `candidates` holds counts of the page's controls, never their text, and only a missing click target may carry it. Any other key or value fails the read instead of being dropped.
+ * `textDifference` is a relation to the declared literal, never page text, and only a text mismatch may carry it; `matchedElements` counts the elements a text condition's selector matched when it matched several and none of them reads the expected text; `candidates` holds counts of the page's controls, never their text, and only a missing click target may carry it. Any other key or value fails the read instead of being dropped.
  */
 export const configuredDomFailureSchema = z.union([
   z.strictObject({
     conditionIndex: conditionIndexSchema,
     reason: z.literal('text-mismatch'),
     textDifference: z.literal('surrounding-text').optional(),
+    matchedElements: severalElementsSchema.optional(),
   }),
   z.strictObject({
     conditionIndex: conditionIndexSchema,
@@ -136,6 +156,18 @@ export const configuredDomFailureSchema = z.union([
     ]),
   }),
 ])
+/**
+ * What the owned page reports, with a read whose conditions hold, for each text condition that held on one of several elements its selector matched, as counts only; read by {@link ConfiguredBrowserRun}, which journals it.
+ */
+export const configuredTextReadingsSchema = z
+  .array(
+    z.strictObject({
+      conditionIndex: z.number().int().nonnegative(),
+      matchedElements: severalElementsSchema,
+      readingElements: z.number().int().positive(),
+    }),
+  )
+  .max(REPOSITORY_CONDITION_LIMIT)
 const conditionsSchema = z
   .array(repositoryConditionSchema)
   .min(1)
@@ -193,19 +225,13 @@ const repositoryConfigurationShape = z.strictObject({
     before: conditionsSchema,
     after: conditionsSchema,
   }),
-  inspections: z
-    .array(repositoryInspectionSchema)
-    .min(1)
-    .max(REPOSITORY_INSPECTION_LIMIT),
+  inspections: stopInspectionsSchema,
   additionalStops: z
     .array(
       z.strictObject({
         line: z.number().int().positive(),
         column: z.number().int().positive(),
-        inspections: z
-          .array(repositoryInspectionSchema)
-          .min(1)
-          .max(REPOSITORY_INSPECTION_LIMIT),
+        inspections: stopInspectionsSchema,
       }),
     )
     .max(CONFIGURED_OBSERVATION_LIMIT - 1)
@@ -254,16 +280,18 @@ function validateInspections(
     const path = index
       ? ['additionalStops', index - 1, 'inspections']
       : ['inspections']
-    // A type-only stop cannot supply the useful actual value required by the configured learning contract.
-    if (
-      !inspections.some(
-        (inspection) => inspection.required && inspection.mode === 'value',
-      )
+    // A type-only stop cannot supply the useful actual value required by the configured learning contract; the refusal names the stop and what it declares.
+    const missingValueInspection = missingValueInspectionMessage(
+      inspections,
+      index
+        ? `configuration.additionalStops[${index - 1}].inspections`
+        : 'configuration.inspections',
     )
+    if (missingValueInspection)
       context.addIssue({
         code: 'custom',
         path,
-        message: 'At least one required value inspection is needed.',
+        message: missingValueInspection,
       })
     if (
       new Set(
