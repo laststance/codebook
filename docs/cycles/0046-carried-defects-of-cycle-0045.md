@@ -288,7 +288,7 @@ The second wave (the configured run and the agent's contract, 37 files; the Stud
 
 **Packages that run now:** MKT (rows 109 to 118), LKB (103 to 108), PRG (86, 87, 90, 93 to 100), CIB (119, 121, 122, 124 to 127 and 143), WUB (82 and 129), and the continuations of SPC (89, 140), SPD (85, 88, 101), STC (130, 131, 141), MKS (142) and the Wiki reader's fixer (102, 132 to 139). The coordinator's own rows are 120 (the CHANGELOG entry, with the delivery), 123 and 128 (the records and the documents of the goal, corrected in the commit that adds this section).
 
-73 of 143 rows are closed (the table counts a row only when its commits are part of this branch).
+75 of 143 rows are closed (the table counts a row only when its commits are part of this branch).
 
 ## Result and decision
 
