@@ -712,7 +712,7 @@ export class StudyService {
   /**
    * Reads the book revision a start selects and refuses a node id it does not have, before {@link StudyService.startOnStoredBook} reserves the run.
    * @param input - The start as the tool received it.
-   * @throws A `STALE_INSTANCE` error for another instance; a `BOOK_UNAVAILABLE` {@link StudyError} for a revision that does not exist or a node id it does not have. Arguments that do not parse, a repeat of an accepted start's key and an editor without book storage are left to {@link StudyService.start}, which answers them as before.
+   * @throws A `STALE_INSTANCE` error for another instance; a `BOOK_UNAVAILABLE` {@link StudyError} for a revision that does not exist, a stored book the store cannot read, or a node id the revision does not have. Arguments that do not parse, a repeat of an accepted start's key, an editor without book storage and a read that fails with any other error are left to {@link StudyService.start} and the run's preparation, which answer them as before.
    * @example
    * await this.refuseMissingBookNode(input) // resolves for a node the revision has
    */
@@ -720,17 +720,39 @@ export class StudyService {
     this.assertMutable(input.instanceId)
     const book = this.bookOfNewStart(input)
     // A repeated key answers its original run, and the other cases are answered by start itself.
-    if (!book || !this.repository) return
-    const selected = await this.repository.readDefinition(
-      book.bookId,
-      book.revision,
-    )
-    const nodeIds = selected.revision.document.nodes.map((node) => node.id)
-    if (!nodeIds.includes(book.nodeId))
+    if (!book) return
+    const nodeIds = await this.storedNodeIds(book)
+    if (nodeIds && !nodeIds.includes(book.nodeId))
       throw new StudyError(
         'BOOK_UNAVAILABLE',
         describeMissingBookNode(book, nodeIds),
       )
+  }
+
+  /**
+   * Reads the node ids of the book revision a start selects, for {@link StudyService.refuseMissingBookNode}.
+   * @param book - The start's book selection.
+   * @returns The revision's node ids in document order; `undefined` without book storage and for a read that failed with an error that is not a {@link StudyError}, which the run's preparation then meets and names in the run.
+   * @throws The store's {@link StudyError} (`BOOK_UNAVAILABLE` for a revision that does not exist or a stored book it cannot read), so the start is refused in its own answer.
+   * @example
+   * await this.storedNodeIds({ bookId: 'interface', revision: 1, nodeId: 'theme' }) // => ['theme']
+   */
+  private async storedNodeIds(book: {
+    bookId: string
+    revision: number
+  }): Promise<string[] | undefined> {
+    if (!this.repository) return undefined
+    try {
+      const selected = await this.repository.readDefinition(
+        book.bookId,
+        book.revision,
+      )
+      return selected.revision.document.nodes.map((node) => node.id)
+    } catch (error) {
+      // Only the store's own refusal is an answer to the start; any other failure is left to preparation, which names it in the run.
+      if (error instanceof StudyError) throw error
+      return undefined
+    }
   }
 
   /**

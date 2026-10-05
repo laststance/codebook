@@ -3,8 +3,8 @@ import { test } from 'node:test'
 
 import { declaredInspectionBindings } from '../utils/declaredInspectionBindings'
 
-// Value: protects=a stop whose own line declares a binding it requires being requested on the next line that can pause, and no other stop; fails_when=a `var`, a line that only reads the name or a longer name that begins with the binding counts as declaring it, or a const, a let or a destructured name does not; why_new=Cycle 0045 N14d-15 (DX-1 a); seam=none
-test('a line declares an inspected binding for const, let and destructured names, and not for a var, a read, a longer name with the same beginning or the type annotation after a pattern', () => {
+// Value: protects=a stop whose own line declares a binding it requires being requested on the next line that can pause, and no other stop; fails_when=a `var`, a line that only reads the name, a longer name that begins with the binding, a name assigned in a loop body after `for (const item of items)` or a member of a plain declaration's type counts as declaring it, or a const, a let or a destructured name does not; why_new=Cycle 0045 N14d-15 (DX-1 a); seam=none
+test("a line declares an inspected binding for const, let and destructured names, and not for a var, a read, a longer name with the same beginning, the type annotation after a pattern, a name in a loop body after the head or a member of a plain declaration's type", () => {
   // Arrange
   const cases = {
     plainConst: ['const user = await getUser(email)', ['user.email']],
@@ -29,6 +29,14 @@ test('a line declares an inspected binding for const, let and destructured names
     readOnly: ['return user.name', ['user']],
     longerName: ['const callbackUrl = read()', ['callback']],
     shorterName: ['const user = read()', ['username']],
+    loopBodyAssignment: [
+      'for (const item of items) { total = total + item.price }',
+      ['total'],
+    ],
+    annotatedObjectType: [
+      'const config: { user: User } = load()',
+      ['user', 'config.user'],
+    ],
   } as const
   // Act
   const declared = Object.fromEntries(
@@ -49,5 +57,7 @@ test('a line declares an inspected binding for const, let and destructured names
     readOnly: [],
     longerName: [],
     shorterName: [],
+    loopBodyAssignment: [],
+    annotatedObjectType: ['config'],
   })
 })

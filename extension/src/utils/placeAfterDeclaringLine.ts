@@ -1,9 +1,9 @@
 import type { MappedPositionsScan } from './sourceMapMappedPositions'
 
 /**
- * Chooses where a stop whose own line declares a binding it requires is requested: the first mapped position of the first mapped line after that line, within the stop's citation, because the debugger pauses before a line runs and the binding has a value only once its line has run.
- * {@link ConfiguredBrowserRun} asks it at preparation, before {@link resolveArmedPlace}, for a stop whose declared line {@link declaredInspectionBindings} finds declaring a required binding.
- * @param declaringLine - The one-based line that declares the binding: the stop's declared line.
+ * Chooses where a stop whose own line declares a binding it requires is requested: the first mapped position of the first mapped line after the declaring statement, within the stop's citation, because the debugger pauses before a line runs and the binding has a value only once its whole statement has run.
+ * {@link ConfiguredBrowserRun} asks it at preparation, before {@link resolveArmedPlace}, for a stop whose declared line {@link declaredInspectionBindings} finds declaring a required binding, with the statement's last line from {@link declarationStatementEndLine}.
+ * @param declaringLine - The one-based last line of the declaring statement (the stop's declared line for a one-line declaration).
  * @param scan - The stop's one scan of its sealed map, from the declared line to the last line of its citation; a place after the citation is never the stop.
  * @returns
  * - The first mapped position of the first mapped line after `declaringLine` that a complete scan found

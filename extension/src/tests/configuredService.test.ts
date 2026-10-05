@@ -850,7 +850,7 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.match(
     contract.sourceBinding,
-    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run \(the stop then ends at the 20 second deadline\); declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
+    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run \(the stop then ends at the 20-second deadline\); declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
   )
   assert.match(
     contract.sourceBinding,
@@ -952,7 +952,7 @@ test('configured help names the active-progress deadline the run uses, in second
   )
   assert.equal(
     contract.sourceBinding.includes(
-      `the stop then fails at the ${deadlineSeconds} second deadline`,
+      `the stop then fails at the ${deadlineSeconds}-second deadline`,
     ),
     true,
   )
@@ -963,7 +963,7 @@ test('configured help names the active-progress deadline the run uses, in second
     true,
   )
   assert.equal(
-    (help.text.match(new RegExp(`${deadlineSeconds} second`, 'g')) ?? [])
+    (help.text.match(new RegExp(`${deadlineSeconds}[ -]second`, 'g')) ?? [])
       .length,
     6,
   )
@@ -982,7 +982,7 @@ test('configured help tells an agent when a binding on another line fails for ea
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sourceBinding.includes(
-      'Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run (the stop then ends at the 20 second deadline); declare the bound place instead, in a citation that covers it.',
+      'Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run (the stop then ends at the 20-second deadline); declare the bound place instead, in a citation that covers it.',
     ),
     true,
   )
@@ -1017,7 +1017,7 @@ test('configured help tells an agent that a run waits for the debugger’s own p
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[4]?.includes(
-      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20 second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records a pause as cdp.pause-observed',
+      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20-second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records a pause as cdp.pause-observed',
     ),
     true,
   )
@@ -2365,7 +2365,7 @@ test('a run that completes in the turn in which its whole-run deadline passes an
   assert.equal(answer.state.error, undefined)
 })
 
-// Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20 second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
+// Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20-second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
 test('a continuation whose run shows no next state within 22 seconds of its acknowledgement answers accepted with the latest state and no next state', async (context) => {
   // Arrange: a run is paused at its first stop; after the continuation the synthetic runtime keeps running.
   let nowMs = CLOCK_START_MS
@@ -2718,7 +2718,7 @@ test('the input schema of codebook_start states the inspection rule for the firs
     ],
   )
   const repositoryBrowserRule =
-      "Every stop needs at least one inspection with mode \"value\" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs.",
+      "Every stop needs at least one inspection with mode \"value\" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow.",
     nodeTestRule =
       'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop\'s line runs, so a binding that the stop\'s own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.'
   assert.deepEqual(described, [
@@ -2767,7 +2767,7 @@ test("the input schema of codebook_start says that a required value is read befo
       tools.tools.find((tool) => tool.name === 'codebook_start')?.inputSchema,
     ).properties.configuration.anyOf
   const movedSentence =
-      "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs.",
+      "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow.",
     declaredSentence =
       "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line."
   const saysIt = [...repositoryVariants.anyOf, nodeTestVariant].map(
@@ -2830,7 +2830,7 @@ test("configured help says that a binding the stop's own line declares has no va
     .parse(JSON.parse(help.text)).inspections
   assert.equal(
     inspections.includes(
-      "Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs. DOM conditions use literals, never patterns, and all conditions must hold",
+      "Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow. DOM conditions use literals, never patterns, and all conditions must hold",
     ),
     true,
   )
@@ -2843,7 +2843,7 @@ test('the extension README says that Codebook requests a stop whose own line dec
 
   // Act
   const saysIt = readme.includes(
-    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's `armed` and `place`, so require a value that already exists before the stop's line when you want the state before that line runs.",
+    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's `armed` and `place`, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, or Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), the stop stays on its line and its failure names the line to follow.",
   )
 
   // Assert
@@ -2955,6 +2955,73 @@ test('a start on a node id its selected revision does not have is refused in the
   )
   assert.equal(service.records.size, 0)
   assert.equal(runtimes.length, 0)
+})
+
+// Value: protects=an agent whose start names a stored book the store cannot read learning it from the start's own answer, with the cause; fails_when=the answer is "The study operation failed." without the store's words, or the run is accepted and fails later; why_new=Cycle 0045 review of N14d-16 (LOW: which failures of the book read refuse a start); seam=none
+test('a start on a stored book the store cannot read is refused in the answer of codebook_start with the store’s sentence and the read’s cause', async (context) => {
+  // Arrange: the stored book "interface" is replaced by bytes that are not JSON.
+  const { service, configuration, library, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  await writeFile(
+    join(library.directory, 'interface.book.v2.json'),
+    '{ not json',
+  )
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unreadable-book',
+      configuration,
+    },
+  })
+
+  // Assert
+  const error = z
+    .object({
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(refused.structuredContent).error
+  assert.equal(refused.isError, true)
+  assert.equal(error.code, 'BOOK_UNAVAILABLE')
+  assert.equal(
+    error.message,
+    'Stored book interface is unavailable; no older revision was substituted.',
+  )
+  assert.equal(error.cause.startsWith('SyntaxError: '), true)
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
+// Value: protects=a start whose book read fails with an error that is not the store's own refusal keeping the run that names the cause; fails_when=the start answers "The study operation failed." and the cause is lost from the run; why_new=Cycle 0045 review of N14d-16 (LOW); seam=the harness's book store, whose read is replaced by one that fails with a plain error
+test('a start whose book read fails with an error that is not the store’s refusal is accepted, and its run ends naming that cause', async (context) => {
+  // Arrange
+  const { service, configuration, books } =
+    await configuredServiceHarness(context)
+  books.readDefinition = async () => {
+    throw new Error('disk read failed')
+  }
+
+  // Act
+  const receipt = await service.startOnStoredBook({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'failing-read',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+
+  // Assert
+  assert.equal(record.error?.code, 'RUNTIME_FAILED')
+  assert.equal(record.error?.describe().cause, 'Error: disk read failed')
 })
 
 // Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none
@@ -3362,7 +3429,7 @@ test('API 1.6 discovery exposes the bounded configured profile and its executabl
 })
 
 // Value: protects=an agent learns that the start a full library refused is the one to repeat after the learner made room; fails_when=the help still only says to reuse a key on response loss, so the agent invents a new key or gives up; why_new=repeating a refused start used to replay the refusal; seam=none
-test('configured help tells an agent that a start the library refused can be repeated with the same key and begins a new run', async (context) => {
+test('configured help tells an agent that a start the library refused can be repeated with the same key and begins a new run, and that a start on a revision or node id the book lacks is refused in its own answer', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -3374,6 +3441,6 @@ test('configured help tells an agent that a start the library refused can be rep
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[0],
-    'codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run.',
+    "codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run. A start on a revision or a node id the book does not have is refused in its own answer with BOOK_UNAVAILABLE, which names the revision's node ids; every other preparation failure is read from the run resource.",
   )
 })

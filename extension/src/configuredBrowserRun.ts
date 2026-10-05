@@ -87,6 +87,7 @@ import { continuationReceipts } from './utils/continuationReceipts'
 import { createBindingLineRule } from './utils/createBindingLineRule'
 import { createBundleVerifier } from './utils/createBundleVerifier'
 import { deadlineText } from './utils/deadlineText'
+import { declarationStatementEndLine } from './utils/declarationStatementEndLine'
 import { declaredAndArmedPlace } from './utils/declaredAndArmedPlace'
 import { declaredInspectionBindings } from './utils/declaredInspectionBindings'
 import { describeCdpPause } from './utils/describeCdpPause'
@@ -107,7 +108,6 @@ import { readDevelopmentBundle } from './utils/readDevelopmentBundle'
 import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
-import { sourceLineText } from './utils/sourceLineText'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
 import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
@@ -144,6 +144,25 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   acceptsBoundLine: (line: number) => boolean
   /** Names the condition that refuses a line as this stop's place, for the failure an agent reads; `undefined` for an accepted line. */
   bindingRefusal: (line: number) => string | undefined
+}
+/**
+ * Names the bindings of a stop's required inspections that its own declared line declares; called by {@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine} at preparation.
+ * @param stop - The declared stop, as {@link configuredStops} gives it.
+ * @param lines - The lines of the stop's sealed source.
+ * @returns The bindings ({@link declaredInspectionBindings}); `[]` when the line declares none of them or the source has no such line.
+ * @example
+ * requiredBindingsDeclaredOn(stop, ['const nextTheme = "dark";']) // => ['nextTheme'] for value:nextTheme required on line 1
+ */
+function requiredBindingsDeclaredOn(
+  stop: ReturnType<typeof configuredStops>[number],
+  lines: readonly string[],
+): string[] {
+  return declaredInspectionBindings(
+    lines[stop.source.line - 1] ?? '',
+    stop.inspections
+      .filter((inspection) => inspection.required)
+      .map((inspection) => inspection.path),
+  )
 }
 /** What a server stop's registration says when a deadline expires; a refusal keeps the reason the registration read threw, so the deadline text can pass it on, and the place when the adapter moved the breakpoint to a line the stop's rule refuses. */
 type RegistrationStatus =
@@ -455,10 +474,14 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
       const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
         taken = this.takeDeclaredPosition(stop, index),
-        // A stop whose own line declares a binding it requires is requested after that line; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
+        // A stop whose own line declares a binding it requires is requested after that declaration's statement; otherwise the debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it. The rule is measured from there.
         armed =
-          this.requestAfterSelfDeclaringLine(stop, scan) ??
-          resolveArmedPlace(taken, scan)
+          this.requestAfterSelfDeclaringLine(
+            stop,
+            acquired.bundle.source.split(/\r\n|\r|\n/),
+            scan,
+            citation.endLine,
+          ) ?? resolveArmedPlace(taken, scan)
       const bindingRule = createBindingLineRule(
         stop.source.line,
         citation,
@@ -620,34 +643,38 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Requests a stop after its declared line when that line declares a binding the stop requires, for the preparation of each stop in {@link prepareOwned}: the debugger pauses before a line runs, so such a binding has no value at the declared line, and what the agent meant (that binding's value) exists from the next line that can pause.
+   * Requests a stop after the statement its declared line begins when that line declares a binding the stop requires, for the preparation of each stop in {@link prepareOwned}: the debugger pauses before a line runs, so such a binding has no value before its whole statement has run, and what the agent meant (that binding's value) exists from the next line after the statement that can pause.
    * @param stop - The declared stop, as {@link configuredStops} gives it.
+   * @param lines - The lines of the stop's sealed source.
    * @param scan - The stop's one scan of its sealed map, from the declared line to the end of its citation.
+   * @param citationEndLine - The last line of the stop's citation.
    * @returns
-   * - The first mapped position after the declared line within the citation ({@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings
-   * - `undefined` when the declared line declares no required binding of the stop, or no later line of the citation can be requested: the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled
+   * - The first mapped position after the declaring statement's last line within the citation ({@link declarationStatementEndLine}, {@link placeAfterDeclaringLine}), after the journal entry `breakpoint.armed-after-self-declaring-line` with the participant, the declared and the armed place and the bindings
+   * - `undefined` when the declared line declares no required binding of the stop, the statement does not end within the citation (or the scan cannot tell where it ends), or no later line of the citation can be requested: the stop is then placed by {@link resolveArmedPlace}, and nothing is journaled
    * @example
    * ```ts
-   * this.requestAfterSelfDeclaringLine(stop, scan) // => { line: 22, column: 3 } for `const [state] = useState()` on line 21 with value:state required
+   * this.requestAfterSelfDeclaringLine(stop, lines, scan, 25) // => { line: 24, column: 3 } for `const total = useMemo(() => {` on line 21 whose statement ends on line 23, with value:total required
    * ```
    */
   private requestAfterSelfDeclaringLine(
     stop: ReturnType<typeof configuredStops>[number],
+    lines: readonly string[],
     scan: MappedPositionsScan,
+    citationEndLine: number,
   ): { line: number; column: number } | undefined {
-    const bindings = declaredInspectionBindings(
-      sourceLineText(
-        this.definition.descriptor.sources,
-        stop.source.path,
-        stop.source.line,
-      ) ?? '',
-      stop.inspections
-        .filter((inspection) => inspection.required)
-        .map((inspection) => inspection.path),
-    )
+    const bindings = requiredBindingsDeclaredOn(stop, lines)
     // Only a required binding of the declared line itself moves the stop; a stop whose values exist before its line stays where it was declared.
     if (!bindings.length) return undefined
-    const armed = placeAfterDeclaringLine(stop.source.line, scan)
+    const statementEnd = declarationStatementEndLine(
+      lines,
+      stop.source.line,
+      citationEndLine,
+    )
+    // A statement that does not end within the citation, or whose end the scan cannot tell, leaves the stop where it was declared.
+    const armed =
+      statementEnd === undefined
+        ? undefined
+        : placeAfterDeclaringLine(statementEnd, scan)
     if (armed)
       this.evidence.record('breakpoint.armed-after-self-declaring-line', {
         participant: stop.participant,
@@ -3635,7 +3662,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       )
       if (missing)
         throw new Error(
-          `Required inspection ${missing.mode}:${missing.path} is unavailable; captured facts remain readable.${selfDeclaredInspectionHint(stop.bundle.source, frame.line, missing.path, this.definition.descriptor.anchors[stop.anchorIndex]!.endLine)}`,
+          `Required inspection ${missing.mode}:${missing.path} is unavailable; captured facts remain readable.${selfDeclaredInspectionHint(stop.bundle.source, frame.line, missing.path, this.definition.descriptor.anchors[stop.anchorIndex]!.endLine, stop.source.line)}`,
         )
       await this.capture(phase, current, pause)
       current()

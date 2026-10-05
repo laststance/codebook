@@ -24,17 +24,21 @@ function withoutTypeAnnotation(head: string): string {
   return closingIndex === -1 ? head : head.slice(0, closingIndex + 1)
 }
 
-/** Lists the names one declaration head binds: a plain name, or the targets of an object or array pattern. @example declaredNames('{ user, id: userId }') // ['user', 'userId'] */
+/** Lists the names one declaration head binds: the name a plain head begins with, or the targets of an object or array pattern. @example declaredNames('{ user, id: userId }') // ['user', 'userId'] */
 function declaredNames(head: string): string[] {
   const trimmed = head.trim()
-  const isPattern = /^[{[]/.test(trimmed)
-  return (isPattern ? withoutTypeAnnotation(trimmed) : trimmed)
+  // A plain head binds one name, alone or before its type (`config: { user: User }`); a head that goes on otherwise is no declaration with an initializer (`item of items) { total`).
+  if (!/^[{[]/.test(trimmed)) {
+    const name = /^([A-Za-z_$][\w$]*)\s*(?::|$)/.exec(trimmed)?.[1]
+    return name ? [name] : []
+  }
+  return withoutTypeAnnotation(trimmed)
     .split(/[{}[\],]/)
     .map((piece) => {
       const element = piece.trim().replace(/^\.\.\./, '')
-      // In a pattern `key: name` binds the name; a plain declaration's `name: Type` binds the part before the colon.
+      // In a pattern `key: name` binds the name.
       const [first = '', second] = element.split(':').map((part) => part.trim())
-      return isPattern && second !== undefined ? second : first
+      return second ?? first
     })
     .filter((name) => /^[A-Za-z_$][\w$]*$/.test(name))
 }
