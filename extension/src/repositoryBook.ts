@@ -464,7 +464,12 @@ export class RepositoryBookStore {
     }
   }
 
-  /** Enumerates only bounded book identities beside the shared ledger, without loading all revision payloads. @example await this.entries() */
+  /**
+   * Enumerates only bounded book identities beside the shared ledger, without loading all revision payloads; called by {@link list} for the catalog and by {@link publishOwned} for the book count that admits a new book.
+   * @returns The ids of the stored books, sorted, each once although a book may have a file of both formats. A file with a book suffix whose prefix is no book id (a stray `X.book.v1.json`) is nobody's book: it is skipped and not counted.
+   * @throws A {@link StudyError} `LIMIT_EXCEEDED` when the directory holds more books than {@link BOOK_MAX_FILES}.
+   * @example await this.entries() // => ['another', 'architecture'] beside a stray 'X.book.v1.json'
+   */
   private async entries(): Promise<string[]> {
     await mkdir(this.library.directory, {
       recursive: true,
@@ -475,8 +480,12 @@ export class RepositoryBookStore {
       const storage = BOOK_STORAGE_FORMATS.find((format) =>
         name.endsWith(format.suffix),
       )
-      if (storage)
-        entries.add(bookIdSchema.parse(name.slice(0, -storage.suffix.length)))
+      if (!storage) continue
+      const parsedId = bookIdSchema.safeParse(
+        name.slice(0, -storage.suffix.length),
+      )
+      // A file named like a book whose prefix is no book id (a stray `X.book.v1.json`) is nobody's book and is skipped.
+      if (parsedId.success) entries.add(parsedId.data)
     }
     if (entries.size > BOOK_MAX_FILES)
       throw new StudyError(
