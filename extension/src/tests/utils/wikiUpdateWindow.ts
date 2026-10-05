@@ -17,6 +17,7 @@ import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
 import { assertConstantsReadBy } from './assertConstantsReadBy'
 import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
 import { createFakeFileWatching, FakeRelativePattern } from './fakeFileWatching'
+import { listenTo } from './listenTo'
 import { loadModule } from './loadModule'
 
 /** The Cancel button of one progress notification the window showed. */
@@ -162,18 +163,6 @@ export async function openWikiUpdateWindow(options: {
   const documentOpenListeners: Array<(document: FakeTextDocument) => void> = []
   const terminalOpenListeners: Array<() => void> = []
   const terminalCommandListeners: Array<() => void> = []
-  /** Registers one listener of a fake editor event and hands back its disposable. */
-  const listenTo = <Listener>(
-    listeners: Listener[],
-    listener: Listener,
-  ): { dispose(): void } => {
-    listeners.push(listener)
-    return {
-      dispose(): void {
-        listeners.splice(listeners.indexOf(listener), 1)
-      },
-    }
-  }
   const confirmations: string[] = []
   const confirmationDetails: string[] = []
   const progressTitles: string[] = []

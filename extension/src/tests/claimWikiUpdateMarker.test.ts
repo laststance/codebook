@@ -507,30 +507,32 @@ test('a watch that ends after another window took its outlasted marker over leav
 
 // Value: protects=every later start after a window was killed while it held the claim on the marker and its process id went to another process; fails_when=such a claim counts for as long as a process has its id, so a stale marker can never be removed and every start ends with a file error; why_new=Cycle 0045 local review wiki-1 #7, follow-up, rewritten in Cycle 0046 (row 2, ER-9): the claim is removed by the start its owner recorded, at once, and no longer by its age; seam=none
 test('a claim on the marker that a killed window left a moment ago does not keep a stale marker in place, although a process has its id: that process began at another time', async () => {
-  // Arrange: a killed editor's marker, and a claim written just now that records this machine, the id of this test process, which runs, and the start of a process that began long ago.
+  // Arrange: a killed editor's marker, and a claim written just now that records this machine, the id of this test process, which runs, and the start of a process that began long ago (clock tick 1; the fixed window's reader answers tick 16362446 for this process).
   const wiki = await createWikiFolder()
   await leaveKilledEditorsMarker(wiki.markerPath)
   const claimDirectory = `${wiki.markerPath}.takeover`
-  const { machineKey, hostKey } = await currentStorageOwner()
   await mkdir(claimDirectory)
   await writeFile(
     join(claimDirectory, 'left-by-a-killed-window'),
     JSON.stringify({
       pid: process.pid,
-      machineKey,
-      hostKey,
-      processStart: startOfKilledWindow(),
+      ...OWNER_OF_THIS_WINDOW,
+      processStart: 'linux:1',
     }),
   )
   try {
     // Act
     const start = await outcomeOf(
-      claimWikiUpdateMarker(wiki.outputDirectory, {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: Date.now(),
-      }),
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      ),
     )
 
     // Assert
@@ -1009,29 +1011,31 @@ test('a claim on the marker without a process start, as 0.2.29.0 writes it, keep
 
 // Value: protects=a running window of this machine that holds the claim on the marker while its extension host is suspended for more than a minute (a debugger, a sleeping laptop); fails_when=its claim is removed by age after 60 s although its process runs, so a second window takes the claim and both change the marker (row 2, decision D8); why_new=Cycle 0046 row 2 (ER-4): the 60 s lease is dropped for a claim whose owner can be judged here; seam=the claim file's modification time
 test('a claim on the marker that a running window of this machine has held for two minutes stays in place, and a start on a stale marker is refused for that time', async () => {
-  // Arrange: a killed editor's marker, and a claim that records this machine, this test process, which runs, and its real start, last written two minutes ago.
+  // Arrange: a killed editor's marker, and a claim that records this machine, this test process, which runs, and the start the fixed window's reader answers for it, last written two minutes ago.
   const wiki = await createWikiFolder()
   await leaveKilledEditorsMarker(wiki.markerPath)
   const claimDirectory = `${wiki.markerPath}.takeover`
   const heldClaim = join(claimDirectory, 'held-by-a-suspended-window')
-  const { machineKey, hostKey, processStart } = await currentStorageOwner()
-  assert.ok(processStart, 'the start of this process can be read')
   await mkdir(claimDirectory)
   await writeFile(
     heldClaim,
-    JSON.stringify({ pid: process.pid, machineKey, hostKey, processStart }),
+    JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
   )
   const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
   await utimes(heldClaim, twoMinutesAgo, twoMinutesAgo)
   try {
     // Act
     const start = await outcomeOf(
-      claimWikiUpdateMarker(wiki.outputDirectory, {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: Date.now(),
-      }),
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      ),
     )
 
     // Assert
@@ -1256,20 +1260,16 @@ test('a window that was suspended under its claim in the middle of its start, wh
   }
 })
 
-/** Places a claim on the marker as another running window of this machine holds it: it records this test process, which runs, with its real start, so no window removes it. Returns the claim file's path. */
+/** Places a claim on the marker as another running window of this machine holds it: it records this test process, which runs, with the start the reader of {@link AS_THIS_WINDOW} answers for it, so no window with that identity removes it. */
 async function holdClaimAsAnotherRunningWindow(
   markerPath: string,
-): Promise<string> {
+): Promise<void> {
   const claimDirectory = `${markerPath}.takeover`
-  const heldClaim = join(claimDirectory, 'held-by-another-window')
-  const { machineKey, hostKey, processStart } = await currentStorageOwner()
-  assert.ok(processStart, 'the start of this process can be read')
   await mkdir(claimDirectory)
   await writeFile(
-    heldClaim,
-    JSON.stringify({ pid: process.pid, machineKey, hostKey, processStart }),
+    join(claimDirectory, 'held-by-another-window'),
+    JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
   )
-  return heldClaim
 }
 
 // Value: protects=the end of an update at the moment another window holds the claim on the marker (it is looking at the marker for its own start); fails_when=the end asks for the claim once and gives up, so the run's marker stays behind and every window is refused with "Another editor window is updating this Wiki" until it expires (row 35, PL-27); why_new=Cycle 0046 row 35: no test reached the second attempt; seam=the wait between two attempts, which counts and at the third lets the other window release its claim
@@ -1277,7 +1277,6 @@ test('the end of a run waits for another window’s claim on the marker and remo
   // Arrange: a window that runs, and another window's claim that is released during the third wait.
   const wiki = await createWikiFolder()
   const waitsMs: number[] = []
-  let heldClaim = ''
   const { claimWikiUpdateMarker: claimWithCountedWaits } = await loadModule<
     typeof claimModule
   >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
@@ -1290,20 +1289,23 @@ test('the end of a run waits for another window’s claim on the marker and remo
     },
   })
   try {
-    const claim = await claimWithCountedWaits(wiki.outputDirectory, {
-      pid: process.pid,
-      windowId: 'window-a',
-      host: 'vscode',
-      startedAtMs: Date.now(),
-    })
+    const claim = await claimWithCountedWaits(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
     assert.ok('release' in claim)
-    heldClaim = await holdClaimAsAnotherRunningWindow(wiki.markerPath)
+    await holdClaimAsAnotherRunningWindow(wiki.markerPath)
 
     // Act
     await claim.release()
 
     // Assert
-    assert.equal(heldClaim.endsWith('held-by-another-window'), true)
     assert.deepEqual(waitsMs, [25, 25, 25])
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
@@ -1334,7 +1336,7 @@ test('the end of a run that never gets the claim on the marker gives up after tw
         host: 'vscode',
         startedAtMs: 1_790_000_000_000,
       },
-      { now: () => 1_790_000_000_000 },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_000_000 },
     )
     assert.ok('release' in claim)
     await holdClaimAsAnotherRunningWindow(wiki.markerPath)
@@ -1412,6 +1414,14 @@ test('the twenty attempts of a run’s end read the start of the running window 
   const holder = await idleChild(context)
   const holderPid = holder.pid
   assert.ok(holderPid, 'the holder runs')
+  const startOfTheHolder = await readProcessStart(holderPid)
+  // This is the file's one case with a real process and its real start; every other case names a fixed start.
+  if (startOfTheHolder === undefined) {
+    context.skip(
+      'the start of a running process could not be read on this machine within the bound of the query (on Windows a PowerShell that starts cold)',
+    )
+    return
+  }
   const { machineKey, hostKey } = await currentStorageOwner()
   let judgementsOfTheHolder = 0
   let readsOfItsStart = 0
@@ -1447,7 +1457,7 @@ test('the twenty attempts of a run’s end read the start of the running window 
       pid: holderPid,
       machineKey,
       hostKey,
-      processStart: await readProcessStart(holderPid),
+      processStart: startOfTheHolder,
     }),
   )
 
