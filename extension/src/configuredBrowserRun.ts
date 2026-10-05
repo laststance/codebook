@@ -106,14 +106,12 @@ import { findUnmappedDeclaredStop } from './utils/findUnmappedDeclaredStop'
 import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
-import {
-  isGeneratedPositionBefore,
-  type GeneratedPosition,
-} from './utils/isGeneratedPositionBefore'
+import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
 import { isPauseInScript } from './utils/isPauseInScript'
 import { isRefreshedFrameAtStop } from './utils/isRefreshedFrameAtStop'
+import { isSameGeneratedPosition } from './utils/isSameGeneratedPosition'
 import { launchDevelopmentServer } from './utils/launchDevelopmentServer'
 import { pausePlace } from './utils/pausePlace'
 import { placeAfterDeclaringLine } from './utils/placeAfterDeclaringLine'
@@ -160,8 +158,12 @@ type PreparedStop = ReturnType<typeof configuredStops>[number] & {
   acceptsBoundLine: (line: number) => boolean
   /** Names the condition that refuses a line as this stop's place, for the failure an agent reads; `undefined` for an accepted line. */
   bindingRefusal: (line: number) => string | undefined
-  /** The binding the stop's rule was last built for from the debugger's break locations, with the generated place taken for it ({@link ConfiguredBrowserRun.rebuildRuleFromBreakLocations}); a pause on that line at another generated place is judged once more. Absent while the map's rule stands and when the generated places were not known. */
-  judgedBinding?: { line: number; generated: GeneratedPosition }
+  /** The binding the stop's rule was last built for from the debugger's break locations, with the generated place taken for it ({@link ConfiguredBrowserRun.rebuildRuleFromBreakLocations}); a pause on that line at another generated place is judged once more, and a refusal of that same binding at that same place stands without the debugger being asked again. `generated` is absent when the generated places were not known; the field is absent while the map's rule stands. */
+  judgedBinding?: {
+    line: number
+    column: number
+    generated?: GeneratedPosition
+  }
 }
 /**
  * Names the bindings of a stop's required inspections that its own declared line declares; called by {@link ConfiguredBrowserRun.requestAfterSelfDeclaringLine} at preparation.
@@ -1786,7 +1788,11 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     const pausedThere = this.pausedOnLine(stop, bound.line, pausedAt)
     if (this.acceptsAsJudged(stop, bound.line, pausedThere)) return true
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
-    if (this.keepsMapRuleUnasked(stop, bound.line, citation)) return false
+    if (
+      this.keepsMapRuleUnasked(stop, bound.line, citation) ||
+      this.isRefusalJudged(stop, bound, pausedThere)
+    )
+      return false
     const places = await this.mappedBreakLocations(stop)
     return this.acceptsUnderBreakLocations(
       stop,
@@ -1869,11 +1875,44 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     pausedThere: GeneratedPosition,
   ): boolean {
     const judged = stop.judgedBinding
-    if (judged?.line !== line) return true
+    // A rule that was not built for a generated place of this line holds wherever the program stands on it.
+    if (judged?.line !== line || !judged.generated) return true
+    return isSameGeneratedPosition(judged.generated, pausedThere)
+  }
+
+  /**
+   * Says whether the stop's rule already refused this very binding at the generated place it is judged at, as the third check of {@link acceptsByBreakLocations} and of {@link acceptsUnderBreakLocations}: the refusal then stands, and the debugger is not asked and the journal not written a second time. The first judgement of a binding (when the adapter's news arrives, or the module is announced) keeps the journal entry, because that is when the run learned it; a later read of the receipt, before the input or at the pause, has nothing new to judge.
+   * A pause at another generated place than the refusal was built for is new information and is judged once more, and so is a pause after a refusal that knew no generated place.
+   * @param stop - The stop whose binding is judged.
+   * @param bound - The line and column the debugger bound the stop at.
+   * @param pausedThere - The generated place of the paused top frame on the bound line ({@link pausedOnLine}); `undefined` before any pause.
+   * @returns `true` when the rule refuses the line and was built for this line and column, before a pause or for exactly the place of this pause; `false` otherwise.
+   * @example
+   * ```ts
+   * this.isRefusalJudged(stop, { line: 7, column: 3 }, undefined) // true once the news that named 7:3 was judged and refused
+   * ```
+   */
+  private isRefusalJudged(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+    pausedThere: GeneratedPosition | undefined,
+  ): boolean {
+    const judged = this.judgementOf(stop, bound)
+    if (!judged || stop.acceptsBoundLine(bound.line)) return false
     return (
-      !isGeneratedPositionBefore(judged.generated, pausedThere) &&
-      !isGeneratedPositionBefore(pausedThere, judged.generated)
+      !pausedThere || isSameGeneratedPosition(judged.generated, pausedThere)
     )
+  }
+
+  /** Gives {@link isRefusalJudged} the judgement a stop's rule was last built for when it was this binding's line and column. @example this.judgementOf(stop, { line: 7, column: 3 }) // { line: 7, column: 3, generated: { lineNumber: 6, columnNumber: 2 } } */
+  private judgementOf(
+    stop: PreparedStop,
+    bound: { line: number; column: number },
+  ): PreparedStop['judgedBinding'] {
+    const judged = stop.judgedBinding
+    return judged?.line === bound.line && judged.column === bound.column
+      ? judged
+      : undefined
   }
 
   /**
@@ -1918,8 +1957,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     pausedThere: GeneratedPosition | undefined,
   ): boolean {
     if (!places) return stop.acceptsBoundLine(bound.line)
-    // Another judgement of the same stop finished while the debugger answered: its rule stands.
+    // Another judgement of the same stop finished while the debugger answered: its rule stands, also when it refused this binding.
     if (this.acceptsAsJudged(stop, bound.line, pausedThere)) return true
+    if (this.isRefusalJudged(stop, bound, pausedThere)) return false
     this.rebuildRuleFromBreakLocations(
       stop,
       bound,
@@ -1971,9 +2011,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     stop.acceptsBoundLine = rule.accepts
     stop.bindingRefusal = rule.refusal
-    stop.judgedBinding = onTheWay && {
+    stop.judgedBinding = {
       line: bound.line,
-      generated: onTheWay.boundAt,
+      column: bound.column,
+      generated: onTheWay?.boundAt,
     }
     this.journalRuleFromBreakLocations(
       stop,

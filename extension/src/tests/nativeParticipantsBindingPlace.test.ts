@@ -469,9 +469,8 @@ test('a server stop bound past a break location between the two generated places
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:3 bound at 7:3, refused: line 5 between the declared line 3 and line 7 has a break location. Frozen source map positions in the selected citation: 3:2, 4:8, 5:3, 6:1, 7:3, 8:1. ${MAPPING_HINTS}`,
   )
-  // The refused place is judged when the module is announced and again when the receipt is read at the pause; every judgement names the same lines.
-  assert.deepEqual(
-    journaled(harness, 'breakpoint.rule-from-break-locations').at(-1),
+  // The refusal judged when the module was announced stands when the receipt is read at the pause: one entry.
+  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
     {
       participant: 'server',
       declared: { line: 3, column: 1 },
@@ -482,8 +481,68 @@ test('a server stop bound past a break location between the two generated places
         bound: { line: 7, column: 3 },
       },
     },
-  )
+  ])
   assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+// Cycle 0046 (row 131): red while a binding the break locations refuse was judged again at every read of its receipt, so one refused stop left two equal `breakpoint.rule-from-break-locations` entries and asked the debugger twice.
+test('a server stop whose binding the break locations refuse leaves one journal entry of that judgement and one request for the break locations, although its receipt is read again at the pause', async (context) => {
+  // Arrange: the function head over lines 1 to 3 is mapped, and the debugger lists a break location on the parameter line (generated 1:2) and on the first statement (generated 3:2). The module is announced, then the adapter's news names 4:3, which is judged and refused as it arrives; the runtime pauses there afterwards.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 1, columnNumber: 2 },
+    { lineNumber: 3, columnNumber: 2 },
+  ])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.pauseAt('server', 3, 2)
+  harness.bindAt('server', 4, 3)
+  harness.movePausedFrame(4, 3)
+  harness.expireSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  harness.announceBreakpointVerified('server', 4, 3)
+  await waitUntil(
+    () => journaled(harness, 'breakpoint.rule-from-break-locations').length,
+    'news judged by the break locations',
+  )
+  // Act
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the stop was refused or captured')
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 4:3, refused: line 2 between the declared line 1 and line 4 has a break location. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:3, 5:1. ${MAPPING_HINTS}`,
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
+    {
+      participant: 'server',
+      declared: { line: 1, column: 1 },
+      boundLine: 4,
+      breakLocationLines: [2, 4],
+      generatedPlaces: {
+        requested: { line: 1, column: 1 },
+        bound: { line: 4, column: 3 },
+      },
+    },
+  ])
+  assert.equal(
+    harness.breakLocationRequests.filter((request) => !request.end).length,
+    1,
+  )
 })
 
 // Cycle 0046 (row 77): when the binding's generated place cannot be known, every line with a break location counts, as before the generated places were compared; red if an unknown place were read as "nothing between".
@@ -514,15 +573,15 @@ test('a server stop whose reported place the debugger lists no break location at
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:3 bound at 7:1, refused: line 4 between the declared line 3 and line 7 has a break location. Frozen source map positions in the selected citation: 3:2, 4:8, 5:3, 6:1, 7:3, 8:1. ${MAPPING_HINTS}`,
   )
-  assert.deepEqual(
-    journaled(harness, 'breakpoint.rule-from-break-locations')[0],
+  // The refusal judged when the news arrived stands when the receipt is read before the input: one entry.
+  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
     {
       participant: 'server',
       declared: { line: 3, column: 1 },
       boundLine: 7,
       breakLocationLines: [4, 7],
     },
-  )
+  ])
   assert.equal(
     harness.commands.some((command) => command.method.startsWith('Input.')),
     false,
