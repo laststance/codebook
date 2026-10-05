@@ -261,9 +261,71 @@ function lineVerdict(
 }
 
 /**
+ * Says whether the scan stands in code, outside every block comment, string and template literal (a template substitution is code); called by {@link sourceLineCode} for each piece of a line and for its rest.
+ * @example
+ * standsInCode({ frames: ['`'], inBlockComment: false }) // => false
+ * standsInCode({ frames: ['`', '${'], inBlockComment: false }) // => true
+ */
+function standsInCode(scan: StatementScan): boolean {
+  return !scan.inBlockComment && !scan.quote && scan.frames.at(-1) !== '`'
+}
+
+/**
+ * Says whether a code token the scan stands before stays in a line's code; called by {@link sourceLineCode} before the token is applied.
+ * @param token - A code token ({@link CODE_TOKEN}).
+ * @param scan - The scan before the token, which tells whether a `}` closes a template substitution.
+ * @returns `true` for a bracket or a `;`; `false` for a comment opener, a quote, a backtick and the `}` that closes a template substitution (the delimiters of comments, strings and template literals).
+ * @example
+ * isKeptCodeToken('(', { frames: [], inBlockComment: false }) // => true
+ * isKeptCodeToken('}', { frames: ['`', '${'], inBlockComment: false }) // => false
+ */
+function isKeptCodeToken(token: string, scan: StatementScan): boolean {
+  if (token === '}' && scan.frames.at(-1) === '${') return false
+  return /^[([{)\]};]$/.test(token)
+}
+
+/**
+ * Blanks the comments, strings and template literals of one line with spaces, so a search for a declaration finds only code and every position stays the column it had; called by {@link declaredInspectionBindings} before it searches the declared line, and by {@link statementTexts} before it finds the keyword a statement begins at.
+ * It reuses this file's scan from a line's start (a line is read as beginning outside every comment and string): escaped quotes stay inside their string, the expression of a template substitution is code (its `${` and `}` are blanked), and a `//` blanks the rest of the line.
+ * @param lineText - One line of source, without its line ending.
+ * @returns The line with the same length, every character inside a comment, a string or a template literal (and their delimiters) replaced by a space.
+ * @example
+ * sourceLineCode('count += 1; // const count = initial') // => 'count += 1;                         '
+ * sourceLineCode("log('let a'); const b = 1")           // => "log(       ); const b = 1"
+ */
+export function sourceLineCode(lineText: string): string {
+  const scan: StatementScan = { frames: [], inBlockComment: false }
+  let position = 0,
+    code = ''
+  for (
+    let token = nextToken(lineText, position, scan);
+    token;
+    token = nextToken(lineText, position, scan)
+  ) {
+    const piece = lineText.slice(position, token.end),
+      tokenStart = piece.length - token.text.length
+    // In code the text before the token stays and the token stays only when it is a bracket or a `;`; inside a comment, a string or a template literal everything is blanked.
+    code += standsInCode(scan)
+      ? piece.slice(0, tokenStart) +
+        (isKeptCodeToken(token.text, scan)
+          ? token.text
+          : ' '.repeat(token.text.length))
+      : ' '.repeat(piece.length)
+    position = token.end
+    // A line comment blanks the rest of the line.
+    if (applyToken(scan, token.text) === 'line-comment')
+      return code + ' '.repeat(lineText.length - position)
+  }
+  const rest = lineText.slice(position)
+  return code + (standsInCode(scan) ? rest : ' '.repeat(rest.length))
+}
+
+/**
  * Gives the lines a declaration's statement may span: from its keyword on the declared line to the last line of the citation; called by {@link declarationStatementEndLine}.
+ * The keyword is searched in the line's code only ({@link sourceLineCode}), so a `const` or `let` in a comment or a string does not begin the statement.
  * @example
  * statementTexts(['if (ready) { const total = sum(rows) }'], 1, 1) // => ['const total = sum(rows) }']
+ * statementTexts(["log('let a'); const total = sum(rows)"], 1, 1) // => ['const total = sum(rows)']
  */
 function statementTexts(
   lines: readonly string[],
@@ -271,7 +333,7 @@ function statementTexts(
   endLine: number,
 ): string[] {
   const [first = '', ...rest] = lines.slice(startLine - 1, endLine),
-    keyword = /\b(?:const|let)\s/.exec(first)
+    keyword = /\b(?:const|let)\s/.exec(sourceLineCode(first))
   // The statement begins at its keyword, so code before it on the line is not counted.
   return [first.slice(keyword?.index ?? 0), ...rest]
 }

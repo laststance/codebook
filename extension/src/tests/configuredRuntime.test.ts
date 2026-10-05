@@ -3116,6 +3116,42 @@ test('a stop that requires a value its own line declares, with no later line of 
   )
 })
 
+// Value: protects=a stop on a line that changes a required value, with a declaration of that name only in the comment after the code, reading the value before the change; fails_when=the declaration search reads the comment's `const nextTheme`, so the stop is requested on the next line and reads the value after the change; why_new=Cycle 0045 PL-15 (row 23 of Cycle 0046); seam=the runtime harness's adapter, which verifies a breakpoint on lines 1 and 2 and pauses where it was requested
+test('a stop on `nextTheme += "!"; // Previously: const nextTheme = "dark"` that requires nextTheme stays on its declared line, because a declaration in a comment declares nothing', async (context) => {
+  // Arrange: line 1 changes nextTheme and names a declaration only in its comment; line 2 is the next mapped line, and the citation covers lines 1 to 2.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA',
+      fixture: {
+        source:
+          'nextTheme += "!"; // Previously: const nextTheme = "dark"\nsetTheme(nextTheme);\n',
+        citationEndLine: 2,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([1, 2])
+
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  await run.stop()
+
+  // Assert: requested at editor position 0:0 (source 1:1), the declared place, and nothing journaled as moved after a declaring line.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 0, character: 0 },
+  )
+  assert.equal(
+    run
+      .view()
+      .events.some(
+        (event) => event.type === 'breakpoint.armed-after-self-declaring-line',
+      ),
+    false,
+  )
+})
+
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).
 test('a stop requested after its unmapped declared line that the debugger then binds on the next line commits there, as a stop declared on the requested line would', async (context) => {
   // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request on line 2 and verifies it at 3:1.
