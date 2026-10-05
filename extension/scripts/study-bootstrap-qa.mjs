@@ -124,27 +124,30 @@ async function check(page, options, collected) {
         .join(','),
     )
   /**
-   * Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure.
+   * Presses the summary of a disclosure by keyboard and waits until the disclosure has changed its open state and told so with a toggle event, at which the pane acts on the opened or closed disclosure.
+   * A toggle event alone is no sign of the press: the browser tells a change of the open state later, so a render before the press (the pane closes the disclosure for another study) can still owe one. The helper therefore reads the state before the press and waits for the other state together with an event that reports it; its own handler runs after the pane's.
    * The wait is bounded: a disclosure that does not toggle rejects after five seconds with a sentence that names it, which ends the flow as one failed case, instead of holding the flow until the limit of its one browser call.
    */
   const toggleByKeyboard = async (disclosureId, key = 'Enter') => {
     const toggleWaitMs = 5_000
-    await page.evaluate((id) => {
-      window.disclosureToggled = false
-      document.getElementById(id).addEventListener(
-        'toggle',
-        () => {
-          window.disclosureToggled = true
-        },
-        { once: true },
-      )
+    const wasOpen = await page.evaluate((id) => {
+      const disclosure = document.getElementById(id)
+      window.disclosureToggledTo = undefined
+      disclosure.ontoggle = () => {
+        window.disclosureToggledTo = disclosure.open
+      }
+      return disclosure.open
     }, disclosureId)
     await page.locator(`#${disclosureId} > summary`).focus()
     await page.keyboard.press(key)
     await page
-      .waitForFunction(() => window.disclosureToggled, undefined, {
-        timeout: toggleWaitMs,
-      })
+      .waitForFunction(
+        ({ id, wasOpen }) =>
+          document.getElementById(id).open !== wasOpen &&
+          window.disclosureToggledTo === !wasOpen,
+        { id: disclosureId, wasOpen },
+        { timeout: toggleWaitMs },
+      )
       .catch((error) => {
         throw new Error(
           `The disclosure #${disclosureId} did not toggle within ${toggleWaitMs} ms of ${key} on its summary (${error.message})`,
@@ -3889,6 +3892,22 @@ async function check(page, options, collected) {
     ...removal,
     request: await lastRemovalRequest(),
   })
+  /** Opens "Remove by hand" by keyboard where the pane then asks the host for the chosen study's files, and waits until that request is sent, five seconds at most. A request that does not come is left to the case, which counts the requests and fails on its own comparison. */
+  const openRemoveByHandAndAwaitRequest = async () => {
+    const requestCount = () =>
+      window.sent.filter((message) => message.type === 'delete-study').length
+    const requestsBefore = await page.evaluate(requestCount)
+    await toggleByKeyboard('study-files')
+    await page
+      .waitForFunction(
+        (requestsBefore) =>
+          window.sent.filter((message) => message.type === 'delete-study')
+            .length > requestsBefore,
+        requestsBefore,
+        { timeout: 5_000 },
+      )
+      .catch(() => undefined)
+  }
   const deleteButton = page.getByRole('button', {
     name: 'Delete saved study…',
     exact: true,
@@ -4729,7 +4748,7 @@ async function check(page, options, collected) {
   // Act: the host shows a study, which asks for nothing; the learner opens Remove by hand by keyboard, and the host answers.
   await library([shownStudy, otherStudy], shownStudy.id, withoutTrash)
   const studyChosen = await removalControl()
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   const askedForFiles = await removalControl()
   const filesAnswer = await answering({
     status: 'refused',
@@ -4971,7 +4990,7 @@ async function check(page, options, collected) {
   const refusalSentence =
     "Choose Overview or Live to leave Recording before removing this study's files by hand."
   await library(threeStudies, thirdStudy.id, withoutTrash)
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   const beforeRefusal = await removalControl()
   const refusedFiles = {
     ...withoutTrash,
