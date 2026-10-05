@@ -13,7 +13,7 @@ import {
  * @param identity - The machine and the boot of this process.
  * @param readStart - Reads the start of the process that has the owner's id now; {@link readProcessStart} unless a caller adds its cache or a test names its own.
  * @returns
- * - `true` when the lock names this machine and an earlier boot, a process id that no longer exists, or a process id that another process has now ({@link isRecordedOwnerGone})
+ * - `true` when the lock names this machine and an earlier boot, a process id that no longer exists, or a process id that another process has now ({@link isRecordedOwnerGone}, which probes a process id only for a record that names its process start in this process's form or its machine in clear)
  * - `true` for a file that was created and never written and has stayed empty ({@link isLeftEmpty}): a writer of an earlier build that was killed between the two left it
  * - `false` for every other lock: one of another machine, one whose process may still run, and one whose content is not an owner record
  * @example
