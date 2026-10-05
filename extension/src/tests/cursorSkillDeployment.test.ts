@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { constants as fileSystemConstants, type StatOptions } from 'node:fs'
 import * as fileSystem from 'node:fs/promises'
 import {
   lstat,
@@ -24,10 +25,19 @@ import {
   removeManagedCursorSkill,
   verifyManagedCursorSkill,
 } from '../cursorSkillDeployment'
+import {
+  openWithoutFollowing,
+  type NoFollowOpenConstants,
+} from '../utils/openWithoutFollowing'
 import { withStorageLock } from '../utils/withStorageLock'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
+import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 
 const INITIAL_SKILL =
   '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
@@ -1051,7 +1061,7 @@ test('a window that reconnects while another window updates the shared skill wai
   )
 })
 
-// Value: protects=a reconnect telling another window's regular update from an edit; fails_when=the receipt is read before and the file after another window replaced both, and the reconnect answers that the skill is missing or was changed; why_new=Cycle 0045 (RT-8, PC-4.7); seam=the reconnecting window's file reads
+// Value: protects=a reconnect telling another window's regular update from an edit; fails_when=the receipt is read before and the file after another window replaced both, and the reconnect answers that the skill is missing or was changed; why_new=Cycle 0045 (RT-8, PC-4.7); seam=the reconnecting window's opener, whose receipt file is read and then followed by the other window's update
 test('another window’s update between a reconnect’s read of the receipt and of the skill is not answered as a missing or changed skill', async (context) => {
   // Arrange: the skill is of the previous installation; two windows of the running one reconnect.
   const paths = await fixture(context)
@@ -1072,21 +1082,26 @@ test('another window’s update between a reconnect’s read of the receipt and 
   let hasOtherWindowUpdated = false
   let otherWindowResult: string | undefined
   const reconnectingWindow = await skillWindow('0.2.28', {
-    'node:fs/promises': {
-      ...fileSystem,
-      readFile: async (path: string): Promise<Buffer> => {
-        const bytes = await readFile(path)
-        // Right after this window read the receipt, the other window replaces the skill and writes its receipt, once.
-        if (path === receiptPath && !hasOtherWindowUpdated) {
-          hasOtherWindowUpdated = true
+    './utils/openWithoutFollowing': {
+      openWithoutFollowing: async (
+        path: string,
+      ): Promise<fileSystem.FileHandle> => {
+        const file = await openWithoutFollowing(path)
+        if (path !== receiptPath || hasOtherWindowUpdated) return file
+        hasOtherWindowUpdated = true
+        const readOpenedFile = file.readFile.bind(file)
+        file.readFile = (async () => {
+          const bytes = await readOpenedFile()
+          // Right after this window read the receipt, the other window replaces the skill and writes its receipt, once.
           const updated = await verifyManagedCursorSkill(
             runningExtension,
             paths.storageRoot,
             paths.homeRoot,
           )
           otherWindowResult = updated.status
-        }
-        return bytes
+          return bytes
+        }) as typeof file.readFile
+        return file
       },
     },
   })
@@ -1155,13 +1170,16 @@ test('a replaced or edited Cursor skill is refused at reconnect as missing or ch
   )
 })
 
-// Value: protects=Cursor chat setup on an NTFS volume, where a file id passes 2^53 once its record was reused 32 times; fails_when=the skill's receipt records or validates the inode as a JavaScript number, so the next setup or reconnect ends with "Cursor skill ownership receipt is invalid; no skill file was changed." (or the receipt holds a rounded number that names no file); why_new=Cycle 0046 row 79: a file id above 2^53 was observed on the development host; seam=node:fs/promises of the loaded deployment, whose files have ids above 2^53
+// Value: protects=Cursor chat setup on an NTFS volume, where a file id passes 2^53 once its record was reused 32 times; fails_when=the skill's receipt records or validates the inode as a JavaScript number, so the next setup or reconnect ends with "Cursor skill ownership receipt is invalid; no skill file was changed." (or the receipt holds a rounded number that names no file); why_new=Cycle 0046 row 79: a file id above 2^53 was observed on the development host; seam=node:fs/promises of the loaded deployment and of the opener it reads through, whose files have ids above 2^53
 test('the receipt of a Cursor skill whose file id is above 2^53, as on an NTFS volume, holds the id in exact decimal digits, and the next setup and reconnect find the skill current', async (context) => {
   // Arrange
   const paths = await fixture(context)
   const largeIds = fileSystemWithLargeFileIds()
   const window = await skillWindow(constants.EXTENSION_VERSION, {
     'node:fs/promises': largeIds,
+    './utils/openWithoutFollowing': await loadOpenWithoutFollowing({
+      fileSystem: largeIds,
+    }),
   })
 
   // Act
@@ -1212,13 +1230,16 @@ test('the receipt of a Cursor skill whose file id is above 2^53, as on an NTFS v
   )
 })
 
-// Value: protects=a skill file the learner put in place of Codebook's own on an NTFS volume; fails_when=the receipted inode is compared as a JavaScript number, so a file with the same bytes whose id differs only below the rounding counts as the installed skill and the next extension update writes over it; why_new=Cycle 0046 row 79; seam=node:fs/promises of the loaded deployment, whose files have ids above 2^53
+// Value: protects=a skill file the learner put in place of Codebook's own on an NTFS volume; fails_when=the receipted inode is compared as a JavaScript number, so a file with the same bytes whose id differs only below the rounding counts as the installed skill and the next extension update writes over it; why_new=Cycle 0046 row 79; seam=node:fs/promises of the loaded deployment and of the opener it reads through, whose files have ids above 2^53
 test('a Cursor skill replaced by a file with the same bytes, whose file id differs only where a number rounds, is not counted as the installed skill: an update refuses to write over it', async (context) => {
   // Arrange: the installed skill is moved away (it stays, so its id is not given to another file) and a copy takes its path; then the extension brings a new skill.
   const paths = await fixture(context)
   const largeIds = fileSystemWithLargeFileIds()
   const window = await skillWindow(constants.EXTENSION_VERSION, {
     'node:fs/promises': largeIds,
+    './utils/openWithoutFollowing': await loadOpenWithoutFollowing({
+      fileSystem: largeIds,
+    }),
   })
   await window.deployCursorSkill(
     paths.extensionPath,
@@ -1315,6 +1336,446 @@ test('the receipt of a Cursor skill whose file id a number holds exactly records
     {
       recorded: { device: skill.dev, inode: skill.ino },
       reconnect: 'current',
+    },
+  )
+})
+
+/** The open flags of a system whose open cannot refuse a link: Windows defines neither `O_NOFOLLOW` nor `O_NONBLOCK`. */
+const OPEN_FLAGS_WITHOUT_NOFOLLOW = {
+  O_RDONLY: fileSystemConstants.O_RDONLY,
+}
+
+/**
+ * Loads the skill deployment as a window in which one path is swapped for another entry at the moment a look at the path and a read of it could come apart: right after the first look at the path (an `lstat` of the window or of its opener), or, where the open itself refuses a link and nothing looks first, right before the path is opened.
+ * @param swapped - `path`: the path that is swapped, once. `swap`: puts the other entry there. `openConstants`: the open flags the window's opener gets; the system's when left out.
+ * @returns The window, and the paths it read by name after the swap: a read by name follows whatever the path holds then.
+ */
+async function skillWindowWhosePathIsSwapped(swapped: {
+  path: string
+  swap: () => Promise<void>
+  openConstants?: NoFollowOpenConstants
+}): Promise<{
+  window: typeof CursorSkillModule
+  readsByNameAfterTheSwap: string[]
+}> {
+  let hasSwapped = false
+  const readsByNameAfterTheSwap: string[] = []
+  const swapOnce = async (): Promise<void> => {
+    if (hasSwapped) return
+    hasSwapped = true
+    await swapped.swap()
+  }
+  const fileSystemOfTheWindow = {
+    ...fileSystem,
+    lstat: async (path: string, options?: StatOptions) => {
+      const look = await fileSystem.lstat(path, options)
+      if (path === swapped.path) await swapOnce()
+      return look
+    },
+    readFile: async (path: string): Promise<Buffer> => {
+      if (hasSwapped && path === swapped.path)
+        readsByNameAfterTheSwap.push(path)
+      return fileSystem.readFile(path)
+    },
+  }
+  const opener = await loadOpenWithoutFollowing({
+    openConstants: swapped.openConstants,
+    fileSystem: fileSystemOfTheWindow,
+  })
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': fileSystemOfTheWindow,
+    './utils/openWithoutFollowing': {
+      openWithoutFollowing: async (
+        path: string,
+      ): Promise<fileSystem.FileHandle> => {
+        // Where the open itself refuses a link, no look comes before it.
+        if (swapped.openConstants === undefined && path === swapped.path)
+          await swapOnce()
+        return opener.openWithoutFollowing(path)
+      },
+    },
+  })
+  return { window, readsByNameAfterTheSwap }
+}
+
+/**
+ * Says in one text what a call of the skill deployment ended with, so a test compares one value.
+ * @returns The status of the result, or the sentence of the refusal.
+ */
+async function statusOrRefusalOf(
+  calling: Promise<CursorSkillModule.CursorSkillResult>,
+): Promise<string> {
+  return calling.then(
+    (result) => result.status,
+    (error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+  )
+}
+
+// Value: protects=the sentence a learner reads when a link takes the place of the managed Cursor skill while setup runs, and the file that link points to; fails_when=setup looks at the path and then reads the path by name, so the link's target is read as the skill and setup answers "The managed Cursor skill was edited after setup", which names an edit nobody made; why_new=Cycle 0046 row 142; seam=node:fs/promises lstat and the opener of the loaded deployment, at which a prepared link takes the skill's path
+test('a link that takes the managed Cursor skill’s path while setup reads it is not read through: setup answers that it will not read through a link, and names what to do', async (context) => {
+  // Arrange: the installed skill, a note of the learner, and a link to that note that takes the skill's path at the moment of the read. The extension brings a new skill, so setup would write.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const notePath = join(paths.homeRoot, 'a-note.md')
+  const preparedLinkPath = join(paths.homeRoot, 'prepared-link')
+  await writeFile(notePath, 'A note of the learner.\n')
+  if (!(await createLinkIfAllowed(notePath, preparedLinkPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const { window, readsByNameAfterTheSwap } =
+    await skillWindowWhosePathIsSwapped({
+      path: paths.targetPath,
+      swap: () => rename(preparedLinkPath, paths.targetPath),
+    })
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      readsByNameAfterTheSwap,
+      note: await readFile(notePath, 'utf8'),
+      skillPathHoldsTheLink: (await lstat(paths.targetPath)).isSymbolicLink(),
+    },
+    {
+      setup: `Codebook will not read through a link: ${paths.targetPath}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+      readsByNameAfterTheSwap: [],
+      note: 'A note of the learner.\n',
+      skillPathHoldsTheLink: true,
+    },
+  )
+})
+
+// Value: protects=the same in a Windows editor, where the open has no flag to refuse a link and the path is looked at first; fails_when=the file that was opened is not the file that was looked at and its bytes are still taken as the skill, or the refusal names an edit or a non-regular file instead of the replacement; why_new=Cycle 0046 row 142; seam=the open flags and node:fs/promises lstat of the opener the loaded deployment reads through, after whose look a prepared link takes the skill's path
+test('a link that takes the managed Cursor skill’s path between the look at it and its open, where the system’s open cannot refuse a link, is not read through: setup answers that another file took the place of the skill', async (context) => {
+  // Arrange: as above, on a system without O_NOFOLLOW.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const notePath = join(paths.homeRoot, 'a-note.md')
+  const preparedLinkPath = join(paths.homeRoot, 'prepared-link')
+  await writeFile(notePath, 'A note of the learner.\n')
+  if (!(await createLinkIfAllowed(notePath, preparedLinkPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const { window, readsByNameAfterTheSwap } =
+    await skillWindowWhosePathIsSwapped({
+      path: paths.targetPath,
+      swap: () => rename(preparedLinkPath, paths.targetPath),
+      openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    })
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      readsByNameAfterTheSwap,
+      note: await readFile(notePath, 'utf8'),
+      skillPathHoldsTheLink: (await lstat(paths.targetPath)).isSymbolicLink(),
+    },
+    {
+      setup: `Another file took the place of ${paths.targetPath} while Codebook opened it, so it was not read. Run Codebook: Set Up AI Chat again.`,
+      readsByNameAfterTheSwap: [],
+      note: 'A note of the learner.\n',
+      skillPathHoldsTheLink: true,
+    },
+  )
+})
+
+// Value: protects=the recovery of an interrupted setup, which adopts the published skill only when it is the recorded file; fails_when=the comparison looks at the path and then reads the path by name, so a link that took the path is read through and another file's bytes are hashed as the published skill's; why_new=Cycle 0046 row 142 (the second place that looked first and read by name); seam=node:fs/promises lstat and the opener of the loaded deployment, at which a prepared link takes the skill's path
+test('the published skill of an interrupted setup that a link replaces while Codebook compares it is not read through the link, and setup refuses the changed skill with its recovery record kept', async (context) => {
+  // Arrange: a setup that was interrupted after it published the skill and before it wrote its receipt; a link to a copy with the same bytes takes the skill's path at the moment of the comparison.
+  const paths = await fixture(context)
+  const parent = join(paths.homeRoot, '.cursor', 'skills'),
+    receiptDirectory = join(paths.storageRoot, 'cursor-skill')
+  await mkdir(join(parent, 'codebook'), { recursive: true })
+  await mkdir(receiptDirectory)
+  const stagedPath = join(
+    parent,
+    '.codebook-stage-00000000-0000-0000-0000-000000000001.tmp',
+  )
+  await writeFile(stagedPath, INITIAL_SKILL)
+  await fileSystem.link(stagedPath, paths.targetPath)
+  const staged = await lstat(stagedPath)
+  await writeFile(
+    join(receiptDirectory, 'pending.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      targetPath: paths.targetPath,
+      stagedPath,
+      skillSha256: createHash('sha256').update(INITIAL_SKILL).digest('hex'),
+      skillVersion: '1.0.0',
+      extensionVersion: '0.2.3',
+      device: staged.dev,
+      inode: staged.ino,
+    }),
+  )
+  const copyPath = join(paths.homeRoot, 'a-copy.md')
+  const preparedLinkPath = join(paths.homeRoot, 'prepared-link')
+  await writeFile(copyPath, INITIAL_SKILL)
+  if (!(await createLinkIfAllowed(copyPath, preparedLinkPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+  const { window, readsByNameAfterTheSwap } =
+    await skillWindowWhosePathIsSwapped({
+      path: paths.targetPath,
+      swap: () => rename(preparedLinkPath, paths.targetPath),
+    })
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      readsByNameAfterTheSwap,
+      recoveryRecordIsKept: (
+        await lstat(join(receiptDirectory, 'pending.json'))
+      ).isFile(),
+    },
+    {
+      setup:
+        'Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record.',
+      readsByNameAfterTheSwap: [],
+      recoveryRecordIsKept: true,
+    },
+  )
+})
+
+// Value: protects=the reconnect of a window in a Windows editor while another window updates the shared skill; fails_when=a skill that another window replaces between this window's look at the path and its open is answered as a failed read, so the reconnect ends with a refusal although the other window's update is regular; why_new=Cycle 0046 row 142: where the open cannot refuse a link, a look and an open can see two files, also for a regular update; seam=the open flags and node:fs/promises lstat of the opener the loaded deployment reads through, after whose look the other window updates the skill
+test('a reconnect whose look at the skill is overtaken by another window’s update, where the system’s open cannot refuse a link, is decided under the storage lock and finds the updated skill current', async (context) => {
+  // Arrange: the skill is of the previous installation; two windows of the running one reconnect, and the other one updates the skill right after this window looked at it.
+  const paths = await fixture(context)
+  const directory = join(paths.homeRoot, '..')
+  const previousExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.27',
+    ),
+    runningExtension = await installExtension(
+      directory,
+      'laststance.codebook-0.2.28',
+    )
+  await (
+    await skillWindow('0.2.27')
+  ).deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  let hasOtherWindowUpdated = false
+  let otherWindowResult: string | undefined
+  const reconnectingWindow = await skillWindow('0.2.28', {
+    './utils/openWithoutFollowing': await loadOpenWithoutFollowing({
+      openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+      fileSystem: {
+        ...fileSystem,
+        lstat: async (path: string, options?: StatOptions) => {
+          const look = await fileSystem.lstat(path, options)
+          if (path === paths.targetPath && !hasOtherWindowUpdated) {
+            hasOtherWindowUpdated = true
+            const updated = await verifyManagedCursorSkill(
+              runningExtension,
+              paths.storageRoot,
+              paths.homeRoot,
+            )
+            otherWindowResult = updated.status
+          }
+          return look
+        },
+      },
+    }),
+  })
+
+  // Act
+  const reconnect = await statusOrRefusalOf(
+    reconnectingWindow.verifyManagedCursorSkill(
+      runningExtension,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      otherWindowResult,
+      reconnect,
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      otherWindowResult: 'updated',
+      reconnect: 'current',
+      skill: publisherSkillOf(runningExtension),
+    },
+  )
+})
+
+// Value: protects=the sentence a learner reads for a link at the managed Cursor skill's path, from each of the three entries; fails_when=a link is answered as "a non-regular skill file", which does not say that a link is there or what to do; why_new=Cycle 0046 row 142: the refusal of a link, of what is no regular file and of a replaced file each got its sentence; seam=the open flags of the opener the loaded deployment reads through
+test('a link at the managed Cursor skill’s path is refused by setup, reconnect and removal with the sentence of a link, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
+  // Arrange: the installed skill is moved away and a link to it stands at its path.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const movedSkillPath = join(paths.homeRoot, 'moved-SKILL.md')
+  await rename(paths.targetPath, movedSkillPath)
+  if (!(await createLinkIfAllowed(movedSkillPath, paths.targetPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+  const windowAsOnWindows = await skillWindow(constants.EXTENSION_VERSION, {
+    './utils/openWithoutFollowing': await loadOpenWithoutFollowing({
+      openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    }),
+  })
+  const refusalOfALink = `Codebook will not read through a link: ${paths.targetPath}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+    setupAsOnWindows: await statusOrRefusalOf(
+      windowAsOnWindows.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    reconnectAsOnWindows: await statusOrRefusalOf(
+      windowAsOnWindows.verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removalAsOnWindows: await statusOrRefusalOf(
+      windowAsOnWindows.removeManagedCursorSkill(
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, movedSkill: await readFile(movedSkillPath, 'utf8') },
+    {
+      refusals: {
+        setup: refusalOfALink,
+        reconnect: refusalOfALink,
+        removal: refusalOfALink,
+        setupAsOnWindows: refusalOfALink,
+        reconnectAsOnWindows: refusalOfALink,
+        removalAsOnWindows: refusalOfALink,
+      },
+      movedSkill: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=the sentence for a skill path that holds a folder, in a Windows editor as elsewhere; fails_when=the refusal of the look, which keeps a folder from being opened where the open cannot refuse a link, reaches the learner as a bare file error instead of the sentence setup gives where the folder is opened and told by its status; why_new=Cycle 0046 row 142; seam=the open flags of the opener the loaded deployment reads through
+test('a folder at the managed Cursor skill’s path is refused by setup with the sentence of a non-regular skill file, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
+  // Arrange: the installed skill is replaced by a folder.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await rm(paths.targetPath)
+  await mkdir(paths.targetPath)
+  const windowAsOnWindows = await skillWindow(constants.EXTENSION_VERSION, {
+    './utils/openWithoutFollowing': await loadOpenWithoutFollowing({
+      openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    }),
+  })
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    setupAsOnWindows: await statusOrRefusalOf(
+      windowAsOnWindows.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(refusals, {
+    setup: `Codebook will not change a non-regular skill file: ${paths.targetPath}`,
+    setupAsOnWindows: `Codebook will not change a non-regular skill file: ${paths.targetPath}`,
+  })
+})
+
+// Value: protects=the sentence for an ownership receipt that was replaced by a link, which named a "skill file" although the receipt is Codebook's record; fails_when=the receipt is read through the link, or the refusal does not say that a link stands at the receipt's path; why_new=Cycle 0046 row 142: every read of the skill setup goes through one reader; seam=none
+test('an ownership receipt of the Cursor skill that is a link is not read: setup answers that it will not read through a link, and names the receipt', async (context) => {
+  // Arrange: the receipt is moved away and a link to it stands at its path.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const receiptPath = join(paths.storageRoot, 'cursor-skill', 'receipt.json')
+  const movedReceiptPath = join(paths.homeRoot, 'moved-receipt.json')
+  await rename(receiptPath, movedReceiptPath)
+  if (!(await createLinkIfAllowed(movedReceiptPath, receiptPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { setup, skill: await readFile(paths.targetPath, 'utf8') },
+    {
+      setup: `Codebook will not read through a link: ${receiptPath}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+      skill: INITIAL_SKILL,
     },
   )
 })
