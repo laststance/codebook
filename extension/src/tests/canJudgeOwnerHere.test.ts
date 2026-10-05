@@ -100,13 +100,24 @@ test('an owner whose start has another system’s form cannot be judged here, no
 
 // Value: protects=a window whose own start could not be read still takes over what a killed window of its system and its pid namespace left: its form is then the one every start it reads here has; fails_when=an identity without a start has no form, or on Linux one without the pid namespace, so every record with a start counts as one of another space and no stale lock is taken over for the 60 s until the own start is read again (Cycle 0046 rows 58 and 65); why_new=the predicate is new; seam=none (the platform and the pid namespace this test runs in)
 test('a window whose own start is unknown judges an owner whose start has the form of the platform it runs on, and no other', () => {
-  // Arrange: a start in the form this platform's query answers, and one in a form no platform answers.
-  const windowWithoutItsStart = { hostname: 'workstation' }
+  // Arrange: a start in the form every start read in this process has (on Linux with this pid namespace), and one in a form no platform answers. The window knows its host name and its digest, not its own start.
+  const windowWithoutItsStart = {
+    hostname: 'workstation',
+    hostKey: 'd195d36bd79da7df',
+  }
   // Act
-  const ofThisPlatform = canJudgeOwnerHere(
+  const ofPrivateStorage = canJudgeOwnerHere(
       {
         pid: 4242,
         hostname: 'workstation',
+        processStart: startOfKilledWindow(),
+      },
+      windowWithoutItsStart,
+    ),
+    ofAProjectFolder = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostKey: 'd195d36bd79da7df',
         processStart: startOfKilledWindow(),
       },
       windowWithoutItsStart,
@@ -116,7 +127,8 @@ test('a window whose own start is unknown judges an owner whose start has the fo
       windowWithoutItsStart,
     )
   // Assert
-  assert.equal(ofThisPlatform, true)
+  assert.equal(ofPrivateStorage, true)
+  assert.equal(ofAProjectFolder, true)
   assert.equal(ofNoPlatform, false)
 })
 
@@ -220,4 +232,52 @@ test('an owner of another pid namespace recorded under another kernel boot id ca
   // Assert
   assert.equal(ofAnotherNamespaceBeforeTheRestart, true)
   assert.equal(ofThisNamespace, true)
+})
+
+// Value: protects=what a killed window left in private storage is judged after its WSL distribution alone was restarted, while a marker in a project folder keeps the rule of the pid namespace; fails_when=the pid namespace decides for a record that names its machine in clear (the lock is never taken over), or the system no longer decides for it (a Windows window's lock is probed on Linux); why_new=records that name their machine in clear got a rule of their own after row 65; seam=none
+test('an owner that names its machine in clear can be judged here although its Linux start names another pid namespace, and cannot when its start has another system’s form', () => {
+  // Arrange: records of private storage, which name the host or the editor's machine id.
+  const sameKernelBoot = { id: 'boot-of-the-shared-kernel' }
+  // Act
+  const namedByHost = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostname: 'workstation',
+        boot: sameKernelBoot,
+        processStart: 'linux@4026532214:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    ),
+    namedByMachineId = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostname: 'laptop.lan',
+        machineId: 'machine-a',
+        boot: sameKernelBoot,
+        processStart: 'linux@4026532214:100',
+      },
+      { ...WINDOW_IN_NAMESPACE_4026531836, machineId: 'machine-a' },
+    ),
+    recordedWithoutANamespace = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostname: 'workstation',
+        boot: sameKernelBoot,
+        processStart: 'linux:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    ),
+    ofAWindowsWindow = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostname: 'workstation',
+        processStart: 'win:2026-10-05T09:12:33.1234567Z',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    )
+  // Assert
+  assert.equal(namedByHost, true)
+  assert.equal(namedByMachineId, true)
+  assert.equal(recordedWithoutANamespace, true)
+  assert.equal(ofAWindowsWindow, false)
 })

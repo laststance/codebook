@@ -29,6 +29,8 @@ export const PROCESS_START_FORMS = {
   darwin: 'ps',
   win32: 'win',
 } as const satisfies Partial<Record<NodeJS.Platform, string>>
+/** What stands between the system and the pid namespace in the form of a Linux process start: `linux@4026531836`. */
+export const PROCESS_START_NAMESPACE_MARK = '@'
 /** Where Linux names the pid namespace of the reading process, as a link to `pid:[<number>]`. A process id means a process only inside one pid namespace ({@link processStartFormHere}). */
 export const LINUX_PID_NAMESPACE_PATH = '/proc/self/ns/pid'
 /** How many hex characters of a SHA-256 name a machine in a storage owner record ({@link deriveMachineKeys}). */

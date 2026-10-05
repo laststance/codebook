@@ -350,6 +350,70 @@ test('an owner of another pid namespace recorded under another kernel boot id is
   assert.deepEqual(startsAsked, [])
 })
 
+// Value: protects=a storage lock, takeover claim, connection descriptor or profile marker a killed window left is taken over after its WSL distribution alone was restarted (`wsl --terminate` while the virtual machine keeps running): the kernel boot id is the same and the distribution has another pid namespace number; fails_when=a record in private storage, which names its machine in clear and which two process spaces do not share, is treated like a marker in a project folder, so the lock counts as one of another pid namespace, is never judged, and refuses every write until it is removed by hand (a regression of row 65 found while implementing it); why_new=row 65 named the pid namespace in the form; seam=the injected identity
+test('an owner that names its machine in clear and another pid namespace under the same kernel boot is gone when no process has its process id', async () => {
+  // Arrange: the lock of a killed window, recorded in the pid namespace the distribution had before it was restarted; no process has its process id now.
+  // Act
+  const isGone = await isRecordedOwnerGone(
+    {
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'workstation',
+      boot: { id: 'boot-of-the-shared-kernel' },
+      processStart: 'linux@4026532214:100',
+    },
+    WINDOW_IN_NAMESPACE_4026531836,
+  )
+  // Assert
+  assert.equal(isGone, true)
+})
+
+// Value: protects=the same lock when a process has its process id: a reused id is told by the clock ticks of the start, which are one clock for every pid namespace of a kernel, and a live owner is never called gone because its record names a namespace number that is no longer this one; fails_when=the two starts are compared with their namespaces, so they always differ and a live window's lock is taken over, or they are not compared at all and a reused id keeps the lock for good; why_new=row 65 named the pid namespace in the form; seam=the injected identity and start reader
+test('an owner that names its machine in clear and another pid namespace is gone when the process with its id began at another tick, and not gone when it began at the same tick', async () => {
+  // Arrange: a lock recorded at clock tick 100 in the pid namespace 4026532214; this test process has its process id, and this window reads starts in the namespace 4026531836.
+  const lockOfTheOtherNamespace = {
+    pid: process.pid,
+    hostname: 'workstation',
+    boot: { id: 'boot-of-the-shared-kernel' },
+    processStart: 'linux@4026532214:100',
+  }
+  // Act
+  const isGoneWhenTheIdWasReused = await isRecordedOwnerGone(
+    lockOfTheOtherNamespace,
+    WINDOW_IN_NAMESPACE_4026531836,
+    async () => 'linux@4026531836:200',
+  )
+  const isGoneWhileItsOwnerRuns = await isRecordedOwnerGone(
+    lockOfTheOtherNamespace,
+    WINDOW_IN_NAMESPACE_4026531836,
+    async () => 'linux@4026531836:100',
+  )
+  // Assert
+  assert.equal(isGoneWhenTheIdWasReused, true)
+  assert.equal(isGoneWhileItsOwnerRuns, false)
+})
+
+// Value: protects=row 58 for records in private storage too: a lock a Windows window wrote is never probed by a WSL window that reaches the same file, although it names the shared host name in clear; fails_when=a record that names its machine in clear is judged whatever system its start names, so the live Windows window's lock counts as gone because no Linux process has its id; why_new=records that name their machine in clear got a rule of their own; seam=the injected identity and the start reader, which must not be asked
+test('an owner that names its machine in clear and whose start has another system’s form is never gone here', async () => {
+  // Arrange: a lock a Windows window wrote, judged by a Linux window of the same host name; no Linux process has its process id.
+  const startsAsked: number[] = []
+  // Act
+  const isGone = await isRecordedOwnerGone(
+    {
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'workstation',
+      processStart: 'win:2026-10-05T09:12:33.1234567Z',
+    },
+    WINDOW_IN_NAMESPACE_4026531836,
+    async (pid) => {
+      startsAsked.push(pid)
+      return 'linux@4026531836:200'
+    },
+  )
+  // Assert
+  assert.equal(isGone, false)
+  assert.deepEqual(startsAsked, [])
+})
+
 // Value: protects=a record names its owner's start to the reader, which lets a start kept by a sweep confirm it; fails_when=the judgement asks without the recorded start, so a sweep's kept start is never used or, worse, is trusted for a start it does not equal; why_new=the cache rule is new (ER-12); seam=the injected start reader
 test('the judgement hands the recorded start to the reader as the start a kept one may confirm', async () => {
   // Arrange

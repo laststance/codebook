@@ -1,6 +1,10 @@
 import { readlinkSync } from 'node:fs'
 
-import { LINUX_PID_NAMESPACE_PATH, PROCESS_START_FORMS } from '../constants'
+import {
+  LINUX_PID_NAMESPACE_PATH,
+  PROCESS_START_FORMS,
+  PROCESS_START_NAMESPACE_MARK,
+} from '../constants'
 
 /** What {@link processStartFormHere} reads with; each is the real one unless a caller or a test names its own. */
 export type ProcessStartFormInputs = {
@@ -73,5 +77,7 @@ export function processStartFormHere(
   const form = FORMS_BY_PLATFORM[inputs.platform ?? process.platform]
   if (form !== PROCESS_START_FORMS.linux) return form
   const pidNamespace = pidNamespaceHere(inputs.readLink)
-  return pidNamespace === undefined ? form : `${form}@${pidNamespace}`
+  return pidNamespace === undefined
+    ? form
+    : `${form}${PROCESS_START_NAMESPACE_MARK}${pidNamespace}`
 }

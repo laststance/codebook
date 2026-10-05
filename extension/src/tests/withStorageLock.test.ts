@@ -14,6 +14,7 @@ import os, { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { currentStorageOwner } from '../utils/currentStorageOwner'
 import { readProcessStart } from '../utils/readProcessStart'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
@@ -794,3 +795,34 @@ test('a prepared takeover claim and a prepared lock of a killed window whose pro
     'writer.lock.takeover-running',
   ])
 })
+
+// Value: protects=the learner's next write after an editor window was killed and its WSL distribution alone was restarted (`wsl --terminate` while the WSL virtual machine keeps running): the lock the killed window left is taken over, as in 0.2.29.0; fails_when=a storage lock that names another pid namespace of this kernel boot is never judged, so every write is refused with "Learning storage is locked ..." until the file is removed by hand or the virtual machine restarts (a regression of row 65); why_new=row 65 named the pid namespace in the form; seam=the process probe. Linux only: no other system has pid namespaces, and a Linux start is never judged on another system.
+test(
+  'a storage lock a killed window left in another pid namespace of this kernel boot is taken over by the next write',
+  {
+    skip: process.platform !== 'linux' && 'pid namespaces exist on Linux only',
+  },
+  async (context) => {
+    // Arrange: the lock of exited process 4242 of this machine, written under this kernel boot in a pid namespace that has ended since (its number, 1, is none a running system gives).
+    const directory = await storageDirectory(context)
+    await writeFile(
+      join(directory, 'writer.lock'),
+      JSON.stringify({
+        pid: 4242,
+        hostname: hostname(),
+        boot: (await currentStorageOwner()).boot,
+        processStart: 'linux@1:100',
+      }),
+    )
+    answerProcessProbes(context, [4242])
+    let writes = 0
+    // Act
+    const outcome = await writeUnderLock(directory, async () => {
+      writes += 1
+    })
+    // Assert
+    assert.equal(outcome, 'written')
+    assert.equal(writes, 1)
+    assert.deepEqual(await readdir(directory), [])
+  },
+)

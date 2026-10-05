@@ -115,3 +115,33 @@ test('a stale lock whose process id another process keeps through both looks of 
   assert.equal(didHoldTheClaim, true)
   assert.deepEqual(await readdir(directory), [])
 })
+
+// Value: protects=the takeover of a storage lock a killed window left before its WSL distribution alone was restarted, and the lock of a live window whose record names the namespace number the distribution had; fails_when=a lock of another pid namespace under the same kernel boot is never judged (it refuses every write until it is removed by hand), or its start is compared with the namespace, so a live window's lock is removed and two windows write; why_new=row 65 named the pid namespace in the form; seam=the process probe and the file read of the start reader
+test('a lock recorded in another pid namespace of this kernel boot is removed when the process with its id began at another tick, and stays when it began at the same tick', async (context) => {
+  // Arrange: two storages with the lock of process 4242, recorded at clock tick 100 in the pid namespace 4026532214. This window reads starts in the namespace 4026531836. A process has the id 4242: in the first storage's case one begun at tick 200, in the second's the owner itself, begun at tick 100.
+  const afterTheIdWasReused = await storageDirectory(context),
+    whileTheOwnerRuns = await storageDirectory(context)
+  const lock =
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026532214:100"}'
+  await writeFile(join(afterTheIdWasReused, 'writer.lock'), lock)
+  await writeFile(join(whileTheOwnerRuns, 'writer.lock'), lock)
+  context.mock.method(process, 'kill', (): true => true)
+  // Act
+  await removeStaleStorageLock(
+    join(afterTheIdWasReused, 'writer.lock'),
+    THIS_WINDOW,
+    linuxStartReader(() => linuxStat(200)),
+  )
+  await removeStaleStorageLock(
+    join(whileTheOwnerRuns, 'writer.lock'),
+    THIS_WINDOW,
+    linuxStartReader(() => linuxStat(100)),
+  )
+  // Assert
+  assert.deepEqual(await readdir(afterTheIdWasReused), [])
+  assert.deepEqual(await readdir(whileTheOwnerRuns), ['writer.lock'])
+  assert.equal(
+    await readFile(join(whileTheOwnerRuns, 'writer.lock'), 'utf8'),
+    lock,
+  )
+})
