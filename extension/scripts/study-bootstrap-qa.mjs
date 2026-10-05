@@ -3130,6 +3130,74 @@ async function check(page, options, collected) {
           JSON.stringify(panelStatusWithNotice) ===
             JSON.stringify(panelStatusBeforeNotice),
       })
+
+      // Arrange: the bottom panel during a replay, which shows the transport alone; no run is live and no study is shown (row 176).
+      await publish(panelReplay)
+      /** Reads the two status regions the bottom panel leaves out during a replay, the strip's height and whether the panel looks as it does without each of them. */
+      const leftOutDuringReplay = async () => ({
+        runtime: await statusRegion('runtime'),
+        saveState: await statusRegion('recording-save-state'),
+        stripHeight: await page
+          .locator('.live-strip')
+          .evaluate((strip) =>
+            Math.round(strip.getBoundingClientRect().height),
+          ),
+        looksWithoutStrip: await looksAsWithout('.live-strip'),
+        looksWithoutSaveState: await looksAsWithout('#recording-save-state'),
+      })
+      const replayAlone = await leftOutDuringReplay()
+      // Act: a run starts during the replay and the shown study's recording is saved; then the replay is left while the run goes on.
+      const runAndSavedStudy = {
+        liveState: 'running',
+        liveTitle: 'Repository operation',
+        study: {
+          terminal: true,
+          studyOutcome: 'demonstrated',
+          historyOutcome: 'saved',
+          finalOutcome: 'demonstrated',
+          recordingSave: { status: 'finalized', contextStatus: 'saved' },
+        },
+      }
+      await publish({ ...panelReplay, ...runAndSavedStudy })
+      const runStartedDuringReplay = await leftOutDuringReplay()
+      await publish({
+        ...options.message,
+        revision: revisionAt(8),
+        ...runAndSavedStudy,
+      })
+      const replayLeft = {
+        runtime: await statusRegion('runtime'),
+        saveState: await statusRegion('recording-save-state'),
+        stopShown: await page.locator('[data-action="stop"]').isVisible(),
+      }
+      // Assert
+      const emptyAndUnseen = {
+        runtime: emptyRegion('runtime'),
+        saveState: emptyRegion('recording-save-state'),
+        stripHeight: 0,
+        looksWithoutStrip: { moved: [], samePixels: true },
+        looksWithoutSaveState: { moved: [], samePixels: true },
+      }
+      cases.push({
+        name: 'in the bottom panel during a replay the live strip’s status and the recording’s save state are in the page, rendered and empty, and the panel looks as it does without them, also when a run starts and the recording is saved meanwhile; when the replay is left, the run’s state and the save state are their first texts',
+        actual: { replayAlone, runStartedDuringReplay, replayLeft },
+        passed:
+          JSON.stringify(replayAlone) === JSON.stringify(emptyAndUnseen) &&
+          JSON.stringify(runStartedDuringReplay) ===
+            JSON.stringify(emptyAndUnseen) &&
+          JSON.stringify(replayLeft) ===
+            JSON.stringify({
+              runtime: {
+                ...emptyRegion('runtime'),
+                text: 'Repository operation — running',
+              },
+              saveState: {
+                ...emptyRegion('recording-save-state'),
+                text: 'Recording saved.',
+              },
+              stopShown: true,
+            }),
+      })
     }
   }
   // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.

@@ -1868,12 +1868,30 @@ function studyClient(
     generalName: string,
   ): string => message.liveTitle ?? profileTitle ?? generalName
   /**
+   * Says whether a Study message shows a replay in the bottom panel's pane, which shows the transport alone then; read by {@link showsLiveStrip} and before the recording's save state is written.
+   * The live strip and the save state are left out there by keeping their status regions empty, not by taking them from the page: when the replay is left, the run's state and the save state are written into regions that exist. Both say how things stand at that moment, so their announcement then is no old news.
+   * @param message - The current Study message.
+   * @example isReplayInBottomPanel(message) // => false in the Study pane, which shows the strip beside a replay
+   */
+  const isReplayInBottomPanel = (message: StudyViewMessage): boolean =>
+    isBottomPanel && Boolean(message.recording)
+  /**
+   * Says whether this pane shows the live strip for a Study message; read by {@link liveStripStatus}.
+   * @param message - The current Study message.
+   * @returns `true` while a run of this window has not stopped, except in the bottom panel during a replay ({@link isReplayInBottomPanel}).
+   * @example showsLiveStrip(message) // => false once the run stopped
+   */
+  const showsLiveStrip = (message: StudyViewMessage): boolean =>
+    Boolean(message.liveState) &&
+    message.liveState !== 'stopped' &&
+    !isReplayInBottomPanel(message)
+  /**
    * Gives what the live strip's status says; read on every Study message.
-   * The strip is never taken from the page: its status is empty while no run of this window is live, and the stylesheet shows nothing of a strip whose status is empty. The first state of a run therefore changes a status region that exists.
+   * The strip is never taken from the page: its status is empty while this pane does not show the strip ({@link showsLiveStrip}), and the stylesheet shows nothing of a strip whose status is empty. The first state of a run therefore changes a status region that exists.
    * @param message - The current Study message.
    * @param profileTitle - The title of the live run's profile, when the message lists that profile.
    * @returns
-   * - No run of this window is live (none started, or it stopped): an empty text
+   * - The pane does not show the strip (no run of this window is live, or the bottom panel shows a replay): an empty text
    * - The run is paused at an item of the study: its title and that item
    * - Otherwise: its title and its state
    * @example liveStripStatus(message, 'Repository operation') // => 'Repository operation — paused at Theme'
@@ -1882,7 +1900,7 @@ function studyClient(
     message: StudyViewMessage,
     profileTitle: string | undefined,
   ): string => {
-    if (!message.liveState || message.liveState === 'stopped') return ''
+    if (!showsLiveStrip(message)) return ''
     return message.model.currentItemId
       ? `${liveRunName(message, profileTitle, 'Live study')} — paused at ${message.model.currentItemTitle}`
       : `${liveRunName(message, profileTitle, 'Runtime')} — ${message.liveState}`
@@ -2284,8 +2302,11 @@ function studyClient(
             : savedRecording.status === 'finalized'
               ? 'Recording frames saved; matching source and explanation context is pending.'
               : 'Recording unavailable for this study.'
-    // Without a study the line is empty and takes no room; it stays rendered, so the first label is a change of a status region that exists.
-    text('recording-save-state', message.study ? recordingLabel : '')
+    // Without a study, and in the bottom panel during a replay, the line is empty and takes no room; it stays rendered, so the first label is a change of a status region that exists.
+    text(
+      'recording-save-state',
+      message.study && !isReplayInBottomPanel(message) ? recordingLabel : '',
+    )
     element('evidence-details').hidden = !message.study
     text('evidence-summary', `Evidence status · ${outcomeLabel}`)
     // Why the last run did not start comes first; Retry storage / refresh cannot fix it, so it does not count for that button.
