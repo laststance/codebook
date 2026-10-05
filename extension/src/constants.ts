@@ -27,7 +27,7 @@ export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
 export const PROCESS_START_PS_TEXT_MAX_LENGTH = 64
 /** Where the start time (field 22 of `/proc/<pid>/stat`) is among the values that follow the command name's closing parenthesis; the first of them is field 3. */
 export const LINUX_STAT_START_TIME_INDEX = 19
-/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. On Linux the form also names the pid namespace, as `linux@<number>` ({@link processStartFormHere}). Two starts of different forms were read in two spaces of process ids and are never compared ({@link canJudgeOwnerHere}). */
+/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. On Linux the form also names the pid namespace, as `linux@<number>` ({@link processStartFormHere}). Two starts of different forms were read in two spaces of process ids and are never compared, and for a record in a project folder neither are two Linux starts that name no pid namespace ({@link canJudgeOwnerHere}). */
 export const PROCESS_START_FORMS = {
   linux: 'linux',
   darwin: 'ps',

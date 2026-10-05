@@ -266,21 +266,21 @@ test('an owner whose start has another system’s form is never gone here, altho
 
 // Value: protects=the takeover of what a killed window of this system left in a project folder: a record that names its machine by digests and its start in this system's form is still judged by its process id; fails_when=every record that matches by a digest counts as one that cannot be probed here, so a killed window's marker or claim is never called gone (Cycle 0046 row 58, the other side of the rule); why_new=the rule of the process space is new; seam=the injected identity of a Linux window
 test('an owner whose start has this system’s form and whose process id names no process is gone', async () => {
-  // Arrange: the same record as a Linux window of this computer wrote it; no process has its process id.
+  // Arrange: the same record as a Linux window of this computer and of this pid namespace wrote it, without a kernel boot id; no process has its process id.
   // Act
   const isGone = await isRecordedOwnerGone(
     {
       pid: ID_OF_NO_PROCESS,
       machineKey: '1fb1404a9738d5ed',
       hostKey: 'd195d36bd79da7df',
-      processStart: 'linux:100',
+      processStart: 'linux@4026531836:100',
     },
     {
       hostname: 'workstation',
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-of-the-linux-kernel' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     },
   )
   // Assert
@@ -627,6 +627,51 @@ test('a claim on the update marker of a window whose process start could not be 
     claims: 'no claim folder',
     markerOfWindow: 'window-a',
   })
+})
+
+// Value: protects=the Wiki update marker of a live window in another pid namespace of one computer where neither window can read its own pid namespace (their Linux starts have one form, `linux`); fails_when=two Linux forms without a namespace count as one space of process ids, so the marker is probed here, no process has its id in this space, and its live owner is called gone (Cycle 0046 row 145); why_new=rows 65 and 103 left the case where neither side names a namespace; seam=the injected identity of a Linux window without its namespace and the start reader, which must not be asked for the record of a project folder
+test('an owner that names its machine by digests alone and a Linux start without a pid namespace is never gone for a window that names no namespace either, and the same record with its host name in clear is gone as before', async () => {
+  // Arrange: a Linux window that could not read its own pid namespace, and a record of this computer under the same kernel boot whose start names no namespace either; no process has its process id here.
+  const windowWithoutItsNamespace = {
+    hostname: 'workstation',
+    machineKey: 'f9c8c7ddcf3d5f56',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-shared-kernel' },
+    processStart: 'linux:16362446',
+  }
+  const recordWithoutANamespace = {
+    pid: ID_OF_NO_PROCESS,
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-shared-kernel' },
+    processStart: 'linux:100',
+  }
+  const startsAsked: number[] = []
+  const readStart = async (pid: number): Promise<string> => {
+    startsAsked.push(pid)
+    return 'linux:200'
+  }
+  // Act
+  const isGoneInAProjectFolder = await isRecordedOwnerGone(
+    recordWithoutANamespace,
+    windowWithoutItsNamespace,
+    readStart,
+  )
+  const isGoneWhileAnotherProcessHasItsId = await isRecordedOwnerGone(
+    { ...recordWithoutANamespace, pid: process.pid },
+    windowWithoutItsNamespace,
+    readStart,
+  )
+  const isGoneInPrivateStorage = await isRecordedOwnerGone(
+    { ...recordWithoutANamespace, hostname: 'workstation' },
+    windowWithoutItsNamespace,
+    readStart,
+  )
+  // Assert
+  assert.equal(isGoneInAProjectFolder, false)
+  assert.equal(isGoneWhileAnotherProcessHasItsId, false)
+  assert.equal(isGoneInPrivateStorage, true)
+  assert.deepEqual(startsAsked, [])
 })
 
 // Value: protects=a record names its owner's start to the reader, which lets a start kept by a sweep confirm it; fails_when=the judgement asks without the recorded start, so a sweep's kept start is never used or, worse, is trusted for a start it does not equal; why_new=the cache rule is new (ER-12); seam=the injected start reader
