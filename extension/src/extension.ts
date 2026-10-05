@@ -50,7 +50,6 @@ import { startServer } from './server'
 import { StudyService } from './service'
 import { StudyWorkspace } from './studyWorkspace'
 import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
-import { aiChatReconnectNotice } from './utils/aiChatReconnectNotice'
 import {
   answerDeepWikiQuestion,
   answerDeepWikiQuestionWithPrompt,
@@ -65,7 +64,6 @@ import {
   currentStorageOwner,
   useEditorMachineId,
 } from './utils/currentStorageOwner'
-import { cursorRegistrationNotice } from './utils/cursorRegistrationNotice'
 import { describeWikiChatOpenFailure } from './utils/describeWikiChatOpenFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
@@ -79,6 +77,7 @@ import { isWikiManifestOf } from './utils/isWikiManifestOf'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
+import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
@@ -325,7 +324,14 @@ export function activate(
           await registerCursorConnection()
         } catch (error) {
           if (!stopping && !cursorRemoving && running === server)
-            void showNotice('warning', cursorRegistrationNotice(error))
+            void showNotice(
+              'warning',
+              noticeWithSetupStep(
+                'Codebook agent server started, but Cursor MCP registration failed',
+                error,
+                'Run Codebook: Set Up AI Chat to repair the connection.',
+              ),
+            )
         }
       }
       if (running !== server || stopping || !server.endpoint.listening)
@@ -1713,7 +1719,14 @@ export function activate(
       await start()
       notifyMcpDefinitions()
     })().catch((error) => {
-      void showNotice('warning', aiChatReconnectNotice(error))
+      void showNotice(
+        'warning',
+        noticeWithSetupStep(
+          'Codebook AI chat did not reconnect',
+          error,
+          'Run Codebook: Set Up AI Chat.',
+        ),
+      )
     })
   }
   return {

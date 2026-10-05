@@ -11,7 +11,8 @@ import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
-import { runFlowKeepingCases } from './utils/runFlowKeepingCases.mjs'
+import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
+import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
 
 const [
   mode = 'verify',
@@ -56,21 +57,13 @@ const message = {
   studies: [],
 }
 
-/** How long one call of the browser CLI may take. */
-const COMMAND_TIMEOUT_MS = 30_000
-/** How long the call that runs the whole flow may take: every case of the check, with its viewport changes and screenshots, runs inside this one call, and the job that runs it ends after ten minutes. */
-const FLOW_TIMEOUT_MS = 300_000
-
-/** Records each owned CLI operation for delayed-snapshot renderer verification; the call labelled `flow` gets the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
+/** Records each owned CLI operation for delayed-snapshot renderer verification; {@link readerDomCommandOptions} gives the call labelled `flow` the flow's own limit. @example await command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise((resolve) =>
     execFile(
       'playwright-cli',
       [`-s=${session}`, ...arguments_],
-      {
-        timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
-        maxBuffer: 4 * 1024 * 1024,
-      },
+      readerDomCommandOptions(label),
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
@@ -3395,26 +3388,24 @@ const server = createServer((request, response) => {
   response.end('<!doctype html><title>Codebook bootstrap verification</title>')
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` wraps the file's text in parentheses, so the file is one expression without a closing semicolon; it calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. The check runs inside {@link runFlowKeepingCases}, whose text is written into the same file: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): together they exceed the size a single command argument may have on Linux (E2BIG), and this script turns no text into code on its own. `run-code` calls that function outside Node's module system, so the check cannot import and takes everything it uses from `options`. {@link readerDomFlowText} writes the file's text, in which the check runs inside {@link runFlowKeepingCases}: a step that throws then ends as one failed case after the cases that passed, instead of a call without a result.
 const flowPath = `${output}/flow.js`
 let recording = false
 try {
   await writeFile(
     flowPath,
-    `async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(
-      {
-        html: { context: studyHtml('context'), moments: studyHtml('moments') },
-        wikiShell: wikiShellPage(
-          await readFile(
-            new URL('../skills/codebook/reader-shell.html', import.meta.url),
-            'utf8',
-          ),
+    readerDomFlowText(check, {
+      html: { context: studyHtml('context'), moments: studyHtml('moments') },
+      wikiShell: wikiShellPage(
+        await readFile(
+          new URL('../skills/codebook/reader-shell.html', import.meta.url),
+          'utf8',
         ),
-        message,
-        output,
-        url: `http://127.0.0.1:${server.address().port}/`,
-      },
-    )})\n`,
+      ),
+      message,
+      output,
+      url: `http://127.0.0.1:${server.address().port}/`,
+    }),
   )
   await command(['open', 'about:blank'], 'open')
   await command(

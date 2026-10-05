@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
+import { runInNewContext } from 'node:vm'
 
+import { readerDomCommandOptions } from '../utils/readerDomCommandOptions.mjs'
+import { readerDomFlowText } from '../utils/readerDomFlowText.mjs'
 import { runFlowKeepingCases } from '../utils/runFlowKeepingCases.mjs'
 
 // Read as text and never imported: loading the script starts its server and its browser.
@@ -160,39 +163,89 @@ test('a pane DOM flow that runs to its end answers its cases as collected, and o
   })
 })
 
-test('the pane DOM check runs its flow inside the case keeper and gives that one call its own, longer limit', async () => {
+// Value: protects=the Reader DOM job's time limits: the one browser call that runs every case of the check may take five minutes, any other call thirty seconds; fails_when=the flow's call falls under the limit of a single browser command and is ended in the middle of its cases, or every call may hang for five minutes; why_new=Cycle 0045 review PA-1 (row 38 of Cycle 0046): the limits were checked as a line of the script's text; seam=none
+test('the browser call that runs the whole pane DOM flow may take five minutes, and every other call thirty seconds', () => {
+  // Act
+  const limits = Object.fromEntries(
+    ['open', 'video-start', 'flow', 'video-stop', 'close'].map((label) => [
+      label,
+      readerDomCommandOptions(label),
+    ]),
+  )
+
+  // Assert
+  assert.deepEqual(limits, {
+    open: { timeout: 30_000, maxBuffer: 4_194_304 },
+    'video-start': { timeout: 30_000, maxBuffer: 4_194_304 },
+    flow: { timeout: 300_000, maxBuffer: 4_194_304 },
+    'video-stop': { timeout: 30_000, maxBuffer: 4_194_304 },
+    close: { timeout: 30_000, maxBuffer: 4_194_304 },
+  })
+})
+
+// Value: protects=the Reader DOM report when a step of the flow throws inside the browser CLI: the file the CLI loads runs the flow inside the case keeper; fails_when=the file's text calls the flow directly, is no single expression, hands the options over as anything but data, or needs something of Node's module system that the CLI's context does not have; why_new=Cycle 0045 review PA-1 (row 38 of Cycle 0046): the wrapper was checked as a line of the script's text; seam=a new context without Node's globals, which runs the text as the browser CLI's run-code does
+test('the file the browser CLI loads runs the pane DOM flow inside the case keeper, with the options as data and nothing of Node’s module system', async () => {
+  // Arrange: a flow that passes one case from its options and the page, and then throws.
+  const flow = async (page, options, collected) => {
+    collected.cases.push({
+      name: `${options.kind} first paint`,
+      actual: page.title,
+      passed: true,
+    })
+    throw new Error('locator.click: Timeout 5000ms exceeded.')
+  }
+
+  // Act: run-code wraps the file's text in parentheses and calls the function with the page.
+  const flowText = readerDomFlowText(flow, { kind: 'context' })
+  const runInBrowserCli = runInNewContext(`(${flowText})`)
+  const report = await runInBrowserCli({ title: 'Loading study…' })
+
+  // Assert: the report was built in the other context, so its plain data is compared.
+  assert.deepEqual(JSON.parse(JSON.stringify(report)), {
+    cases: [
+      { name: 'context first paint', actual: 'Loading study…', passed: true },
+      {
+        name: 'the flow stopped after the case "context first paint"',
+        actual: 'Error: locator.click: Timeout 5000ms exceeded.',
+        passed: false,
+      },
+    ],
+    errors: [],
+  })
+})
+
+// The script cannot be imported (loading it starts its server and its browser), so that it uses the two utilities above, and that its flow adds to the lists it is handed, is read from its text, whatever its line breaks are.
+test('the pane DOM check takes each call’s limits and the flow file’s text from their utilities, and its flow adds its cases and page errors to the lists the case keeper answers', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
 
   // Act
-  const limits = Object.fromEntries(
-    [...script.matchAll(/^const (COMMAND|FLOW)_TIMEOUT_MS = ([\d_]+)$/gm)].map(
-      ([, name, value]) => [name, Number(value.replaceAll('_', ''))],
+  const wiring = {
+    commandLimits:
+      /execFile\(\s*'playwright-cli',[^)]*?\breaderDomCommandOptions\(\s*label\s*\)/.test(
+        script,
+      ),
+    flowFile: /writeFile\(\s*flowPath,\s*readerDomFlowText\(\s*check,/.test(
+      script,
     ),
-  )
+    flowParameters:
+      /async function check\(\s*page,\s*options,\s*collected,?\s*\)/.test(
+        script,
+      ),
+    collectedErrors: /\{\s*errors\s*\}\s*=\s*collected\b/.test(script),
+    collectedCases: /\{\s*cases\s*\}\s*=\s*collected\b/.test(script),
+    listsOfItsOwn: script.match(/\b(?:cases|errors)\s*=\s*\[\s*\]/g),
+  }
 
   // Assert
-  assert.deepEqual(limits, { COMMAND: 30_000, FLOW: 300_000 })
-  assert.ok(
-    script.includes(
-      "timeout: label === 'flow' ? FLOW_TIMEOUT_MS : COMMAND_TIMEOUT_MS,",
-    ),
-    'the flow call has no limit of its own',
-  )
-  assert.ok(
-    script.includes(
-      '`async (page) => (${runFlowKeepingCases.toString()})(${check.toString()}, page, ${JSON.stringify(',
-    ),
-    'the flow is not run inside runFlowKeepingCases',
-  )
-  assert.ok(
-    script.includes('async function check(page, options, collected) {') &&
-      script.includes('  const { errors } = collected\n') &&
-      script.includes('  const { cases } = collected,\n'),
-    'the flow keeps lists of its own, which are lost when it throws',
-  )
-  // The keeper's text is run outside Node's module system: it may name nothing of its file.
-  assert.doesNotMatch(runFlowKeepingCases.toString(), /\bimport\b|\brequire\b/)
+  assert.deepEqual(wiring, {
+    commandLimits: true,
+    flowFile: true,
+    flowParameters: true,
+    collectedErrors: true,
+    collectedCases: true,
+    listsOfItsOwn: null,
+  })
 })
 
 // Value: protects=the measured case of the Wiki reader's right rail in the Reader DOM check (the unit suites read the shell's style sheet, never its layout); fails_when=the check stops laying out the shell, or lays it out at a width where the rail is no row; why_new=Cycle 0045 local review other-1 #6; seam=none

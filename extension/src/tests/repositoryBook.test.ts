@@ -547,6 +547,41 @@ test('a changed captured fact cannot become a valid book destination even after 
   assert.equal(read.links[0]?.status, 'unavailable')
 })
 
+// Value: protects=the list of repository books and the saving of a new one in a learning directory that holds a file nobody's book owns; fails_when=the name of every file with a book suffix is parsed as a book id, so one stray file rejects the list and the book count of a save with a ZodError; why_new=Cycle 0046 package PRF, found while working F3 (row 48); seam=none
+test('a stray X.book.v1.json in the book directory leaves the books listed and a new book saved', async (context) => {
+  // Arrange: one saved book, and two files with a book suffix whose prefix is no book id.
+  const { books, intent, library } = await bookHarness(context)
+  await books.publish(intent)
+  await writeFile(join(library.directory, 'X.book.v1.json'), '{}')
+  await writeFile(join(library.directory, 'my_notes.book.v2.json'), '{}')
+
+  // Act
+  const receipt = await books.publish({ ...intent, bookId: 'another' })
+  const catalog = await books.list()
+
+  // Assert
+  assert.equal(receipt.bookId, 'another')
+  assert.equal(receipt.revision, 1)
+  assert.deepEqual(
+    catalog.map((entry) => [entry.bookId, entry.status]),
+    [
+      ['another', 'available'],
+      ['architecture', 'available'],
+    ],
+  )
+  assert.deepEqual(
+    (await readdir(library.directory))
+      .filter((name) => name.includes('.book.'))
+      .sort(),
+    [
+      'X.book.v1.json',
+      'another.book.v2.json',
+      'architecture.book.v2.json',
+      'my_notes.book.v2.json',
+    ],
+  )
+})
+
 test('a seventeenth distinct book is saved and a sixty-fifth is rejected without evicting retained history', async (context) => {
   // Arrange
   const { books, intent, path, library } = await bookHarness(context)
