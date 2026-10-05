@@ -132,6 +132,38 @@ test('PROJECT_STATE keeps the active cycle and the two before it and stays short
   )
 })
 
+// Value: protects=a reader of PROJECT_STATE who takes its count of closed defects as the cycle's; fails_when=the carried-defects table of the active bug-fix cycle gains or closes a row and the state file keeps the earlier counts, or the state file counts rows while it links no table; why_new=the local CodeRabbit review of Cycle 0046 found the state file at 62 closed rows while the table had 63; seam=none
+test("PROJECT_STATE counts the rows and the closed rows of the active cycle's carried-defects table as the table has them", async () => {
+  // Arrange
+  const projectState = await readDocument('PROJECT_STATE.md')
+  const tablePath = /docs\/cycles\/\d{4}-carried-defects\.md/.exec(
+    projectState,
+  )?.[0]
+  const table = tablePath ? await readDocument(tablePath) : ''
+
+  // Act: a row is a table line that begins with its number, and it is closed when its last cell begins with FIXED or EVIDENCE.
+  const rows = table.split('\n').filter((line) => /^\| \d+ \|/.test(line))
+  const closedRows = rows.filter((row) =>
+    /^(?:FIXED|EVIDENCE)/.test(
+      row
+        .replace(/ \|$/, '')
+        .split(/(?<!\\)\| /)
+        .at(-1) ?? '',
+    ),
+  )
+  const statedCounts = [
+    ...projectState.matchAll(/(\d+) rows, (\d+) closed/g),
+  ].map(([, total, closed]) => `${total} rows, ${closed} closed`)
+  const tableCounts = `${rows.length} rows, ${closedRows.length} closed`
+
+  // Assert: every count the state file gives is the table's; a state file that links no table gives none.
+  assert.deepEqual(
+    statedCounts,
+    statedCounts.map(() => tableCounts),
+  )
+  assert.equal(tablePath === undefined, statedCounts.length === 0)
+})
+
 // Cycle 0045 (CR-1): red while the status paragraph retold every cycle from 0028 to 0043 (sixteen linked records) instead of leaving that history to the records and the change history.
 // Review of Cycle 0045 (tests-1 #2): the check read the first paragraph only, so it was green while the section's second paragraph linked the record of Cycle 0029 and retold what it changed.
 test("README's implementation status states the delivered and the open cycle and leaves the history of earlier cycles to their records and the change history", async () => {

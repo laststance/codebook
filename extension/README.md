@@ -136,6 +136,8 @@ The interface arrived with API 1.5, and API 1.6 and 1.7 changed nothing in it: 1
 
 Codebook arranges the Study workspace layout: application above source beside the explanation. 0.2.12 removed the **Presentation** selector from the explanation pane, and the **Codebook: Select Presentation** command is removed as well; the Living book and Guided walkthrough layouts are retired (`codebook_presentation` refuses to select them and keeps one only where a saved preference already shows it). Overview, Live and Recording remain independent content tabs. The same learner selection, understanding and runtime remain in place.
 
+Only `study-workspace` can be selected. `living-book` and `guided-walkthrough` are retired; the table keeps them because a reader whose saved preference still names one reports that mode, and `focus`, `restore` and `save-preference` accept the mode the reader reports.
+
 | Mode                 | Intended use                                  | Native arrangement                                                   |
 | -------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
 | `study-workspace`    | Connect the application to the inspected code | Application above source; explanation beside both                    |
