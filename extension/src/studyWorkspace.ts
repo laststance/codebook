@@ -6121,7 +6121,7 @@ export class StudyWorkspace {
           this.lastRendered = undefined
           this.sourceRevision = undefined
           this.lastSelectionKey = undefined
-          // A reload of the displayed recording keeps its frame until the reloaded moment paints.
+          // A reload of the displayed recording, or the end of a stop's pause on the same frame, keeps that frame until the next moment paints.
           if (!keepPixels) this.replayViewport?.clearRecorded()
         },
         changed: () => {
@@ -6730,19 +6730,25 @@ export class StudyWorkspace {
    * editor keeps on screen until its window has the focus again.
    *
    * @param studyId - The saved study whose recording the entry names.
-   * @returns Once the recording is presented and its study's selection written to the ledger, its load failed and the notification was shown, another recording took its place, or the bound passed.
+   * @returns Once the recording is presented and its study's selection written to the ledger, its load failed and the notification was shown, another recording took its place, or the bound passed (a ledger write still pending then goes on in the background).
    * @throws Whatever {@link openRecording} throws before the load is admitted.
    * @example await workspace.openLearningReplay(studyId)
    */
   async openLearningReplay(studyId: string): Promise<void> {
     await this.openRecording(studyId)
     const playback = this.playback!
+    const resultWaitEndsAtMs = performance.now() + OPEN_REPLAY_RESULT_WAIT_MS
     // A load that outlasts the bound is still running and has nothing to report yet.
     await playback
       .settle(undefined, OPEN_REPLAY_RESULT_WAIT_MS)
       .catch(() => undefined)
-    // A bounded settle leaves the saves out; the selection write that the shown recording started is awaited here, so the command ends with the ledger naming it.
-    await this.shownRecordingSelectionSaved
+    // A bounded settle leaves the saves out; the selection write that the shown recording started is awaited here, so the command ends with the ledger naming it. It can wait behind this window's queued library writes and another window's storage lock, so it gets only what is left of the same bound, and a failed load's notice never waits longer.
+    await awaitResponse(
+      this.shownRecordingSelectionSaved,
+      'the ledger write of the shown recording',
+      undefined,
+      resultWaitEndsAtMs - performance.now(),
+    ).catch(() => undefined)
     const state = playback.state()
     if (
       state.studyId !== studyId ||

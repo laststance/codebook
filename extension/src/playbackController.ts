@@ -2,6 +2,7 @@ import { PLAYBACK_TICK_INTERVAL_MS } from './constants'
 import type { PlaybackCommand } from './playbackSchemas'
 import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { leavesStopOnSameFrame } from './utils/leavesStopOnSameFrame'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
 import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
@@ -29,7 +30,7 @@ export interface PlaybackDependencies {
   load(studyId: string, signal: AbortSignal): Promise<PlaybackData>
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
-  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded: its frame stays until the reloaded moment paints, instead of a blank pane. */
+  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, or when Play leaves a stop's pause on an unchanged frame: the frame stays until the next moment paints, instead of a blank pane. */
   invalidate(keepPixels?: boolean): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
@@ -457,23 +458,23 @@ export class PlaybackController {
             projection,
             image,
           }
-          const contextChanged =
-            this.contextKey(bundle) !==
-            (this.presented && this.contextKey(this.presented))
           // Explicit seeks clear pixels even when their frame/context matches the last committed bundle.
           const changed =
             this.cleared ||
             Boolean(request.restore) ||
             this.presentationKey(bundle) !==
               (this.presented && this.presentationKey(this.presented))
-          // An explanation that becomes available for the stop on screen is presented with it; only another stop retires the image and the native values.
+          // Explanations shown for the stop on screen reach the Study pane through the publication below; only another stop (or none) retires the image and the native values.
           const stopChanged =
             !this.presented ||
             bundle.projection.observation?.id !==
               this.presented.projection.observation?.id
           if (stopChanged && !this.cleared) {
             this.cleared = true
-            this.dependencies.invalidate()
+            // The end of a stop's pause on an unchanged frame keeps that image; every other stop change clears it until the next moment paints.
+            this.dependencies.invalidate(
+              leavesStopOnSameFrame(this.presented?.projection, projection),
+            )
             this.dependencies.changed()
           }
           if (changed) {
@@ -489,8 +490,8 @@ export class PlaybackController {
           this.reason = undefined
           this.cleared = false
           if (this.mode === 'playing') {
-            // Source-boundary I/O is a visible wait, not elapsed film time that silently skips the explanation.
-            if (contextChanged) {
+            // Loading another stop's source and values is a visible wait, not elapsed film time that silently skips its explanation.
+            if (stopChanged) {
               this.anchorMs = positionMs
               this.anchorWallMs = this.clock()
             }
@@ -519,7 +520,17 @@ export class PlaybackController {
     this.running = pending
   }
 
-  /** Compares visible evidence, avoiding redundant image decode/source opens when only the playhead changes. @example this.presentationKey(bundle) */
+  /**
+   * Names what the Application pane and the historical debugger show for a bundle, so {@link pump} asks them to present a Play tick only when that changes.
+   *
+   * The explanations shown for the stop (which ones, and whether one carries a saved-later note) are not part of it: they change while
+   * the same image and the same native values stay on screen, and the Study pane receives them through the `changed` publication.
+   *
+   * @param bundle - A loaded or committed bundle of this controller.
+   * @returns A JSON text of the study, its context hash, the frame hash, the stop id, whether a debugger snapshot exists, the missing-history reason and the two recorded confirmations; equal texts mean the panes would show the same moment.
+   * @example
+   * this.presentationKey(bundle) // => '["<study>","<hash>","<frame>","browser-session:1",true,null,false,false]'
+   */
   private presentationKey(bundle: PlaybackBundle): string {
     const { frame, observation, missing, pauseConfirmed, rendererConfirmed } =
       bundle.projection
@@ -529,18 +540,9 @@ export class PlaybackController {
       frame?.hash,
       observation?.id,
       Boolean(bundle.projection.debugger),
-      observation?.interpretations.map((value) => value.id),
       missing,
       pauseConfirmed,
       rendererConfirmed,
-    ])
-  }
-
-  /** Identifies learning boundaries (another stop, or another set of shown explanations) independently from moving pixels, so {@link pump} excludes their source/value loads from the playback clock; only another stop also retires the displayed moment. @example this.contextKey(bundle) */
-  private contextKey(bundle: PlaybackBundle): string {
-    return JSON.stringify([
-      bundle.projection.observation?.id,
-      bundle.projection.observation?.interpretations.map((value) => value.id),
     ])
   }
 

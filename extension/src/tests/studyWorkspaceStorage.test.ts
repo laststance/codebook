@@ -1815,3 +1815,82 @@ test('every opened recording writes its study to the ledger once, and seeking wi
     await harness.close()
   }
 })
+
+// Value: protects=the status bar's Open replay ending within its bound and telling the learner about a failed load while the ledger write of the recording shown before it is still waiting for storage; fails_when=the command awaits that write without a bound, so it outlasts the bound and the failed load's notice waits for the storage lock of another window; why_new=Cycle 0045 FXU item 6 (delegated review of the selection fixer's write); seam=the reader's learning storage with a held selection write, the reader's recording store with a failing read, and node:test setTimeout mock
+test(
+  'Open replay whose load fails while the ledger write of the recording shown before it is still pending ends within its bound and shows the failure',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange: two saved studies with recordings; the first recording is shown and its ledger write stays pending; the second recording's index cannot be read.
+    const harness = await recordedReaderHarness()
+    let releaseLedgerWrite = (): void => {}
+    try {
+      harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const otherRecord = [...harness.service.records.values()].at(-1)!
+      await otherRecord.preparation
+      assert.ok(otherRecord.recording)
+      otherRecord.recording.frame({
+        bytes: harness.png,
+        elapsedMs: 20,
+        kind: 'stream',
+      })
+      harness.clock(1_100)
+      await harness.reader.action('click')
+      harness.clock(1_200)
+      await harness.reader.action('stop')
+      const otherStudyId = otherRecord.recording.header.studyId
+      const library = await harness.reader.learningStorage()
+      const select = library.select.bind(library)
+      const ledgerWriteReleased = new Promise<void>((resolve) => {
+        releaseLedgerWrite = resolve
+      })
+      const heldLedgerWrites: (string | undefined)[] = []
+      library.select = async (selection): Promise<void> => {
+        heldLedgerWrites.push(selection.studyId)
+        await ledgerWriteReleased
+        return select(selection)
+      }
+      await harness.reader.openRecording(harness.studyId)
+      await waitUntil(
+        () => harness.controller.state().readiness === 'ready',
+        'the first recording shown',
+        2_000,
+      )
+      const readerStore = harness.reader['recordings']
+      assert.ok(readerStore)
+      const read = readerStore.read.bind(readerStore)
+      readerStore.read = async (studyId) => {
+        if (studyId === otherStudyId)
+          throw new Error('The recording index of this study cannot be read.')
+        return read(studyId)
+      }
+      enableFakeClock(context)
+
+      // Act: the status bar's Open replay names the second study.
+      const opening = harness.reader.openLearningReplay(otherStudyId).then(
+        () => 'completed',
+        (error: unknown) => String(error),
+      )
+      const elapsedMs = await advanceClockUntilSettled(context, opening, 60_000)
+      resetFakeClock(context)
+
+      // Assert: the command ended within its bound of 33 s (10 s for the window focus and 23 s for one replay settle), with the first write still pending.
+      assert.equal(await opening, 'completed')
+      assert.ok(elapsedMs <= 33_250, `ended after ${elapsedMs} ms`)
+      assert.deepEqual(heldLedgerWrites, [harness.studyId])
+      assert.equal(harness.controller.state().readiness, 'failed')
+      assert.deepEqual(harness.errorMessages, [
+        'Codebook could not open the learning replay: The recording index of this study cannot be read.',
+      ])
+    } finally {
+      resetFakeClock(context)
+      releaseLedgerWrite()
+      await harness.close()
+    }
+  },
+)

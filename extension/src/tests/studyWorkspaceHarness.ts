@@ -265,7 +265,7 @@ export async function workspaceHarness(
   type SourceEditor = {
     document: { uri: Uri; getText(): string }
     readonly viewColumn: number
-    setDecorations(): void
+    setDecorations(decoration?: unknown, ranges?: readonly unknown[]): void
     selections: { active: Position; anchor: Position }[]
     visibleRanges: Range[]
     revealRange(range: Range, revealType?: number): void
@@ -298,7 +298,9 @@ export async function workspaceHarness(
   const visibleSourceEditors: (SourceEditor & {
       group: (typeof groups)[number]
     })[] = [],
-    decoratedColumns: number[] = []
+    decoratedColumns: number[] = [],
+    /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
+    decoratedRangeCounts: number[] = []
   let retainedReadingRange: Range | undefined
   /** Models native scrolling for display and explicit reveal without conflating their callbacks. @example scrollReadingRange(new Range(position, position)) */
   const scrollReadingRange = (range: Range, revealType?: number): void => {
@@ -328,8 +330,12 @@ export async function workspaceHarness(
     get viewColumn() {
       return reportedColumn ?? group.viewColumn
     },
-    setDecorations(): void {
+    setDecorations(
+      _decoration?: unknown,
+      ranges: readonly unknown[] = [],
+    ): void {
       decoratedColumns.push(reportedColumn ?? group.viewColumn)
+      decoratedRangeCounts.push(ranges.length)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
     get visibleRanges() {
@@ -3220,6 +3226,8 @@ export async function workspaceHarness(
       decoratedColumns.length = 0
     },
     decoratedColumns: () => [...decoratedColumns],
+    /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. @example harness.decoratedRangeCounts().at(-1) // => 0 once the stop's highlight was cleared */
+    decoratedRangeCounts: () => [...decoratedRangeCounts],
     moveSource(column: number): void {
       const editor = lastSourceEditor
       assert.ok(editor)
@@ -4002,6 +4010,7 @@ export async function saveOneStopNodeHistory(store: NodeTestHistoryStore) {
  * Creates sealed recording/context before workspace replay/navigation tests open history; runtime values and native paint are synthetic.
  * @param capturedApplication - Also retain a real paused-browser PNG checkpoint.
  * @param recordedDebugger - Attach captured native debugger state to the recorded stop, paused from 100 ms until its 900 ms continuation (recording ends at 1,000 ms), so replay presents it through the historical debugger.
+ * @param duringStop - Runs once the stop committed at 100 ms and before the run continues (900 ms) or stops (200 ms without `recordedDebugger`), so a test can save an explanation at a recorded time inside the stop by setting the clock first.
  * @example const harness = await recordedReaderHarness(true, true)
  */
 export async function recordedReaderHarness(
@@ -4009,6 +4018,9 @@ export async function recordedReaderHarness(
   recordedDebugger = false,
   /** Column of the declared line at which the debugger bound and captured the stop; another column than the declared 1 gives a moved-column study. Used with `recordedDebugger`. */
   boundColumn = 1,
+  duringStop?: (
+    stopped: Awaited<ReturnType<typeof workspaceHarness>>,
+  ) => Promise<void>,
 ) {
   const harness = await workspaceHarness(true, true),
     service = harness.service
@@ -4088,6 +4100,7 @@ export async function recordedReaderHarness(
   record.recording.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
   harness.clock(100)
   await harness.reader.action('click')
+  await duringStop?.(harness)
   // The continuation receipt seals the recorded stop's paused interval, long enough for several Play ticks to advance through it.
   if (recordedDebugger) {
     harness.clock(900)
