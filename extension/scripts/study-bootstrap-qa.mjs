@@ -3098,8 +3098,8 @@ async function check(page, options, collected) {
     }
   }
   // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.
-  /** Loads a fresh document of one pane at a size and waits until it is ready for its first Study message. */
-  const openPane = async (kind, size) => {
+  /** Loads a fresh document of one pane at a size and waits until it is ready for its first Study message; `html` is the pane's document unless a case gives its own. */
+  const openPane = async (kind, size, html = options.html[kind]) => {
     await page.setViewportSize(size)
     await page.goto(options.url)
     await page.evaluate(() => {
@@ -3110,7 +3110,7 @@ async function check(page, options, collected) {
         postMessage: (message) => window.sent.push(message),
       })
     })
-    await page.setContent(options.html[kind])
+    await page.setContent(html)
     await page.waitForFunction(() =>
       window.sent.some((message) => message.type === 'ready'),
     )
@@ -3644,6 +3644,77 @@ async function check(page, options, collected) {
       { playbackPanelVisible: true },
     ),
   )
+
+  // Arrange: a page whose own content carries the two ids the Keyboard shortcuts list names its dialog and its tooltip by, as a Wiki page published before the publisher kept such ids apart can (row 101); the Study pane's document stands in for it, with two such elements ahead of the pane.
+  /** Reads what Chrome's accessibility tree holds for one element: its role, its name and its description. */
+  const accessibleNode = async (selector) => {
+    const accessibility = await page.context().newCDPSession(page)
+    const { root } = await accessibility.send('DOM.getDocument')
+    const { nodeId } = await accessibility.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector,
+    })
+    const { nodes } = await accessibility.send(
+      'Accessibility.getPartialAXTree',
+      { nodeId, fetchRelatives: false },
+    )
+    await accessibility.detach()
+    return {
+      role: nodes[0]?.role?.value,
+      name: nodes[0]?.name?.value,
+      description: nodes[0]?.description?.value,
+    }
+  }
+  /** Puts the focus on the heading's Keyboard shortcuts button, which shows the tooltip, opens the dialog with it, and reads how both are named: the ids they refer to and what Chrome's accessibility tree gives. */
+  const keyboardHelpNaming = async () => {
+    const helpSelector = '.learning-header [data-shortcut-help]'
+    await page.locator(helpSelector).focus()
+    const button = await accessibleNode(helpSelector)
+    const describedBy = await page
+      .locator(helpSelector)
+      .getAttribute('aria-describedby')
+    await page.locator(helpSelector).press('Enter')
+    const dialog = await accessibleNode('.shortcut-dialog')
+    const labelledBy = await page
+      .locator('.shortcut-dialog')
+      .getAttribute('aria-labelledby')
+    await page.keyboard.press('Escape')
+    return { button, describedBy, dialog, labelledBy }
+  }
+  await openPane(
+    'context',
+    { width: 600, height: 800 },
+    options.html.context.replace(
+      '<p id="bootstrap-status"',
+      '<h2 id="shortcut-title">A heading of the page</h2><p id="shortcut-tooltip">A paragraph of the page</p><p id="bootstrap-status"',
+    ),
+  )
+  await publish(options.message)
+  // Act: the same reading on that page and on the Study pane as it is.
+  const namingBesideThePagesIds = await keyboardHelpNaming()
+  await openPane('context', { width: 600, height: 800 })
+  await publish(options.message)
+  const namingInTheStudyPane = await keyboardHelpNaming()
+  // Assert
+  const helpNaming = (describedBy, labelledBy) => ({
+    button: {
+      role: 'button',
+      name: 'Keyboard shortcuts',
+      description: 'Keyboard shortcuts — ? (Codebook, outside text inputs)',
+    },
+    describedBy,
+    dialog: { role: 'dialog', name: 'Keyboard shortcuts' },
+    labelledBy,
+  })
+  cases.push({
+    name: 'on a page whose content carries the ids shortcut-title and shortcut-tooltip, Chrome names the Keyboard shortcuts dialog Keyboard shortcuts and describes the focused Keyboard shortcuts button by the tooltip, not by the page’s elements; the Study pane keeps both ids as they were',
+    actual: { namingBesideThePagesIds, namingInTheStudyPane },
+    passed:
+      JSON.stringify(namingBesideThePagesIds) ===
+        JSON.stringify(helpNaming('shortcut-tooltip-2', 'shortcut-title-2')) &&
+      JSON.stringify(namingInTheStudyPane) ===
+        JSON.stringify(helpNaming('shortcut-tooltip', 'shortcut-title')),
+  })
 
   // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
   await page.setViewportSize({ width: 420, height: 720 })
