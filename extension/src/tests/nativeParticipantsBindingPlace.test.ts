@@ -360,6 +360,44 @@ test('a server stop above a function whose pending breakpoint the adapter report
   assert.deepEqual(journaled(harness, 'cdp.held-pause-adopted'), [])
 })
 
+// Cycle 0046 (found with row 77 in the journals of checks f21a and f21b): red while news that arrived before the run's own channel announced the module was never judged by the break locations, so the stop's pause was held for the whole 3 s wait and adopted only then.
+test('a server stop whose pending breakpoint the adapter reports verified before the run has seen its module is judged when the module is announced, and matched at its pause without waiting', async (context) => {
+  // Arrange: the adapter's news names 7:3 before the module is announced, so the source map alone refuses it. The wait for the stop's own pause never ends by itself.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    appendedRegistration('server'),
+  )
+  harness.listPossibleBreakLocations(
+    'server',
+    APPENDED_REGISTRATION_BREAK_LOCATIONS,
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.pauseAt('server', 6, 2)
+  harness.bindAt('server', 7, 3)
+  harness.movePausedFrame(7, 3)
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceBreakpointVerified('server', 7, 3)
+  // Act
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return journaled(harness, 'breakpoint.rule-from-break-locations').length
+  }, 'news judged by the break locations')
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [7, 3])
+  assert.deepEqual(journaled(harness, 'cdp.held-pause-adopted'), [])
+})
+
 // Cycle 0046 (row 77, a browser stop while it is armed): red for the same cause where a browser binding is judged before any pause: arming ended with "line 4 between the declared line 3 and line 7 has a break location".
 test('a browser stop declared on the line above a function whose line a statement at the module’s end is mapped to is armed and captured at the function’s first statement', async (context) => {
   // Arrange: the browser stop is declared at 3:1; the debugger verifies it at 7:3 and lists the first statement and the appended call as break locations.
@@ -431,7 +469,9 @@ test('a server stop bound past a break location between the two generated places
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:3 bound at 7:3, refused: line 5 between the declared line 3 and line 7 has a break location. Frozen source map positions in the selected citation: 3:2, 4:8, 5:3, 6:1, 7:3, 8:1. ${MAPPING_HINTS}`,
   )
-  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
+  // The refused place is judged when the module is announced and again when the receipt is read at the pause; every judgement names the same lines.
+  assert.deepEqual(
+    journaled(harness, 'breakpoint.rule-from-break-locations').at(-1),
     {
       participant: 'server',
       declared: { line: 3, column: 1 },
@@ -442,7 +482,7 @@ test('a server stop bound past a break location between the two generated places
         bound: { line: 7, column: 3 },
       },
     },
-  ])
+  )
   assert.equal(harness.run.view().snapshots.length, 0)
 })
 

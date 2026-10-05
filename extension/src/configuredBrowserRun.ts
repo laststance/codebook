@@ -2461,6 +2461,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Gives every declared stop of a participant the script its sealed module was parsed as, for the `Debugger.scriptParsed` handler of {@link observeParticipant}.
    * A module that is parsed again under another script id after it was sealed fails the run, and no later stop is given the script.
+   * News about a stop's owned breakpoint that the source map alone refused before the module was announced is judged now ({@link judgeNewsRefusedBeforeModule}).
    * @param name - The participant whose runtime announced the script.
    * @param event - The announced script.
    * @example
@@ -2479,7 +2480,21 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         return
       }
       stop.script = event
+      this.judgeNewsRefusedBeforeModule(stop)
     }
+  }
+
+  /**
+   * Judges the adapter's news about a stop's owned breakpoint by the debugger's break locations once the stop's module is announced, for {@link bindParsedScript}: the adapter can report a pending breakpoint verified before the run's own channel announces the module, and news the source map alone refuses cannot be judged without the module ({@link retakeNewsByBreakLocations}). Judged now, the stop's pause is matched as it arrives instead of being held for the whole wait for its own pause.
+   * @param stop - The stop whose module was just announced.
+   * @example
+   * ```ts
+   * this.judgeNewsRefusedBeforeModule(stop) // asks the break locations when the adapter's news named a place the map alone refuses
+   * ```
+   */
+  private judgeNewsRefusedBeforeModule(stop: PreparedStop): void {
+    const session = this.participants[stop.participant].selected
+    if (session) this.track(this.retakeNewsByBreakLocations(stop, session))
   }
 
   /** Tells {@link bindParsedScript} whether a stop's module was already announced under another script id than the one announced now. @example this.isSealedAsAnotherScript(stop, event) // false for the module's first announcement */
