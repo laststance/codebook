@@ -38,7 +38,7 @@ test('a source file, a file whose name only starts like the Wiki’s folder and 
 test('a command line that names the publisher’s script or the Wiki’s folder is a step of an update, and the learner’s own commands are not', () => {
   // Act
   const signs = [
-    'node /extensions/codebook/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki',
+    'node /extensions/codebook/skills/codebook/publish-wiki.mjs --prepare --project . --output .codebook/wiki',
     'ls -la /repo/.codebook/wiki',
     'pnpm test',
     'git status',

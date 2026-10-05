@@ -2079,6 +2079,9 @@ test('a folder the publisher prepares beside the Wiki counts as the chat’s wor
     clock.advance(2_000)
     await new Promise((resolveWait) => setTimeout(resolveWait, 100))
     clock.advance(28_000)
+    // The settle time of a withdrawal passes as well.
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    clock.advance(2_000)
     await press
 
     // Assert

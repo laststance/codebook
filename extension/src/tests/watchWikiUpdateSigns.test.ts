@@ -95,7 +95,7 @@ test('a terminal that starts the publisher is reported as a sign, and one that s
     execution: {
       commandLine: {
         value:
-          'node /extensions/codebook/skills/codebook/publish-wiki.mjs --prepare --project /repo --output /repo/.codebook/wiki',
+          'node /extensions/codebook/skills/codebook/publish-wiki.mjs --prepare --project . --output .codebook/wiki',
       },
     },
   })
