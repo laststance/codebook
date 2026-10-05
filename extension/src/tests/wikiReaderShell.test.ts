@@ -432,6 +432,48 @@ test('the target added to an entry of 0.2.29.0 takes an id of its own on a page 
   )
 })
 
+// Value: protects=the text of a page that shows a Codebook address, for example an escaped code example about source links, when Cursor serves the page; fails_when=the reader rewrites the editor scheme in the page's text or in a comment again, so the example shows another address than its author wrote, or stops rewriting it in the address of a link, so a link of a page served by Cursor opens VS Code; why_new=Cycle 0046 row 135 (the scheme was rewritten in the whole page, as in 0.2.29.0); seam=none
+test('a page served by Cursor gets Cursor’s scheme in the address of every link, and a Codebook address shown in its text or in a comment stays as written', () => {
+  // Arrange: an update link, a citation in single quotes and a settings link; then the same kind of address in an escaped code example, in plain text and inside a comment.
+  const page =
+    '<a class="wiki-update" href="vscode://laststance.codebook/update?root=%2Frepo">Update LLM Wiki</a>' +
+    "<a href='vscode://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1'>a.ts:1</a>" +
+    '<a title="a > b" href="vscode://laststance.codebook/settings?root=%2Frepo">Change location</a>' +
+    '<pre><code>&lt;a href="vscode://laststance.codebook/source?root=%2Frepo"&gt;</code></pre>' +
+    '<p>Write href="vscode://laststance.codebook/update?root=%2Frepo" into the link.</p>' +
+    '<!-- <a href="vscode://laststance.codebook/settings?root=%2Frepo">old</a> -->'
+
+  // Act
+  const servedByCursor = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert
+  assert.equal(
+    servedByCursor,
+    '<a class="wiki-update" href="cursor://laststance.codebook/update?root=%2Frepo">Update LLM Wiki</a>' +
+      "<a href='cursor://laststance.codebook/source?root=%2Frepo&amp;path=a.ts&amp;line=1'>a.ts:1</a>" +
+      '<a title="a > b" href="cursor://laststance.codebook/settings?root=%2Frepo">Change location</a>' +
+      '<pre><code>&lt;a href="vscode://laststance.codebook/source?root=%2Frepo"&gt;</code></pre>' +
+      '<p>Write href="vscode://laststance.codebook/update?root=%2Frepo" into the link.</p>' +
+      '<!-- <a href="vscode://laststance.codebook/settings?root=%2Frepo">old</a> -->',
+  )
+})
+
+// Value: protects=the rail entry of a page whose link has an address without a query; fails_when=the reader reads the whole address as a query again, so an entry whose address is "path=a.ts&line=3" gets the invented target a.ts:3; why_new=Cycle 0046 row 135; seam=none
+test('an entry whose address has no query gets no target', () => {
+  // Arrange: an entry in the shape of 0.2.29.0 whose address is no Codebook address and has no question mark.
+  const page =
+    '<p class="open-in-editor"><a href="path=a.ts&amp;line=3">Open in VS Code</a></p>'
+
+  // Act
+  const served = rebindDeepWikiEditorLinks(page, 'cursor')
+
+  // Assert: the editor is named, and nothing is added beside the link.
+  assert.equal(
+    served,
+    '<p class="open-in-editor"><a href="path=a.ts&amp;line=3">Open in Cursor</a></p>',
+  )
+})
+
 test('the open control is printed only where the publisher puts a page’s first citation, never as a fixed link of the shell', async () => {
   // Arrange / Act
   const shell = await readShell()
@@ -467,13 +509,13 @@ test('where the right rail is a row the open control keeps the width of its labe
   // Assert
   assert.ok(
     railRowRules?.includes(
-      '.right-rail .open-in-editor{flex:none;margin:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}',
+      '.right-rail .open-in-editor{flex:none;margin:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%;',
     ),
     'the open control has no rule in the row layout, or its target adds to its width',
   )
   assert.ok(
     columnRules?.includes(
-      '.right-rail .open-in-editor{margin:0 0 1rem}.right-rail .open-target{width:auto;min-width:0}',
+      '.right-rail .open-in-editor{margin:0 0 1rem}.right-rail .open-target{width:auto;min-width:0;',
     ),
     'the open control keeps the row layout’s margin or its target the row layout’s width in the column layout',
   )
@@ -625,5 +667,30 @@ test('where the right rail is a row the summary of an open update detail has its
       '[data-codebook-update-detail][open]{max-height:none;overflow:visible}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:3px}',
     ),
     'the single column lacks the rule [data-codebook-update-detail][open]>summary:focus-visible{outline-offset:3px}',
+  )
+})
+
+// Value: protects=the height of the rail's entry where the rail is a row (701 to 1000 px) and a page's first source has a long path; fails_when=the target loses its bound of eight lines there, so a path of about 200 characters makes the entry 300 px high and the rail with it, or the whole path no longer shows under the pointer and with the keyboard focus, or the bound reaches the single column, where the entry has the page's width; why_new=Cycle 0046 row 137 (the measured case is in the Wiki reader DOM check); seam=none
+test('where the right rail is a row the entry’s target shows eight lines at most and the whole path under the pointer or with the keyboard focus, and below 700 px it is unbounded again', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const rowRules =
+    /@media\(max-width:1000px\)\{(.*)\}\n@media\(max-width:700px\)/.exec(
+      shell,
+    )?.[1]
+  const columnRules = /@media\(max-width:700px\)\{(.*)\}\n/.exec(shell)?.[1]
+
+  // Assert
+  assert.ok(
+    rowRules?.includes(
+      '.right-rail .open-target{width:0;min-width:100%;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:8;overflow:hidden}.right-rail .open-in-editor:hover .open-target,.right-rail .open-in-editor:focus-within .open-target{-webkit-line-clamp:none}',
+    ),
+    'the row layout lacks the bound of the entry’s target or the rule that shows the whole path',
+  )
+  assert.ok(
+    columnRules?.includes(
+      '.right-rail .open-target{width:auto;min-width:0;display:block;-webkit-line-clamp:none;overflow:visible}',
+    ),
+    'the single column lacks the rule that takes the bound of the entry’s target back',
   )
 })

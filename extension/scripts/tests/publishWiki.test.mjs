@@ -1380,7 +1380,165 @@ test('a renamed content id takes a name the page does not carry, its id lists an
   }
 })
 
-// Value: protects=the list of ids the publisher keeps a page's content apart from; fails_when=the shell's template or one of the reader's page scripts gives an element an id the publisher does not know, so a page whose content carries that id is published with it twice; why_new=Cycle 0046 row 84; seam=none
+// Value: protects=links and references to a renamed section as an author may write them; fails_when=the renderer compares an address or an id as raw text again, so a link written with an entity, with a percent-encoded fragment or with a query keeps the old id and no longer reaches its heading, or misses an attribute that follows a closing quote directly, an id written with an entity or one of the newer attributes that refer to an id, or renames an element inside a comment, or resolves an address that starts at the site's root against the page's folder; why_new=Cycle 0046 row 134 (delegated review of the renaming of row 84, verified by running); seam=none
+test('a renamed content id is followed the way a browser reads the page: through entities, a percent-encoded fragment, a query, an attribute directly after a closing quote and every attribute that refers to an id, and not into a comment or an address from the site’s root', async () => {
+  // Arrange: the overview carries qa-form (its id follows a closing quote directly) and qa-input (written with an entity); three other pages carry qa-form too, two of them with a character in their path that an address escapes.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ids-browser-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 class="title"id="qa-form">The form</h2>' +
+      '<h3 id="qa&#45;input">The field</h3>' +
+      '<!-- <h2 id="theme-toggle">An old section</h2> -->' +
+      '<p><a href="a&amp;b.html#qa-form">One</a> <a href="it&#39;s.html#qa-form">Two</a> ' +
+      '<a href="pages/details.html#qa%2Dform">Three</a> <a href="pages/details.html?from=overview#qa-form">Four</a> ' +
+      '<a href="/index.html#qa-form">Five</a> <a href="#theme-toggle">Six</a></p>' +
+      '<button popovertarget="qa-form" commandfor="qa-form" form="qa-form" itemref="qa-form flow" anchor="qa-form">Open</button>' +
+      '<h3 id="flow">Flow</h3>'
+    manifest.pages[0].outline = [
+      { id: 'qa-form', label: 'The form' },
+      { id: 'qa-input', label: 'The field' },
+    ]
+    for (const path of ['a&b.html', "it's.html", 'pages/details.html'])
+      manifest.pages.push({
+        path,
+        title: `Page ${path}`,
+        section: 'Guide & concepts',
+        contentHtml:
+          '<h2 id="qa-form">A form</h2><p><a href="index.html#qa&#45;input">The field</a></p>',
+        sources: [{ path: 'source.ts', line: 1 }],
+        outline: [{ id: 'qa-form', label: 'A form' }],
+      })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the article of the overview after its relevant-source disclosure, its outline, and a page that links back.
+    const contentOf = (path) =>
+      /<\/details>(.*)<\/article>/.exec(pages.get(path))?.[1]
+    assert.equal(
+      contentOf('index.html'),
+      '<h2 class="title"id="page-qa-form">The form</h2>' +
+        '<h3 id="page-qa-input">The field</h3>' +
+        '<!-- <h2 id="theme-toggle">An old section</h2> -->' +
+        '<p><a href="a&amp;b.html#page-qa-form">One</a> <a href="it&#39;s.html#page-qa-form">Two</a> ' +
+        '<a href="pages/details.html#page-qa-form">Three</a> <a href="pages/details.html?from=overview#page-qa-form">Four</a> ' +
+        '<a href="/index.html#qa-form">Five</a> <a href="#theme-toggle">Six</a></p>' +
+        '<button popovertarget="page-qa-form" commandfor="page-qa-form" form="page-qa-form" itemref="page-qa-form flow" anchor="page-qa-form">Open</button>' +
+        '<h3 id="flow">Flow</h3>',
+    )
+    assert.ok(
+      pages
+        .get('index.html')
+        .includes(
+          '<ul class="outline"><li><a href="#page-qa-form">The form</a></li><li><a href="#page-qa-input">The field</a></li></ul>',
+        ),
+    )
+    assert.equal(
+      contentOf('a&b.html'),
+      '<h2 id="page-qa-form">A form</h2><p><a href="index.html#page-qa-input">The field</a></p>',
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the outline of a published page, each entry of which must lead to a section; fails_when=the publisher accepts an outline entry whose id no element of the page carries because the id stands in an escaped code example or inside a comment, so the published entry leads nowhere; why_new=Cycle 0046 row 102 (the check looked for the text id="…" anywhere in the page's content); seam=none
+test('an outline entry whose id stands only in an escaped code example or inside a comment is refused: no element of the page carries it', async () => {
+  // Arrange: two stages; in each the outline names "flow", which the page shows once in an escaped example and once in a comment, and no element carries.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-outline-text-')),
+  )
+  try {
+    const shownInAnExample = await readerInput(root)
+    shownInAnExample.pages[0].contentHtml =
+      '<h2 id="source">Source flow</h2><pre><code>&lt;h2 id="flow"&gt;Flow&lt;/h2&gt;</code></pre>'
+    const insideAComment = await readerInput(root)
+    insideAComment.pages[0].contentHtml =
+      '<h2 id="source">Source flow</h2><!-- <h2 id="flow">Flow</h2> -->'
+
+    // Act / Assert
+    for (const manifest of [shownInAnExample, insideAComment])
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html has an invalid or missing outline anchor.',
+        },
+      )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page whose anchor is written the way HTML allows without quotes, or with a character reference; fails_when=the publisher refuses such a page although a browser gives the element that id, so the agent must rewrite valid HTML; why_new=Cycle 0046 row 102 (the check accepted quoted ids only); seam=none
+test('an outline entry whose anchor is written without quotes or with a character reference is accepted and leads to it', async () => {
+  // Arrange: the anchor "flow" without quotes, and the anchor "data-flow" with its hyphen as a character reference.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-outline-forms-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id=flow>Source flow</h2><h2 id="data&#45;flow">Data flow</h2>'
+    manifest.pages[0].outline = [
+      { id: 'flow', label: 'Source flow' },
+      { id: 'data-flow', label: 'Data flow' },
+    ]
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the content is printed as authored, and the outline names both anchors.
+    const overview = pages.get('index.html')
+    assert.ok(
+      overview.includes(
+        '<h2 id=flow>Source flow</h2><h2 id="data&#45;flow">Data flow</h2>',
+      ),
+    )
+    assert.ok(
+      overview.includes(
+        '<ul class="outline"><li><a href="#flow">Source flow</a></li><li><a href="#data-flow">Data flow</a></li></ul>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Lists every value a source assigns to the id of an element, in the order the source writes them, so the test below sees each form and not one script's one pattern.
+ *
+ * Read are the code lines alone (comments are taken out first): `<element>.id = <value>`, `setAttribute('id', <value>)` and an `id="<value>"` inside a string of markup.
+ *
+ * @param source - The text of a TypeScript source of the reader.
+ * @returns The assigned values as written: a quoted literal (`'shortcut-title'`), or an expression (`freeStatusRegionId()`, `${targetId}`).
+ * @example
+ * assignedIdsOf("heading.id = 'shortcut-title'\nbox.setAttribute('id', name)") // => ["'shortcut-title'", 'name']
+ */
+function assignedIdsOf(source) {
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+  return [
+    ...code.matchAll(
+      /\.id\s*=(?!=)\s*([^\n;]+)|setAttribute\(\s*['"`]id['"`]\s*,\s*([^)\n]+)\)|\bid=\\?["']([^"'\\]+)/g,
+    ),
+  ].map(([, assigned, set, written]) => (assigned ?? set ?? written).trim())
+}
+
+// Value: protects=the list of ids the publisher keeps a page's content apart from; fails_when=the shell's template or one of the reader's sources gives an element an id the publisher does not know, in any form (a property, `setAttribute` or markup in a string), or assigns an id from something other than a literal or one of the two helpers that take a free id, so a page whose content carries that id is published with it twice; why_new=Cycle 0046 rows 84 and 133 (the first form of the test read one pattern per script); seam=none
 test('the publisher keeps a page’s content apart from every id the shell’s template and the reader’s page scripts give an element', async () => {
   // Arrange: the shell, the publisher, and the sources of the reader that run in a served page or add to it.
   const textOf = (path) =>
@@ -1389,21 +1547,32 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
   const renderer = await textOf('skills/codebook/render-wiki.mjs')
   const constants = await textOf('src/constants.ts')
   const statusScript = await textOf('src/utils/installWikiUpdateStatus.ts')
-  const helpScript = await textOf('src/utils/installShortcutHelp.ts')
-  const questionScript = await textOf('src/deepWikiReader.ts')
+  const entryScript = await textOf('src/utils/rebindDeepWikiEditorLinks.ts')
 
-  // Act: the ids of the template (the publisher reads them from it), the ids the reader's scripts assign, and the ids the publisher names for them.
+  // Act: the ids of the template (the publisher reads them from it), every id the reader's sources assign, what the two helpers that take a free id start from, and the ids the publisher names.
   const idsOfTheTemplate = [...shell.matchAll(/\sid="([^"]+)"/g)].map(
     ([, id]) => id,
   )
-  const idsOfTheScripts = {
-    entryTarget: /WIKI_OPEN_TARGET_ELEMENT_ID = '([^']+)'/.exec(constants)?.[1],
-    statusRegion: /let id = '([^']+)'/.exec(statusScript)?.[1],
-    keyboardHelp: [...helpScript.matchAll(/\.id = '([^']+)'/g)].map(
-      ([, id]) => id,
+  const idsTheSourcesAssign = {
+    statusScript: assignedIdsOf(statusScript),
+    keyboardHelp: assignedIdsOf(
+      await textOf('src/utils/installShortcutHelp.ts'),
     ),
-    // The script of the question form looks its elements up and gives none an id.
-    questionForm: [...questionScript.matchAll(/\.id = /g)].length,
+    questionForm: assignedIdsOf(await textOf('src/deepWikiReader.ts')),
+    entryScript: assignedIdsOf(entryScript),
+  }
+  const idsTheHelpersStartFrom = {
+    freeStatusRegionId:
+      /const freeStatusRegionId = [\s\S]*?let id = '([^']+)'/.exec(
+        statusScript,
+      )?.[1],
+    freeOpenTargetIdIn: [
+      /const targetId = (\w+)\(/.exec(entryScript)?.[1],
+      /function freeOpenTargetIdIn\([\s\S]*?let id = (\w+)/.exec(
+        entryScript,
+      )?.[1],
+      /WIKI_OPEN_TARGET_ELEMENT_ID = '([^']+)'/.exec(constants)?.[1],
+    ],
   }
   const idsThePublisherNames = /const READER_ELEMENT_IDS = \[([^\]]+)\]/
     .exec(renderer)?.[1]
@@ -1418,11 +1587,19 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
     'qa-input',
     'qa-response',
   ])
-  assert.deepEqual(idsOfTheScripts, {
-    entryTarget: 'codebook-open-target',
-    statusRegion: 'codebook-update-status',
-    keyboardHelp: ['shortcut-title', 'shortcut-tooltip'],
-    questionForm: 0,
+  assert.deepEqual(idsTheSourcesAssign, {
+    statusScript: ['freeStatusRegionId()'],
+    keyboardHelp: ["'shortcut-title'", "'shortcut-tooltip'"],
+    questionForm: [],
+    entryScript: ['${targetId}'],
+  })
+  assert.deepEqual(idsTheHelpersStartFrom, {
+    freeStatusRegionId: 'codebook-update-status',
+    freeOpenTargetIdIn: [
+      'freeOpenTargetIdIn',
+      'WIKI_OPEN_TARGET_ELEMENT_ID',
+      'codebook-open-target',
+    ],
   })
   assert.deepEqual(idsThePublisherNames, [
     'codebook-open-target',
