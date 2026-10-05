@@ -560,6 +560,33 @@ test('the update marker of a window whose process start could not be read counts
   })
 })
 
+// Value: protects=the Update button on a Wiki whose repository carries an update marker with a process id no system can have ("pid": 4294967295, as a marker of 0.2.29.0 without digests), and a storage lock or claim that records such an id; fails_when=the id is answered as a process that may still run, because the system's probe refuses the number itself, so the marker refuses every start until the run's longest time has passed (about 21 minutes) and the lock is never taken over (Cycle 0046 row 180); why_new=no record test had an id above the largest a system has; seam=the clock handed to the look
+test('an update marker and an owner record that name the process id 4294967295, which no system can have, are nobody’s at once', async (context) => {
+  // Arrange: a marker as 0.2.29.0 writes it, without digests, whose run has just begun; and a lock's owner record of this machine as 0.2.29.0 writes it.
+  const wiki = await wikiFolder(context)
+  await writeFile(
+    wiki.markerPath,
+    '{"pid":4294967295,"windowId":"window-of-the-repository","host":"cursor","startedAtMs":1790000000000}',
+  )
+  // Act
+  const look = await readLiveWikiUpdateMarker(
+    wiki.outputDirectory,
+    'own-window',
+    {
+      identity: WINDOW_IN_NAMESPACE_4026531836,
+      readStart: async () => undefined,
+      nowMs: 1_790_000_001_000,
+    },
+  )
+  const isOwnerOfTheRecordGone = await isRecordedOwnerGone(
+    { pid: 4_294_967_295, hostname: 'workstation' },
+    WINDOW_IN_NAMESPACE_4026531836,
+  )
+  // Assert
+  assert.deepEqual(look, { kind: 'unowned' })
+  assert.equal(isOwnerOfTheRecordGone, true)
+})
+
 // Value: protects=the claim a live Windows window whose process start could not be read holds on the update marker while it removes or replaces it, beside a WSL window on the same project folder; fails_when=the claim, which names its machine by digests and no start, is judged by a probe of its process id in the WSL window's space and removed at once, so two windows change the marker at the same time (Cycle 0046 row 103); and it must still go after 60 s, or a killed window's claim would keep a stale marker for good; why_new=no claim test had digests without a start; seam=the claim file's modification time, the injected identity and the clock handed to the claim
 test('a claim on the update marker of a window whose process start could not be read keeps the marker in place for 60 s and is removed after that, although no process has its process id here', async (context) => {
   // Arrange: a killed editor's marker (a marker of 0.2.29.0, whose process no longer exists), and a claim on it that names its machine by digests and no process start, last written at the fixed time.
