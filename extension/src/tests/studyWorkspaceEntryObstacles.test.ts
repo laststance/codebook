@@ -586,6 +586,52 @@ test('a Restore after the learner widened the window during a Read shows the sid
   }
 })
 
+for (const read of ['read-app', 'read-source', 'read-context'] as const)
+  for (const secondaryBar of ['closed', 'open'] as const)
+    for (const ending of ['Restore', 'Close Study Workspace'] as const)
+      // Value: protects=the learner's secondary side bar (Cursor's Agent pane) after a Read of any of the three panes: Restore and Close show it again when it was open before the Read and leave it closed when it was closed; fails_when=the Read measures the editor area through its own maximized layout, in which the editor answers every hidden group with the width it had while visible, so the area seems to have grown by a side bar and a secondary side bar the learner had closed opens after every Read App or Read Source, or the answer of a hidden split column fails the layout's check and the measurement is lost; why_new=Cycle 0046 rows 167 and 170 (delegated review, findings 3 and 7: the fake editor answered clean columns while a group was maximized, and only Read Explanation was tested); seam=the workspace harness's side bar model, whose layout read answers as both editors do while a group is maximized
+      test(`${ending} after ${read === 'read-app' ? 'Read App' : read === 'read-source' ? 'Read Source' : 'Read Explanation'} ${secondaryBar === 'open' ? 'shows the secondary side bar the Read hid' : 'leaves the secondary side bar closed, as it was before the Read'}`, async () => {
+        // Arrange: the primary side bar is open and the secondary one as the case says; the learner reads one pane enlarged, which hides both bars.
+        const harness = await workspaceHarness(false)
+        harness.useNativeLayout({ orientation: 0, groups: [{}] })
+        harness.modelSideBars({
+          primary: true,
+          auxiliary: secondaryBar === 'open',
+        })
+        try {
+          await harness.reader.open()
+          await harness.reader.action(read)
+          const duringRead = {
+            ...harness.sideBars(),
+            maximized: harness.maximizedEditorGroup(),
+          }
+
+          // Act
+          if (ending === 'Restore') await harness.reader.action('arrange')
+          else await harness.reader.close()
+
+          // Assert
+          assert.deepEqual(duringRead, {
+            primary: false,
+            auxiliary: false,
+            hasKeyboard: false,
+            maximized: true,
+          })
+          assert.deepEqual(harness.sideBars(), {
+            primary: true,
+            auxiliary: secondaryBar === 'open',
+            hasKeyboard: false,
+          })
+          assert.equal(
+            harness.commands.includes('workbench.action.focusAuxiliaryBar'),
+            secondaryBar === 'open',
+          )
+          assert.equal(harness.maximizedEditorGroup(), false)
+        } finally {
+          await harness.close()
+        }
+      })
+
 // Value: protects=the learner's side bars after a Read during which the learner made the window narrower: Close Study Workspace shows both side bars the Read hid; fails_when=the end of the reading finds the editor area no wider than before the Read because the window lost more than the secondary side bar's width, and leaves the secondary side bar (Cursor's Agent pane) hidden; why_new=Cycle 0046 row 30 (PL-22 of Cycle 0045); seam=the workspace harness's side bar model and its resizeWindow
 test('closing the Study workspace after the learner narrowed the window during a Read shows both side bars the Read hid', async () => {
   // Arrange: both side bars are open; the learner reads the explanation enlarged and then narrows the window by 600 px.

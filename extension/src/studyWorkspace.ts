@@ -121,9 +121,9 @@ import {
   VIEWPORT_ACK_TIMEOUT_REASON,
 } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
-import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
 import type { StudyRecord, StudyService } from './service'
@@ -172,6 +172,7 @@ import {
   isProportionalEditorLayout,
 } from './utils/isProportionalEditorLayout'
 import { libraryHasRoom } from './utils/libraryHasRoom'
+import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
@@ -2926,7 +2927,7 @@ export class StudyWorkspace {
 
   /**
    * Measures whether the secondary side bar was open before a Read, right after the Read's maximize command hid it; called by {@link beginReadingMaximized} once for each reading that hid both bars.
-   * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar.
+   * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar. That read goes through the maximized layout, in which the editor answers every hidden group with the width it had while visible: only the column of the maximized group, which has the whole area, is read ({@link readMaximizedEditorAreaWidthPx}).
    * @returns Once {@link sideBarsBeforeRead} says whether the secondary bar was open; left without that answer when the area gave no width, and {@link sideBarShowCommands} measures it when the reading ends.
    * @example
    * ```ts
@@ -2937,11 +2938,29 @@ export class StudyWorkspace {
     const before = this.sideBarsBeforeRead
     // Only a reading whose maximization hid both bars has a secondary bar to measure.
     if (before?.widthWithoutPrimaryPx === undefined) return
-    const maximizedWidthPx = await this.readEditorAreaWidthPx()
+    const maximizedWidthPx = await this.readMaximizedEditorAreaWidthPx()
     if (maximizedWidthPx === undefined) return
     before.auxiliaryVisible = this.hasSideBarGain(
       maximizedWidthPx,
       before.widthWithoutPrimaryPx,
+    )
+  }
+
+  /**
+   * Reads the width of the editor area while the Read's maximization is on, for {@link rememberAuxiliaryBarAtRead}.
+   * The maximized group is the active one: the maximize command maximizes the active group, and the Read gave the pane it shows the focus before.
+   * @returns The width {@link maximizedEditorAreaWidthPx} finds in the column of the active group, or `undefined` when the layout has no columns at its top level, does not hold that group, or the read failed.
+   * @example
+   * ```ts
+   * const maximizedWidthPx = await this.readMaximizedEditorAreaWidthPx() // => 1335 for a maximized Application group in a window of that width with both side bars hidden
+   * ```
+   */
+  private async readMaximizedEditorAreaWidthPx(): Promise<number | undefined> {
+    return maximizedEditorAreaWidthPx(
+      await vscode.commands
+        .executeCommand<unknown>('vscode.getEditorLayout')
+        .then(undefined, () => undefined),
+      vscode.window.tabGroups.activeTabGroup.viewColumn,
     )
   }
 

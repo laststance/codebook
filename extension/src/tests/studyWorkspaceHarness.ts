@@ -562,6 +562,8 @@ export async function workspaceHarness(
     cursorTwoEventContraction = false,
     explicitEditorLayout = false,
     maximizedEditorGroup = false
+  /** The view column of the group the editor's maximize command maximized, read while `maximizedEditorGroup` is set: the group that was the active one when the command ran. */
+  let maximizedColumn: number | undefined
   let closeEmptyGroupsOnMove = false
   let closeDisposedPanelTabsLater = false
   // Cursor 3.23.12 keeps naming the chat's group as the active tab group after `workbench.action.focusFirstEditorGroup` gave the main editor the keyboard; the next tab or group change rebuilds the tab model and corrects the name.
@@ -1013,6 +1015,29 @@ export async function workspaceHarness(
       EDITOR_AREA_PX.height,
     )
     return found
+  }
+  /**
+   * Rewrites the pixel widths of a layout's top-level columns as both editors answer them while one group is maximized; called by the fake `vscode.getEditorLayout` for the model of `modelSideBars`.
+   * The editor hides every other group, and its grid serializes a hidden group with the size it had while it was visible (VS Code 1.140 and Cursor 3.23, `serializeNode`: `size = cachedVisibleSize`). So the column that holds the maximized group answers the whole editor area, a hidden column that is one group keeps the width it had in that area, and the sum is wider than the area. A hidden column that is itself split answers its own width, which is nothing while all its groups are hidden: that zero is inferred from the grid's code and was not seen in an editor.
+   * @param columns - The top-level columns, already in pixels of the area; they are changed in place.
+   * @param areaPx - The editor area's width.
+   * @example answerColumnsAsWhileMaximized([{ size: 734, groups: [{}, {}] }, { size: 601 }], 1335) // Application maximized: 1335 and 601
+   */
+  function answerColumnsAsWhileMaximized(
+    columns: { size: number; groups?: unknown[] }[],
+    areaPx: number,
+  ): void {
+    let firstLeafColumn = 1
+    for (const column of columns) {
+      const leafCount = column.groups?.length ?? 1
+      const holdsMaximizedGroup =
+        maximizedColumn !== undefined &&
+        maximizedColumn >= firstLeafColumn &&
+        maximizedColumn < firstLeafColumn + leafCount
+      if (holdsMaximizedGroup) column.size = areaPx
+      else if (column.groups) column.size = 0
+      firstLeafColumn += leafCount
+    }
   }
   /** Closes a main group whose last tab the editor just closed, renumbering the later columns and the measured layout. @example removeEmptiedGroup(group) */
   function removeEmptiedGroup(emptied: (typeof groups)[number]): void {
@@ -2246,12 +2271,16 @@ export async function workspaceHarness(
               editorLayout = layout
             }
           }
-          if (name === 'workbench.action.toggleMaximizeEditorGroup')
+          if (name === 'workbench.action.toggleMaximizeEditorGroup') {
             maximizedEditorGroup = !maximizedEditorGroup
+            maximizedColumn = activeTabGroup.viewColumn
+          }
           if (name === 'workbench.action.maximizeEditorHideSidebar') {
             maximizedEditorGroup = true
             // The command hides both side bars, and no later command of the editor brings them back by itself (both editors, obs15 P4).
             if (sideBars) sideBars = { primary: false, auxiliary: false }
+            // The bars are hidden first and the active group is maximized after it, so the other groups are hidden at the sizes they have in the whole window.
+            maximizedColumn = activeTabGroup.viewColumn
           }
           if (sideBars && name === 'workbench.action.closeSidebar')
             sideBars.primary = false
@@ -2416,10 +2445,12 @@ export async function workspaceHarness(
                   windowWidthPx -
                   (sideBars.primary ? sideBarWidthsPx.primary : 0) -
                   (sideBars.auxiliary ? sideBarWidthsPx.auxiliary : 0),
-                columns: { size: number }[] = layout.groups,
+                columns: { size: number; groups?: unknown[] }[] = layout.groups,
                 total = columns.reduce((sum, column) => sum + column.size, 0)
               for (const column of columns)
                 column.size = Math.round((column.size / total) * areaPx)
+              if (maximizedEditorGroup)
+                answerColumnsAsWhileMaximized(columns, areaPx)
             }
             // The accepted grid settles without a second mutation; its first read can still contain native transient pixels.
             if (settlementPending) {
