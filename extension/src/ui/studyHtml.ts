@@ -242,8 +242,8 @@ function studyClient(
   let transportFocusOwed:
     | { leaving: HTMLElement; preferred: readonly string[]; section: string }
     | undefined
-  // The control at which this pane's keyboard stands, read as each message of the host arrives: the control that holds the focus, and still that control after the page disabled it or took it out under the focus, which hands the browser's focus to the document body. A holder that left is owed a place for its focus; it is paid like the transport's, when the message is handled if this document has the focus, else at its next focus event.
-  let focusHolder: HTMLElement | undefined
+  // The control at which this pane's keyboard stands, read as each message of the host arrives: the control that holds the focus, and still that control after the page disabled it or took it out under the focus, which hands the browser's focus to the document body (`isTakenByPage`). A holder that left is owed a place for its focus, and one the page disabled is owed its focus back once it can be used again; both are paid like the transport's, when the message is handled if this document has the focus, else at its next focus event.
+  let focusHolder: { control: HTMLElement; isTakenByPage: boolean } | undefined
   let inputRevision = 0
   let poseTransaction:
     | {
@@ -1609,52 +1609,76 @@ function studyClient(
   /**
    * Gives the holder of the focus that stays the holder although the document body has the focus: one the page took the focus from, by disabling it or by taking it out. Read by {@link readFocusHolder}.
    * A control that is shown and enabled lost the focus by the learner's doing and is no holder any more.
-   * @returns The holder {@link focusHolder} names when it is disabled or no longer shown, else `undefined`.
-   * @example keptFocusHolder()?.dataset.action // => 'stop' while Stop is disabled for a pending request
+   * @returns The holder {@link focusHolder} names, marked as taken by the page, when its control is disabled or no longer shown; else `undefined`.
+   * @example keptFocusHolder()?.control.dataset.action // => 'stop' while Stop is disabled for a pending request
    */
-  const keptFocusHolder = (): HTMLElement | undefined =>
+  const keptFocusHolder = (): typeof focusHolder =>
     focusHolder &&
-    (focusHolder.matches(':disabled') || !focusHolder.checkVisibility())
-      ? focusHolder
+    (focusHolder.control.matches(':disabled') ||
+      !focusHolder.control.checkVisibility())
+      ? { control: focusHolder.control, isTakenByPage: true }
       : undefined
   /**
    * Reads at which control the keyboard stands, before a message of the host changes the page; called by the listener that is added ahead of the one that handles the message.
    * @example readFocusHolder()
    */
   const readFocusHolder = (): void => {
-    focusHolder = focusedControl() ?? keptFocusHolder()
+    const focused = focusedControl()
+    focusHolder = focused
+      ? { control: focused, isTakenByPage: false }
+      : keptFocusHolder()
   }
   /**
    * Says whether the pane may place the focus for a holder now: this document has the focus, and the focus stands on the document body or on the holder itself. Read by {@link settleFocus}.
    * A pane the learner left takes no focus back, and a learner who put the focus on another control keeps it.
-   * @param holder - The control at which the keyboard stood.
+   * @param control - The control at which the keyboard stood.
    * @example isFocusOpenFor(button('stop')!) // => true after the run stopped under a focused Stop
    */
-  const isFocusOpenFor = (holder: HTMLElement): boolean =>
+  const isFocusOpenFor = (control: HTMLElement): boolean =>
     document.hasFocus() &&
     (document.activeElement === document.body ||
-      document.activeElement === holder)
+      document.activeElement === control)
+  /**
+   * Gives a holder that is shown its own control back when the page had taken the focus from it by disabling it and it can be used again; read by {@link focusTargetFor}.
+   * Pressing a control that the host disables while it works (Stop, a recorded step, Restore) therefore leaves the keyboard on that control. A control the learner took the focus from gets nothing back.
+   * @param holder - The holder, whose control is shown.
+   * @returns The control when the page took its focus and it is enabled again, else `undefined` (a disabled control waits).
+   * @example returningControl({ control: element('next-moment'), isTakenByPage: true })?.id // => 'next-moment' once the requested moment is shown
+   */
+  const returningControl = (
+    holder: NonNullable<typeof focusHolder>,
+  ): HTMLElement | undefined =>
+    holder.isTakenByPage && !holder.control.matches(':disabled')
+      ? holder.control
+      : undefined
   /**
    * Gives the control that takes the focus of a holder; read by {@link settleFocus}.
-   * @param holder - The control at which the keyboard stood.
+   * @param holder - The control at which the keyboard stood, and whether the page took the focus from it.
    * @returns
-   * - The holder left the page: the summary of the nearest disclosure around it that is still shown, else {@link stayingControl}
-   * - The holder is shown: `undefined`, its focus is its own
-   * @example focusTargetFor(button('stop')!)?.id // => 'live-tab' once the live strip has left
+   * - The control left the page: the summary of the nearest disclosure around it that is still shown, else {@link stayingControl}
+   * - The control is shown: what {@link returningControl} gives
+   * @example focusTargetFor({ control: button('stop')!, isTakenByPage: false })?.id // => 'live-tab' once the live strip has left
    */
-  const focusTargetFor = (holder: HTMLElement): HTMLElement | undefined =>
-    holder.checkVisibility()
-      ? undefined
-      : (disclosureSummaryAround(holder) ?? stayingControl(holder))
+  const focusTargetFor = (
+    holder: NonNullable<typeof focusHolder>,
+  ): HTMLElement | undefined => {
+    if (holder.control.checkVisibility()) return returningControl(holder)
+    return (
+      disclosureSummaryAround(holder.control) ?? stayingControl(holder.control)
+    )
+  }
   /**
-   * Gives the focus of a control that left the page a control that stays, so it does not rest on the document body. Called after every message of the host, by a listener added after the one that handles the message, and at this document's focus event.
+   * Gives the focus of a control that left the page a control that stays, and gives a control the page had disabled its focus back, so the focus does not rest on the document body. Called after every message of the host, by a listener added after the one that handles the message, and at this document's focus event. A focus that was placed is owed no more.
    * A part with a rule of its own (the Show Variables buttons, Saved studies) has moved its focus before, and that focus is kept.
    * @example settleFocus()
    */
   const settleFocus = (): void => {
     const holder = focusHolder
-    if (!holder || !isFocusOpenFor(holder)) return
-    focusTargetFor(holder)?.focus({ preventScroll: true })
+    if (!holder || !isFocusOpenFor(holder.control)) return
+    const target = focusTargetFor(holder)
+    if (!target) return
+    focusHolder = undefined
+    target.focus({ preventScroll: true })
   }
   window.addEventListener('focus', settleFocus)
   /** Says whether the transport's status describes a shown moment, which is when it carries the covered label: not while the replay failed, nor while a requested moment is pending. Read by {@link coveredAnnouncement}. @example showsMomentStatus(recording) // => false for a failed replay */

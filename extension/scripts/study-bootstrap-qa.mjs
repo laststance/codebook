@@ -3158,6 +3158,96 @@ async function check(page, options, collected) {
       metadata: 'validated',
     }
   const helpButtonName = 'button: Keyboard shortcuts ?'
+  /**
+   * Runs one situation in which the host disables a control while it works and then offers it again, twice from the same start: with the focus left where the press put it, and with the learner moving the focus to another control while the first is disabled.
+   * @returns The focus on the control, while it is disabled and when it is offered again; and for the second run the focus after the control is offered again, which must still be the other control.
+   */
+  const focusWhenControlReturns = async ({
+    before,
+    opened = [],
+    control,
+    working,
+    after,
+    other,
+  }) => {
+    const press = async () => {
+      await publish(before)
+      await openDisclosures(opened)
+      await page.locator(control).first().focus()
+      const held = await focusName()
+      await publish(working)
+      return { held, whileDisabled: await focusName() }
+    }
+    const kept = await press()
+    await publish(after)
+    kept.offeredAgain = await focusName()
+    await press()
+    await page.locator(other).first().focus()
+    await publish(after)
+    return { kept, movedOn: await focusName() }
+  }
+  const recordedStops = [1000, 3000, 4000].map((elapsedMs, index) => ({
+      id: `recorded-stop-${index}`,
+      itemId: options.message.model.selection.itemId,
+      title: 'Recorded stop',
+      elapsedMs,
+      at: '2026-09-27T00:00:00.000Z',
+    })),
+    /** A recording with three recorded stops, shown at one position: Next recorded stop can be used at 2 s and at 3 s. */
+    recordingAt = (presentedMs, extra = {}) => ({
+      ...openRecording,
+      moments: recordedStops,
+      ...extra,
+      recording: { ...openRecording.recording, presentedMs },
+    }),
+    /** The same recording while a requested moment is not shown yet, which disables the recorded steps. */
+    recordingPendingAt = (presentedMs, extra = {}) => {
+      const shown = recordingAt(presentedMs, extra)
+      return {
+        ...shown,
+        recording: { ...shown.recording, readiness: 'loading', cleared: true },
+      }
+    }
+  const returningSituations = (paneName, otherBesideStop, extra = {}) => [
+    {
+      name: `in the ${paneName}, after Next recorded stop is pressed by keyboard and the requested moment is shown, the keyboard focus is on Next recorded stop again, so a second press steps on; a learner who moved the focus meanwhile keeps it`,
+      before: recordingAt(2000, extra),
+      control: '#next-moment',
+      working: recordingPendingAt(2000, extra),
+      after: recordingAt(3000, extra),
+      other: '#playback-toggle',
+      expected: ['next-moment', 'playback-toggle'],
+    },
+    {
+      name: `in the ${paneName}, when Stop is disabled while the host works and offered again because the run goes on, the keyboard focus is on Stop again; a learner who moved the focus meanwhile keeps it`,
+      before: { ...liveRun, ...extra },
+      control: '[data-action="stop"]',
+      working: { ...liveRun, ...extra, busy: true },
+      after: { ...liveRun, ...extra },
+      other: otherBesideStop.selector,
+      expected: ['stop', otherBesideStop.name],
+    },
+  ]
+  /** Adds one case a situation of {@link focusWhenControlReturns}. */
+  const addReturningCases = async (situations) => {
+    for (const situation of situations) {
+      const actual = await focusWhenControlReturns(situation)
+      cases.push({
+        name: situation.name,
+        actual,
+        passed:
+          JSON.stringify(actual) ===
+          JSON.stringify({
+            kept: {
+              held: situation.expected[0],
+              whileDisabled: 'body',
+              offeredAgain: situation.expected[0],
+            },
+            movedOn: situation.expected[1],
+          }),
+      })
+    }
+  }
 
   // Arrange: the Study pane.
   await openPane('context', { width: 600, height: 800 })
@@ -3390,6 +3480,47 @@ async function check(page, options, collected) {
         }),
     })
 
+  // Arrange: controls of the Study pane the host disables while it works on their press (found with row 85): the browser hands the focus of a disabled control to the document body.
+  await addReturningCases([
+    ...returningSituations('Study pane', {
+      selector: '[data-action="outline"]',
+      name: 'outline',
+    }),
+    {
+      name: 'in the Study pane, when Restore is disabled while the presentation changes and offered again, the keyboard focus is on Restore again; a learner who moved the focus meanwhile keeps it',
+      before: { ...overview, presentation: openPresentation({}) },
+      opened: ['reader-options'],
+      control: '[data-presentation="restore"]',
+      working: {
+        ...overview,
+        presentation: openPresentation({ state: 'applying' }),
+      },
+      after: { ...overview, presentation: openPresentation({}) },
+      other: '[data-action="read-app"]',
+      expected: ['button: Restore', 'read-app'],
+    },
+  ])
+  // Arrange: Play holds the focus and the learner leaves the pane, so the document has no focus when the next message arrives and nothing is settled for it.
+  await publish(recordingAt(2000))
+  await page.locator('#playback-toggle').focus()
+  await page.evaluate(() => {
+    document.hasFocus = () => false
+  })
+  await publish(recordingAt(2000))
+  // Act: the learner comes back with a click on a place that takes no focus, which takes it off Play; the pane gets its focus event.
+  await page.evaluate(() => {
+    document.activeElement.blur()
+    delete document.hasFocus
+    window.dispatchEvent(new Event('focus'))
+  })
+  const focusAfterLearnerLeftControl = await focusName()
+  // Assert
+  cases.push({
+    name: 'a focus the learner took off a control that is shown and can be used is not put back at the pane’s next focus event',
+    actual: focusAfterLearnerLeftControl,
+    passed: focusAfterLearnerLeftControl === 'body',
+  })
+
   // Arrange: the bottom panel's pane, which has no content tabs: a focus that loses its control goes to Play while the transport is shown, else to the first control the pane shows.
   await openPane('moments', { width: 1200, height: 400 })
   await publish(options.message)
@@ -3490,6 +3621,14 @@ async function check(page, options, collected) {
           staying: { held: expected[2], then: expected[2] },
         }),
     })
+
+  await addReturningCases(
+    returningSituations(
+      'bottom panel',
+      { selector: '#studies', name: 'studies' },
+      { playbackPanelVisible: true },
+    ),
+  )
 
   // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
   await page.setViewportSize({ width: 420, height: 720 })
