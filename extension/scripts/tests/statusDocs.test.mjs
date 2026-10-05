@@ -218,3 +218,76 @@ test('the LLM Wiki contract names the rail entry that opens the first cited sour
   assert.equal(namesEntry, true)
   assert.equal(publisher.includes('Open in VS Code'), true)
 })
+
+// Value: protects=a later reader of the Cycle 0045 record who wants to know that a private evidence folder is still the one the record describes; fails_when=the record names an evidence folder of its final round without the file count and the SHA-256 of that folder's list, or says again that the red team added PL-28 and PL-29; why_new=Cycle 0046 row 46: the folders after N14-c were named without a per-file SHA-256; seam=none
+test('the Cycle 0045 record names, for every evidence folder of its final round, the file count and the SHA-256 of its per-file list', async () => {
+  // Arrange
+  const record = await readDocument(
+    'docs/cycles/0045-natural-request-and-carried-defects.md',
+  )
+
+  // Act
+  const listedFolders = [
+    ...record.matchAll(/^ {2}\| `([^`]+)` \| (\d+) \| `([a-f0-9]{64})` \|$/gm),
+  ].map(([, folder, files, listHash]) => ({ folder, files, listHash }))
+
+  // Assert
+  assert.deepEqual(listedFolders, [
+    {
+      folder: 'n14/candF/',
+      files: '20',
+      listHash:
+        '5cc4e4a0529995ee7d70cadc08d72302402b75b2af98e178ac93026923342435',
+    },
+    {
+      folder: 'n14/prepF/',
+      files: '101',
+      listHash:
+        'a72e5b8619dd8a0535187de691f1c687ec431554f6a648a8a86f08f7b1c8a6b9',
+    },
+    {
+      folder: 'n14/prepG/',
+      files: '88',
+      listHash:
+        'ceb35ba7f6bd329e5906d3e8de1613a2037435981facc9c892f0213a8b5e0de6',
+    },
+    {
+      folder: 'n14/prepH/',
+      files: '11',
+      listHash:
+        '7482c43ad72aa1beb9b77173f39748bc3e9da1a390a1cc5e596bf722887455b3',
+    },
+    {
+      folder: 'n14/N14-d/',
+      files: '191',
+      listHash:
+        '471110d5b6ac8272e0f9a960c71026627f9f6ef2e8f6cdf8606fd5b477d1ca6e',
+    },
+    {
+      folder: 'n14/owedF/',
+      files: '315',
+      listHash:
+        'a3deda6ba3768f15e66d33cbc6e8a1e1e496564fb3a5ec80129b3ae132add34c',
+    },
+    {
+      folder: 'n14/owedW/',
+      files: '210',
+      listHash:
+        '405c9b7bac247c04124f75b53f6ab960f13631dc5fd35e085d17e209a5a8d693',
+    },
+    {
+      folder: 'n14/c20/',
+      files: '690',
+      listHash:
+        '967f35fe57434cedf840dde973c63c3287087774d189c0011b70e432988fa4e8',
+    },
+    {
+      folder: 'f23-next/',
+      files: '59',
+      listHash:
+        'fcb933d047c7b3987a1a5c353ae22455fb005b73a31ecfcf8442d0275ab20692',
+    },
+  ])
+  assert.equal(record.includes('The red team added PL-24 and PL-25.'), true)
+  assert.equal(record.includes('The red team added PL-28 and PL-29.'), false)
+})
