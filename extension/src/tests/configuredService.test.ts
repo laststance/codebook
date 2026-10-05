@@ -2957,6 +2957,73 @@ test('a start on a node id its selected revision does not have is refused in the
   assert.equal(runtimes.length, 0)
 })
 
+// Value: protects=an agent whose start names a stored book the store cannot read learning it from the start's own answer, with the cause; fails_when=the answer is "The study operation failed." without the store's words, or the run is accepted and fails later; why_new=Cycle 0045 review of N14d-16 (LOW: which failures of the book read refuse a start); seam=none
+test('a start on a stored book the store cannot read is refused in the answer of codebook_start with the store’s sentence and the read’s cause', async (context) => {
+  // Arrange: the stored book "interface" is replaced by bytes that are not JSON.
+  const { service, configuration, library, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  await writeFile(
+    join(library.directory, 'interface.book.v2.json'),
+    '{ not json',
+  )
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unreadable-book',
+      configuration,
+    },
+  })
+
+  // Assert
+  const error = z
+    .object({
+      error: z.object({
+        code: z.string(),
+        message: z.string(),
+        cause: z.string(),
+      }),
+    })
+    .parse(refused.structuredContent).error
+  assert.equal(refused.isError, true)
+  assert.equal(error.code, 'BOOK_UNAVAILABLE')
+  assert.equal(
+    error.message,
+    'Stored book interface is unavailable; no older revision was substituted.',
+  )
+  assert.equal(error.cause.startsWith('SyntaxError: '), true)
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
+// Value: protects=a start whose book read fails with an error that is not the store's own refusal keeping the run that names the cause; fails_when=the start answers "The study operation failed." and the cause is lost from the run; why_new=Cycle 0045 review of N14d-16 (LOW); seam=the harness's book store, whose read is replaced by one that fails with a plain error
+test('a start whose book read fails with an error that is not the store’s refusal is accepted, and its run ends naming that cause', async (context) => {
+  // Arrange
+  const { service, configuration, books } =
+    await configuredServiceHarness(context)
+  books.readDefinition = async () => {
+    throw new Error('disk read failed')
+  }
+
+  // Act
+  const receipt = await service.startOnStoredBook({
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'failing-read',
+      configuration,
+    }),
+    record = service.record(receipt)
+  await record.preparation
+
+  // Assert
+  assert.equal(record.error?.code, 'RUNTIME_FAILED')
+  assert.equal(record.error?.describe().cause, 'Error: disk read failed')
+})
+
 // Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none
 test('repository help says that a revision conflict names the current revision and gives the two ways on', async (context) => {
   // Arrange
@@ -3362,7 +3429,7 @@ test('API 1.6 discovery exposes the bounded configured profile and its executabl
 })
 
 // Value: protects=an agent learns that the start a full library refused is the one to repeat after the learner made room; fails_when=the help still only says to reuse a key on response loss, so the agent invents a new key or gives up; why_new=repeating a refused start used to replay the refusal; seam=none
-test('configured help tells an agent that a start the library refused can be repeated with the same key and begins a new run', async (context) => {
+test('configured help tells an agent that a start the library refused can be repeated with the same key and begins a new run, and that a start on a revision or node id the book lacks is refused in its own answer', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   // Act
@@ -3374,6 +3441,6 @@ test('configured help tells an agent that a start the library refused can be rep
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[0],
-    'codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run.',
+    "codebook_start with profile repository-browser, full configuration and a stable key returns immediately. Reuse the complete identical input on response loss; never retry input with a new key. A start the library refused can be repeated with the same key after room was made; it begins a new run. A start on a revision or a node id the book does not have is refused in its own answer with BOOK_UNAVAILABLE, which names the revision's node ids; every other preparation failure is read from the run resource.",
   )
 })
