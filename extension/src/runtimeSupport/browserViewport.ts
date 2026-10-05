@@ -18,6 +18,7 @@ import {
 } from './constants'
 import { FrameDelivery, type ViewFrame } from './frameDelivery'
 import { awaitResponse } from './utils/awaitResponse'
+import { isStackFrameItem } from './utils/isStackFrameItem'
 import { sha256 } from './utils/sha256'
 import { unpaintedApplicationReason } from './utils/unpaintedApplicationReason'
 import { ViewportAckTimeoutError } from './utils/viewportAckTimeoutError'
@@ -511,15 +512,18 @@ export class BrowserViewport {
    * hides the focused editor without focusing anything: the keyboard focus falls to the document body until the learner clicks
    * (native run of 2026-10-04, after every committed capture). The pane then takes the focus the editor it replaces had.
    *
-   * Without a paused thread in Run and Debug the focus is preserved: the extension API cannot tell an editor that holds the
+   * Without a stack frame in Run and Debug the focus is preserved: the extension API cannot tell an editor that holds the
    * keyboard focus from one that is merely the active editor while the learner types in a side-view chat (VS Code's, and Cursor's
-   * Agent pane in the secondary side bar). At a pause the debugger gave the paused file the keyboard, whoever had it before.
+   * Agent pane in the secondary side bar). At a pause the debugger gave the paused file the keyboard, whoever had it before. A
+   * pause is told by a frame only ({@link isStackFrameItem}): once the session runs again the editor reports its thread, and the
+   * pane then covers an editor the learner may have chosen.
    *
-   * @returns `true` only while a debug session is paused, the window is focused, and the pane's group is the active group showing a text editor that is the active text editor, with `debug.focusEditorOnBreak` not turned off.
+   * @returns `true` only while Run and Debug's active stack item is a frame, the window is focused, and the pane's group is the active group showing a text editor that is the active text editor, with `debug.focusEditorOnBreak` not turned off.
    * @example if (!this.coversEditorFocusedByPause()) return false
    */
   private coversEditorFocusedByPause(): boolean {
-    if (vscode.debug.activeStackItem === undefined) return false
+    // Only a stack frame is a pause: while the session runs the editor reports its thread.
+    if (!isStackFrameItem(vscode.debug.activeStackItem)) return false
     const group = vscode.window.tabGroups.activeTabGroup
     return (
       this.isFocusedPaneGroup(group) &&

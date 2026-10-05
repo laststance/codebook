@@ -56,6 +56,21 @@ const SIDE_BAR_WINDOW_PX = { window: 1335, primary: 214, auxiliary: 461 }
  * - `'missed-the-stop'`: the view showed an earlier stop and was hidden while the recording moved on; its tree is empty until a deferred refresh loads the stop and expands the first scope by itself
  * - `'shows-another-session'`: the view keeps another debug session's frame and never asks for the recorded stop
  */
+/** The thread the fake editor reports as Run and Debug's active stack item once a paused session runs again. */
+interface FakeStackThread {
+  session: { id: string }
+  threadId: number
+}
+/** The stack frame the fake editor reports as Run and Debug's active stack item while a session is paused. */
+interface FakeStackFrame extends FakeStackThread {
+  frameId: number
+}
+/** Tells a frame from a thread among the fake editor's stack items, as the frame id does in the editor's API. @example isFakeStackFrame({ session: { id: 'live-next-server' }, threadId: 1 }) // => false */
+function isFakeStackFrame(
+  item: FakeStackFrame | FakeStackThread | undefined,
+): item is FakeStackFrame {
+  return item !== undefined && 'frameId' in item
+}
 type NativeVariablesHiding =
   'never-opened' | 'missed-the-stop' | 'shows-another-session'
 
@@ -567,9 +582,22 @@ export async function workspaceHarness(
   let windowWidthPx = SIDE_BAR_WINDOW_PX.window
   /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
   let keyboardInSideBar = false
-  // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
-  let activeStackItem: unknown, focusEditorOnBreak: boolean | undefined
-  /** The reader's listeners for a change of the selected stack item of Run and Debug; `setActiveStackItem` calls them. */
+  // What the editor reports for Run and Debug: its active stack item, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
+  /** Run and Debug's active stack item as the fake editor reports it: a frame while a session is paused, its thread once it runs again, none before a first stop and after the session's end; see `pauseDebugger`. */
+  let activeStackItem: FakeStackFrame | FakeStackThread | undefined,
+    focusEditorOnBreak: boolean | undefined
+  let nextStackFrameId = 1
+  /**
+   * The settings the fake editor answers, by their full key; every other setting is unset. Read at each `get`, so a test that changes one of the values is answered with the new one.
+   * @returns The values of `codebook.savedStudyLimit`, `debug.focusEditorOnBreak` (unset: the editor's default, on) and `workbench.editor.closeEmptyGroups` (the fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`).
+   * @example configuredValues()['debug.focusEditorOnBreak'] // => false after harness.pauseDebugger({ focusesEditorOnBreak: false })
+   */
+  const configuredValues = (): Record<string, unknown> => ({
+    'codebook.savedStudyLimit': savedStudyCapacity,
+    'debug.focusEditorOnBreak': focusEditorOnBreak,
+    'workbench.editor.closeEmptyGroups': closeDisposedPanelTabsLater,
+  })
+  /** The reader's listeners for a change of the selected stack item of Run and Debug; `pauseDebugger`, `selectStackFrame`, `resumeDebugger` and `endDebugSession` call them. */
   const activeStackItemListeners = new Set<() => void>()
   /** Whether the fake editor lets the keyboard fall to the page body when it removes an emptied editor group while a text editor has the keyboard; see `loseKeyboardWhenGroupCloses`. */
   let losesKeyboardWhenGroupCloses = false
@@ -2782,7 +2810,7 @@ export async function workspaceHarness(
         },
       },
       debug: {
-        // Unset unless a test pauses a debug session with `setActiveStackItem`; the Application pane then always preserves the keyboard focus when it is revealed.
+        // Unset unless a test pauses a debug session with `pauseDebugger`; the Application pane then always preserves the keyboard focus when it is revealed.
         get activeStackItem() {
           return activeStackItem
         },
@@ -2797,15 +2825,7 @@ export async function workspaceHarness(
       },
       workspace: {
         getConfiguration: (section: string) => ({
-          get: (key: string) =>
-            section === 'codebook' && key === 'savedStudyLimit'
-              ? savedStudyCapacity
-              : section === 'debug' && key === 'focusEditorOnBreak'
-                ? focusEditorOnBreak
-                : // The fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`.
-                  section === 'workbench.editor' && key === 'closeEmptyGroups'
-                  ? closeDisposedPanelTabsLater
-                  : undefined,
+          get: (key: string) => configuredValues()[`${section}.${key}`],
         }),
         onDidChangeConfiguration: (
           listener: (event: {
@@ -3516,21 +3536,61 @@ export async function workspaceHarness(
       windowWidthPx = widthPx
     },
     /**
-     * Sets what the fake editor reports as the selected stack item of Run and Debug and tells the reader's listeners of the change: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`; Cursor's and VS Code's debugger open that file first and select the stack item after it), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
+     * Pauses the fake debugger: Run and Debug's active stack item is a stack frame, and the reader's listeners are told. Both editors report three states of that item, and the three methods beside this one are the only way to set them: none before a session's first stop, a frame while the focused thread is stopped (this method), and that thread without a frame once the session runs again ({@link resumeDebugger}). The editor has opened the paused file with the keyboard before it reports the frame (see `focusMutableDraft`; Cursor's and VS Code's debugger await that opening and select the frame after it), so a test focuses that file first.
+     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server.
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
-     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     * harness.pauseDebugger()
      */
-    setActiveStackItem(item: unknown, focusesEditorOnBreak?: boolean): void {
-      activeStackItem = item
-      focusEditorOnBreak = focusesEditorOnBreak
+    pauseDebugger(
+      options: { focusesEditorOnBreak?: boolean; session?: string } = {},
+    ): void {
+      activeStackItem = {
+        session: { id: options.session ?? 'live-next-server' },
+        threadId: 1,
+        frameId: nextStackFrameId++,
+      }
+      focusEditorOnBreak = options.focusesEditorOnBreak
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Selects another frame of the paused thread, as a learner's click in the Call Stack view does: the active stack item is a frame with another id, of the same session and thread. The editor has opened that frame's file before (see `focusMutableDraft`).
+     * @example
+     * harness.focusMutableDraft('login-form.tsx', 1)
+     * harness.selectStackFrame()
+     */
+    selectStackFrame(): void {
+      assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
+      activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Lets the paused session run again as the editor reports it: the active stack item becomes the thread without a frame, which both editors report from about 200 ms after the focused session went on running until it stops again (VS Code 1.140 and Cursor 3.23: `registerSessionListeners` sets the view model's focus to the thread alone after that delay). Until a test calls this, the frame of the pause is still the active item, as it is in the editor during those 200 ms. No editor reports "no item" for a session that continued.
+     * @example
+     * harness.pauseDebugger()
+     * harness.resumeDebugger()
+     */
+    resumeDebugger(): void {
+      assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
+      activeStackItem = {
+        session: activeStackItem.session,
+        threadId: activeStackItem.threadId,
+      }
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Ends the debug session as the editor reports it: no stack item is active, as before a session's first stop.
+     * @example harness.endDebugSession()
+     */
+    endDebugSession(): void {
+      activeStackItem = undefined
       for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
      * Brings the live run's Application pane to the front over the file the debugger focused at a pause, as its viewport does at the end of a capture when the debugger opened that file in the pane's group: the reader is asked through the lease to give the keyboard back first, and the pane takes it, and tells the reader, only when the reader gave it to nobody.
      * @returns Once the pane is revealed and, where it took the keyboard, the reader was told.
      * @example
-     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     * harness.pauseDebugger()
      * await harness.revealApplicationPaneOverPausedFile()
      */
     async revealApplicationPaneOverPausedFile(): Promise<void> {

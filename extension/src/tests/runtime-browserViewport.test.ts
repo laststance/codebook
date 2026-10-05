@@ -150,10 +150,11 @@ async function viewportHarness(
   observer?: ViewportModule.ViewportRecordingObserver,
   mode: 'live' | 'recording' = 'live',
   renderer = viewportPanel(),
-  /** What the editor reports while the debugger holds a pause and has opened the paused file, with the keyboard focus, in the first group; without it no debug session is paused. `learnerInChat` says how Cursor reports a learner who went back to the Agent chat afterwards: `'named group'` (the chat's group is the active tab group) or `'keyboard only'` (the paused file's tab is still named, and no text editor is active). */
+  /** What the editor reports once the debugger has opened a paused file, with the keyboard focus, in the first group; without it no debug session has stopped yet and no stack item is active. While the session is paused the active stack item is a frame; `sessionRunsAgain` makes it the thread without a frame, which both editors report once the session went on running, with that file still the active text editor. `learnerInChat` says how Cursor reports a learner who went back to the Agent chat afterwards: `'named group'` (the chat's group is the active tab group) or `'keyboard only'` (the paused file's tab is still named, and no text editor is active). */
   pausedFile?: {
     focusEditorOnBreak: boolean
     learnerInChat?: 'named group' | 'keyboard only'
+    sessionRunsAgain?: boolean
   },
   /** What the lease's owner answers when the viewport asks it to give the keyboard back before the pane covers the paused file: `true` (it gave the keyboard to the chat), `false` (to nobody), or `'fails'` (its answer rejects). Left out, the lease has no such owner. */
   ownerReturnsKeyboard?: boolean | 'fails',
@@ -195,7 +196,11 @@ async function viewportHarness(
               TabInputText: PausedFileTab,
               debug: {
                 activeStackItem: pausedFile
-                  ? { session: { id: 'live-next-server' }, threadId: 1 }
+                  ? {
+                      session: { id: 'live-next-server' },
+                      threadId: 1,
+                      ...(pausedFile.sessionRunsAgain ? {} : { frameId: 7 }),
+                    }
                   : undefined,
               },
               workspace: {
@@ -1955,7 +1960,11 @@ for (const [ownerAnswer, revealPreservesFocus, takesTold] of [
   })
 
 for (const [situation, pausedFile] of [
-  ['no debug session is paused', undefined],
+  ['no debug session has stopped yet', undefined],
+  [
+    'the session runs again after a pause and the editor reports its thread',
+    { focusEditorOnBreak: true, sessionRunsAgain: true },
+  ],
   [
     'the learner turned off debug.focusEditorOnBreak',
     { focusEditorOnBreak: false },

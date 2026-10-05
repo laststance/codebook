@@ -2015,6 +2015,69 @@ test("Close Study Workspace made with the learner's own file active gives the ac
   }
 })
 
+// Value: protects=the learner reading the notice of Close Study Workspace once in an editor session, also after the workspace folders changed and the extension made a new reader; fails_when=the mark "told once" is kept with the reader, which a change of the workspace folders disposes, so the same sentence is told again in one editor session; why_new=Cycle 0046 row 174 (delegated review, finding 11); seam=the workspace harness's createReader (a second reader from the same loaded module, as the extension makes one), focusMutableDraft and information messages
+test('the notice of Close Study Workspace is not told again in the same editor session by the reader that replaces a disposed one after the workspace folders changed', async () => {
+  // Arrange: the first reader of the editor session closed its Study workspace beside the learner's file and told where the keyboard is.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let replacement: ReturnType<typeof harness.createReader> | undefined
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.close()
+    const sentencesOfFirstReader = harness.informationMessages.map(
+      (message) => message.message,
+    )
+
+    // Act: the workspace folders change: the extension disposes its reader and makes a new one, whose Study workspace is opened and closed the same way.
+    await harness.reader.dispose()
+    replacement = harness.createReader()
+    await replacement.open()
+    harness.focusMutableDraft('actions.ts', 1)
+    await replacement.close()
+
+    // Assert: the second Close settled the keyboard and told nothing more.
+    assert.deepEqual(sentencesOfFirstReader, [
+      'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+    ])
+    assert.equal(
+      harness.commands.at(-1),
+      'workbench.action.focusActiveEditorGroup',
+    )
+    assert.equal(harness.informationMessages.length, 1)
+  } finally {
+    await replacement?.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner who types in the terminal beside a file when the workspace folders change and the extension disposes its reader: no focus command runs and nothing is told; fails_when=a reader's disposal runs the Close of the command, which gives the active editor group the keyboard beside a learner's file, so a folder added to the workspace moves the keyboard without a word; why_new=Cycle 0046 row 174 (delegated review, finding 11: a reader that is disposed moves no keyboard); seam=the workspace harness's focusMutableDraft, command log and information messages
+test("a reader that is disposed while its Study workspace is open beside the learner's own file runs no focus command and tells nothing", async () => {
+  // Arrange: the Study workspace is open and the learner's file in the first group is the active editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    harness.focusMutableDraft('actions.ts', 1)
+    const commandsBefore = harness.commands.length
+
+    // Act: the workspace folders change, and the extension disposes its reader.
+    await harness.reader.dispose()
+
+    // Assert
+    assert.equal(harness.counts().panels, 0)
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .some((command) => /^workbench\.action\.focus/.test(command)),
+      false,
+    )
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner whose Settings page (a tab of the main editor that is no text editor) is the active editor when "Codebook: Close Study Workspace" runs in an editor without a chat tab: the active editor group has it once the panes' groups are closed, and the learner is told where it is; fails_when=Close settles the keyboard only while the editor names an active text editor or pane, the editor rebuilds its grid as the closed tabs' groups leave, and the keyboard is on the page body until the learner clicks; why_new=Cycle 0046 row 140, item 8 (the state of row 66 beside a page that is no text editor); seam=the workspace harness's addOpaqueTab, focusOpaqueTab, closeDisposedPanelTabsLater, removeEmptiedGroupsLater, loseKeyboardWhenGroupCloses, keyboardOnBody, command log and information messages
 test("Close Study Workspace made with the editor's Settings page active gives the active editor group the keyboard once the panes' groups closed, and says where it is", async () => {
   // Arrange: an editor with one editor part; it removes a group its last tab left and lets the keyboard fall to the page body when it does; the reader is open and the Settings page in the first group is the active editor.
