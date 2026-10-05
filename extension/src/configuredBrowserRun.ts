@@ -824,22 +824,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
     if (laterPlace && (await this.rearmOnRequestedLine(stop, laterPlace)))
       acknowledged = await this.secondServerAcknowledgement(stop, firstRequest)
+    if (acknowledged.refusal !== undefined)
+      await this.requestRefusedAgain(stop, acknowledged)
+  }
+
+  /**
+   * Decides a refused server registration for {@link acknowledgedOnRequestedLine}, once no second request on the requested line stands in its place: a reply the source map alone refused on a later line is requested again when the debugger's own break locations accept that line ({@link requestAgainUnderBreakLocations}).
+   * @param stop - The server stop being armed.
+   * @param refused - The refused acknowledgement ({@link serverAcknowledgement} with its `refusal`).
+   * @returns Once the new request was acknowledged without a refusal.
+   * @throws The registration's refusal when the break locations do not accept its place, and the new request's refusal when it was refused too.
+   * @example
+   * ```ts
+   * if (acknowledged.refusal !== undefined) await this.requestRefusedAgain(stop, acknowledged)
+   * ```
+   */
+  private async requestRefusedAgain(
+    stop: PreparedStop,
+    refused: Awaited<ReturnType<ConfiguredBrowserRun['serverAcknowledgement']>>,
+  ): Promise<void> {
     // A reply the source map alone refused on a later line is requested again when the debugger's own break locations accept that line.
-    if (
-      acknowledged.refusal !== undefined &&
-      acknowledged.place &&
-      (await this.acceptsByBreakLocations(stop, acknowledged.place.line))
-    )
-      acknowledged = await this.requestAgainUnderBreakLocations(
-        stop,
-        acknowledged.place,
-      )
+    const acknowledged =
+      refused.place &&
+      (await this.acceptsByBreakLocations(stop, refused.place.line))
+        ? await this.requestAgainUnderBreakLocations(stop, refused.place)
+        : refused
     // No second request could be made for a refused registration, or the second one was refused too: the refusal stands.
     if (acknowledged.refusal !== undefined) throw acknowledged.refusal
   }
 
   /**
-   * Requests a server stop's breakpoint once more at the same place after its registration reply was refused on a later line that the debugger's own break locations accept ({@link acceptsByBreakLocations}), for {@link acknowledgedOnRequestedLine}: a refused reply is never taken back, so the refused registration is retired, confirmed by the adapter, and the new one is judged by the stop's rebuilt rule.
+   * Requests a server stop's breakpoint once more at the same place after its registration reply was refused on a later line that the debugger's own break locations accept ({@link acceptsByBreakLocations}), for {@link requestRefusedAgain}: a refused reply is never taken back, so the refused registration is retired, confirmed by the adapter, and the new one is judged by the stop's rebuilt rule.
    * @param stop - The server stop being armed; its rule was just rebuilt from the break locations.
    * @param place - Where the adapter verified the refused registration.
    * @returns The acknowledgement of the new request ({@link serverAcknowledgement}).
@@ -1220,16 +1235,36 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return await stop.breakpoint!.registered(session, this.abort.signal)
     } catch (error) {
       if (this.abort.signal.aborted) throw error
-      // The news named a place the map alone refused; the debugger's break locations may accept it, and then the breakpoint stands there (it may already, when {@link retakeNewsByBreakLocations} judged that news first), so the receipt is read once more.
-      if (
-        error instanceof OwnedBreakpointMovedError &&
-        (await this.acceptsByBreakLocations(stop, error.place.line))
-      ) {
-        stop.breakpoint!.retakeRefusedPlace(session)
-        return this.registeredStop(stop)
-      }
-      throw this.registrationFailure(stop, error)
+      // Only news that moved the breakpoint to a refused place is judged once more; every other failure stands.
+      if (!(error instanceof OwnedBreakpointMovedError))
+        throw this.registrationFailure(stop, error)
+      return this.registeredAfterRefusedNews(stop, session, error)
     }
+  }
+
+  /**
+   * Reads a server stop's receipt once more after the adapter's news moved its acknowledged breakpoint to a place the source map alone refuses, for {@link registeredStop} when its read failed for that reason.
+   * @param stop - The declared server stop whose receipt was read.
+   * @param session - The stop's selected session.
+   * @param moved - The failure of the read, which carries the refused place.
+   * @returns The receipt read again ({@link registeredStop}), once the debugger's own break locations accepted the place and the owned breakpoint took it again ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}).
+   * @throws The registration failure ({@link registrationFailure}) when the break locations refuse the place too.
+   * @example
+   * ```ts
+   * return this.registeredAfterRefusedNews(stop, session, error) // { status: 'bound', movedTo: { line: 32, column: 11 }, ... }
+   * ```
+   */
+  private async registeredAfterRefusedNews(
+    stop: PreparedStop,
+    session: vscode.DebugSession,
+    moved: OwnedBreakpointMovedError,
+  ): ReturnType<ConfiguredBrowserRun['registeredStop']> {
+    // The news named a place the map alone refused; the debugger's break locations may accept it, and then the breakpoint stands there (it may already, when {@link retakeNewsByBreakLocations} judged that news first), so the receipt is read once more.
+    if (await this.acceptsByBreakLocations(stop, moved.place.line)) {
+      stop.breakpoint!.retakeRefusedPlace(session)
+      return this.registeredStop(stop)
+    }
+    throw this.registrationFailure(stop, moved)
   }
 
   /**
@@ -1658,10 +1693,49 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<boolean> {
     if (stop.acceptsBoundLine(line)) return true
     const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
-    // Only a later line within the citation is refused for what lies between it and the requested line, and only a parsed module can be asked.
-    if (line <= stop.armed.line || line > citation.endLine || !stop.script)
-      return false
+    if (this.keepsMapRuleUnasked(stop, line, citation)) return false
     const places = await this.mappedBreakLocations(stop)
+    return this.acceptsUnderBreakLocations(stop, line, citation, places)
+  }
+
+  /**
+   * Says whether the map's rule stands for a refused line without the debugger being asked, as the second check of {@link acceptsByBreakLocations}.
+   * @param stop - The stop whose binding is judged.
+   * @param line - The line the debugger bound the stop on, which the stop's rule refuses.
+   * @param citation - The stop's article excerpt.
+   * @returns `true` for a line up to the requested one, for a line after the citation and for a module that is not parsed yet; `false` when the break locations can judge the line.
+   * @example
+   * ```ts
+   * this.keepsMapRuleUnasked(stop, 96, { endLine: 95 }) // true: the line lies after the citation
+   * ```
+   */
+  private keepsMapRuleUnasked(
+    stop: PreparedStop,
+    line: number,
+    citation: { endLine: number },
+  ): boolean {
+    // Only a later line within the citation is refused for what lies between it and the requested line, and only a parsed module can be asked.
+    return line <= stop.armed.line || line > citation.endLine || !stop.script
+  }
+
+  /**
+   * Builds a stop's rule again from the break locations the debugger listed and judges a line by it, as the last step of {@link acceptsByBreakLocations}; the rebuilt rule is kept on the stop and journaled as `breakpoint.rule-from-break-locations`.
+   * @param stop - The stop whose binding is judged.
+   * @param line - The line the debugger bound the stop on.
+   * @param citation - The stop's article excerpt.
+   * @param places - The module's break locations mapped back to the source ({@link mappedBreakLocations}); `undefined` when the adapter could not list them.
+   * @returns `false` without break locations (the map's rule stands); what the stop's rule says when another judgement of the same stop already accepted the line; otherwise what the rebuilt rule says.
+   * @example
+   * ```ts
+   * this.acceptsUnderBreakLocations(stop, 32, citation, [{ line: 26, column: 1 }, { line: 32, column: 11 }]) // true for a stop requested on line 26
+   * ```
+   */
+  private acceptsUnderBreakLocations(
+    stop: PreparedStop,
+    line: number,
+    citation: { endLine: number },
+    places: { line: number; column: number }[] | undefined,
+  ): boolean {
     if (!places) return false
     // Another judgement of the same stop finished while the debugger answered: its rule stands.
     if (stop.acceptsBoundLine(line)) return true
@@ -3185,16 +3259,45 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     session: vscode.DebugSession,
     body: DebugProtocol.StoppedEvent['body'],
   ): PreparedStop | undefined {
-    const hitIds = body.hitBreakpointIds ?? []
     // A pause of the browser's own, or one whose thread or breakpoints are unknown, is never resumed by the run.
-    if (
-      !hitIds.length ||
-      !Number.isInteger(body.threadId) ||
+    if (!Number.isInteger(body.threadId) || this.browserHoldsOwnPause())
+      return undefined
+    return this.serverStopOfEveryBreakpoint(
+      session,
+      body.hitBreakpointIds ?? [],
+    )
+  }
+
+  /**
+   * Says whether the browser holds a pause, a queued stop or an unacknowledged continuation of its own, for {@link serverStopOfBrowserPause}: a `stopped` that arrives then is never taken for a pause in a stub of a server module.
+   * @returns `true` while the browser's gate holds a pause, its announced stop is queued, or its continuation still waits for the adapter's `continued`.
+   * @example
+   * ```ts
+   * this.browserHoldsOwnPause() // true while a declared browser stop is being inspected
+   * ```
+   */
+  private browserHoldsOwnPause(): boolean {
+    return Boolean(
       this.participants.browser.gate.current ||
       this.pendingDapStop?.participant === 'browser' ||
-      this.awaitsContinued('browser')
+      this.awaitsContinued('browser'),
     )
-      return undefined
+  }
+
+  /**
+   * Finds the server stop a browser pause names with every breakpoint it hit, for {@link serverStopOfBrowserPause} once the pause is known to be none of the browser's own.
+   * @param session - The browser session that sent the `stopped` event.
+   * @param hitIds - The adapter's ids of the breakpoints the pause hit; empty when the event named none.
+   * @returns The server stop whose owned breakpoint the first id names, when every id names a server stop's breakpoint in this session; `undefined` when one of them does not, and for a pause that names no breakpoint.
+   * @example
+   * ```ts
+   * this.serverStopOfEveryBreakpoint(session, [12]) // the server stop whose breakpoint the browser adapter calls 12
+   * ```
+   */
+  private serverStopOfEveryBreakpoint(
+    session: vscode.DebugSession,
+    hitIds: readonly number[],
+  ): PreparedStop | undefined {
     const serverStopOf = (id: number): PreparedStop | undefined =>
       this.stops.find(
         (stop) =>
@@ -3202,7 +3305,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           stop.breakpoint?.acknowledgedId(session) === id,
       )
     // Every breakpoint the pause hit must be a server stop's, so a breakpoint of the page's own is never resumed past.
-    return hitIds.every((id) => serverStopOf(id))
+    return hitIds.length > 0 && hitIds.every((id) => serverStopOf(id))
       ? serverStopOf(hitIds[0]!)
       : undefined
   }
