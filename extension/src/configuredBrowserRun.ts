@@ -3848,7 +3848,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           line: callFrame.location.lineNumber,
           column: callFrame.location.columnNumber ?? 0,
         },
-        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position, and the requested line is the declared one or the first mapped line after it.
+        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position (or, once the debugger listed its break locations, a break location), and the requested line is the declared one or the first mapped line after it.
         binding: {
           declaredLine: position.line,
           ...(stop.armed.line === position.line
