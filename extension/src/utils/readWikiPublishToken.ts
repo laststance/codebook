@@ -13,7 +13,7 @@ import { readWikiRegularFile } from './readWikiRegularFile'
  *
  * @param outputDirectory - Resolved Wiki output folder.
  * @returns
- * - Manifest present as a regular file: `<sha256 of the manifest file bytes>@<inode of the manifest file>`
+ * - Manifest present as a regular file: `<sha256 of the manifest file bytes>@<inode number of the manifest file, in decimal digits>`; the number is read exactly, so two manifest files are told apart also where a JavaScript number would round both ids to one value (file ids on NTFS can pass 2^53)
  * - Manifest missing, not a regular file or unreadable (also while the publisher swaps the folder): undefined
  *
  * @example

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
-import { open } from 'node:fs/promises'
 import { pipeline } from 'node:stream/promises'
+
+import { openWithoutFollowing } from './openWithoutFollowing'
 
 /**
  * Hashes a regular file of any size without holding it in memory, and refuses anything that is not a regular file before it reads a byte.
@@ -11,20 +11,18 @@ import { pipeline } from 'node:stream/promises'
  *
  * @param filePath - Absolute path of a regular file; a caller that accepts links resolves them first.
  * @returns The lowercase SHA-256 digest of the file's bytes.
- * @throws The file system's error when the file is missing (`ENOENT`) or its last path component is a link (`ELOOP`); an error with the code `ENOTREG` when it is a pipe, a device or a folder.
+ * @throws The file system's error when the file is missing (`ENOENT`); an error with the code `ELOOP` when its last path component is a link, on every system ({@link openWithoutFollowing}: the open's own error where the system has `O_NOFOLLOW`, and the same code after a look at the path where it has not, as on Windows); an error with the code `ENOTREG` when it is a pipe, a device or a folder; and, only where the system has no `O_NOFOLLOW`, an error with the code `EREPLACED` when another file took the path between the look at it and its open.
  *
  * @example
  * ```ts
  * await hashFileSha256('/repo/pnpm-lock.yaml') // => '44512ae0…'
  * await hashFileSha256('/repo/a-named-pipe')   // rejects at once with code 'ENOTREG'
+ * await hashFileSha256('/repo/a-link')         // rejects with code 'ELOOP', on Windows too
  * ```
  */
 export async function hashFileSha256(filePath: string): Promise<string> {
-  // Without O_NONBLOCK the open itself waits for the writer of a named pipe.
-  const file = await open(
-    filePath,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  )
+  // A link is refused on every system, and the open does not wait for the writer of a named pipe.
+  const file = await openWithoutFollowing(filePath)
   try {
     if (!(await file.stat()).isFile())
       throw Object.assign(new Error(`Not a regular file: ${filePath}`), {
