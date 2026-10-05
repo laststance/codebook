@@ -45,6 +45,7 @@ import {
   type WikiUpdateStatusAnswer,
 } from './utils/installWikiUpdateStatus'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
+import { labelQuestionField } from './utils/labelQuestionField'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
@@ -88,9 +89,9 @@ const qaClient = `(function () {
   // The shell's form by its element and its id together: a page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article, which stands before the form.
   var form = document.querySelector('form#qa-form, [data-codebook-question]');
   if (!form) return;
-  // On such a page the label of the question field may name that heading instead; the field then gets the label's words itself.
+  // On such a page the label of the question field may name that heading instead; a field nothing names gets the label's words itself.
   var field = form.querySelector('textarea, input[name="question"]');
-  if (field && field.labels && !field.labels.length) field.setAttribute('aria-label', 'Ask about this repository');
+  if (field) (${labelQuestionField.toString()})(field);
   var status = document.querySelector('[data-codebook-status]');
   if (status) { status.textContent = '● Connected to Codebook reader'; status.classList.remove('unavailable'); }
   var submit = form.querySelector('button[type="submit"]');

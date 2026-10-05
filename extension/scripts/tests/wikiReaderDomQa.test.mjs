@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 // Read as text and never imported: loading the script publishes a Wiki, starts its reader and opens a browser.
 const scriptUrl = new URL('../wiki-reader-dom-qa.mjs', import.meta.url)
 
-// Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout); fails_when=a case is removed or renamed without notice, so a size or a focus ring the cycle's rows name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83 and 84 (design review DR-8 to DR-11, ND-3); seam=none
-test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600, the single column, the missing-page line and two pages whose headings carry the reader’s ids', async () => {
+// Value: protects=the measured cases of the Wiki reader's right rail, chapter list, reading column, missing-page line and of its own elements on a page that carries their ids (the unit suites read the shell's style sheet and run the page script on a hand-written page, never a layout); fails_when=a case is removed or renamed without notice, so a size or a focus ring the cycle's rows name is no longer measured; why_new=Cycle 0046 rows 28, 61, 67, 68, 69, 83, 84, 132 and 137 (design review DR-8 to DR-11, ND-3); seam=none
+test('the Wiki reader DOM check measures the open control and its states, the row at 720 and 701 px, the focus rings of the rail, the article and the composer with the room they keep, the answer’s ring, the rail at 960 x 600 with a refused start and a conflict, a long source path, the single column, the missing-page line and two pages whose headings carry the reader’s ids', async () => {
   // Arrange
   const script = await readFile(scriptUrl, 'utf8')
 
@@ -28,14 +29,15 @@ test('the Wiki reader DOM check measures the open control and its states, the ro
     'in the Wiki reader at 1200 px the room the article and the composer keep for focus rings moves nothing: every part of the reading column stands where it stands without the room, at rest it is drawn the same, and an open answer leaves it so',
     'in the Wiki reader at 1200 px the keyboard focus ring of every control of the article and the composer is whole, also of one the keyboard scrolled back from the edge: Relevant source files, a link of the article, the question field, Ask Codebook, the answer with its summary and its citation, and the connection line',
     'in the Wiki reader at 1200 px the answer of a question has the reader’s own keyboard focus ring, 2 px in the link colour and 3 px outside it, whole inside the composer that scrolls',
-    'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a refused update without a scrollbar, while a long outline scrolls inside 160 px',
-    'in the Wiki reader at 960 x 600 an open update detail of twelve files scrolls inside 84 px (14vh) under the whole sentence of the refused update, and the rail is at most 45vh high',
+    'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a refused update and its output line without a scrollbar, while a long outline scrolls inside 160 px',
+    'in the Wiki reader at 960 x 600 the page of a conflict of twelve files shows its whole sentence and its output line in a rail of at most 45vh, and the list of the files, opened by a press, scrolls inside 84 px (14vh) and adds no more than that to the rail',
     'in the Wiki reader at 960 px the keyboard focus ring of the summary of an open update detail lies inside the detail that scrolls',
     'in the Wiki reader at 960 px the keyboard focus ring of an outline link lies inside the outline that scrolls',
+    'in the Wiki reader at 960 x 600 the rail entry of a source whose path is about 200 characters long shows eight lines of the path at rest, so the rail stays at most 45vh high, describes its link by the whole path, and shows the whole path while the pointer rests on it or its link has the keyboard focus',
     'in the Wiki reader at 640 px the single column keeps its rail and its composer as before: no cap on the rail, the outline or an open detail, the open control has its margin, the output block may shrink, and the composer has no height limit and its own bottom padding',
     'the overview opened in place of a missing page has its status line in the page, empty and without a box, before the line gets its sentence 150 ms after the load, and names the missing page in the document title at once',
     'on a page whose headings were authored with the reader’s own ids every such id stands once in the served page, the headings, their outline entries and the links to them carry page- before the id, and the outline, the theme button, the question form with its label and its answer, the rail entry and the keyboard help work',
-    'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, and the status region and the rail entry’s target get ids of their own',
+    'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, the status region and the rail entry’s target get ids of their own, and the keyboard help is named by its own title',
   ])
 })
 
@@ -65,4 +67,49 @@ test('the Wiki reader DOM check loads its flow from a file without eval, and rea
     '../dist/deepWikiReader.js',
     '../skills/codebook/publish-wiki.mjs',
   ])
+})
+
+// Value: protects=the measured cases of a site published by 0.2.29.0, whose pages carry that build's stylesheet under the rules the reader injects; fails_when=the check no longer runs the steps of a page on the page in the shell of 0.2.29.0, or runs fewer of them there, or the shell kept beside the check is no longer the file the tag v0.2.29.0 shipped, so the injected rules are laid out against another stylesheet than a learner's old site has; why_new=Cycle 0046 row 138 (the pages named "published by 0.2.29.0" were pages of today's shell); seam=none
+test('the Wiki reader DOM check runs the steps of a page a second time on the same content in the shell of 0.2.29.0, and that shell is the file the tag v0.2.29.0 shipped', async () => {
+  // Arrange
+  const script = await readFile(scriptUrl, 'utf8')
+  const shellOf02290 = await readFile(
+    new URL('../fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
+  )
+
+  // Act: the steps of a page, how often the check runs them, what it adds to the name of a case of the second run, and the shell's digest.
+  const stepsOfAPage = /const stepsOfAPage = \[([^\]]+)\]/
+    .exec(script)?.[1]
+    .split(',')
+    .map((step) => step.trim())
+    .filter(Boolean)
+  const runs = script.match(
+    /for \(const step of stepsOfAPage\) await step\(\)/g,
+  )
+  const namedInTheSecondRun = /caseSuffix = '([^']+)'/.exec(script)?.[1]
+  const digest = createHash('sha256').update(shellOf02290).digest('hex')
+
+  // Assert: the digest is that of `git show ae9c1f2:extension/skills/codebook/reader-shell.html`.
+  assert.deepEqual(stepsOfAPage, [
+    'measureEntryInRow',
+    'measureNarrowestRow',
+    'measureReadingColumnInRow',
+    'measureEntryInColumn',
+    'measureEntryStates',
+    'measureRingsInColumns',
+    'measureRingsAtRailEdges',
+    'measureReadingColumnInColumns',
+    'measureAnswerRing',
+    'measureRailWithRefusal',
+    'measureRailWithOpenDetail',
+    'measureDetailSummaryRingInRow',
+    'measureOutlineRingInRow',
+    'measureSingleColumn',
+  ])
+  assert.equal(runs?.length, 2)
+  assert.equal(namedInTheSecondRun, ' (on a page in the shell of 0.2.29.0)')
+  assert.equal(
+    digest,
+    'eb35cdfedadf3542fa601391c34c21bc56d0736c7798d21f2ab7b6b3f4b67442',
+  )
 })
