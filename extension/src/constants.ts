@@ -567,6 +567,8 @@ export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 /** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the chat's first answer (a reply, or a tool call it makes for the request) before the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
+/** How long the withdrawal of an unanswered Wiki update request gives each of the chat's two commands to return, and then the hand-over command to return after it; a request the chat removed or stopped ends its hand-over command within milliseconds, so a command still pending after this time is taken as not ended by that step. */
+export const WIKI_CHAT_WITHDRAW_SETTLE_MS = 2_000
 /** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
 export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
 /** What a Wiki update says when it was blocked by a conflict that names no file, so that the learner cannot be told what to move: the reason of the `failed` state {@link WikiUpdateRun} records for a finished update and for a refused start alike. */

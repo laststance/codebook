@@ -19,6 +19,7 @@ import {
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
+import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
 
@@ -207,6 +208,31 @@ test('the packaged README says that a VS Code update waits 30 seconds for the ch
   assert.deepEqual(delivered, [true, true, true])
   assert.deepEqual(retired, [])
   assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 30)
+})
+
+// Value: protects=a learner whose VS Code chat did not answer an update reading what Codebook did to the chat (its request is taken back, queued requests of the learner's leave the queue with it) and the sentence for a request it could not take back; fails_when=the README still describes an update that leaves its request in the chat, or names another sentence than the product prints; why_new=Cycle 0046 row 82; seam=none
+test('the packaged README says that an unanswered VS Code update takes its request back from the chat, what that removes, and the sentence for a request it could not take back', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "When a VS Code chat gives no first answer within those 30 seconds, Codebook takes its request back before it shows the sentence, so the chat keeps nothing of an update that was not started: it removes the request from the chat's queue, or stops it with the chat's own Cancel when it is the request in progress.",
+    "Requests of your own that wait in that chat's queue are removed with it, and a request of yours that is in progress there is left alone.",
+    'Both steps act on the chat you focused last: if you moved to another chat within those 30 seconds, they act on the requests there.',
+    'If Codebook did not see its request leave the chat, the sentence reads `The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
+  ])
+
+  // Assert: the README holds each sentence, and the product prints the two sentences it quotes.
+  assert.deepEqual(delivered, [true, true, true, true])
+  assert.equal(
+    describeUnansweredWikiChat('withdrawn', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
+  )
+  assert.equal(
+    describeUnansweredWikiChat('left', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+  )
 })
 
 // Value: protects=a client author reading the same limit of explanations the service enforces and an agent reads in its refusal; fails_when=the README counts "explanation intents" again, or names another number than the budget; why_new=Cycle 0046 row 56: row 25 reworded the refusal to "explanation budget (32 keys)" and the README kept the old words; seam=none

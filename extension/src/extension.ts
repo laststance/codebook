@@ -19,6 +19,7 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_CHAT_WITHDRAW_SETTLE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_ENTRY_FILE,
@@ -66,6 +67,7 @@ import {
   currentStorageOwner,
   useEditorMachineId,
 } from './utils/currentStorageOwner'
+import { describeUnansweredWikiChat } from './utils/describeUnansweredWikiChat'
 import { describeWikiChatOpenFailure } from './utils/describeWikiChatOpenFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
@@ -95,7 +97,6 @@ import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
-import { secondsText } from './utils/secondsText'
 import {
   selectActiveWikiCandidate,
   wikiLastRunSchema,
@@ -115,6 +116,7 @@ import {
   type WikiUpdateOutput,
 } from './utils/wikiUpdateRun'
 import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
+import { withdrawWikiChatRequest } from './utils/withdrawWikiChatRequest'
 
 let stopExtension: (() => Promise<void>) | undefined
 
@@ -1249,15 +1251,16 @@ export function activate(
         })
         try {
           // The bound starts when the request is handed over and ends at the chat's first answer, not when the command returns: a chat that cannot answer still takes the request.
+          // With `blockOnResponse` the command settles when the chat's response completes or waits for a confirmation; a command that throws at once is a failed one too.
+          const handOver = Promise.resolve().then(() =>
+            vscode.commands.executeCommand('workbench.action.chat.open', {
+              query,
+              isPartialQuery: false,
+              blockOnResponse: true,
+            }),
+          )
           const answer = await waitForWikiChatAnswer({
-            // With `blockOnResponse` the command settles when the chat's response completes or waits for a confirmation; a command that throws at once is a failed one too.
-            reply: Promise.resolve().then(() =>
-              vscode.commands.executeCommand('workbench.action.chat.open', {
-                query,
-                isPartialQuery: false,
-                blockOnResponse: true,
-              }),
-            ),
+            reply: handOver,
             toolCall,
             signal: run.controller.signal,
             timeoutMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
@@ -1271,8 +1274,19 @@ export function activate(
             return
           }
           if (answer.outcome === 'unanswered') {
+            // The request the chat still holds is taken back before the result is published, so "not started" stays true; a reply that reports an error left nothing in the chat.
+            const withdrawal = await withdrawWikiChatRequest({
+              handOver,
+              runChatCommand: (command) =>
+                vscode.commands.executeCommand(command),
+              signal: run.controller.signal,
+              settleMs: WIKI_CHAT_WITHDRAW_SETTLE_MS,
+            })
             await finishWikiUpdate(run, {
-              failure: `The editor chat did not answer within ${secondsText(WIKI_CHAT_OPEN_TIMEOUT_MS)}, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`,
+              failure: describeUnansweredWikiChat(
+                withdrawal,
+                WIKI_CHAT_OPEN_TIMEOUT_MS,
+              ),
               isFailureCodebookSentence: true,
             })
             return

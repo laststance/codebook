@@ -13,6 +13,7 @@ import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
 import { waitForWikiChatAnswer } from '../../utils/waitForWikiChatAnswer'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
+import { withdrawWikiChatRequest } from '../../utils/withdrawWikiChatRequest'
 
 import { assertConstantsReadBy } from './assertConstantsReadBy'
 import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
@@ -54,7 +55,8 @@ export type HeldUpdateStep =
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
  * @param options.chatFails - Makes VS Code's chat command throw: "Chat is unavailable" for `true`, the given message for a text.
  * @param options.chatReply - What VS Code's chat command resolves with once it took the request, as it does with `blockOnResponse` when the chat's response completed or waits for a confirmation; a reply at once (`{}`) when omitted. A promise that never settles is a chat that never answers.
- * @param options.chatAnswerClock - Sleep handed to the wait for the chat's first answer, so a test can pass its 30 second bound without waiting.
+ * @param options.chatAnswerClock - Sleep handed to the wait for the chat's first answer and to the withdrawal of an unanswered request, so a test can pass the 30 second bound and the withdrawal's settle time without waiting.
+ * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the chat's "Remove All Queued" and its Cancel, for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
  * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
  * @param options.declineConfirmation - Makes the learner dismiss the modal confirmation of the browser's update link.
@@ -66,7 +68,7 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
- * @returns What the window showed (chat requests, notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when the chat reads a file, opens a terminal or runs a command there) and `close`.
+ * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when the chat reads a file, opens a terminal or runs a command there) and `close`.
  *
  * @example
  * ```ts
@@ -85,6 +87,7 @@ export async function openWikiUpdateWindow(options: {
   chatAnswerClock?: {
     sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
   }
+  editorCommand?: (name: string) => unknown
   cursorAgent?: (
     root: string,
     prompt: string,
@@ -109,6 +112,7 @@ export async function openWikiUpdateWindow(options: {
   openWikiFails?: string
 }): Promise<{
   chatRequests: Array<{ name: string; query: string }>
+  executedCommands: string[]
   notices: string[]
   warnings: string[]
   errors: string[]
@@ -139,6 +143,7 @@ export async function openWikiUpdateWindow(options: {
     addedPaths: [],
   }
   const chatRequests: Array<{ name: string; query: string }> = []
+  const executedCommands: string[] = []
   const notices: string[] = []
   const warnings: string[] = []
   const errors: string[] = []
@@ -228,6 +233,7 @@ export async function openWikiUpdateWindow(options: {
             return { dispose(): void {} }
           },
           executeCommand: async (name: string, argument?: unknown) => {
+            executedCommands.push(name)
             if (
               name === 'codebook.openDeepWiki' &&
               options.openWikiFails !== undefined
@@ -239,8 +245,10 @@ export async function openWikiUpdateWindow(options: {
                   ? 'Chat is unavailable'
                   : options.chatFails,
               )
+            // Every other command of the editor does what the test says, and nothing when it says nothing.
+            if (name !== 'workbench.action.chat.open')
+              return options.editorCommand?.(name)
             await passHold('chat-open')
-            const isChatRequest = name === 'workbench.action.chat.open'
             chatRequests.push({
               name,
               query:
@@ -251,8 +259,7 @@ export async function openWikiUpdateWindow(options: {
                   ? argument.query
                   : '',
             })
-            // The chat's reply, as `blockOnResponse` returns it; every other command returns nothing.
-            if (!isChatRequest) return undefined
+            // The chat's reply, as `blockOnResponse` returns it.
             return options.chatReply ? options.chatReply() : {}
           },
         },
@@ -401,6 +408,16 @@ export async function openWikiUpdateWindow(options: {
             ...options.chatAnswerClock,
           }),
       },
+      // The real withdrawal runs; only its sleep is replaced by the test's clock when one is given.
+      './utils/withdrawWikiChatRequest': {
+        withdrawWikiChatRequest: (
+          withdrawalOptions: Parameters<typeof withdrawWikiChatRequest>[0],
+        ) =>
+          withdrawWikiChatRequest({
+            ...withdrawalOptions,
+            ...options.chatAnswerClock,
+          }),
+      },
       // The real watch runs; only its two-second wait between looks is shortened, or replaced by the test's clock.
       './utils/waitForWikiPublish': {
         waitForWikiPublish: <Published>(
@@ -430,6 +447,7 @@ export async function openWikiUpdateWindow(options: {
     await commands.get('codebook.openDeepWiki')?.()
   return {
     chatRequests,
+    executedCommands,
     notices,
     warnings,
     errors,
