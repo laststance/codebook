@@ -138,6 +138,6 @@ test('the inspection of a server stop declared on an unmapped line names its dec
   assert.equal(JSON.stringify(facts.requestedSource), '{"line":1,"column":1}')
   assert.equal(
     facts.place,
-    'src/mode.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.',
+    'src/mode.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); Codebook requested the breakpoint on line 2 and the debugger bound it on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.',
   )
 })

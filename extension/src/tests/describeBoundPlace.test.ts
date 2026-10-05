@@ -162,7 +162,7 @@ test('a moved stop whose requested line can pause is told which column to declar
   )
   assert.equal(
     requestedAfterDeclaredLine.place,
-    'src/theme.ts: this stop paused on line 3, column 1. You declared line 1 (configuration.source); the debugger bound the breakpoint on line 3. Name line 3 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 2 can pause at column 5; declare line 2 at that column to stop there.',
+    'src/theme.ts: this stop paused on line 3, column 1. You declared line 1 (configuration.source); Codebook requested the breakpoint on line 2 and the debugger bound it on line 3. Name line 3 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner. Line 2 can pause at column 5; declare line 2 at that column to stop there.',
   )
   assert.equal(
     JSON.stringify(requestedOnDeclaredLine.pausable),
