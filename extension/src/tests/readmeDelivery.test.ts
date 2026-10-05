@@ -7,7 +7,7 @@ import {
   API_VERSION,
   MAX_EXPLANATIONS,
   MAX_SESSIONS,
-  MS_PER_SECOND,
+  MILLISECONDS_PER_SECOND,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
@@ -206,7 +206,7 @@ test('the packaged README says that a VS Code update waits 30 seconds for the ch
   // Assert: the README names the bound the editor enforces.
   assert.deepEqual(delivered, [true, true, true])
   assert.deepEqual(retired, [])
-  assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND, 30)
+  assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 30)
 })
 
 // Value: protects=a client author reading the same limit of explanations the service enforces and an agent reads in its refusal; fails_when=the README counts "explanation intents" again, or names another number than the budget; why_new=Cycle 0046 row 56: row 25 reworded the refusal to "explanation budget (32 keys)" and the README kept the old words; seam=none
