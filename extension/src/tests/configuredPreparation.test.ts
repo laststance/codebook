@@ -139,7 +139,7 @@ test('missing book revisions or nodes cannot silently select another article bef
     {
       code: 'BOOK_UNAVAILABLE',
       message:
-        'configuration.book.nodeId does not exist in the exact selected revision.',
+        'configuration.book.nodeId absent does not exist in revision 1 of book interface, which has the nodes: theme, unrelated. Use one of them, or publish your own document under its own book id and start on that revision.',
     },
   )
 })

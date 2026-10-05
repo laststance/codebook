@@ -47,6 +47,9 @@ interface BeforeFailure {
   candidates?: { button: number; link: number; field: number }
 }
 
+/** The source of a fixture that gives none: one statement on line 1 and an empty line 2, declared with `var` so that the stop on line 1, which requires value:nextTheme, stays on its declared line. */
+const FIXTURE_SOURCE = 'var nextTheme = "dark";\n'
+
 /** Drives the product coordinator with real Git/source/evidence and controlled native protocol events, never claiming actual-editor proof. @example const harness = await configuredRuntimeHarness(context); await harness.run.prepare() */
 export async function configuredRuntimeHarness(
   context: TestContext,
@@ -59,7 +62,7 @@ export async function configuredRuntimeHarness(
     before?: RepositoryConfiguration['action']['before']
     /** Opts into a source the debugger can bind on another line than declared: the executed module is then the source text itself, so generated line n is source line n + 1 under a map such as 'AAAA;AACA'. */
     fixture?: {
-      /** Replaces the one-statement source; its default already has an empty line 2. */
+      /** Replaces the one-statement source; its default (`var nextTheme = "dark";`) already has an empty line 2. */
       source?: string
       /** Last line of the first citation instead of line 1. */
       citationEndLine?: number
@@ -80,7 +83,11 @@ export async function configuredRuntimeHarness(
   })
   const repository = await repositoryHarness(context),
     fixture = options.fixture,
-    reference = createConfiguredStudy(fixture?.source, fixture?.citationEndLine)
+    // A fixture without its own source declares the stop's binding with `var`, which the run reads where it was declared: a `const` on the stop's own line would make the run request the stop on the next mapped line, as it does for an agent's declaration.
+    reference = createConfiguredStudy(
+      fixture ? (fixture.source ?? FIXTURE_SOURCE) : undefined,
+      fixture?.citationEndLine,
+    )
   if (additionalStops.length)
     reference.configuration.additionalStops = additionalStops
   if (options.before) reference.configuration.action.before = options.before

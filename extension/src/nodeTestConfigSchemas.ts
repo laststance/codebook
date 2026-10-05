@@ -9,7 +9,7 @@ import {
 import {
   repositoryBookSelectionSchema,
   repositorySourceStopSchema,
-  stopInspectionsSchema,
+  nodeTestStopInspectionsSchema,
 } from './repositoryConfigSchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
 import { missingValueInspectionMessage } from './utils/missingValueInspectionMessage'
@@ -31,7 +31,7 @@ const testTitleSchema = z
   .regex(/^[^\x00-\x1f\x7f]+$/)
 const nodeTestStopSchema = repositorySourceStopSchema.extend({
   anchorIndex: repositoryBookSelectionSchema.shape.anchorIndex,
-  inspections: stopInspectionsSchema,
+  inspections: nodeTestStopInspectionsSchema,
 })
 
 /** Bounds the intended repository-local Vitest test and its debugger observations before a Node runtime is acquired. @example nodeTestConfigSchema.parse({ version: 1, adapter: 'vitest-node', book, testFile: 'src/a.test.ts', testTitles: ['subscription', 'notifies once'], source, inspections }) */
@@ -56,7 +56,7 @@ export const nodeTestConfigSchema = z
         'Required for a new run: every enclosing describe title, outermost first, then the test title, exactly as Vitest reports them. Example: ["invoice data queries", "converts stored invoice cents to dollars for the edit form"].',
       ),
     source: repositorySourceStopSchema,
-    inspections: stopInspectionsSchema,
+    inspections: nodeTestStopInspectionsSchema,
     additionalStops: z
       .array(nodeTestStopSchema)
       .max(CONFIGURED_OBSERVATION_LIMIT - 1)

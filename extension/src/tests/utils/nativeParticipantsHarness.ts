@@ -41,6 +41,12 @@ const FIRST_ADAPTER_BREAKPOINT_ID = 12
 /** How far the id of a breakpoint the adapter rebound at its pause lies from the acknowledged one. */
 const REBOUND_ID_OFFSET = 1_000
 
+/** The source of a participant's fixture that gives none: the one statement of {@link createCrossRuntimeStudy} on line 1 and an empty line 2, declared with `var` so that the participant's stop on line 1, which requires the binding it declares, stays on its declared line. */
+const FIXTURE_SOURCES: Record<Participant, string> = {
+  browser: 'var nextTheme = "dark";\n',
+  server: 'export var mode = "display";\n',
+}
+
 /** Exercises the real coordinator using two controlled native transports and inert source records; never native product proof. @example const harness = await nativeParticipantsHarness(context); await harness.run.prepare() */
 export async function nativeParticipantsHarness(
   context: TestContext,
@@ -57,7 +63,7 @@ export async function nativeParticipantsHarness(
       Record<
         Participant,
         {
-          /** Replaces the participant's one-statement source; its default already has an empty line 2. */
+          /** Replaces the participant's one-statement source; its default ({@link FIXTURE_SOURCES}) already has an empty line 2. */
           source?: string
           /** Last line of the participant's citation instead of line 1. */
           citationEndLine?: number
@@ -91,11 +97,11 @@ export async function nativeParticipantsHarness(
         (candidate) => candidate.path === stop.source.path,
       )!,
       anchor = described.anchors[stop.anchorIndex]!
-    if (fixture.source !== undefined) {
-      source.text = fixture.source
-      source.hash = anchor.hash = sha256(fixture.source)
-      source.lineCount = fixture.source.split(/\r\n?|\n/).length
-    }
+    // A fixture without its own source declares the stop's binding with `var`, which the run reads where it was declared: a `const` on the stop's own line would make the run request the stop on the next mapped line, as it does for an agent's declaration.
+    const text = fixture.source ?? FIXTURE_SOURCES[stop.participant]
+    source.text = text
+    source.hash = anchor.hash = sha256(text)
+    source.lineCount = text.split(/\r\n?|\n/).length
     anchor.endLine = fixture.citationEndLine ?? anchor.endLine
   }
   described.citationContext = citationContext(described.anchors)

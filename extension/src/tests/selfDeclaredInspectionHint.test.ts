@@ -28,16 +28,16 @@ test('a required value gets the declared-on-this-line hint for a plain, a rename
   // Assert
   assert.deepEqual(hints, {
     plain:
-      ' Line 1 declares user, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 1 declares user, so it has no value yet when the debugger pauses before that line runs; a stop that requires user must be on a line after line 1, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 1.',
     renamed:
-      ' Line 2 declares rows, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 2 declares rows, so it has no value yet when the debugger pauses before that line runs; a stop that requires rows must be on a line after line 2, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 2.',
     renamedKey: '',
     arrayRest:
-      ' Line 3 declares rest, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 3 declares rest, so it has no value yet when the debugger pauses before that line runs; a stop that requires rest must be on a line after line 3, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 3.',
     hoistedVar: '',
     laterUse: '',
     annotated:
-      ' Line 6 declares total, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 6 declares total, so it has no value yet when the debugger pauses before that line runs; a stop that requires total must be on a line after line 6, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 6.',
     outsideSource: '',
   })
 })
@@ -92,14 +92,35 @@ test('the hint is still given for a declaration after long white space, after an
   // Assert
   assert.deepEqual(hints, {
     afterLongWhiteSpace:
-      ' Line 1 declares user, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 1 declares user, so it has no value yet when the debugger pauses before that line runs; a stop that requires user must be on a line after line 1, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 1.',
     afterComparison:
-      ' Line 2 declares total, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 2 declares total, so it has no value yet when the debugger pauses before that line runs; a stop that requires total must be on a line after line 2, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 2.',
     afterStatement:
-      ' Line 3 declares ready, so it has no value yet when the debugger pauses before that line runs; declare the stop on a later line or require a value that already exists there.',
+      ' Line 3 declares ready, so it has no value yet when the debugger pauses before that line runs; a stop that requires ready must be on a line after line 3, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 3.',
     endedBySemicolon: '',
     endedByComparison: '',
     keywordInsideWord: '',
     loopBinding: '',
+  })
+})
+
+// Value: protects=an agent whose required value was unavailable because the stop lies before the line that declares it; fails_when=the failure gives no word about the declaring line, or its advice ("declare the stop on a later line") leads to an earlier line that declares the binding again, as the Cursor agent of N14-d moved its stop from line 21 to line 20; why_new=Cycle 0045 N14d-15 (DX-1 c); seam=none
+test('a required value declared on a later line of the citation than the paused one is named with its declaring line and the line the stop must follow', () => {
+  // Arrange: the debugger paused on line 1; line 2 declares state, and the citation ends on line 3.
+  const source = [
+    "const callbackUrl = searchParams.get('callbackUrl')",
+    'const [state, dispatch] = useActionState(authenticate, undefined)',
+    'return state',
+  ].join('\n')
+  // Act
+  const hints = {
+    declaredLater: selfDeclaredInspectionHint(source, 1, 'state.message', 3),
+    declaredAfterCitation: selfDeclaredInspectionHint(source, 1, 'state', 1),
+  }
+  // Assert
+  assert.deepEqual(hints, {
+    declaredLater:
+      ' Line 2 declares state, after line 1 where the debugger paused, so it has no value yet there; a stop that requires state must be on a line after line 2, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 1.',
+    declaredAfterCitation: '',
   })
 })

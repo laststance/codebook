@@ -807,6 +807,63 @@ test('the saved learning resource of a stop requested on another line than decla
   }
 })
 
+// Value: protects=a reader of a saved study learning that Codebook, not the debugger, put a stop on the line after the one declared (the line declares the binding the stop requires, or has no mapped position); fails_when=the saved place says the debugger bound the breakpoint on the next line, or names the declared line as the place of the pause; why_new=Cycle 0045 N14d-15 (DX-1 a): such a stop is requested after its own declaring line; seam=none
+test('the saved learning resource of a stop Codebook requested after its declared line says Codebook requested the breakpoint on the line it paused on', async () => {
+  // Arrange: the stop declared at src/theme.ts 1:1 (`const nextTheme = "dark";`, value:nextTheme required) was requested on line 2, captured at 2:1, and the study is saved.
+  const harness = await contextHarness(recordingDiskIo, 2),
+    { service, record } = harness
+  try {
+    record.recording!.frame({ bytes: png, elapsedMs: 20, kind: 'stream' })
+    harness.clock(100)
+    service.action({
+      ...harness.receipt,
+      key: 'requested-after-declaring-line',
+      action: 'repository-click',
+    })
+    bindCommittedSnapshotAt(
+      harness.runtime.snapshots[0]!,
+      { line: 2, column: 1 },
+      {
+        declaredLine: 1,
+        requestedLine: 2,
+        boundLine: 2,
+        mappedLinesBetween: 0,
+      },
+    )
+    harness.clock(200)
+    await service.stop(harness.receipt)
+    await harness.checkpoint()
+    const id = record.recording!.header.studyId,
+      metadata = await readResource(
+        service,
+        `codebook://${service.instanceId}/studies/${id}/recording`,
+      )
+    assert.ok('text' in metadata)
+
+    // Act
+    const learning = await readResource(
+      service,
+      JSON.parse(metadata.text).learningUri,
+    )
+
+    // Assert
+    assert.ok('text' in learning)
+    const observation = JSON.parse(JSON.parse(learning.text).content)
+      .observations[0]
+    assert.equal(
+      observation.place,
+      'src/theme.ts: this stop paused on line 2, column 1. You declared line 1 (configuration.source); Codebook requested the breakpoint on line 2 and the debugger bound it on line 2. Name line 2 as the place of this pause in the interpretation, in the learning summary and in your answer to the learner.',
+    )
+    assert.equal(
+      JSON.stringify(observation.declaredSource),
+      '{"line":1,"column":1}',
+    )
+    assert.equal(observation.source.line, 2)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('ordinary readers discover bounded actual facts and saved explanations without opening debugger graphs', async () => {
   // Arrange
   const harness = await contextHarness(),

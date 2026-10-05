@@ -251,7 +251,7 @@ export function createProtocol(service: StudyService): McpServer {
       inputSchema: startSchema,
       annotations: { ...execution, idempotentHint: true },
     },
-    (input) => toolResult(() => service.start(input)),
+    (input) => toolResult(() => service.startOnStoredBook(input)),
   )
   server.registerTool(
     'codebook_action',

@@ -2717,17 +2717,19 @@ test('the input schema of codebook_start states the inspection rule for the firs
         .description,
     ],
   )
-  const rule =
-    'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop\'s line runs, so a binding that the stop\'s own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.'
+  const repositoryBrowserRule =
+      "Every stop needs at least one inspection with mode \"value\" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs.",
+    nodeTestRule =
+      'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop\'s line runs, so a binding that the stop\'s own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.'
   assert.deepEqual(described, [
-    ['next-dev-webpack 1', rule, rule],
-    ['next-dev-webpack 2', rule, rule],
-    ['vitest-node 1', rule, rule],
+    ['next-dev-webpack 1', repositoryBrowserRule, repositoryBrowserRule],
+    ['next-dev-webpack 2', repositoryBrowserRule, repositoryBrowserRule],
+    ['vitest-node 1', nodeTestRule, nodeTestRule],
   ])
 })
 
-// Value: protects=an agent learning, where it reads last before it declares a run, that a required value is read before the stop's line runs; fails_when=the description of inspections does not say it, so an agent requires the binding the stop's own line declares and its first admitted run ends at that stop (the Cursor run of the second native round); why_new=Cycle 0045 cause 11 (DX-1 b); seam=none
-test("the input schema of codebook_start says that a required value is read before the stop's line runs and what to declare instead, for the first stop and for later stops of both profiles", async (context) => {
+// Value: protects=an agent learning, where it reads last before it declares a run, that a required value is read before the stop's line runs and, for a repository-browser stop, that Codebook then requests the stop on the next line that can pause; fails_when=the description of inspections does not say it, so an agent requires the binding the stop's own line declares and cannot tell why its stop paused a line later, or a node-test stop, which Codebook requests where it was declared, is said to move; why_new=Cycle 0045 cause 11 (DX-1 b), rewritten for N14d-15 (DX-1 a: the repository-browser profile now moves such a stop); seam=none
+test("the input schema of codebook_start says that a required value is read before the stop's line runs and what Codebook and the agent do about a binding that line declares, for the first stop and for later stops of both profiles", async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context),
     client = await connectMcpClient(context, service)
@@ -2764,21 +2766,24 @@ test("the input schema of codebook_start says that a required value is read befo
     .parse(
       tools.tools.find((tool) => tool.name === 'codebook_start')?.inputSchema,
     ).properties.configuration.anyOf
-  const sentence =
-    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line."
+  const movedSentence =
+      "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs.",
+    declaredSentence =
+      "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line."
   const saysIt = [...repositoryVariants.anyOf, nodeTestVariant].map(
     (variant) => [
       `${variant.properties.adapter.const} ${variant.properties.version.const}`,
-      variant.properties.inspections.description.includes(sentence),
+      variant.properties.inspections.description.includes(movedSentence),
       variant.properties.additionalStops.items.properties.inspections.description.includes(
-        sentence,
+        movedSentence,
       ),
+      variant.properties.inspections.description.includes(declaredSentence),
     ],
   )
   assert.deepEqual(saysIt, [
-    ['next-dev-webpack 1', true, true],
-    ['next-dev-webpack 2', true, true],
-    ['vitest-node 1', true, true],
+    ['next-dev-webpack 1', true, true, false],
+    ['next-dev-webpack 2', true, true, false],
+    ['vitest-node 1', false, false, true],
   ])
 })
 
@@ -2810,8 +2815,8 @@ test('configured help says that every stop needs a required value inspection of 
   assert.doesNotMatch(inspections, /declare type:<path> or a primitive member/)
 })
 
-// Value: protects=the help an agent reads before its first start saying that a required value must already exist when the debugger pauses before the stop's line runs; fails_when=the help's sentence on inspections does not say it; why_new=Cycle 0045 cause 11 (DX-1 b); seam=none
-test("configured help says that a required value is read when the debugger pauses before the stop's line runs, so a binding that line declares has no value there", async (context) => {
+// Value: protects=the help an agent reads before its first start saying that a required value must already exist when the debugger pauses before the stop's line runs, and that Codebook requests a stop whose own line declares its binding on the next line that can pause; fails_when=the help's sentence on inspections does not say it; why_new=Cycle 0045 cause 11 (DX-1 b), rewritten for N14d-15 (DX-1 a); seam=none
+test("configured help says that a binding the stop's own line declares has no value when the debugger pauses, so Codebook requests the stop on the first line after it that can pause", async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
 
@@ -2825,10 +2830,24 @@ test("configured help says that a required value is read when the debugger pause
     .parse(JSON.parse(help.text)).inspections
   assert.equal(
     inspections.includes(
-      "Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line. DOM conditions use literals, never patterns, and all conditions must hold",
+      "Required unavailable/unsafe/oversized inspections fail; optional unavailability remains explicit. A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs. DOM conditions use literals, never patterns, and all conditions must hold",
     ),
     true,
   )
+})
+
+// Value: protects=a reader of the extension README learning what the help says about a binding the stop's own line declares; fails_when=the README's inspection step does not say that Codebook requests such a stop on the next line that can pause; why_new=Cycle 0045 N14d-15 (DX-1 b); seam=none
+test('the extension README says that Codebook requests a stop whose own line declares its required binding on the first line after it that can pause, as the help does', async () => {
+  // Arrange
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+
+  // Act
+  const saysIt = readme.includes(
+    "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's `armed` and `place`, so require a value that already exists before the stop's line when you want the state before that line runs.",
+  )
+
+  // Assert
+  assert.equal(saysIt, true)
 })
 
 // Value: protects=an agent that publishes an article under a book id an earlier question already took getting to a run on its own citations; fails_when=the conflict only says "read the current book", so the agent runs on the article it found, whose citations do not cover its stop (the Cursor run's second refused start); why_new=Cycle 0045 cause 5; seam=none
@@ -2897,6 +2916,45 @@ test('after a publish with expectedRevision 0 is refused for an existing article
   assert.equal(record.prepared, true)
   assert.equal(runtimes.length, 1)
   assert.equal(service.state(record).nextActions[0], 'repository-click')
+})
+
+// Value: protects=an agent whose own document was refused and that then starts on its node id in an existing revision learning at once which nodes that revision has; fails_when=codebook_start accepts the run and it ends without a runtime saying only "configuration.book.nodeId does not exist in the exact selected revision." (the Cursor agent of N14-d, run 48e4a83d); why_new=Cycle 0045 N14d-16 (DX-1 c); seam=none
+test('a start on a node id its selected revision does not have is refused in the answer of codebook_start, naming the revision’s nodes and the two ways on', async (context) => {
+  // Arrange: revision 1 of the book "interface" has the one node "theme".
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unpublished-node',
+      configuration: {
+        ...configuration,
+        book: { ...configuration.book, nodeId: 'invalid-login-path' },
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.deepEqual(
+    z
+      .object({
+        error: z.object({ code: z.string(), message: z.string() }),
+      })
+      .parse(refused.structuredContent).error,
+    {
+      code: 'BOOK_UNAVAILABLE',
+      message:
+        'configuration.book.nodeId invalid-login-path does not exist in revision 1 of book interface, which has the node: theme. Use it, or publish your own document under its own book id and start on that revision.',
+    },
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
 })
 
 // Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none
