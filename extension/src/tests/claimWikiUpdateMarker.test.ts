@@ -1961,3 +1961,117 @@ test('links where a killed window’s claim, its prepared claim folder and its p
     },
   )
 })
+
+// Value: protects=the time and the memory of an Update press in a project whose repository carries links to an endless device where a claim, a prepared claim's record and a prepared marker would lie (row 110: one start and its end took 1.8 s and 700 MiB for a single link); fails_when=the owner record of each entry is read with an unbounded read that follows the link, before the entry's age is looked at; why_new=Cycle 0046 row 110; seam=the clock handed to the claim (the test's time bound is the observation: every read of the device takes about a second)
+test(
+  'links to an endless device where a claim, the record of a prepared claim and a prepared marker would lie are never read: a start returns at once while they are young, and 61 s later they are removed by their age',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no endless device at a path of the file system'
+        : false,
+  },
+  async () => {
+    // Arrange: a killed editor's marker, so each start asks for the claim, and a link to /dev/zero at each of the three names.
+    const wiki = await createWikiFolder()
+    await leaveKilledEditorsMarker(wiki.markerPath)
+    await mkdir(`${wiki.markerPath}.takeover`)
+    await symlink('/dev/zero', join(`${wiki.markerPath}.takeover`, 'left'))
+    await mkdir(`${wiki.markerPath}.takeover-left`)
+    await symlink('/dev/zero', join(`${wiki.markerPath}.takeover-left`, 'left'))
+    await symlink('/dev/zero', `${wiki.markerPath}.pending-left`)
+    const linkedAtMs = Date.now()
+    const startingWindow = {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode' as const,
+      startedAtMs: linkedAtMs,
+    }
+    try {
+      // Act: a link among the claims counts as a claim nobody can judge for 60 s, so the first start is refused.
+      const startWhileTheLinksAreYoung = await outcomeOf(
+        claimWikiUpdateMarker(wiki.outputDirectory, startingWindow, {
+          ...AS_THIS_WINDOW,
+          now: () => linkedAtMs,
+        }),
+      )
+      const later = await claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        startingWindow,
+        { ...AS_THIS_WINDOW, now: () => linkedAtMs + 61_000 },
+      )
+      assert.ok('release' in later)
+      await later.release()
+
+      // Assert
+      assert.deepEqual(
+        {
+          startWhileTheLinksAreYoung,
+          besideTheWikiAfterTheLaterRun: await readdir(wiki.directory),
+        },
+        {
+          startWhileTheLinksAreYoung: 'refused with EEXIST',
+          besideTheWikiAfterTheLaterRun: ['wiki'],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the rule that what a repository puts beside the marker is judged by itself and never by what it leads to; fails_when=the owner record is read through a link (a link to a file at a claim's or a prepared marker's name, a link to a folder at a prepared claim's name), so a record elsewhere that names a running window keeps the link in place for good and with it the claim on the marker; why_new=Cycle 0046 row 110: "a link is removed by its age without being read"; seam=the clock handed to the claim
+test(
+  'links that lead to the record of a running window, where a claim, a prepared claim folder and a prepared marker would lie, are judged by their age alone and removed 61 s later',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'a link to a file needs a right on Windows that a user may lack'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a record that names this window, which runs, in a folder of the project; and a link to it, or to its folder, at each of the three names.
+    const cloned = await createClonedProject(context)
+    const recordOfARunningWindow = join(cloned.project, 'docs', 'left')
+    await writeFile(
+      recordOfARunningWindow,
+      JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
+    )
+    await mkdir(`${cloned.markerPath}.takeover`)
+    await symlink(
+      recordOfARunningWindow,
+      join(`${cloned.markerPath}.takeover`, 'left'),
+    )
+    await symlink(
+      join(cloned.project, 'docs'),
+      `${cloned.markerPath}.takeover-left`,
+      'junction',
+    )
+    await symlink(recordOfARunningWindow, `${cloned.markerPath}.pending-left`)
+    const aMinuteAndASecondLater = Date.now() + 61_000
+    const claim = await claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: aMinuteAndASecondLater,
+      },
+      { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+    )
+    assert.ok('release' in claim)
+
+    // Act
+    await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      {
+        besideTheWiki: await readdir(join(cloned.project, '.codebook')),
+        docs: (await readdir(join(cloned.project, 'docs'))).toSorted(),
+      },
+      { besideTheWiki: ['wiki'], docs: ['guide.md', 'left'] },
+    )
+  },
+)

@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { constants as openConstants } from 'node:fs'
+import {
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
+import { promisify } from 'node:util'
 
 import { z } from 'zod'
 
@@ -104,3 +115,71 @@ test('a record with the process start and the digests is read with them, and a r
     boot: { id: 'boot-1' },
   })
 })
+
+// Value: protects=the start and the end of a Wiki update in a project whose repository carries a link to a pipe where an owner record beside the marker would lie (row 110: the read would hold the claim on the marker for good); fails_when=the record is read with a plain file read, which follows the link and waits for a writer of the pipe that never comes; why_new=Cycle 0046 row 110: owner records beside the marker were read without a bound and through links; seam=none (a real named pipe, whose waiting reader the test releases when it ends)
+test(
+  'an owner record whose path holds a link to a named pipe is not waited on: the read answers at once and names no owner',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no named pipe in a folder, and no mkfifo to create one'
+        : false,
+  },
+  async (context) => {
+    // Arrange
+    const directory = await mkdtemp(join(tmpdir(), 'codebook-recorded-owner-'))
+    const pipePath = join(directory, 'a-pipe')
+    await promisify(execFile)('mkfifo', [pipePath])
+    // A read that waits on the pipe would keep this process alive: a writer that opens and closes ends it, also when the body was stopped at its time bound.
+    context.after(async () => {
+      await open(
+        pipePath,
+        openConstants.O_WRONLY | openConstants.O_NONBLOCK,
+      ).then(
+        (writer) => writer.close(),
+        () => undefined,
+      )
+      await rm(directory, { recursive: true, force: true })
+    })
+    const recordPath = join(directory, 'wiki.update-run.json.pending-a-link')
+    await symlink(pipePath, recordPath)
+
+    // Act
+    const owner = await readRecordedOwner(recordPath)
+
+    // Assert
+    assert.equal(owner, undefined)
+  },
+)
+
+// Value: protects=the judgement of what lies beside a Wiki update's marker in a project folder: only a record that is a file of its own names an owner; fails_when=the read follows a link, so a file elsewhere that names a running process makes a link count as that process's claim; why_new=Cycle 0046 row 110; seam=none
+test(
+  'an owner record whose path holds a link is not followed: the record of a running process that the link leads to is not read as its owner',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'a link to a file needs a right on Windows that a user may lack'
+        : false,
+  },
+  async (context) => {
+    // Arrange
+    const directory = await storageDirectory(context)
+    const recordElsewhere = join(directory, 'a-record-elsewhere.json')
+    await writeFile(recordElsewhere, `{"pid":${process.pid}}`)
+    const recordPath = join(directory, 'wiki.update-run.json.pending-a-link')
+    await symlink(recordElsewhere, recordPath)
+
+    // Act
+    const owners = {
+      throughTheLink: await readRecordedOwner(recordPath),
+      ofTheFileItself: await readRecordedOwner(recordElsewhere),
+    }
+
+    // Assert
+    assert.deepEqual(owners, {
+      throughTheLink: undefined,
+      ofTheFileItself: { pid: process.pid },
+    })
+  },
+)

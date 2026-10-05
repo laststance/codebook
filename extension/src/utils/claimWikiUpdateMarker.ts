@@ -184,10 +184,11 @@ async function readMarkerText(markerPath: string): Promise<string | undefined> {
 /**
  * Says whether a claim on the marker, or a file prepared beside it, is nobody's by its age; called by {@link removeIfExpired} for each entry the sweeps find.
  * Why: a claim is held for the time of one read and one removal, and a prepared file exists for the time of one write, so an old one was left by a killed window. Age decides only where the owner cannot be judged by this process ({@link canJudgeOwnerHere}): an entry of another machine, of 0.2.29.0, of a window whose process start could not be read, or one whose record cannot be read. An entry whose owner can be judged here is left to that judgement ({@link removeStaleStorageClaims}), so a live window that was suspended while it held the claim keeps it.
+ * These paths lie in the learner's project folder, where a cloned repository can put anything: the entry is looked at without following a link, a link is judged by its age alone, and an owner's record is read only as a regular file of bounded size ({@link readRecordedOwner}), so a link to an endless device or to a pipe costs neither time nor memory.
  * @param path - What age is taken from and what would be removed: a claim's owner file, a claim folder that was prepared and never put into place, or a marker file that was prepared and never linked or moved into place.
  * @param ownerPath - The file that records the owner of that entry.
  * @param judgement - The identity of this process and the clock.
- * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}; `false` for a younger one, for one whose owner can be judged here, and for a path that cannot be inspected.
+ * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}, also a link whatever it leads to; `false` for a younger one, for one whose owner can be judged here, and for a path that cannot be inspected.
  * @example
  * await isExpiredMarkerClaim(claimPath, claimPath, judgement) // => true for a claim a killed window of another machine left two minutes ago
  */
@@ -196,13 +197,14 @@ async function isExpiredMarkerClaim(
   ownerPath: string,
   { identity, now }: MarkerClaimJudgement,
 ): Promise<boolean> {
-  const owner = await readRecordedOwner(ownerPath)
-  if (owner && canJudgeOwnerHere(owner, identity)) return false
   const entry = await lstat(path).catch(() => undefined)
-  return (
-    entry !== undefined &&
-    now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
-  )
+  if (!entry) return false
+  // A link is no claim and no prepared file: its age decides, and nothing is read through it.
+  const owner = entry.isSymbolicLink()
+    ? undefined
+    : await readRecordedOwner(ownerPath)
+  if (owner && canJudgeOwnerHere(owner, identity)) return false
+  return now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
 }
 
 /**
