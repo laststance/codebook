@@ -4366,7 +4366,7 @@ test('after the listed files of a study were removed by hand, a refresh lists th
     assert.deepEqual(answer, {
       status: 'refused',
       studyId: earlier.id,
-      text: "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh.",
+      text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
       files: [
         join(directory, `${earlier.id}.study.meta.v3.json`),
         join(directory, `${earlier.id}.study.v3.json`),
@@ -4469,6 +4469,160 @@ test('in a window without a Trash, the files listed for one study stay listed an
     assert.deepEqual(harness.clipboardTexts, [
       `${join(directory, `${first.id}.study.meta.v3.json`)}\n${join(directory, `${first.id}.study.v3.json`)}`,
     ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who pressed Copy paths is told that the paths are on the clipboard, by the host that wrote them; fails_when=the reader copies and answers nothing, so the pane has no sign that the copy worked (or confirms it without knowing), or the answer goes to another pane; why_new=Cycle 0046 row 27, DR-6 (the copy only wrote the clipboard); seam=the Study pane's webview and the editor's clipboard, recorded by the harness
+test('in a window without a Trash, Copy paths writes the listed files one path a line and then answers the asking pane with their number', async () => {
+  // Arrange: a WSL remote window with one saved study whose files a request has listed.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    await requestRemoval(harness, study.id)
+    const directory = harness.reader.inspect().libraryDirectory!
+    // Act: the Study pane's webview sends the copy request.
+    harness.receive({
+      type: 'copy-study-files',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: study.id,
+    })
+    await waitUntil(
+      () => harness.studyFilesCopyAnswers().length > 0,
+      'the answer to Copy paths',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(harness.clipboardTexts, [
+      `${join(directory, `${study.id}.study.meta.v3.json`)}\n${join(directory, `${study.id}.study.v3.json`)}`,
+    ])
+    assert.deepEqual(harness.studyFilesCopyAnswers(), [
+      {
+        webview: 'context',
+        answer: {
+          type: 'study-files-copied',
+          studyId: study.id,
+          status: 'copied',
+          count: 2,
+        },
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner is not told "Copied" when the clipboard took nothing; fails_when=the reader answers before the write settled or swallows its rejection, so the pane confirms a copy that did not happen; why_new=Cycle 0046 row 27, DR-6; seam=the editor's clipboard, which refuses every write
+test('in a window without a Trash, Copy paths answers the asking pane with a failure when the clipboard refuses the write', async () => {
+  // Arrange: a WSL remote window with one saved study whose files are listed, and a clipboard that refuses.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    await requestRemoval(harness, study.id)
+    harness.rejectClipboardWrites()
+    // Act
+    harness.receive({
+      type: 'copy-study-files',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: study.id,
+    })
+    await waitUntil(
+      () => harness.studyFilesCopyAnswers().length > 0,
+      'the answer to Copy paths',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(harness.clipboardTexts, [])
+    assert.deepEqual(harness.studyFilesCopyAnswers(), [
+      {
+        webview: 'context',
+        answer: {
+          type: 'study-files-copied',
+          studyId: study.id,
+          status: 'failed',
+        },
+      },
+    ])
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a copy request for a study whose files the reader never listed copies nothing and says so; fails_when=the reader writes an empty clipboard or text the pane named, or leaves the pane without an answer; why_new=Cycle 0046 row 27, DR-6; seam=the Study pane's webview and the editor's clipboard, recorded by the harness
+test('in a window without a Trash, Copy paths for a study whose files were never listed writes nothing and answers the asking pane with a failure', async () => {
+  // Arrange: a WSL remote window with one saved study; no request listed its files.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    await harness.reader.open()
+    // Act
+    harness.receive({
+      type: 'copy-study-files',
+      revision: harness.reader.inspect().view!.revision,
+      studyId: study.id,
+    })
+    await waitUntil(
+      () => harness.studyFilesCopyAnswers().length > 0,
+      'the answer to Copy paths',
+      2_000,
+    )
+    // Assert
+    assert.deepEqual(harness.clipboardTexts, [])
+    assert.deepEqual(harness.studyFilesCopyAnswers(), [
+      {
+        webview: 'context',
+        answer: {
+          type: 'study-files-copied',
+          studyId: study.id,
+          status: 'failed',
+        },
+      },
+    ])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=in a window without a Trash the sentence the reader refuses a files request with says what the learner can do there; fails_when=the refusal speaks of deleting, which that window cannot do, and "Remove by hand" shows that sentence; why_new=Cycle 0046 row 59 (ND-1: the reasons were worded for a window with a Trash only); seam=the editor's remote name
+test('in a window without a Trash, a request for the files of a Node test history or of the study of a run that has not stopped is refused with a sentence about removing by hand, not about deleting', async () => {
+  // Arrange: a WSL remote window with a saved Node test history and a live run whose study the reader has saved.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    const { record } = await startRun(harness)
+    const liveStudyId = `${harness.service.instanceId}_${record.id}`
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.reader
+          .inspect()
+          .view!.studies.some((entry) => entry.id === liveStudyId),
+      'the saved study of the live run',
+      2_000,
+    )
+    // Act
+    await requestRemoval(harness, nodeHistory.studyId)
+    const node = structuredClone(harness.reader.inspect().view!.studyRemoval)
+    await requestRemoval(harness, liveStudyId)
+    const live = structuredClone(harness.reader.inspect().view!.studyRemoval)
+    // Assert
+    assert.deepEqual(node, {
+      status: 'refused',
+      studyId: nodeHistory.studyId,
+      text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+    })
+    assert.deepEqual(live, {
+      status: 'refused',
+      studyId: liveStudyId,
+      text: "Stop the run before removing its study's files by hand.",
+    })
+    assert.equal(harness.reader.inspect().view!.removalWithoutTrash, true)
   } finally {
     await harness.close()
   }

@@ -41,6 +41,20 @@ export interface StudyRemovalView {
   files?: string[]
 }
 
+/**
+ * The host's answer to the one pane that sent a `copy-study-files` message, posted after the clipboard write settled: how many paths of the study's listed files were copied, or that none was (the clipboard refused, or the host keeps no list for that study).
+ * The pane writes its confirmation line from this answer, so it never confirms a copy that did not happen.
+ */
+export type StudyFilesCopied =
+  | {
+      type: 'study-files-copied'
+      studyId: string
+      status: 'copied'
+      /** The number of paths written to the clipboard, one a line. */
+      count: number
+    }
+  | { type: 'study-files-copied'; studyId: string; status: 'failed' }
+
 export interface StudyViewMessage {
   type: 'study'
   revision: number
@@ -186,11 +200,11 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section><h2>Source-linked flow</h2><div id="flow"></div><p id="correspondence" class="muted"></p></section>
 <details id="study-controls"><summary>Study controls</summary><div id="next-scenario"><div class="row"><button class="primary" data-action="connect">Connect your editor agent</button><button data-action="click">Perform configured action once</button></div><p class="muted" id="profile-description">Ask your editor agent to explain a code path in the open repository.</p></div></details>
 <section><h2>Workspace panes</h2><div class="row"><button data-action="focus-app">Focus application</button><button data-action="source">Focus source</button><button data-action="focus-context">Focus explanation</button><button data-action="outline">Show learning outline</button><button data-action="arrange">Restore Study arrangement</button></div></section></div>
-<p id="recording-save-state" class="status" role="status" aria-live="polite" hidden></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
+<p id="recording-save-state" class="status" role="status" aria-live="polite"></p><details id="evidence-details" hidden><summary id="evidence-summary">Evidence status</summary><p id="study-state" class="status" hidden></p></details>
 <section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved Node test entry selected in Saved studies. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. This test has no application video or synchronized application replay.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it does not create application video or claim synchronized application replay.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; application video is unavailable.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
-<section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden>This saved study cannot be opened. It can still be deleted.</p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden>This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study.</p><div id="delete-study-row" class="row" hidden><button id="repair-study" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><div id="study-files" hidden><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy path</button><button type="button" data-action="retry">Retry storage / refresh</button></div></div></section>
-<section id="recording-transport" aria-label="Recorded playback" hidden>${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
+<section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
+<section id="recording-transport" aria-label="Recorded playback" hidden>${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()})</script></body></html>`
 }
@@ -220,6 +234,8 @@ function studyClient(
   let removalRequest: { request: number; started: boolean } | undefined
   // In a window without a Trash: the entry whose files this pane last asked the host to list, and the Study message it asked under.
   let filesRequest: { studyId: string; revision: number } | undefined
+  // In a window without a Trash: the entry the "Remove by hand" disclosure is offered for; another entry, or none, closes it.
+  let filesDisclosureStudyId: string | undefined
   let scrubbing = false
   let nodeHistoryScrubbing = false
   // A Show Variables button that left while it held this pane's focus, and where that focus goes: paid when the Study message is rendered if this document has the focus, else at its next focus event, so a pane the learner left for Run and Debug takes no focus back.
@@ -345,6 +361,39 @@ function studyClient(
       `${transport.hidden ? 0 : transport.getBoundingClientRect().height}px`,
     ),
   ).observe(transport)
+  /**
+   * Brings a recovery disclosure of the transport into the transport's visible box at once; called when the learner opens Playback details or Recording error details.
+   * The summary's transport scrolls inside itself and is bounded while these details are open, so what opens below its box would look like a press that did nothing. The scroll is instant (reduced motion needs no branch) and moves no focus.
+   * @param disclosure - The disclosure that was opened.
+   * @param keptInView - A part above the disclosure that must not leave the box for it: when the reveal pushed its top out, it comes back and the end of the disclosure is reached by scrolling.
+   * @example revealInTransport(element('playback-options'), transport.querySelector('.playback-row'))
+   */
+  const revealInTransport = (
+    disclosure: HTMLElement,
+    keptInView?: Element | null,
+  ): void => {
+    disclosure.scrollIntoView({ block: 'nearest' })
+    if (
+      keptInView &&
+      keptInView.getBoundingClientRect().top <
+        transport.getBoundingClientRect().top
+    )
+      keptInView.scrollIntoView({ block: 'nearest' })
+  }
+  // Playback details open right under the controls, so Play and the playhead stay with them; the error details can be longer than the box and are shown from their summary.
+  const playbackOptions = element('playback-options'),
+    playbackDiagnostics = element('playback-diagnostics')
+  playbackOptions.addEventListener('toggle', () => {
+    if (playbackOptions.hasAttribute('open'))
+      revealInTransport(
+        playbackOptions,
+        transport.querySelector('.playback-row'),
+      )
+  })
+  playbackDiagnostics.addEventListener('toggle', () => {
+    if (playbackDiagnostics.hasAttribute('open'))
+      revealInTransport(playbackDiagnostics)
+  })
   const strip = document.querySelector<HTMLElement>('.live-strip')
   // Oversized sticky controls must not hide keyboard focus at narrow widths or enlarged text.
   const adaptStrip = (): void => {
@@ -480,7 +529,21 @@ function studyClient(
   })
   element('copy-study-files').addEventListener('click', () => {
     const studyId = chosenStudyId()
-    if (studyId) send({ type: 'copy-study-files', studyId })
+    if (!studyId) return
+    // Emptied at the press: the host's answer then changes the line also when it reads like the answer before, so a second copy is confirmed again.
+    showCopyOutcome('', false)
+    send({ type: 'copy-study-files', studyId })
+  })
+  element('study-files').addEventListener('toggle', () => {
+    if (!element('study-files').hasAttribute('open')) {
+      showCopyOutcome('', false)
+      return
+    }
+    const studyId = filesDisclosureStudyId
+    if (!current || !studyId) return
+    // The learner asked for the files by opening the disclosure: an earlier refusal for this entry does not stand in for the answer.
+    askForStudyFiles(current, studyId, Boolean(current.studyFiles?.[studyId]))
+    showStudyFilesAnswer(current, studyId)
   })
   element('node-history-previous').addEventListener('click', () => {
     if (current?.nodeHistory && (current.nodeHistoryPage ?? 0) > 0)
@@ -979,41 +1042,44 @@ function studyClient(
     const status = removal?.status
     return status === 'confirming' || status === 'moving'
   }
-  /** Says why the chosen entry cannot be deleted, first match wins; empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Node test histories cannot be deleted here yet.' */
+  /**
+   * Gives the sentences that say why a saved study cannot be removed, as this window words them: a window without a Trash deletes nothing, so its sentences speak of removing the study's files by hand. Read by {@link removalReason}, {@link chosenStudyRefusal} and {@link showStudyNote} on every render of the Saved studies section.
+   * @param message - The current Study message.
+   * @returns
+   * - The message says that the window has no Trash: the sentences that name the removal by hand
+   * - Otherwise: the sentences that name the delete button
+   * @example removalRefusals(message).runNotStopped // => 'Stop the run before deleting its study.'
+   */
+  const removalRefusals = (
+    message: StudyViewMessage,
+  ): typeof options.studyRemovalRefusalsWithoutTrash =>
+    message.removalWithoutTrash
+      ? options.studyRemovalRefusalsWithoutTrash
+      : options.studyRemovalRefusals
+  /** Says why the chosen entry cannot be removed, first match wins, in the words of this window ({@link removalRefusals}); empty when it can. @example chosenStudyRefusal(message, nodeEntry) // => 'Node test histories cannot be deleted here yet.' */
   const chosenStudyRefusal = (
     message: StudyViewMessage,
     chosen: SavedStudyEntry,
   ): string => {
+    const sentences = removalRefusals(message)
     const refusals: [applies: boolean, sentence: string][] = [
-      [
-        chosen.format === 'node-test-history',
-        options.studyRemovalRefusals.nodeHistory,
-      ],
+      [chosen.format === 'node-test-history', sentences.nodeHistory],
       // The host moves nothing of a study a newer Codebook saved: which files that format keeps is not known here.
-      [chosen.format === 'newer', options.studyRemovalRefusals.newerFormat],
-      [
-        message.unstoppedStudyId === chosen.id,
-        options.studyRemovalRefusals.runNotStopped,
-      ],
-      [
-        message.contentTab === 'recording',
-        options.studyRemovalRefusals.recordingOpen,
-      ],
+      [chosen.format === 'newer', sentences.newerFormat],
+      [message.unstoppedStudyId === chosen.id, sentences.runNotStopped],
+      [message.contentTab === 'recording', sentences.recordingOpen],
     ]
     return refusals.find(([applies]) => applies)?.[1] ?? ''
   }
-  /** Says why the delete button cannot be used, first match wins: a chosen entry that is still opening, no entry, then the entry's own reason. Empty when it can be used, and while a removal is in progress, which the status line names instead. In a window without a Trash the sentence for no entry says what choosing one gives there. @example removalReason(message, undefined, false) // => 'Choose a saved study to delete.' */
+  /** Says why the chosen entry cannot be removed now, first match wins: a chosen entry that is still opening, no entry, then the entry's own reason. Empty when it can be removed, and while a removal is in progress, which the status line names instead. A window without a Trash gets its own sentences, none of which speaks of deleting ({@link removalRefusals}). @example removalReason(message, undefined, false) // => 'Choose a saved study to delete.' */
   const removalReason = (
     message: StudyViewMessage,
     chosen: SavedStudyEntry | undefined,
     inProgress: boolean,
   ): string => {
     if (inProgress) return ''
-    if (openingChoice) return options.studyRemovalRefusals.studyOpening
-    if (!chosen)
-      return message.removalWithoutTrash
-        ? options.studyFilesNothingChosen
-        : options.studyRemovalRefusals.nothingChosen
+    if (openingChoice) return removalRefusals(message).studyOpening
+    if (!chosen) return removalRefusals(message).nothingChosen
     return chosenStudyRefusal(message, chosen)
   }
   /** Shows whether the delete button can be used and the reason beside it; with no saved study there is nothing to delete and nothing to explain. A window without a Trash gets no delete button, so its row stays only for the repair button. @example showRemovalControl(message, '', false) */
@@ -1042,12 +1108,22 @@ function studyClient(
   /** Says whether a removal ended without moving the whole study, which the status line shows as an error. @example removalFailed({ status: 'refused', studyId }) // => true */
   const removalFailed = (removal: StudyRemoval): boolean =>
     removal !== undefined && ['refused', 'failed'].includes(removal.status)
-  /** Shows the last removal's progress or outcome under the delete button. The answer of a window without a Trash comes with the study's files and is no failed request of the learner's, so it is not marked as an error. @example showRemovalStatus(visibleRemoval(message.studyRemoval)) */
-  const showRemovalStatus = (shown: StudyRemoval): void => {
-    text('delete-study-status', shown?.text ?? '')
+  /**
+   * Shows the last removal's progress or outcome under the delete button; called by {@link renderStudyRemoval}.
+   * A window without a Trash has no delete button and removes nothing: what the host answers there answers a request for a study's files, which the "Remove by hand" disclosure shows ({@link showStudyFilesAnswer}). The line stays empty there, so no sentence appears above the summary the learner pressed and nothing is announced when a study is only chosen.
+   * @param message - The current Study message.
+   * @param shown - The removal this pane shows, see {@link visibleRemoval}.
+   * @example showRemovalStatus(message, visibleRemoval(message.studyRemoval))
+   */
+  const showRemovalStatus = (
+    message: StudyViewMessage,
+    shown: StudyRemoval,
+  ): void => {
+    const outcome = message.removalWithoutTrash ? undefined : shown
+    text('delete-study-status', outcome?.text ?? '')
     element('delete-study-status').classList.toggle(
       'error',
-      removalFailed(shown) && !shown?.files,
+      removalFailed(outcome),
     )
   }
   /** Names the note of a chosen entry that cannot be opened: the repair note for a stale catalog checkpoint, the entry's own sentence for a study a newer Codebook saved, else the delete-only note; nothing for an entry that opens. @example studyNoteId(staleEntry) // => 'study-repairable' */
@@ -1058,26 +1134,39 @@ function studyClient(
     if (canBeRepaired(chosen)) return 'study-repairable'
     return chosen?.format === 'newer' ? 'study-newer' : 'study-unopenable'
   }
+  /** Names which wording of the notes this window gets: the one that ends with the removal by hand in a window without a Trash, else the one that ends with the deletion. Read by {@link showStudyNote}. @example studyNoteWording(message) // => 'withoutTrash' in a WSL remote window */
+  const studyNoteWording = (
+    message: StudyViewMessage,
+  ): keyof typeof options.studyNotes.unopenable =>
+    message.removalWithoutTrash ? 'withoutTrash' : 'withTrash'
   /**
    * Shows the one note of the chosen entry, describes the list and the delete button by it, and offers Repair saved study beside the repair note.
+   * The notes of an entry that cannot be opened and of one that can be repaired end with what the learner can still do, which a window without a Trash words differently: nothing can be deleted there, so they name the removal by hand.
    * When the repair button leaves while it holds the keyboard focus (the repair succeeded), the focus returns to the Saved studies list instead of falling to the document body.
    * Called by {@link renderStudyRemoval} before the delete control is shown.
+   * @param message - The current Study message; it says whether the window has a Trash.
    * @param chosen - The entry chosen in the list, if any.
-   * @example showStudyNote(staleEntry)
+   * @example showStudyNote(message, staleEntry)
    */
-  const showStudyNote = (chosen: SavedStudyEntry | undefined): void => {
-    const shownNote = studyNoteId(chosen)
+  const showStudyNote = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry | undefined,
+  ): void => {
+    const shownNote = studyNoteId(chosen),
+      wording = studyNoteWording(message)
     for (const noteId of [
       'study-unopenable',
       'study-newer',
       'study-repairable',
     ])
       element(noteId).hidden = noteId !== shownNote
+    text('study-unopenable', options.studyNotes.unopenable[wording])
+    text('study-repairable', options.studyNotes.repairable[wording])
     // The catalog's own sentence names both format numbers; the refusal stands in for an entry without one.
     text(
       'study-newer',
       shownNote === 'study-newer'
-        ? (chosen?.reason ?? options.studyRemovalRefusals.newerFormat)
+        ? (chosen?.reason ?? removalRefusals(message).newerFormat)
         : '',
     )
     if (shownNote)
@@ -1093,56 +1182,253 @@ function studyClient(
     if (heldFocus && repair.hidden)
       element('studies').focus({ preventScroll: true })
   }
-  /** Says whether the host answered a request for one entry's files already: it listed them, for this pane or for another one, or its removal state shows its own refusal for that entry. Asked by {@link askForStudyFiles} before it sends a request. @example hostAnsweredFilesOf(message, entry.id) // => true once message.studyFiles holds entry.id */
+  /**
+   * Gives the sentence the host refused a request for one entry's files with: its removal state names that entry and lists no file. Read by {@link hostAnsweredFilesOf} and {@link studyFilesView}.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @returns
+   * - The host's removal state names the entry and lists no file: its sentence
+   * - Otherwise: `undefined`
+   * @example filesRefusalOf(message, entry.id) // => "Stop the run before removing its study's files by hand."
+   */
+  const filesRefusalOf = (
+    message: StudyViewMessage,
+    studyId: string,
+  ): string | undefined => {
+    const removal = message.studyRemoval
+    return removal?.studyId === studyId && !removal.files
+      ? removal.text
+      : undefined
+  }
+  /** Says whether the host answered a request for one entry's files already: it listed them, for this pane or for another one, or its removal state shows its refusal for that entry. Asked by {@link showStudyFiles} before a render asks for the files of an open disclosure. @example hostAnsweredFilesOf(message, entry.id) // => true once message.studyFiles holds entry.id */
   const hostAnsweredFilesOf = (
     message: StudyViewMessage,
     studyId: string,
   ): boolean =>
     Boolean(message.studyFiles?.[studyId]) ||
-    message.studyRemoval?.studyId === studyId
+    filesRefusalOf(message, studyId) !== undefined
+  /** Says whether this pane asked the host for one entry's files under the current Study message; such a request is unanswered, and nothing is asked twice under one message. Read by {@link askForStudyFiles} and {@link shownFilesRefusal}. @example isAskedUnderThisMessage(message, entry.id) // => true right after the learner opened the disclosure */
+  const isAskedUnderThisMessage = (
+    message: StudyViewMessage,
+    studyId: string,
+  ): boolean =>
+    filesRequest?.studyId === studyId &&
+    filesRequest.revision === message.revision
   /**
-   * In a window without a Trash, asks the host for the files of the chosen entry, which the host names only in its answer to a delete request; called by {@link renderStudyRemoval}.
-   * Nothing is asked while the entry cannot be removed anyway, once the host listed its files or refused the request, or twice under one Study message.
+   * In a window without a Trash, asks the host for the files of the chosen entry, which the host names only in its answer to a delete request. Called when the learner opens the "Remove by hand" disclosure, and by {@link showStudyFiles} for a disclosure that is open on a later Study message; never for a study that was only chosen.
+   * Nothing is asked twice under one Study message: a second press on the summary, or a render that is no new Study message, sends nothing.
    * @param message - The current Study message.
-   * @param chosen - The entry chosen in the list, if any.
-   * @param reason - Why the entry cannot be removed now; empty when it can.
-   * @example askForStudyFiles(message, entry, '')
+   * @param studyId - The entry the disclosure is offered for.
+   * @param isAnswered - Whether the caller already has the host's answer; nothing is asked then.
+   * @example askForStudyFiles(message, entry.id, hostAnsweredFilesOf(message, entry.id))
    */
   const askForStudyFiles = (
     message: StudyViewMessage,
-    chosen: SavedStudyEntry | undefined,
-    reason: string,
+    studyId: string,
+    isAnswered: boolean,
   ): void => {
-    if (!message.removalWithoutTrash || !chosen || reason) return
-    if (hostAnsweredFilesOf(message, chosen.id)) return
-    // A render that is no new Study message (a choice in the list, the host's reply to an open request) asks nothing again.
-    if (
-      filesRequest?.studyId === chosen.id &&
-      filesRequest.revision === message.revision
-    )
-      return
-    filesRequest = { studyId: chosen.id, revision: message.revision }
+    if (isAnswered || isAskedUnderThisMessage(message, studyId)) return
+    filesRequest = { studyId, revision: message.revision }
     send({
       type: 'delete-study',
-      studyId: chosen.id,
+      studyId,
       removalRequest: ++removalRequestCount,
     })
   }
-  /** Lists the files the host named for the removal by hand of the chosen entry, with Copy path and Retry storage / refresh beside them; hidden in a window with a Trash and until the host listed that entry's files. The list is read by study, not from the removal state, which answers one pane's request at a time. @example showStudyFiles(message, entry.id) */
-  const showStudyFiles = (
+  /** What the "Remove by hand" disclosure holds: the sentence above the list, whether that sentence is the host's refusal, the paths to list, and whether Retry storage / refresh is offered (not while the host is still asked). */
+  type StudyFilesView = {
+    note: string
+    isRefusal: boolean
+    files: string[]
+    offersRetry: boolean
+  }
+  /**
+   * Gives the refusal the "Remove by hand" disclosure shows for one entry; read by {@link studyFilesView}.
+   * A refusal the host showed for the entry counts only while the disclosure is open and until this pane asks again: a closed disclosure is prepared with the listing sentence, so opening it never shows an answer the learner did not ask for, and a request sent under the current Study message is unanswered.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @param isOpen - Whether the learner has the disclosure open.
+   * @returns
+   * - The disclosure is open, this pane has not asked under this message and the host refused: the host's sentence
+   * - Otherwise: `undefined`
+   * @example shownFilesRefusal(message, entry.id, false) // => undefined
+   */
+  const shownFilesRefusal = (
     message: StudyViewMessage,
-    chosenId: string,
+    studyId: string,
+    isOpen: boolean,
+  ): string | undefined =>
+    isOpen && !isAskedUnderThisMessage(message, studyId)
+      ? filesRefusalOf(message, studyId)
+      : undefined
+  /**
+   * Says what the "Remove by hand" disclosure holds for one entry, from what the host answered so far; read by {@link showStudyFilesAnswer}.
+   * The files are read by study, not from the removal state, which answers one pane's request at a time.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @param isOpen - Whether the learner has the disclosure open.
+   * @returns
+   * - The host listed files: the sentence that says to remove them, the paths, Retry
+   * - The host listed no file: the sentence that none is left, no path, Retry
+   * - The host's refusal is shown ({@link shownFilesRefusal}): its sentence as a refusal, no path, Retry
+   * - Otherwise: the listing sentence, no path, no Retry
+   * @example studyFilesView(message, entry.id, true) // => { note: "Listing this study's files…", isRefusal: false, files: [], offersRetry: false }
+   */
+  const studyFilesView = (
+    message: StudyViewMessage,
+    studyId: string,
+    isOpen: boolean,
+  ): StudyFilesView => {
+    const files = message.studyFiles?.[studyId]
+    if (files)
+      return {
+        note: files.length
+          ? options.studyFiles.listed
+          : options.studyFiles.noneLeft,
+        isRefusal: false,
+        files,
+        offersRetry: true,
+      }
+    const refusal = shownFilesRefusal(message, studyId, isOpen)
+    return {
+      note: refusal ?? options.studyFiles.listing,
+      isRefusal: refusal !== undefined,
+      files: [],
+      offersRetry: refusal !== undefined,
+    }
+  }
+  /**
+   * Fills the "Remove by hand" disclosure for one entry: the sentence of its state, the listed paths, Copy paths beside paths only and Retry storage / refresh once the host answered. Called by {@link showStudyFiles} on every render while the disclosure is offered, and when the learner opens it.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @example showStudyFilesAnswer(message, entry.id)
+   */
+  const showStudyFilesAnswer = (
+    message: StudyViewMessage,
+    studyId: string,
   ): void => {
-    const files =
-      (message.removalWithoutTrash && message.studyFiles?.[chosenId]) || []
-    element('study-files').hidden = !files.length
-    replace('study-files-list', files, () =>
-      files.map((path) => {
+    const view = studyFilesView(
+      message,
+      studyId,
+      element('study-files').hasAttribute('open'),
+    )
+    text('study-files-note', view.note)
+    element('study-files-note').classList.toggle('error', view.isRefusal)
+    replace('study-files-list', view.files, () =>
+      view.files.map((path) => {
         const item = document.createElement('li')
         item.textContent = path
         return item
       }),
     )
+    element('study-files-list').hidden = !view.files.length
+    element('copy-study-files').hidden = !view.files.length
+    const actions = element('copy-study-files').parentElement
+    if (actions) actions.hidden = !view.offersRetry
+  }
+  /**
+   * Writes the line under Copy paths and marks it as an error or not; called with an empty text at a press on Copy paths, when the disclosure closes and when another entry is chosen, and by {@link showStudyFilesCopied} with the host's answer.
+   * The line is a status region that stays rendered while empty, so every text is a change of a region that exists.
+   * @param sentence - The confirmation or the failure; empty to clear the line.
+   * @param isFailure - Whether the copy failed.
+   * @example showCopyOutcome('Copied 4 paths.', false)
+   */
+  const showCopyOutcome = (sentence: string, isFailure: boolean): void => {
+    text('copy-study-files-status', sentence)
+    element('copy-study-files-status').classList.toggle('error', isFailure)
+  }
+  /** Words the confirmation of a copy with the number of paths the host wrote to the clipboard; called by {@link showStudyFilesCopied}. @example copiedSentence(1) // => 'Copied 1 path.' @example copiedSentence(4) // => 'Copied 4 paths.' */
+  const copiedSentence = (count: number): string =>
+    `Copied ${count} path${count === 1 ? '' : 's'}.`
+  /**
+   * Shows the host's answer to this pane's Copy paths: how many paths the clipboard took, or that it took none. Called for the `study-files-copied` message, which the host posts to the asking pane only after the clipboard write settled; the keyboard focus stays where it is.
+   * An answer for another entry than the one the open disclosure lists (the learner chose another meanwhile) changes nothing.
+   * @param answer - The host's answer.
+   * @example showStudyFilesCopied({ type: 'study-files-copied', studyId, status: 'copied', count: 4 }) // the line reads "Copied 4 paths."
+   */
+  const showStudyFilesCopied = (answer: StudyFilesCopied): void => {
+    if (
+      answer.studyId !== filesDisclosureStudyId ||
+      !element('study-files').hasAttribute('open')
+    )
+      return
+    if (answer.status === 'failed')
+      showCopyOutcome(options.studyFiles.copyFailed, true)
+    else showCopyOutcome(copiedSentence(answer.count), false)
+  }
+  /** Gives the element that holds the keyboard focus when it stands inside the "Remove by hand" disclosure, its summary included; read by {@link showStudyFiles} before it closes or hides the disclosure. @example focusedInStudyFiles() // => the Copy paths button */
+  const focusedInStudyFiles = (): Element | undefined => {
+    const focused = document.activeElement
+    return focused && element('study-files').contains(focused)
+      ? focused
+      : undefined
+  }
+  /** Gives the place in Saved studies the keyboard focus goes to when its control left with the "Remove by hand" disclosure: the disclosure's summary while it is offered, else the Saved studies list. Read by {@link keepFocusInSavedStudies}. @example savedStudiesFocusTarget().focus() */
+  const savedStudiesFocusTarget = (): HTMLElement => {
+    const disclosure = element('study-files')
+    return (
+      (disclosure.hidden ? undefined : disclosure.querySelector('summary')) ??
+      element('studies')
+    )
+  }
+  /**
+   * Keeps the keyboard focus in Saved studies when the control that held it is no longer rendered because the "Remove by hand" disclosure closed (it renders its summary only) or left. Called by {@link showStudyFiles} after it closed or hid the disclosure, so the focus does not fall to the document body after Retry storage / refresh took the study from the list.
+   * @param focusedBefore - The control inside the disclosure that held the focus before the disclosure changed, if any.
+   * @example keepFocusInSavedStudies(focusedInStudyFiles())
+   */
+  const keepFocusInSavedStudies = (
+    focusedBefore: Element | undefined,
+  ): void => {
+    if (!focusedBefore || focusedBefore.checkVisibility()) return
+    savedStudiesFocusTarget().focus({ preventScroll: true })
+  }
+  /** Names the entry the "Remove by hand" disclosure is offered for: the chosen entry of a window without a Trash that no reason keeps from being removed. Read by {@link showStudyFiles}. @example filesOfferedFor(message, entry, '') // => entry.id in a WSL remote window */
+  const filesOfferedFor = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry | undefined,
+    reason: string,
+  ): string | undefined =>
+    message.removalWithoutTrash && chosen && !reason ? chosen.id : undefined
+  /**
+   * Hands the "Remove by hand" disclosure over to another entry, or to none: it closes, its copy confirmation is cleared, and the keyboard focus of a control that left with it stays in Saved studies. Called by {@link showStudyFiles} on every render; an unchanged entry changes nothing.
+   * @param offeredFor - The entry the disclosure is offered for now, if any.
+   * @example offerStudyFilesFor(undefined) // the disclosure is closed and hidden
+   */
+  const offerStudyFilesFor = (offeredFor: string | undefined): void => {
+    const disclosure = element('study-files'),
+      focusedBefore = focusedInStudyFiles()
+    if (offeredFor !== filesDisclosureStudyId) {
+      disclosure.removeAttribute('open')
+      showCopyOutcome('', false)
+    }
+    filesDisclosureStudyId = offeredFor
+    disclosure.hidden = !offeredFor
+    keepFocusInSavedStudies(focusedBefore)
+  }
+  /**
+   * Offers the "Remove by hand" disclosure in a window without a Trash for a chosen entry that no reason keeps from being removed, and fills it for that entry; hidden in a window with a Trash, with no entry chosen and beside a reason. Called by {@link renderStudyRemoval} on every render of the Saved studies section.
+   * The disclosure is offered closed and closes again when another entry is chosen: the host is asked for an entry's files only after the learner opened it, never because a study was chosen.
+   * @param message - The current Study message.
+   * @param chosen - The entry chosen in the list, if any.
+   * @param reason - Why the entry cannot be removed now; empty when it can.
+   * @example showStudyFiles(message, entry, '')
+   */
+  const showStudyFiles = (
+    message: StudyViewMessage,
+    chosen: SavedStudyEntry | undefined,
+    reason: string,
+  ): void => {
+    const offeredFor = filesOfferedFor(message, chosen, reason)
+    offerStudyFilesFor(offeredFor)
+    if (!offeredFor) return
+    // An open disclosure follows the host on every Study message: it asks again while the host has not answered for this entry. A closed one asks for nothing.
+    if (element('study-files').hasAttribute('open'))
+      askForStudyFiles(
+        message,
+        offeredFor,
+        hostAnsweredFilesOf(message, offeredFor),
+      )
+    showStudyFilesAnswer(message, offeredFor)
   }
   /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
   const focusRestsOnDeleteButton = (): boolean =>
@@ -1178,7 +1464,7 @@ function studyClient(
     focusAfterRemoval(isOwn && removal?.status === 'moved')
   }
   /**
-   * Renders the Saved studies section's delete control: the note for an entry that cannot be opened with its repair button, whether the delete button can be used and why not, the last removal's outcome, the files a window without a Trash lists for removal by hand, and the focus after this pane's own request was answered.
+   * Renders the Saved studies section's delete control: the note for an entry that cannot be opened with its repair button, whether the delete button can be used and why not, the last removal's outcome, the "Remove by hand" disclosure a window without a Trash offers in place of the delete button, and the focus after this pane's own request was answered.
    * Called by {@link showChosenEntry} on every Study message and on the host's reply to an open request, by {@link askHostToOpen} when the learner chooses an entry the host opens, and by {@link chooseUnopenable} when the learner chooses an entry that cannot be opened.
    * @param message - The current Study message.
    * @example renderStudyRemoval(message)
@@ -1189,11 +1475,10 @@ function studyClient(
       inProgress = removalInProgress(message.studyRemoval),
       reason = removalReason(message, chosen, inProgress),
       shownRemoval = visibleRemoval(message.studyRemoval)
-    showStudyNote(chosen)
+    showStudyNote(message, chosen)
     showRemovalControl(message, reason, inProgress)
-    showRemovalStatus(shownRemoval)
-    showStudyFiles(message, chosenId)
-    askForStudyFiles(message, chosen, reason)
+    showRemovalStatus(message, shownRemoval)
+    showStudyFiles(message, chosen, reason)
     answerRemovalRequest(message.studyRemoval, inProgress)
   }
   /**
@@ -1249,6 +1534,29 @@ function studyClient(
     usableTransportControl(owed)?.focus({ preventScroll: true })
   }
   window.addEventListener('focus', payTransportFocus)
+  /** Says whether the transport's status describes a shown moment, which is when it carries the covered label: not while the replay failed, nor while a requested moment is pending. Read by {@link coveredAnnouncement}. @example showsMomentStatus(recording) // => false for a failed replay */
+  const showsMomentStatus = (
+    recording: NonNullable<StudyViewMessage['recording']>,
+  ): boolean =>
+    recording.readiness !== 'failed' &&
+    !(recording.cleared && recording.readiness === 'loading')
+  /**
+   * Gives what the transport's second status region says for a replay: the remedy for a recorded application another tab covers, exactly while the transport's status carries the covered label for a moment that is shown (the observation is not loading, the moment is neither failed nor pending).
+   * The region is written with {@link text} on every Study message that carries a recording, so a screen reader hears the remedy once, when the cover begins, after the status that names the label; the summary's visible line stays in `#loading`, which is no live region.
+   * @param recording - The replay of the current Study message.
+   * @param isLoading - Whether the selected observation is loading.
+   * @returns
+   * - A covered recording whose moment is shown: the remedy sentence
+   * - A recording that is not covered, an observation that is loading, a failed or a pending moment: an empty text
+   * @example coveredAnnouncement(recording, false) // => 'Bring the Recorded application tab to the front to show this moment again.'
+   */
+  const coveredAnnouncement = (
+    recording: NonNullable<StudyViewMessage['recording']>,
+    isLoading: boolean,
+  ): string =>
+    recording.applicationCovered && !isLoading && showsMomentStatus(recording)
+      ? options.applicationCovered.announcement
+      : ''
   /**
    * Makes each title that its two-line clamp cuts a tab stop, so the keyboard can open it (a focused title is shown whole), and takes the tab stop from a title that fits; called after every Study message and when the pane is resized.
    * A focused title is not measured: it is shown whole and would read as fitting.
@@ -1267,9 +1575,14 @@ function studyClient(
       | StudyViewMessage
       | PresentationPoseCapture
       | PresentationPoseRestore
-      | OpenRequestSettled = event.data
+      | OpenRequestSettled
+      | StudyFilesCopied = event.data
     if (message?.type === 'open-request-settled') {
       settleOpenRequest(message)
+      return
+    }
+    if (message?.type === 'study-files-copied') {
+      showStudyFilesCopied(message)
       return
     }
     if (message?.type === 'capture-presentation-pose') {
@@ -1402,6 +1715,10 @@ function studyClient(
           : pending
             ? 'Loading matching image, source and values…'
             : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}${recording.applicationCovered ? ` · ${options.applicationCovered.label}` : ''}`,
+      )
+      text(
+        'application-covered-remedy',
+        coveredAnnouncement(recording, message.loading),
       )
       text(
         'playback-position',
@@ -1622,8 +1939,8 @@ function studyClient(
             : savedRecording.status === 'finalized'
               ? 'Recording frames saved; matching source and explanation context is pending.'
               : 'Recording unavailable for this study.'
+    // Without a study the line is empty and takes no room; it stays rendered, so the first label is a change of a status region that exists.
     text('recording-save-state', message.study ? recordingLabel : '')
-    element('recording-save-state').hidden = !message.study
     element('evidence-details').hidden = !message.study
     text('evidence-summary', `Evidence status · ${outcomeLabel}`)
     // Why the last run did not start comes first; Retry storage / refresh cannot fix it, so it does not count for that button.

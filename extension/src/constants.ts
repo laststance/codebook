@@ -162,9 +162,26 @@ export const STUDY_REMOVAL_REFUSALS = {
   newerFormat:
     'This study was saved by a newer Codebook and is kept as it is. Update the extension, then delete it there.',
 } as const
-/** What Saved studies answers a delete request with in a window without a Trash; the reader lists the study's files with it and deletes nothing itself. */
+/** The same reasons as a window without a Trash words them: nothing is deleted there, so none speaks of deleting; each names the removal of the study's files by hand, which the "Remove by hand" disclosure of Saved studies lists. The Study pane shows them and the host repeats them when it refuses a request for a study's files. */
+export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
+  keyof typeof STUDY_REMOVAL_REFUSALS,
+  string
+> = {
+  nothingChosen:
+    'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
+  nodeHistory:
+    'Codebook cannot list the files of a Node test history for removal by hand yet.',
+  runNotStopped: "Stop the run before removing its study's files by hand.",
+  recordingOpen:
+    "Choose Overview or Live to leave Recording before removing this study's files by hand.",
+  studyOpening: STUDY_REMOVAL_REFUSALS.studyOpening,
+  unavailable: STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
+  newerFormat:
+    'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.',
+}
+/** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
-  "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh."
+  'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.'
 // Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
 export const AGENT_STORAGE_DIRECTORY = 'agent'
 export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'

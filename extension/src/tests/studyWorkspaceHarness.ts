@@ -28,7 +28,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from '../runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import type * as StudyWorkspaceModule from '../studyWorkspace'
-import type { StudyViewMessage } from '../ui/studyHtml'
+import type { StudyFilesCopied, StudyViewMessage } from '../ui/studyHtml'
 import { bookObservationHash } from '../utils/bookObservationHash'
 import type { OpenRequestSettled } from '../utils/readOpenRequest'
 
@@ -135,6 +135,8 @@ export async function workspaceHarness(
   let heldTrashMove: { wait: Promise<void>; entered(): void } | undefined
   /** Every text the reader wrote to the editor's clipboard. */
   const clipboardTexts: string[] = []
+  /** Whether the editor's clipboard refuses every write; see `rejectClipboardWrites`. */
+  let rejectsClipboardWrites = false
   const harness = await createHarness({
     create: async (directory, profile) => {
       const runtime = new ControlledRuntime(directory, profile)
@@ -643,6 +645,9 @@ export async function workspaceHarness(
     webview: string
     openRequest: number
   }[] = []
+  // The reader's answers to a pane's Copy paths, with the webview that got each (named as in `openRequestReplies`).
+  const studyFilesCopyAnswers: { webview: string; answer: StudyFilesCopied }[] =
+    []
   let heldPresentationMessage:
     { mode?: 'living-book'; wait: Promise<void>; entered(): void } | undefined
   const receivers = new Map<string, (message: unknown) => void>()
@@ -1129,6 +1134,7 @@ export async function workspaceHarness(
             | PresentationPoseCapture
             | PresentationPoseRestore
             | OpenRequestSettled
+            | StudyFilesCopied
             | {
                 type: 'codebook-focus'
                 phase: string
@@ -1140,6 +1146,13 @@ export async function workspaceHarness(
             openRequestReplies.push({
               webview: kind === 'codebook.studyContext' ? 'context' : kind,
               openRequest: message.openRequest,
+            })
+            return true
+          }
+          if (message.type === 'study-files-copied') {
+            studyFilesCopyAnswers.push({
+              webview: kind === 'codebook.studyContext' ? 'context' : kind,
+              answer: message,
             })
             return true
           }
@@ -1850,12 +1863,18 @@ export async function workspaceHarness(
           },
         }
       },
-      async postMessage(message: StudyViewMessage | OpenRequestSettled) {
+      async postMessage(
+        message: StudyViewMessage | OpenRequestSettled | StudyFilesCopied,
+      ) {
         if (message.type === 'open-request-settled') {
           openRequestReplies.push({
             webview: 'summary',
             openRequest: message.openRequest,
           })
+          return true
+        }
+        if (message.type === 'study-files-copied') {
+          studyFilesCopyAnswers.push({ webview: 'summary', answer: message })
           return true
         }
         postedMessages.push(message)
@@ -1905,7 +1924,9 @@ export async function workspaceHarness(
         playbackPanelListeners.add(callback)
         return disposable()
       },
-      async postMessage(message: StudyViewMessage | OpenRequestSettled) {
+      async postMessage(
+        message: StudyViewMessage | OpenRequestSettled | StudyFilesCopied,
+      ) {
         if (message.type === 'open-request-settled') {
           openRequestReplies.push({
             webview: 'moments',
@@ -1915,6 +1936,10 @@ export async function workspaceHarness(
             message.openRequest,
             structuredClone(playbackPanelMessages.at(-1)),
           )
+          return true
+        }
+        if (message.type === 'study-files-copied') {
+          studyFilesCopyAnswers.push({ webview: 'moments', answer: message })
           return true
         }
         playbackPanelMessages.push(message)
@@ -1960,6 +1985,8 @@ export async function workspaceHarness(
         remoteName,
         clipboard: {
           writeText: async (text: string): Promise<void> => {
+            if (rejectsClipboardWrites)
+              throw new Error('The clipboard is unavailable.')
             clipboardTexts.push(text)
           },
         },
@@ -2898,6 +2925,17 @@ export async function workspaceHarness(
     trashMoves,
     /** Every text the reader wrote to the editor's clipboard, in order. @example harness.clipboardTexts.at(-1) */
     clipboardTexts,
+    /** Makes the editor's clipboard refuse every write from now on, as a clipboard another program holds does. @example harness.rejectClipboardWrites() */
+    rejectClipboardWrites(): void {
+      rejectsClipboardWrites = true
+    },
+    /** Lists the reader's answers to Copy paths in the order the webviews received them, so a test can assert which pane was answered and with what. @example harness.studyFilesCopyAnswers() // => [{ webview: 'context', answer: { type: 'study-files-copied', studyId, status: 'copied', count: 2 } }] */
+    studyFilesCopyAnswers: () =>
+      // Copied field by field: the reader's module builds the answer in its own realm, which a strict comparison tells apart.
+      studyFilesCopyAnswers.map((entry) => ({
+        webview: entry.webview,
+        answer: { ...entry.answer },
+      })),
     /** Makes the editor's Trash refuse the moves a test names. @example harness.rejectTrashMoves((path) => path.endsWith('.study.v3.json')) */
     rejectTrashMoves(rejects: (path: string) => boolean): void {
       rejectsTrashMove = rejects
