@@ -92,6 +92,17 @@ async function check(page, options, collected) {
         ),
       revision,
     )
+  /** Builds the presentation an open Study workspace reports, so the cases that publish one state its control revision once, here. @example openPresentation({ layoutConfirmed: false }) // an open workspace whose layout is not confirmed */
+  const openPresentation = (overrides) => ({
+    presentationId: '11111111-1111-4111-8111-111111111111',
+    presentationControlRevision: 1,
+    mode: 'study-workspace',
+    state: 'open',
+    layoutConfirmed: true,
+    preference: { status: 'default' },
+    panes: {},
+    ...overrides,
+  })
   const { errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
@@ -954,15 +965,7 @@ async function check(page, options, collected) {
       // The summary lives in a sidebar; retired central-pane commands must not be offered even after a saved preference fails.
       await publish({
         ...replay,
-        presentation: {
-          presentationId: '11111111-1111-4111-8111-111111111111',
-          presentationControlRevision: 1,
-          mode: 'study-workspace',
-          state: 'open',
-          layoutConfirmed: true,
-          preference: { status: 'failed' },
-          panes: {},
-        },
+        presentation: openPresentation({ preference: { status: 'failed' } }),
       })
       await page.locator('#reader-options > summary').click()
       await page.locator('#presentation-options > summary').click()
@@ -2491,15 +2494,8 @@ async function check(page, options, collected) {
       })
 
       // Arrange: Live, then Overview, then Recording: the Recording tab closes "Study view and pane controls", and the presentation has nothing to report (row 74).
-      const presentationOf = (layoutConfirmed) => ({
-        presentationId: '11111111-1111-4111-8111-111111111111',
-        presentationControlRevision: 1,
-        mode: 'study-workspace',
-        state: 'open',
-        layoutConfirmed,
-        preference: { status: 'default' },
-        panes: {},
-      })
+      const presentationOf = (layoutConfirmed) =>
+        openPresentation({ layoutConfirmed })
       await publish({ ...options.message, contentTab: 'live' })
       await publish({ ...options.message, contentTab: 'overview' })
       await publish({ ...withValues, presentation: presentationOf(true) })
@@ -3037,15 +3033,7 @@ async function check(page, options, collected) {
       // Act: the host reports a layout that is not confirmed.
       await publish({
         ...panelReplay,
-        presentation: {
-          presentationId: '11111111-1111-4111-8111-111111111111',
-          presentationControlRevision: 1,
-          mode: 'study-workspace',
-          state: 'open',
-          layoutConfirmed: false,
-          preference: { status: 'default' },
-          panes: {},
-        },
+        presentation: openPresentation({ layoutConfirmed: false }),
       })
       const panelStatusWithNotice = {
         region: await statusRegion('presentation-status'),
@@ -4782,7 +4770,7 @@ async function check(page, options, collected) {
 /**
  * Fills the Wiki reader's shell the way the publisher does for one page, so the check can lay out the right rail without a published Wiki.
  * @param shell - The text of `skills/codebook/reader-shell.html`.
- * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control the publisher prints.
+ * @returns The page: every field of the shell replaced, with an outline entry that cannot break and the open control as the publisher prints it: the link with its label alone and, beside it, the file and line it opens.
  * @throws When the shell names a field this page has no text for, so a new field cannot reach the browser as `{{FIELD}}`.
  * @example
  * wikiShellPage('<title>{{TITLE}}</title>') // => '<title>Overview</title>'
@@ -4808,7 +4796,7 @@ function wikiShellPage(shell) {
     OUTLINE:
       '<li><a href="#rendering">Rendering</a></li><li><a href="#preparation">createConfiguredBrowserRunPreparationForReplay</a></li>',
     OPEN_SOURCE:
-      '<p class="open-in-editor"><a href="#source">Open in VS Code</a></p>',
+      '<p class="open-in-editor"><a href="#source" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a.ts<wbr>:12</span></p>',
     SETTINGS: '#settings',
   }
   return shell.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
