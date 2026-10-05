@@ -389,6 +389,24 @@ test('an agent that ends its turn without publishing and without an error is a f
   })
 })
 
+// Value: protects=the learner whose VS Code chat finished its reply without publishing; fails_when=the sentence tells them to run the update request in the chat "to see its own message", which sends a second request, although the reply is already in the Chat view; why_new=Cycle 0046 row 149 (a completed reply now ends a VS Code run this way); seam=none
+test('a VS Code chat that finishes its reply without publishing is a failure that kept the site and says where the reply is', () => {
+  // Arrange
+  const facts: WikiUpdateEndFacts = { ...NOTHING_HAPPENED, host: 'vscode' }
+
+  // Act
+  const end = classifyWikiUpdateEnd(facts)
+
+  // Assert
+  assert.deepEqual(end, {
+    state: 'failed',
+    site: 'kept',
+    isCodebookSentence: true,
+    reason:
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+  })
+})
+
 test('a site missing at the run’s end is not called a newly published Wiki', () => {
   // Arrange
   const facts: WikiUpdateEndFacts = {

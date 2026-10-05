@@ -307,7 +307,7 @@ function blockedEnd(
  * @param site - Whether the published site was replaced meanwhile.
  * @returns
  * - A changed site that is not verified current: `failed` with the reason of {@link describeUnverifiedPublish}
- * - Nothing published: `failed` with `site: 'kept'` and the chat command that shows the agent's own message
+ * - Nothing published: `failed` with `site: 'kept'`; for Cursor with the chat command that shows the agent's own message, for VS Code with where the chat's reply is
  * @example
  * unexplainedEnd({ ...facts, host: 'cursor' }, 'kept')
  * // => { state: 'failed', reason: 'Cursor Agent finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.', isCodebookSentence: true, site: 'kept' }
@@ -324,10 +324,13 @@ function unexplainedEnd(
       isCodebookSentence: true,
       site,
     }
-  // An agent can end its turn without publishing and without an error.
+  // An agent can end its turn without publishing and without an error. VS Code's chat shows its reply in the Chat view; the Cursor CLI's reply is shown nowhere.
   return {
     state: 'failed',
-    reason: `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in ${facts.host === 'cursor' ? 'Cursor chat' : 'the editor chat'} to see its own message.`,
+    reason:
+      facts.host === 'cursor'
+        ? `${agent} finished without publishing a new Wiki. Run "/codebook Update LLM Wiki" in Cursor chat to see its own message.`
+        : 'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
     isCodebookSentence: true,
     site,
   }
