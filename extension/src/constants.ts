@@ -567,6 +567,8 @@ export const WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS = 300_000
 export const WIKI_UPDATE_MARKER_WRITE_GRACE_MS = 2_000
 /** The mode a Wiki update's marker file is created with: that of any file a project holds, which the process's file mode mask narrows, so a window of another user on a shared project folder can read whose update runs. */
 export const WIKI_UPDATE_MARKER_FILE_MODE = 0o666
+/** The mode the claim folder beside a Wiki update's marker is created with: that of any folder a project holds, which the process's file mode mask narrows. With {@link WIKI_UPDATE_MARKER_FILE_MODE} for the claim file inside it, a window of another user on a shared project folder can judge the claim a killed window left, and remove it where the folder's modes let it write. */
+export const WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE = 0o777
 /** How often the end of a Wiki update asks for the exclusive claim on its marker file before it leaves the marker as it is; another window holds that claim for the time of one read and one removal. */
 export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
 /** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */

@@ -4,6 +4,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -20,6 +21,7 @@ import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
 import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
 import { createManualClock } from './utils/createManualClock'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import {
   openWikiUpdateWindow,
   type CancellableProgress,
@@ -1675,6 +1677,49 @@ test('a marker file another window is writing refuses an Update before this wind
     )
     assert.deepEqual(wiki.offeredActions.at(-1)?.actions, ['Open LLM Wiki'])
     assert.equal(wiki.chatRequests.length, chatRequestsBefore)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner who presses Update at the moment another window removes a stale marker or the marker of its own run, or within a minute after a window of another computer was killed while it did so; fails_when=the start ends with the file system's error of the marker's creation ("EEXIST: file already exists, link …pending-<id> -> …wiki.update-run.json"), which names a file the learner never saw and no next step (row 115); why_new=Cycle 0046 row 115: an ordinary race between two windows had no sentence; seam=none (the claim another window holds is a claim file of another machine, written just now)
+test('an Update that meets a marker nobody owns while another window holds the claim on it is refused with the sentence of a starting or ending update, and the marker and the claim stay', async () => {
+  // Arrange: a killed editor's marker, which a start removes under the claim, and the claim held by a window of another machine, which this machine cannot judge and leaves in place for 60 s.
+  const wiki = await openWikiWindow()
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  const markerOfAKilledEditor = JSON.stringify({
+    pid: ID_OF_NO_PROCESS,
+    windowId: 'a-window-that-was-killed',
+    host: 'vscode',
+    startedAtMs: Date.now(),
+  })
+  await writeFile(markerPath, markerOfAKilledEditor)
+  await mkdir(`${markerPath}.takeover`)
+  await writeFile(
+    join(`${markerPath}.takeover`, 'held-by-a-window-of-another-machine'),
+    JSON.stringify({
+      pid: process.pid,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: '5f0c1a8d2e3b4a69',
+      processStart: 'linux:777',
+    }),
+  )
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const refused = wiki.status()
+    assert.equal(
+      refused.state === 'failed' ? refused.reason : refused.state,
+      'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.',
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, ['Open LLM Wiki'])
+    assert.equal(await readFile(markerPath, 'utf8'), markerOfAKilledEditor)
+    assert.deepEqual(await readdir(`${markerPath}.takeover`), [
+      'held-by-a-window-of-another-machine',
+    ])
   } finally {
     await wiki.close()
   }

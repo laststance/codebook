@@ -1000,13 +1000,15 @@ export function activate(
           )
         })
     }
-    /** The sentence for another window's running update, or for the marker another window is writing at this moment because its update begins; nothing overrides it. */
+    /** The sentence for another window's running update, for the marker another window is writing at this moment because its update begins, or for the marker another window is removing or replacing at this moment; nothing overrides it. */
     const describeOtherWindow = (
       holder: Extract<WikiUpdateMarkerClaim, { heldBy: unknown }>['heldBy'],
     ): string =>
-      'beingWrittenSinceMs' in holder
-        ? 'Another editor window is starting an update of this Wiki. Wait a moment and try again.'
-        : `Another editor window is updating this Wiki (${holder.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(holder.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
+      'isMarkerInChange' in holder
+        ? 'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.'
+        : 'beingWrittenSinceMs' in holder
+          ? 'Another editor window is starting an update of this Wiki. Wait a moment and try again.'
+          : `Another editor window is updating this Wiki (${holder.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(holder.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
     for (const isLastAttempt of [false, true]) {
       // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
       const startBlock = await findWikiUpdateStartBlock(outputDirectory)

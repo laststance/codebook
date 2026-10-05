@@ -18,6 +18,7 @@ import {
 } from './utils/fakeFileWatching'
 import { openFakeWikiPage } from './utils/fakeWikiPage'
 import { keptListingFolderOf } from './utils/keptListingFolderOf'
+import { listenTo } from './utils/listenTo'
 import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 import type * as ServeMinimalWikiModule from './utils/serveMinimalWiki'
@@ -480,6 +481,22 @@ test('a file listener whose registration was disposed gets no further event from
     'second: /repo/src/b.ts',
   ])
   assert.equal(files.liveWatcherCount(), 1)
+})
+
+// Value: protects=the Wiki update tests that end a watch twice (a run that is cancelled and then closed) while the editor still reports to other listeners; fails_when=a disposable that is disposed a second time no longer finds its listener and takes the last listener of the event out instead, so a later test step fires an event nobody hears and waits for nothing (row 118); why_new=Cycle 0046 row 118: the fake editor's disposable removed whatever stood at index -1; seam=none
+test('a listener of the fake editor that is disposed twice is taken out once, and the listeners registered beside it stay', () => {
+  // Arrange: three listeners of one event.
+  const listeners: string[] = []
+  listenTo(listeners, 'first listener')
+  const second = listenTo(listeners, 'second listener')
+  listenTo(listeners, 'third listener')
+
+  // Act
+  second.dispose()
+  second.dispose()
+
+  // Assert
+  assert.deepEqual(listeners, ['first listener', 'third listener'])
 })
 
 // Value: protects=a test that reports a file outside the watched project showing that the product does not hear of it; fails_when=the fake delivers a report to every live watcher whatever folder it watches, so a file of another project reaches the product; why_new=review of Cycle 0045, tests-1 #10; seam=none

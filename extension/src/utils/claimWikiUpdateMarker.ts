@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import type { Stats } from 'node:fs'
 import { lstat, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS,
+  WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
   WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS,
   WIKI_UPDATE_MARKER_FILE_MODE,
@@ -17,6 +19,7 @@ import {
   type StorageLockTakeoverClaim,
 } from './claimStorageLockTakeover'
 import { currentStorageOwner } from './currentStorageOwner'
+import { listPlacedClaims } from './listPlacedClaims'
 import { placeStorageLock } from './placeStorageLock'
 import {
   readLiveWikiUpdateMarker,
@@ -35,10 +38,14 @@ import { readWikiRegularFile } from './readWikiRegularFile'
 import { systemErrorCode } from './systemErrorCode'
 import { withoutBootTime } from './withoutBootTime'
 
-/** What holds the Wiki against a start: another window's running update, or a marker another window is writing at this moment. */
-type WikiUpdateHolder = WikiUpdateMarker | WikiUpdateMarkerBeingWritten
+/** A marker that is in the way at the moment another window removes or replaces it under its claim: it is no run that holds the Wiki, and this window may not remove it either. @example const inChange: WikiUpdateMarkerInChange = { isMarkerInChange: true } */
+type WikiUpdateMarkerInChange = { isMarkerInChange: true }
 
-/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound), or what holds the Wiki instead: the marker of the other window's run, or the time since which another window is writing its marker. */
+/** What holds the Wiki against a start: another window's running update, a marker another window is writing at this moment, or a marker another window is removing or replacing at this moment. */
+type WikiUpdateHolder =
+  WikiUpdateMarker | WikiUpdateMarkerBeingWritten | WikiUpdateMarkerInChange
+
+/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker, or the note that another window is changing the marker. */
 export type WikiUpdateMarkerClaim =
   | {
       release: () => Promise<void>
@@ -146,27 +153,26 @@ function isMarkerOfNobodysRun(look: WikiUpdateMarkerLook): boolean {
 
 /**
  * Decides what the marker in the way means for this claim; called by {@link claimWikiUpdateMarker} with what {@link readLiveWikiUpdateMarker} has just found, before it removes a marker that is nobody's.
+ * Why the last answer: a marker that nobody's run owns and that is still in the way after this start's one removal was not removed because another window holds the claim on it: it is removing a stale marker for its own start, or removing or replacing its own marker at the end of its run. That is an ordinary moment between two windows, so the start is refused in a sentence and not ended with the file system's error of the creation.
  * @param look - What the look at the marker in the way found.
  * @param isLastAttempt - Whether the creation was already tried again after a removal; a marker still in the way then is not removed a second time.
- * @param error - What the exclusive creation threw.
  * @returns
  * - Another window's run is live, or another window is writing its marker: the claim that names it, and the marker file stays
  * - Anything else, with one attempt left: `undefined`, so the caller removes a marker that is nobody's and creates its own once more
- * @throws The given error itself when the marker is in the way again on the last attempt.
+ * - Anything else on the last attempt: the claim that says another window is changing the marker
  * @example
- * claimOfHolder({ kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }, false, error)
+ * claimOfHolder({ kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }, false)
  * // => { heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }
- * claimOfHolder({ kind: 'unowned' }, false, error) // => undefined
+ * claimOfHolder({ kind: 'unowned' }, false) // => undefined
+ * claimOfHolder({ kind: 'unowned' }, true)  // => { heldBy: { isMarkerInChange: true } }
  */
 function claimOfHolder(
   look: WikiUpdateMarkerLook,
   isLastAttempt: boolean,
-  error: unknown,
 ): Extract<WikiUpdateMarkerClaim, { heldBy: WikiUpdateHolder }> | undefined {
   const heldBy = holderIn(look)
   if (heldBy) return { heldBy }
-  if (isLastAttempt) throw error
-  return undefined
+  return isLastAttempt ? { heldBy: { isMarkerInChange: true } } : undefined
 }
 
 /**
@@ -181,12 +187,29 @@ async function readMarkerText(markerPath: string): Promise<string | undefined> {
 }
 
 /**
+ * Reads the owner that an entry beside the marker records, unless the entry is a link; called by {@link isExpiredMarkerClaim} with what its look at the entry found.
+ * Why: a link is no claim and no prepared file, whatever it leads to, so its age alone decides and nothing is read through it: neither the file a link at a claim's or a prepared marker's name leads to, nor a file in the folder a link at a prepared claim's name leads to.
+ * @param entry - What the look at the entry found, without following a link.
+ * @param ownerPath - The file that records the owner of that entry.
+ * @returns The recorded owner ({@link readRecordedOwner}); `undefined` for a link, and for a record that is no regular file or cannot be read.
+ * @example
+ * await readOwnerOfEntry(await lstat(claimPath), claimPath) // => { pid: 4242, machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', processStart: 'linux:16362446' }
+ */
+async function readOwnerOfEntry(
+  entry: Stats,
+  ownerPath: string,
+): Promise<RecordedOwner | undefined> {
+  return entry.isSymbolicLink() ? undefined : readRecordedOwner(ownerPath)
+}
+
+/**
  * Says whether a claim on the marker, or a file prepared beside it, is nobody's by its age; called by {@link removeIfExpired} for each entry the sweeps find.
  * Why: a claim is held for the time of one read and one removal, and a prepared file exists for the time of one write, so an old one was left by a killed window. Age decides only where the owner cannot be judged by this process ({@link canJudgeOwnerHere}): an entry of another machine, of 0.2.29.0, of a window whose process start could not be read, or one whose record cannot be read. An entry whose owner can be judged here is left to that judgement ({@link removeStaleStorageClaims}), so a live window that was suspended while it held the claim keeps it.
+ * These paths lie in the learner's project folder, where a cloned repository can put anything: the entry is looked at without following a link, a link is judged by its age alone, and an owner's record is read only as a regular file of bounded size ({@link readRecordedOwner}), so a link to an endless device or to a pipe costs neither time nor memory.
  * @param path - What age is taken from and what would be removed: a claim's owner file, a claim folder that was prepared and never put into place, or a marker file that was prepared and never linked or moved into place.
  * @param ownerPath - The file that records the owner of that entry.
  * @param judgement - The identity of this process and the clock.
- * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}; `false` for a younger one, for one whose owner can be judged here, and for a path that cannot be inspected.
+ * @returns `true` for an entry that cannot be judged here and is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS}, also a link whatever it leads to; `false` for a younger one, for one whose owner can be judged here, and for a path that cannot be inspected.
  * @example
  * await isExpiredMarkerClaim(claimPath, claimPath, judgement) // => true for a claim a killed window of another machine left two minutes ago
  */
@@ -195,13 +218,11 @@ async function isExpiredMarkerClaim(
   ownerPath: string,
   { identity, now }: MarkerClaimJudgement,
 ): Promise<boolean> {
-  const owner = await readRecordedOwner(ownerPath)
-  if (owner && canJudgeOwnerHere(owner, identity)) return false
   const entry = await lstat(path).catch(() => undefined)
-  return (
-    entry !== undefined &&
-    now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
-  )
+  if (!entry) return false
+  const owner = await readOwnerOfEntry(entry, ownerPath)
+  if (owner && canJudgeOwnerHere(owner, identity)) return false
+  return now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
 }
 
 /**
@@ -255,6 +276,7 @@ async function removeExpiredPreparations(
  * Removes the claims on the marker, and what was prepared beside it, that are nobody's by their age, each by its own unique name; called by {@link tryMarkerClaim} before it asks for the claim.
  *
  * Why: {@link claimStorageLockTakeover} removes a claim whose owner is gone, which it can say only of an owner of this machine. A window of another machine, or of 0.2.29.0, that was killed while it held the claim would keep it for good, and every later start on a stale marker would fail. Such a claim is nobody's once it is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} ({@link isExpiredMarkerClaim}).
+ * The claim folder's path lies in the learner's project folder, where a cloned repository can put a link: only a real directory there is listed, and anything else at that path is removed by its own name ({@link listPlacedClaims}), so the sweep never reaches the files a link leads to.
  *
  * @param markerPath - `<output>.update-run.json`; the claim is one owner file in the folder `<marker>.takeover`.
  * @param judgement - The identity of this process and the clock.
@@ -267,8 +289,8 @@ async function removeExpiredMarkerClaims(
   judgement: MarkerClaimJudgement,
 ): Promise<void> {
   const claimDirectory = `${markerPath}.takeover`
-  // A placed claim is one owner file inside the claim folder.
-  for (const claimName of await readdir(claimDirectory).catch(() => [])) {
+  // A placed claim is one owner file inside the claim folder; a link or a file at the folder's path is removed there and never listed.
+  for (const claimName of await listPlacedClaims(claimDirectory)) {
     const claimPath = join(claimDirectory, claimName)
     await removeIfExpired(claimPath, claimPath, judgement)
   }
@@ -277,7 +299,7 @@ async function removeExpiredMarkerClaims(
 
 /**
  * Asks once for the exclusive right to remove or replace the marker file; called by {@link claimMarkerChange} for each of its attempts.
- * The claim file lies in the learner's project folder, so it records this process without the host name and the editor's machine id ({@link machineAndProcessOf}).
+ * The claim file lies in the learner's project folder, so it records this process without the host name and the editor's machine id ({@link machineAndProcessOf}), and the claim is created with the modes of the project's own files, as the marker is: a window of another user on a shared project folder can then judge a claim a killed window left, and clear it where the folder lets it write.
  * @param markerPath - `<output>.update-run.json`.
  * @param judgement - The identity of this process, the reader of process starts and the clock.
  * @returns The claim, or `undefined` while another window holds it and when the claim cannot be made at all (for example a folder that cannot be written).
@@ -296,6 +318,10 @@ async function tryMarkerClaim(
       judgement.identity,
       judgement.readStart,
       { pid: process.pid, ...machineAndProcessOf(judgement.identity) },
+      {
+        directoryMode: WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE,
+        fileMode: WIKI_UPDATE_MARKER_FILE_MODE,
+      },
     )
   } catch {
     return undefined
@@ -338,6 +364,7 @@ async function claimMarkerChange(
  * Removes the marker in the way when it is nobody's run, under the exclusive claim and after a look made while the claim is held; called by {@link claimWikiUpdateMarker} before its second exclusive creation.
  *
  * Why: between a window's look at a stale marker and its removal another window can have removed that marker and created its own. Under the claim no other window removes or replaces the marker, and none can create one while a file is there, so a marker that this look read is the marker that is removed. Where the look found no marker at all, nothing is removed: another window may have created its own in that instant.
+ * The marker's path lies in the learner's project folder, where a cloned repository can put an entry that is no marker file: a link there is removed as the link and its target stays, and a folder is removed with its content, so no such entry refuses every start.
  * A window that was suspended under its claim can have lost it to a window that judged the claim by its age, so the claim is asked for once more right before the removal.
  * Limit: a window suspended in the instant between that check and the removal can still remove a marker another window created since.
  *
@@ -364,8 +391,9 @@ async function removeUnownedMarker(
       ownWindowId,
       atThisMoment(judgement),
     )
+    // What the look read as nobody's is removed whatever it is: a file, a link as the link, a folder with its content.
     if (isMarkerOfNobodysRun(look) && (await claim.isStillHeld()))
-      await rm(markerPath, { force: true })
+      await rm(markerPath, { recursive: true, force: true })
   } finally {
     await claim.release()
   }
@@ -449,7 +477,8 @@ async function replaceMarker(markerPath: string, text: string): Promise<void> {
  * @returns
  * - The marker was created: `release`, which removes it, and `reserve`, which replaces it by a stopped watch's reservation; both leave a marker another window has written since, and a reservation that cannot be written leaves the run's marker, which `release` still removes
  * - Another window's live run holds the Wiki, or another window is writing its marker at this moment: `heldBy` with that marker, or with the time since which it is being written
- * @throws The file system's error when the marker cannot be created for another reason (for example a read-only folder), and the exclusive creation's `EEXIST` when a marker is still in the way at the second attempt, also because another window was removing or releasing it at that moment.
+ * - A marker that is nobody's run is still in the way at the second attempt, because another window holds the claim on it (it is removing a stale marker or releasing its own at that moment, or a killed window of another machine left its claim less than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} ago): `heldBy` with `isMarkerInChange`, and the marker file stays
+ * @throws The file system's error when the marker cannot be created for another reason than a marker in the way (for example a read-only folder).
  *
  * @example
  * ```ts
@@ -502,7 +531,7 @@ export async function claimWikiUpdateMarker(
         atThisMoment(judgement),
       )
       // What holds the Wiki ends the claim; a marker that is nobody's run is removed for the one retry.
-      const holder = claimOfHolder(look, isLastAttempt, error)
+      const holder = claimOfHolder(look, isLastAttempt)
       if (holder) return holder
       await removeUnownedMarker(
         outputDirectory,

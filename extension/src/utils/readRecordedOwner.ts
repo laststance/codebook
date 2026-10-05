@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises'
-
 import { z } from 'zod'
+
+import { readWikiRegularFile } from './readWikiRegularFile'
 
 const recordedOwnerSchema = z.object({
   pid: z.number().int().positive(),
@@ -31,20 +31,39 @@ export type StorageOwnerIdentity = Omit<RecordedOwner, 'pid' | 'hostname'> & {
 }
 
 /**
- * Reads which process a JSON file says wrote it, so {@link isStaleStorageLock}, {@link evidenceInUseElsewhere} and {@link removeAbandonedProfiles} can tell what a killed editor left behind from what a running one owns.
+ * Parses the bytes of an owner record; called by {@link readRecordedOwner} for the file it read.
+ * @param bytes - The bytes of the lock, claim, descriptor or profile marker file.
+ * @returns What the bytes say as JSON, or `undefined` for bytes that are no JSON.
+ * @example
+ * parseRecordedJson(Buffer.from('{"pid":4242}')) // => { pid: 4242 }
+ * parseRecordedJson(Buffer.from(''))             // => undefined
+ */
+function parseRecordedJson(bytes: Buffer): unknown {
+  try {
+    return JSON.parse(bytes.toString('utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Reads which process a JSON file says wrote it, so {@link isStaleStorageLock}, {@link evidenceInUseElsewhere}, {@link removeAbandonedProfiles} and the claim sweep of {@link claimWikiUpdateMarker} can tell what a killed editor left behind from what a running one owns.
+ * The file is read as the Wiki's metadata files are ({@link readWikiRegularFile}): only a regular file of bounded size, without following a link and without waiting on a pipe. An owner record beside a Wiki update's marker lies in the learner's project folder, where a cloned repository can put a link to an endless device or to a pipe at its path.
  * @param path - The lock, claim, descriptor or profile marker file.
  * @returns
  * - The recorded process id, with the host name, the editor's machine id, the machine's pseudonyms, the boot and the process start when the file names them
- * - `undefined` when the file cannot be read, is no JSON object, or records no process id (written by an earlier build)
+ * - `undefined` when the path holds no regular file (a link, a pipe, a device, a folder), when the file cannot be read or is larger than a metadata file may be, is no JSON object, or records no process id (written by an earlier build)
  * @example
- * await readRecordedOwner('/storage/learning/writer.lock') // => { pid: 4242, hostname: 'workstation', boot: { id: '0c1d…' } }
+ * await readRecordedOwner('/storage/learning/writer.lock')                        // => { pid: 4242, hostname: 'workstation', boot: { id: '0c1d…' } }
+ * await readRecordedOwner('/repo/.codebook/wiki.update-run.json.pending-a-link') // => undefined, at once
  */
 export async function readRecordedOwner(
   path: string,
 ): Promise<RecordedOwner | undefined> {
-  const recorded: unknown = await readFile(path, 'utf8')
-    .then((text) => JSON.parse(text))
-    .catch(() => undefined)
-  const parsed = recordedOwnerSchema.safeParse(recorded)
+  const recordFile = await readWikiRegularFile(path)
+  if (!recordFile) return undefined
+  const parsed = recordedOwnerSchema.safeParse(
+    parseRecordedJson(recordFile.bytes),
+  )
   return parsed.success ? parsed.data : undefined
 }
