@@ -5,6 +5,7 @@ import {
   PROCESS_LISTING_MAX_BYTES,
   PROCESS_LISTING_TIMEOUT_MS,
 } from '../../constants'
+import { systemErrorCode } from '../../utils/systemErrorCode'
 
 /** One running process as the system's listing names it: its id and its whole command line with every argument. */
 export type ListedProcess = { pid: number; command: string }
@@ -78,6 +79,11 @@ const WINDOWS_LISTING: ProcessListingForm = {
   },
 }
 
+/** Chooses the listing of a system: PowerShell on Windows, `ps` on every other system; called by {@link listProcesses}. @example listingFormOf('darwin').file // => 'ps' */
+function listingFormOf(platform: NodeJS.Platform): ProcessListingForm {
+  return platform === 'win32' ? WINDOWS_LISTING : UNIX_LISTING
+}
+
 /** Runs one process listing without a shell and closes its input, which neither listing reads and which, left open, can keep PowerShell waiting. @example await runListing('ps', ['-axww', '-o', 'pid=,command='], bounds) // => { stdout: '    1 /sbin/launchd\n…', stderr: '' } */
 const runListing: NonNullable<ProcessListingInputs['run']> = (
   file,
@@ -89,8 +95,15 @@ const runListing: NonNullable<ProcessListingInputs['run']> = (
   return listing
 }
 
+/** Says whether a failed listing was ended because it ran longer than its time bound: Node.js marks the error of a child it ended itself. @example isEndedAtTimeBound(Object.assign(new Error('Command failed: ps'), { killed: true, signal: 'SIGKILL' })) // => true */
+function isEndedAtTimeBound(failure: unknown): boolean {
+  return (
+    failure instanceof Error && 'killed' in failure && failure.killed === true
+  )
+}
+
 /**
- * Words a listing that was ended at one of its bounds, so that a run that waited for the listing says what happened and not only "Command failed"; called by {@link listProcesses} with what its runner rejected with.
+ * Words a listing that was ended at one of its bounds, so that a run that waited for the listing says what happened and not only "Command failed"; called by {@link printedListing} with what its runner rejected with.
  * @param failure - What the runner rejected with.
  * @param file - The command that was run.
  * @param bounds - The bounds it was run with.
@@ -106,18 +119,43 @@ function listingFailure(
   file: string,
   bounds: ProcessListingOptions,
 ): unknown {
-  if (!(failure instanceof Error)) return failure
-  if ('code' in failure && failure.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
+  // A child that printed too much is ended by Node.js too, so the output limit is asked first.
+  if (systemErrorCode(failure) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')
     return new Error(
       `The process listing (${file}) printed more than ${bounds.maxBuffer} bytes and was ended.`,
       { cause: failure },
     )
-  if ('killed' in failure && failure.killed === true)
+  if (isEndedAtTimeBound(failure))
     return new Error(
       `The process listing (${file}) did not answer within ${bounds.timeout} ms and was ended.`,
       { cause: failure },
     )
   return failure
+}
+
+/**
+ * Runs one system's listing within its bounds and reads what it printed; the body of {@link listProcesses} once the system, the runner and the bounds are chosen.
+ * @param listing - The command and the line reader of the system.
+ * @param run - The runner.
+ * @param bounds - The bounds the listing is run with.
+ * @returns Every process the listing printed with a command line, in its order.
+ * @throws What the runner rejects with, worded by {@link listingFailure} for a listing that was ended at a bound.
+ * @example
+ * await printedListing(UNIX_LISTING, runListing, bounds) // => [{ pid: 1, command: '/sbin/launchd' }, …]
+ */
+async function printedListing(
+  listing: ProcessListingForm,
+  run: NonNullable<ProcessListingInputs['run']>,
+  bounds: ProcessListingOptions,
+): Promise<ListedProcess[]> {
+  try {
+    const { stdout } = await run(listing.file, listing.listingArguments, bounds)
+    return stdout
+      .split('\n')
+      .flatMap((line) => listing.processOfLine(line) ?? [])
+  } catch (failure) {
+    throw listingFailure(failure, listing.file, bounds)
+  }
 }
 
 /**
@@ -133,26 +171,14 @@ function listingFailure(
 export async function listProcesses(
   inputs: ProcessListingInputs = {},
 ): Promise<ListedProcess[]> {
-  const listing =
-    (inputs.platform ?? process.platform) === 'win32'
-      ? WINDOWS_LISTING
-      : UNIX_LISTING
-  const bounds: ProcessListingOptions = {
-    timeout: inputs.timeoutMs ?? PROCESS_LISTING_TIMEOUT_MS,
-    maxBuffer: PROCESS_LISTING_MAX_BYTES,
-    killSignal: 'SIGKILL',
-    windowsHide: true,
-  }
-  try {
-    const { stdout } = await (inputs.run ?? runListing)(
-      listing.file,
-      listing.listingArguments,
-      bounds,
-    )
-    return stdout
-      .split('\n')
-      .flatMap((line) => listing.processOfLine(line) ?? [])
-  } catch (failure) {
-    throw listingFailure(failure, listing.file, bounds)
-  }
+  return printedListing(
+    listingFormOf(inputs.platform ?? process.platform),
+    inputs.run ?? runListing,
+    {
+      timeout: inputs.timeoutMs ?? PROCESS_LISTING_TIMEOUT_MS,
+      maxBuffer: PROCESS_LISTING_MAX_BYTES,
+      killSignal: 'SIGKILL',
+      windowsHide: true,
+    },
+  )
 }

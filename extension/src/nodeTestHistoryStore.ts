@@ -110,16 +110,7 @@ export class NodeTestHistoryStore {
     if (headerBytes.byteLength > HEADER_LIMIT_BYTES)
       throw new Error('Node history article context exceeds its storage limit.')
     const runDirectory = this.path(header.studyId)
-    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE })
-    try {
-      await this.createHistoryFiles(runDirectory, headerBytes)
-    } catch (error) {
-      // A folder without a header is shown by no list and would take a place of the saved study limit for good: a start that fails after it made the folder removes it again.
-      await rm(runDirectory, { recursive: true, force: true }).catch(
-        () => undefined,
-      )
-      throw error
-    }
+    await this.createHistoryFolder(runDirectory, headerBytes)
     this.active.add(header.studyId)
     return new NodeTestHistoryWriter(runDirectory, header, () =>
       this.active.delete(header.studyId),
@@ -127,8 +118,33 @@ export class NodeTestHistoryStore {
   }
 
   /**
-   * Writes the two files a history starts with into its new folder, the header and the empty journal, each created anew and flushed; called by {@link start}, which removes the folder again when this fails.
-   * @param runDirectory - The history's folder, which {@link start} has just made.
+   * Makes the folder of a new history with its first two files, or leaves no folder: one whose files could not be written is removed again; called by {@link start} once the history is admitted and its header is within its size limit.
+   * A folder without a header is shown by no list and would take a place of the saved study limit for good.
+   * @param runDirectory - The history's folder; it must not exist yet.
+   * @param headerBytes - The header as it is stored.
+   * @throws What making the folder throws (a folder that exists is left as it is), and what writing its files throws, after the folder was removed again.
+   * @example
+   * await this.createHistoryFolder('/…/node-tests.v1/<study id>', Buffer.from(JSON.stringify(header)))
+   */
+  private async createHistoryFolder(
+    runDirectory: string,
+    headerBytes: Buffer,
+  ): Promise<void> {
+    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE })
+    try {
+      await this.createHistoryFiles(runDirectory, headerBytes)
+    } catch (error) {
+      // The removal is tried once; its own failure does not replace the error of the start.
+      await rm(runDirectory, { recursive: true, force: true }).catch(
+        () => undefined,
+      )
+      throw error
+    }
+  }
+
+  /**
+   * Writes the two files a history starts with into its new folder, the header and the empty journal, each created anew and flushed; called by {@link createHistoryFolder}, which removes the folder again when this fails.
+   * @param runDirectory - The history's folder, which {@link createHistoryFolder} has just made.
    * @param headerBytes - The header as it is stored, already within its size limit.
    * @throws What creating, writing or flushing either file throws, for example on a full disk.
    * @example
