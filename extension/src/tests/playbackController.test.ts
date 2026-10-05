@@ -1377,7 +1377,7 @@ test('Play across the time an explanation becomes available for the stop on scre
   // Arrange: the stop committed at 100 ms has no recorded debugger state, so it stays selected to the end of the recording; its explanation was saved at 150 ms.
   const presentedPositions: number[] = []
   let invalidations = 0,
-    publications = 0
+    publicationsOfTheExplainedMoment = 0
   const player = playbackHarness({
     present: async (bundle) => {
       presentedPositions.push(bundle.projection.positionMs)
@@ -1385,8 +1385,16 @@ test('Play across the time an explanation becomes available for the stop on scre
     invalidate: () => {
       invalidations++
     },
+    // Counts only the publications that hand the Study pane the moment of 150 ms with its explanation, as the workspace reads it from the presented bundle.
     changed: () => {
-      publications++
+      const presented = player.controller.bundle()?.projection
+      if (
+        presented?.positionMs === 150 &&
+        presented.observation?.interpretations.some(
+          (interpretation) => interpretation.id === explanationId,
+        )
+      )
+        publicationsOfTheExplainedMoment++
     },
   })
   const explanationId = '55555555-5555-4555-8555-555555555555'
@@ -1412,7 +1420,6 @@ test('Play across the time an explanation becomes available for the stop on scre
     )
   const invalidationsBeforePlay = invalidations
   player.play()
-  const publicationsAtPlay = publications
 
   // Act: Play reaches the time the explanation was saved.
   player.clock(30)
@@ -1432,7 +1439,7 @@ test('Play across the time an explanation becomes available for the stop on scre
   )
   assert.deepEqual(presentedPositions, [0, 120])
   assert.equal(invalidations - invalidationsBeforePlay, 0)
-  assert.ok(publications > publicationsAtPlay)
+  assert.equal(publicationsOfTheExplainedMoment, 1)
   assert.equal(player.controller.state().mode, 'playing')
   await player.controller.dispose()
 })
