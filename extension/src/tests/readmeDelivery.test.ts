@@ -10,6 +10,8 @@ import {
   MS_PER_SECOND,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
+  SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
+  STUDY_CLOSE_KEYBOARD_MESSAGE,
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_OFFER,
@@ -242,6 +244,29 @@ test('the packaged README names the rail entry Open in VS Code or Open in Cursor
   assert.deepEqual(delivered, [true, true, true, true, true, true])
   assert.equal(WIKI_UPDATE_WATCH_TIMEOUT_MS, 900_000)
   assert.equal(MAX_EXPLANATIONS, 32)
+})
+
+// Value: protects=a learner who reads one of the two keyboard notices finding in the README when Codebook shows it; fails_when=the README loses a notice, or quotes another sentence than the reader shows; why_new=Cycle 0046, found by package DOA: rows 1 and 5 added the two notices and no document named them; seam=none
+test('the packaged README quotes the notice of Close Study Workspace about the keyboard and the notice of a captured source that took the keyboard at a pause, as the reader shows them', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    '**Codebook: Close Study Workspace** run while a Codebook pane or the captured source is the active editor gives the active editor group the keyboard, and Codebook says so: `Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.` A close made while your own file is the active editor shows nothing.',
+    'In VS Code, the first time in an editor session that the captured source takes the place of the file the debugger opened at a pause, Codebook says where the keyboard is: `Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.` Cursor shows no such sentence.',
+  ])
+
+  // Assert: the README holds both, and the reader shows the sentences it quotes.
+  assert.deepEqual(delivered, [true, true])
+  assert.equal(
+    STUDY_CLOSE_KEYBOARD_MESSAGE,
+    'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.',
+  )
+  assert.equal(
+    SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
+    'Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+  )
 })
 
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.
