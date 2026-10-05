@@ -149,25 +149,36 @@ test('the packaged README says that a focused tab that is no text editor is admi
 })
 
 // Cycle 0045 (P1-F1): red while the README named API 1.5 as the current one in two places and did not say what API 1.6 added.
-test('the packaged README names the API version the server reports and says what API 1.6 added', async () => {
+// Cycle 0046 (rows 44 and 54): red while the README named API 1.6 as the current one, its summary of 1.6 left out numberedText on the source answers, and it said those answers still carry text.
+test('the packaged README names API 1.7 as the version the server reports, says that 1.7 took text out of the source answers and what API 1.6 added', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const current = heldSentences(readme, [
-    '## Shared presentations (API 1.6)',
-    "The interface arrived with API 1.5, and API 1.6 changed nothing in it: 1.6 added fields to a configured run's resources and an answer option to its continuation (see [Run one configured repository action](#run-one-configured-repository-action)).",
-    'with **MCP API 1.6** (`codebook_status` reports the installed build).',
+    '## Shared presentations (API 1.7)',
+    "The interface arrived with API 1.5, and API 1.6 and 1.7 changed nothing in it: 1.6 added fields to a configured run's resources, an answer option to its continuation and `numberedText` to the source answers, and 1.7 removed `text` from those source answers (see [Run one configured repository action](#run-one-configured-repository-action)).",
+    'with **MCP API 1.7** (`codebook_status` reports the installed build).',
+    "API 1.7 changed two answers: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text`, because the two copies doubled every source answer. An MCP `resources/read` of a cited source's URI still answers its exact text. No request states an API version, so a client written for API 1.6 gets these answers too: where it read `text`, it reads `numberedText` (each line after its one-based number and a tab, the lines joined by a line feed).",
     'API 1.6 added, without changing the meaning of an existing field: `declaredSource`, the position you declared (`requestedSource` is its older name); `armed`, the place Codebook requested the breakpoint at when that differs; `place`, one sentence that names the line a stop paused on when the debugger bound it on another line than you declared; and `answer: "next"` in the run resource\'s `continueArguments`, with which a continuation answers with the next state (the next observation, the observed result or the failure).',
+    "API 1.6 also added `numberedText` to the answer of `codebook_source` and to the answer of `codebook_read_resource` for a book's cited source: the source's lines, each after its one-based number and a tab.",
+    "Each result contains the path, the SHA-256 of the file's full bytes, a line count and `numberedText`: the source's lines, each after its one-based number and a tab. The lines are answered once; since API 1.7 the result has no `text` beside them.",
+    "A book's cited source read through `codebook_read_resource` answers `numberedText` in place of its text as well; an MCP `resources/read` of that source's URI answers the exact text.",
   ])
-  const namesOlderApiAsCurrent = /\(API 1\.5\)|\*\*MCP API 1\.5\*\*/.test(
+  const namesOlderApiAsCurrent = /\(API 1\.[56]\)|\*\*MCP API 1\.[56]\*\*/.test(
     readme,
   )
+  const saysSourceAnswerHoldsText = [
+    'Each result contains exact UTF-8 text',
+    'the same lines as `text`',
+    'answers its `numberedText` too',
+  ].filter((phrase) => readme.includes(phrase))
 
   // Assert
-  assert.equal(API_VERSION, '1.6')
-  assert.deepEqual(current, [true, true, true, true])
+  assert.equal(API_VERSION, '1.7')
+  assert.deepEqual(current, [true, true, true, true, true, true, true, true])
   assert.equal(namesOlderApiAsCurrent, false)
+  assert.deepEqual(saysSourceAnswerHoldsText, [])
 })
 
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.

@@ -46,6 +46,10 @@ import { snapshotSourceHashes } from './utils/snapshotSourceHashes'
 /** The active-progress deadline in the whole seconds the repository-browser help names, so the help follows {@link ACTIVE_TIMEOUT_MS}. */
 const ACTIVE_TIMEOUT_SECONDS = ACTIVE_TIMEOUT_MS / MILLISECONDS_PER_SECOND
 
+/** What API 1.7 changed, said in the server's instructions ({@link createProtocol}) and in the source-only help ({@link readResource}), so a client written for API 1.6 learns where a source's lines are now: {@link StudyService.source} and a book's cited source read through `codebook_read_resource` answer the numbered lines alone, and {@link readRepositoryResource} still gives an MCP resource read the exact text. */
+export const SOURCE_ANSWER_SINCE_API_1_7_HELP =
+  "Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text."
+
 export type ResourceContent =
   | {
       uri: string
@@ -200,7 +204,7 @@ export async function readResource(
     })
   if (uri === 'codebook://help/repository')
     return json({
-      entry: `Read codebook_status.repository, then codebook_sources and exact codebook_source paths. ${NUMBERED_SOURCE_LINES_HELP} Author structured plain-text sections, verified path/hash/inclusive line citations and source-derived relations. Publish a complete document with expectedRevision and a stable key; open only the returned retained revision.`,
+      entry: `Read codebook_status.repository, then codebook_sources and exact codebook_source paths. ${NUMBERED_SOURCE_LINES_HELP} ${SOURCE_ANSWER_SINCE_API_1_7_HELP} Author structured plain-text sections, verified path/hash/inclusive line citations and source-derived relations. Publish a complete document with expectedRevision and a stable key; open only the returned retained revision.`,
       boundaries: {
         sourceBytes: REPOSITORY_SOURCE_LIMIT_BYTES,
         documentBytes: BOOK_INPUT_LIMIT_BYTES,
