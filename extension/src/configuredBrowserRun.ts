@@ -472,8 +472,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       this.definition.configuration.entryPath,
     )
     this.alive()
+    // The lock's identity is read with exact numbers: a file id can be larger than a number holds exactly.
     const developmentLock = await lstat(
       join(this.options.workspace, '.next/dev/lock'),
+      { bigint: true },
     ).catch((error) => {
       if (error.code === 'ENOENT') return undefined
       throw error
