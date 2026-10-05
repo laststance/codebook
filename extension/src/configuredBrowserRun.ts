@@ -1346,7 +1346,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * @param moved - The failure of the read, which carries the refused place.
    * @param pausedAt - The generated place of the paused top frame, when the receipt is read at the stop's pause.
    * @returns The receipt read again ({@link registeredStop}), once the debugger's own break locations accepted the place and the owned breakpoint took it again ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}).
-   * @throws The registration failure ({@link registrationFailure}) when the break locations refuse the place too.
+   * @throws The registration failure ({@link registrationFailure}) when the break locations refuse the place too, or the module is not announced within the bound ({@link moduleAnnouncedForJudgement}) and the map's rule stands.
    * @example
    * ```ts
    * return this.registeredAfterRefusedNews(stop, session, error) // { status: 'bound', movedTo: { line: 32, column: 11 }, ... }
@@ -1358,12 +1358,41 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     moved: OwnedBreakpointMovedError,
     pausedAt?: Protocol.Debugger.Location,
   ): ReturnType<ConfiguredBrowserRun['registeredStop']> {
+    // The adapter can report the breakpoint verified before the run's own channel announced the module, and the break locations cannot be asked without it.
+    await this.moduleAnnouncedForJudgement(stop, moved.place.line)
     // The news named a place the map alone refused; the debugger's break locations may accept it, and then the breakpoint stands there (it may already, when {@link retakeNewsByBreakLocations} judged that news first), so the receipt is read once more.
     if (await this.acceptsByBreakLocations(stop, moved.place, pausedAt)) {
       stop.breakpoint!.retakeRefusedPlace(session)
       return this.registeredStop(stop, pausedAt)
     }
     throw this.registrationFailure(stop, moved)
+  }
+
+  /**
+   * Waits a bounded time for a stop's module to be announced when only the debugger's break locations could lift the refusal of a line, for {@link registeredAfterRefusedNews}: the adapter's news about a pending breakpoint can be read before the run's own channel announces the module, and a receipt read in that window (before the input, or while a later stop is armed) would be refused by the source map alone, with a reason the judgement at the module's announcement lifts milliseconds later.
+   * The wait ends with the module or after the capture bound; the map's reason is then given only when the module did not arrive.
+   * @param stop - The stop whose receipt was read.
+   * @param line - The line the adapter's news named, which the stop's rule refuses.
+   * @example
+   * ```ts
+   * await this.moduleAnnouncedForJudgement(stop, 32) // returns at once for a parsed module, and for a line the break locations could not judge
+   * ```
+   */
+  private async moduleAnnouncedForJudgement(
+    stop: PreparedStop,
+    line: number,
+  ): Promise<void> {
+    const citation = this.definition.descriptor.anchors[stop.anchorIndex]!
+    // A parsed module can be asked at once; a line before the requested one or after the citation is refused whatever the debugger lists.
+    if (stop.script || line <= stop.armed.line || line > citation.endLine)
+      return
+    await waitUntil(
+      () => stop.script,
+      `the announcement of the module of declared stop ${this.declaredAt(stop)}`,
+      CAPTURE_TIMEOUT_MS,
+      this.abort.signal,
+    ).catch(() => undefined)
+    this.alive()
   }
 
   /**

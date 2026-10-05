@@ -845,3 +845,73 @@ test('a server stop that pauses while the debugger still has to answer the break
   assert.deepEqual([server.source.line, server.source.column], [7, 3])
   assert.deepEqual(journaled(harness, 'cdp.held-pause-adopted'), [])
 })
+
+// Cycle 0046 (row 159): red while news read before the run had seen the module was judged by the source map alone when the input was dispatched in that window: the run ended before the input with "line 2 between the declared line 1 and line 4 has a mapped position", which the judgement at the module's announcement would have lifted.
+test('a server stop whose pending breakpoint the adapter reports verified before the run has seen the module waits for the module before the input and is then judged by the break locations', async (context) => {
+  // Arrange: the function head over lines 1 to 3 is mapped and the debugger lists a break location on line 4 only. The adapter's news names 4:3 before the module is announced, and the action is accepted in that window.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 3, columnNumber: 2 },
+  ])
+  await harness.run.prepare()
+  harness.pauseAt('server', 3, 2)
+  harness.bindAt('server', 4, 3)
+  harness.movePausedFrame(4, 3)
+  harness.announceBreakpointVerified('server', 4, 3)
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return harness.waitInProgress(
+      'the announcement of the module of declared stop src/mode.ts:1',
+    )
+  }, 'the run waits for the module before the input')
+  const inputSentBeforeTheModule = harness.commands.some((command) =>
+    command.method.startsWith('Input.'),
+  )
+  // Act: the run's own channel announces the module.
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(inputSentBeforeTheModule, false)
+  assert.deepEqual([server.source.line, server.source.column], [4, 3])
+  assert.equal(
+    journaled(harness, 'breakpoint.rule-from-break-locations').length,
+    1,
+  )
+})
+
+// Cycle 0046 (row 159): the map's reason is given only when the module does not arrive within the bound; red if the wait had no end or its expiry gave another text.
+test('a server stop whose reported place the map refuses and whose module is not announced within the bound is refused before the input with the map’s reason', async (context) => {
+  // Arrange: as above, but the module is never announced; the bound of the wait is 200 ms.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+    runtimeConstants: { CAPTURE_TIMEOUT_MS: 200 },
+  })
+  await harness.run.prepare()
+  harness.announceBreakpointVerified('server', 4, 3)
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'refused once the module did not arrive',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 4:3, refused: line 2 between the declared line 1 and line 4 has a mapped position. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:3, 5:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
+})
