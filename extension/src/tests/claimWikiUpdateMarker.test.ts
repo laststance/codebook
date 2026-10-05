@@ -2075,3 +2075,116 @@ test(
     )
   },
 )
+
+// Value: protects=the Update button in a checkout whose repository holds a folder at the marker's path (row 111: every start ended with the file error EISDIR, although the look calls such an entry nobody's); fails_when=the marker in the way is removed as a file only, which fails for a folder; why_new=Cycle 0046 row 111: the existing test of a folder asserts only the look's kind; seam=the clock handed to the claim
+test('a folder with content at the marker’s path does not refuse every start: once it is older than a write takes it is removed with its content as nobody’s marker, and the update runs', async () => {
+  // Arrange: a folder that holds a file, where the marker file would lie.
+  const wiki = await createWikiFolder()
+  await mkdir(wiki.markerPath)
+  await writeFile(join(wiki.markerPath, 'supplied-by-a-repository'), 'x')
+  const createdAtMs = (await lstat(wiki.markerPath)).mtimeMs
+  try {
+    // Act
+    const start = await outcomeOf(
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: createdAtMs,
+        },
+        { ...AS_THIS_WINDOW, now: () => createdAtMs + 2_000 },
+      ),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        start,
+        isTheMarkerAFile: (await lstat(wiki.markerPath)).isFile(),
+        besideTheWiki: (await readdir(wiki.directory)).toSorted(),
+      },
+      {
+        start: 'holds the claim',
+        isTheMarkerAFile: true,
+        besideTheWiki: ['wiki', 'wiki.update-run.json'],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder that a link at the marker's path leads to; fails_when=the removal of an entry that is nobody's marker, which also removes a folder with its content since row 111, goes into a link's target instead of removing the link; why_new=Cycle 0046 rows 109 and 111: the existing test has a link to a file; seam=the clock handed to the claim
+test('a link to a folder at the marker’s path is removed as a link once it is older than a write takes: the folder keeps every file, and the update runs', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await symlink(cloned.besideTheProject, cloned.markerPath, 'junction')
+  const linkedAtMs = (await lstat(cloned.markerPath)).mtimeMs
+
+  // Act
+  const start = await outcomeOf(
+    claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: linkedAtMs,
+      },
+      { ...AS_THIS_WINDOW, now: () => linkedAtMs + 2_000 },
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      start,
+      isTheMarkerAFile: (await lstat(cloned.markerPath)).isFile(),
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+    },
+    {
+      start: 'holds the claim',
+      isTheMarkerAFile: true,
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=every Wiki update in a checkout whose repository holds a file at `.codebook/wiki.update-run.json.takeover` (row 112: the first update's end left its marker, and every later start failed with a raw EEXIST for good); fails_when=a file at the claim folder's path is neither a folder to list nor removed, so no claim can ever be placed there; why_new=Cycle 0046 row 112; seam=none
+test('a file at the claim folder’s path does not keep the claim from being taken: the end of a run removes its marker, and the next start on a killed editor’s marker runs', async () => {
+  // Arrange: a file where the claim folder would lie, and a run that began with no marker in the way.
+  const wiki = await createWikiFolder()
+  await writeFile(`${wiki.markerPath}.takeover`, 'supplied by a repository')
+  const windowA = {
+    pid: process.pid,
+    windowId: 'window-a',
+    host: 'vscode' as const,
+    startedAtMs: Date.now(),
+  }
+  try {
+    const firstRun = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      windowA,
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in firstRun)
+
+    // Act
+    await firstRun.release()
+    const besideTheWikiAfterTheFirstRun = await readdir(wiki.directory)
+    await leaveKilledEditorsMarker(wiki.markerPath)
+    const nextStart = await outcomeOf(
+      claimWikiUpdateMarker(wiki.outputDirectory, windowA, AS_THIS_WINDOW),
+    )
+
+    // Assert
+    assert.deepEqual(
+      { besideTheWikiAfterTheFirstRun, nextStart },
+      { besideTheWikiAfterTheFirstRun: ['wiki'], nextStart: 'holds the claim' },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
