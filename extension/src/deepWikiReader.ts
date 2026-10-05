@@ -85,8 +85,12 @@ const qaClient = `(function () {
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
   (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)}, outsideOutputApprovalsNote: ${JSON.stringify(WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE)}, missingPageTextDelayMs: ${WIKI_MISSING_PAGE_TEXT_DELAY_MS}, missingPagePathLimitChars: ${WIKI_MISSING_PAGE_PATH_LIMIT_CHARS} });
-  var form = document.querySelector('#qa-form, [data-codebook-question]');
+  // The shell's form by its element and its id together: a page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article, which stands before the form.
+  var form = document.querySelector('form#qa-form, [data-codebook-question]');
   if (!form) return;
+  // On such a page the label of the question field may name that heading instead; the field then gets the label's words itself.
+  var field = form.querySelector('textarea, input[name="question"]');
+  if (field && field.labels && !field.labels.length) field.setAttribute('aria-label', 'Ask about this repository');
   var status = document.querySelector('[data-codebook-status]');
   if (status) { status.textContent = '● Connected to Codebook reader'; status.classList.remove('unavailable'); }
   var submit = form.querySelector('button[type="submit"]');
@@ -98,6 +102,9 @@ const qaClient = `(function () {
     if (!input || !output) return;
     var question = input.value.trim();
     if (!question) return;
+    // The answer's disclosure is opened here too: the page's own script opens the element with the disclosure's id, which on such a page may be a heading of the article.
+    var disclosure = output.closest('details');
+    if (disclosure) { disclosure.hidden = false; disclosure.open = true; }
     output.style.display = 'block'; output.textContent = 'Asking the editor model…';
     try {
       var response = await fetch(prefix + '${WIKI_QUESTION_ROUTE}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });

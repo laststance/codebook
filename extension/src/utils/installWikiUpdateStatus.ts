@@ -117,6 +117,8 @@ export function installWikiUpdateStatus(
     // The article and the composer scroll too: they keep 5 px of room on the sides where a control reaches their edge, so its focus ring, 5 px outside it, is whole, also after the keyboard scrolled the control to the edge. Nothing moves: the padding is taken back by a negative margin, the composer's height limit grows by the room below it, and its top border is drawn 5 px shorter at each end, which is its length without the room.
     '.wiki-article{padding-left:5px;margin-left:-5px;scroll-padding-bottom:6px}',
     '.composer{max-height:calc(34% + 5px);border-image:linear-gradient(to right,transparent 5px,var(--border,#777) 5px calc(100% - 5px),transparent calc(100% - 5px)) 1 0 0;padding-left:5px;padding-right:5px;padding-bottom:5px;margin:0 -5px -5px;scroll-padding-block:6px}',
+    // The answer of a question takes the keyboard focus as a region; it gets the reader's ring, not the browser's own, 5 px outside it as on every other control, which is the room the composer keeps.
+    '.qa-answer:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:3px}',
     // In the single column the composer has no height limit and a bottom padding of its own, which is room enough.
     '@media(max-width:700px){.composer{max-height:none;padding-bottom:.6rem;margin-bottom:0}}',
     // A chapter title or an outline entry that cannot break (an identifier) wraps inside its column instead of giving the column a sideways scrollbar.
@@ -216,7 +218,14 @@ export function installWikiUpdateStatus(
     document.querySelector<HTMLElement>('[data-codebook-update-status]') ??
     document.createElement('p')
   statusRegion.replaceChildren()
-  statusRegion.id = 'codebook-update-status'
+  /** Chooses the id of the status region: its own, or that id with a number when another element of the page carries it. A page published before the publisher kept the ids of a page's content apart from the reader's may carry it on a heading of its article, and the update link names the region by id as its description. Called once per page load. @returns `codebook-update-status`, or `codebook-update-status-2` and so on. @example freeStatusRegionId() // => 'codebook-update-status' */
+  const freeStatusRegionId = (): string => {
+    let id = 'codebook-update-status'
+    for (let count = 2; document.querySelector('#' + id); count += 1)
+      id = 'codebook-update-status-' + count
+    return id
+  }
+  statusRegion.id = freeStatusRegionId()
   statusRegion.setAttribute('data-codebook-update-status', '')
   // The region is in the accessibility tree from load, so its first sentence is announced, and whole.
   statusRegion.setAttribute('role', 'status')
