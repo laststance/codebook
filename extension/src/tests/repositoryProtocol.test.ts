@@ -797,7 +797,7 @@ test('the source-only help and the repository-browser help tell an agent to take
       .parse(browserHelp.structuredContent).data.sourceBinding
     assert.equal(
       repositoryEntry.startsWith(
-        "Read codebook_status.repository, then codebook_sources and exact codebook_source paths. numberedText gives the source's lines once, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Author structured plain-text sections,",
+        "Read codebook_status.repository, then codebook_sources and exact codebook_source paths. numberedText gives the source's lines once, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Author structured plain-text sections,",
       ),
       true,
     )
@@ -807,6 +807,102 @@ test('the source-only help and the repository-browser help tell an agent to take
       ),
       true,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a client written for API 1.6, which read text from a source answer, learning from the server it connects to that the lines are in numberedText now; fails_when=the server reports another API version than 1.7 while its source answer has no text, or its instructions no longer say what 1.7 changed; why_new=Cycle 0046 row 54: row 6 took text out of both source answers while the server still reported API 1.6, the version that promised both members; seam=none
+test('the server reports API 1.7 and its instructions say that codebook_source and a book’s cited source answer numberedText and no longer text', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const instructions = harness.client.getInstructions() ?? ''
+    const status = await harness.client.callTool({
+      name: 'codebook_status',
+      arguments: {},
+    })
+    const source = await harness.client.callTool({
+      name: 'codebook_source',
+      arguments: { instanceId: harness.service.instanceId, path: 'module.ts' },
+    })
+
+    // Assert: the version, the sentence, and the answer the sentence describes.
+    assert.equal(
+      z
+        .object({ data: z.object({ apiVersion: z.string() }) })
+        .parse(status.structuredContent).data.apiVersion,
+      '1.7',
+    )
+    assert.equal(harness.endpoint.descriptor.apiVersion, '1.7')
+    assert.equal(
+      instructions.startsWith(
+        "API 1.7. Call codebook_status first. To learn repository source, discover sources, read exact files, publish structured cited articles and open the retained book; no runtime is required. Since API 1.7 codebook_source, and codebook_read_resource for a book's cited source, answer the source's lines as numberedText and no longer as text; an MCP resources/read of a cited source's URI still answers its exact text. Authored relations are source interpretation.",
+      ),
+      true,
+    )
+    assert.deepEqual(
+      Object.keys(
+        z
+          .object({ data: z.record(z.string(), z.unknown()) })
+          .parse(source.structuredContent).data,
+      ).sort(),
+      ['hash', 'instanceId', 'lineCount', 'numberedText', 'path'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Takes the client example out of the packaged README, so the test below runs the code a reader copies and the README cannot drift from what is tested.
+ * @param readme - The packaged README's text.
+ * @returns The JavaScript between the example's `node --input-type=module <<'NODE'` line and its closing `NODE` line.
+ * @throws When the README holds no such example.
+ * @example
+ * readmeClientExample("```sh\nnode --input-type=module <<'NODE'\nconsole.log(1);\nNODE\n```") // => 'console.log(1);\n'
+ */
+function readmeClientExample(readme: string): string {
+  const example = /^node --input-type=module <<'NODE'\n([\s\S]*?\n)NODE$/m.exec(
+    readme,
+  )
+  if (!example?.[1]) throw new Error('The README holds no client example.')
+  return example[1]
+}
+
+// Value: protects=a developer who copies the README's source-reading example getting the source instead of a schema error; fails_when=the example's schema no longer matches the codebook_source answer (it threw "Unrecognized key: numberedText" for every source since API 1.6, and expected a text member the answer lost in API 1.7), or the example no longer runs; why_new=Cycle 0046 row 49 (package STA, found while working); seam=none
+test('the README’s client example, run as the README says against a tracked file, prints that file’s identity and numbered lines', async () => {
+  // Arrange: the example as the packaged README prints it, and the connection descriptor of a running server.
+  const harness = await repositoryProtocolHarness()
+  const extensionRoot = join(__dirname, '..', '..')
+  const connectionPath = join(harness.directory, 'connection.json')
+  try {
+    const example = readmeClientExample(
+      await readFile(join(extensionRoot, 'README.md'), 'utf8'),
+    )
+    await writeFile(connectionPath, JSON.stringify(harness.endpoint.descriptor))
+
+    // Act: `node --input-type=module` from `extension/`, the example on standard input.
+    const run = executeFile(process.execPath, ['--input-type=module'], {
+      cwd: extensionRoot,
+      env: {
+        ...process.env,
+        CODEBOOK_CONNECTION: connectionPath,
+        CODEBOOK_SOURCE: 'module.ts',
+      },
+    })
+    run.child.stdin?.end(example)
+    const { stdout } = await run
+
+    // Assert
+    assert.deepEqual(JSON.parse(stdout), {
+      instanceId: harness.service.instanceId,
+      path: 'module.ts',
+      hash: '5e707638ceba927d6f9dbef0ee9935ebc85198b1f6bc55531c8dc64a1e13846b',
+      lineCount: 2,
+      numberedText: '1\texport const price = 24;\n2\t',
+    })
   } finally {
     await harness.close()
   }

@@ -27,11 +27,11 @@ async function storageDirectory(context: TestContext): Promise<string> {
   return directory
 }
 
-/** This window as both tests name it: a Linux process of the host "workstation" under the kernel boot "boot-1", begun at clock tick 16362446. Its takeover claim records that start, so the start reader must answer it for this process. */
+/** This window as both tests name it: a Linux process of the host "workstation" under the kernel boot "boot-1", in the pid namespace 4026531836, begun at clock tick 16362446. Its takeover claim records that start, so the start reader must answer it for this process. */
 const THIS_WINDOW = {
   hostname: 'workstation',
   boot: { id: 'boot-1' },
-  processStart: 'linux:16362446',
+  processStart: 'linux@4026531836:16362446',
 }
 
 /**
@@ -47,6 +47,7 @@ function linuxStartReader(statOfProcess4242: () => string): ProcessStartReader {
     readProcessStart(pid, {
       ...inputs,
       platform: 'linux',
+      readLink: () => 'pid:[4026531836]',
       ownStart,
       readFile: async (path) =>
         path === '/proc/4242/stat' ? statOfProcess4242() : linuxStat(16362446),
@@ -64,10 +65,10 @@ test('a lock that a new window with the same process id placed between the two l
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
   const lockOfTheNewWindow =
-    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:300"}'
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026531836:300"}'
   await writeFile(
     lockPath,
-    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:100"}',
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026531836:100"}',
   )
   context.mock.method(process, 'kill', (): true => true)
   let reads = 0
@@ -100,7 +101,7 @@ test('a stale lock whose process id another process keeps through both looks of 
   const lockPath = join(directory, 'writer.lock')
   await writeFile(
     lockPath,
-    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:100"}',
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026531836:100"}',
   )
   context.mock.method(process, 'kill', (): true => true)
   const readStart = linuxStartReader(() => linuxStat(200))
@@ -113,4 +114,34 @@ test('a stale lock whose process id another process keeps through both looks of 
   // Assert
   assert.equal(didHoldTheClaim, true)
   assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=the takeover of a storage lock a killed window left before its WSL distribution alone was restarted, and the lock of a live window whose record names the namespace number the distribution had; fails_when=a lock of another pid namespace under the same kernel boot is never judged (it refuses every write until it is removed by hand), or its start is compared with the namespace, so a live window's lock is removed and two windows write; why_new=row 65 named the pid namespace in the form; seam=the process probe and the file read of the start reader
+test('a lock recorded in another pid namespace of this kernel boot is removed when the process with its id began at another tick, and stays when it began at the same tick', async (context) => {
+  // Arrange: two storages with the lock of process 4242, recorded at clock tick 100 in the pid namespace 4026532214. This window reads starts in the namespace 4026531836. A process has the id 4242: in the first storage's case one begun at tick 200, in the second's the owner itself, begun at tick 100.
+  const afterTheIdWasReused = await storageDirectory(context),
+    whileTheOwnerRuns = await storageDirectory(context)
+  const lock =
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026532214:100"}'
+  await writeFile(join(afterTheIdWasReused, 'writer.lock'), lock)
+  await writeFile(join(whileTheOwnerRuns, 'writer.lock'), lock)
+  context.mock.method(process, 'kill', (): true => true)
+  // Act
+  await removeStaleStorageLock(
+    join(afterTheIdWasReused, 'writer.lock'),
+    THIS_WINDOW,
+    linuxStartReader(() => linuxStat(200)),
+  )
+  await removeStaleStorageLock(
+    join(whileTheOwnerRuns, 'writer.lock'),
+    THIS_WINDOW,
+    linuxStartReader(() => linuxStat(100)),
+  )
+  // Assert
+  assert.deepEqual(await readdir(afterTheIdWasReused), [])
+  assert.deepEqual(await readdir(whileTheOwnerRuns), ['writer.lock'])
+  assert.equal(
+    await readFile(join(whileTheOwnerRuns, 'writer.lock'), 'utf8'),
+    lock,
+  )
 })

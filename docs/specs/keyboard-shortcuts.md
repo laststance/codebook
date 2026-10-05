@@ -1,6 +1,6 @@
 # Keyboard shortcuts and discovery
 
-Authority: PRODUCT_GOAL version 9, G07/G11 and D035. This is a required product contract; current keyboard bindings and implementation are not claimed here.
+Authority: PRODUCT_GOAL version 10, G07/G11 and D035. This is a required product contract; current keyboard bindings and implementation are not claimed here.
 
 ## Every assigned shortcut is visible
 

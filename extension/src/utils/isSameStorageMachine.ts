@@ -1,3 +1,4 @@
+import { namesMachineInClear } from './namesMachineInClear'
 import type { RecordedOwner, StorageOwnerIdentity } from './readRecordedOwner'
 
 /** The fields of a storage owner by which its machine is told: the host name, the editor's machine id and the two pseudonyms of {@link deriveMachineKeys}. */
@@ -17,15 +18,10 @@ function sharesMachineKey(
   )
 }
 
-/** Says whether a record names neither a host name nor an editor's machine id, as one written into a learner's project folder does, which must not name the computer. @example namesNoMachineInClear({ hostKey: 'd195d36bd79da7df' }) // => true */
-function namesNoMachineInClear(recorded: MachineNames): boolean {
-  return recorded.hostname === undefined && recorded.machineId === undefined
-}
-
 /**
  * Says whether a recorded storage owner ran on this machine, the only place where its process id, its boot and its process start can be judged; called by {@link isRecordedOwnerGone} and by the release of {@link withStorageLock}.
  * The editor's machine id stays the same when the host name follows the network (macOS), and it tells two machines with one host name apart. A record or a reader without one (an earlier build, a remote window, a plain Node process) is compared by host name.
- * A record that names neither (one written into a learner's project folder, which must not name the computer) is compared by the pseudonyms of {@link deriveMachineKeys}, and any match counts. Three limits follow from that: an editor's machine id differs between VS Code and Cursor on one computer, which is why the host name's digest carries their match; two computers with one host name therefore look like one machine, and a process id of the other is probed here unless its recorded start has another system's form ({@link canJudgeOwnerHere}); and a digest is a pseudonym in a file a commit can publish, so the digest of a common host name can be found by trying names.
+ * A record that names neither (one written into a learner's project folder, which must not name the computer) is compared by the pseudonyms of {@link deriveMachineKeys}, and any match counts. Three limits follow from that: an editor's machine id differs between VS Code and Cursor on one computer, which is why the host name's digest carries their match; two computers with one host name therefore look like one machine, and a process id of the other is probed here unless its recorded start has another system's form, or, for such a record that names its machine by pseudonyms alone, another pid namespace's ({@link canJudgeOwnerHere}); and a digest is a pseudonym in a file a commit can publish, so the digest of a common host name can be found by trying names.
  * @param recorded - The owner a lock, a claim, a descriptor or a marker names.
  * @param current - The identity of this process.
  * @returns
@@ -43,8 +39,7 @@ export function isSameStorageMachine(
   current: MachineNames & Pick<StorageOwnerIdentity, 'hostname'>,
 ): boolean {
   // A record that names its machine by pseudonyms alone is compared by them.
-  if (namesNoMachineInClear(recorded))
-    return sharesMachineKey(recorded, current)
+  if (!namesMachineInClear(recorded)) return sharesMachineKey(recorded, current)
   if (recorded.machineId !== undefined && current.machineId !== undefined)
     return recorded.machineId === current.machineId
   return recorded.hostname === current.hostname

@@ -53,7 +53,7 @@ function recordedBoot(
  * @returns The host name, the editor's machine id when {@link useEditorMachineId} accepted one, the machine's two pseudonyms ({@link deriveMachineKeys}), the boot {@link readBootIdentity} reads now, and this process's start. While the start cannot be read it is absent, and so is a boot that is a computed time ({@link recordedBoot}).
  * @example
  * await currentStorageOwner()
- * // => { hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux:16362446' }
+ * // => { hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux@4026531836:16362446' }
  */
 export async function currentStorageOwner(
   startInputs?: ProcessStartInputs,

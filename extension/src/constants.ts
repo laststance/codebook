@@ -1,6 +1,10 @@
 import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
 
-export const API_VERSION = '1.6'
+/**
+ * The version of the MCP API this build serves: `codebook_status`, the connection descriptor, the server's instructions and the repository-browser help report it, and the package's build metadata records it.
+ * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
+ */
+export const API_VERSION = '1.7'
 export const EXTENSION_VERSION = '0.2.29'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
@@ -23,12 +27,16 @@ export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
 export const PROCESS_START_PS_TEXT_MAX_LENGTH = 64
 /** Where the start time (field 22 of `/proc/<pid>/stat`) is among the values that follow the command name's closing parenthesis; the first of them is field 3. */
 export const LINUX_STAT_START_TIME_INDEX = 19
-/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. Two starts of different forms were read in two spaces of process ids and are never compared ({@link canJudgeOwnerHere}). */
+/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. On Linux the form also names the pid namespace, as `linux@<number>` ({@link processStartFormHere}). Two starts of different forms were read in two spaces of process ids and are never compared ({@link canJudgeOwnerHere}). */
 export const PROCESS_START_FORMS = {
   linux: 'linux',
   darwin: 'ps',
   win32: 'win',
 } as const satisfies Partial<Record<NodeJS.Platform, string>>
+/** What stands between the system and the pid namespace in the form of a Linux process start: `linux@4026531836`. */
+export const PROCESS_START_NAMESPACE_MARK = '@'
+/** Where Linux names the pid namespace of the reading process, as a link to `pid:[<number>]`. A process id means a process only inside one pid namespace ({@link processStartFormHere}). */
+export const LINUX_PID_NAMESPACE_PATH = '/proc/self/ns/pid'
 /** How many hex characters of a SHA-256 name a machine in a storage owner record ({@link deriveMachineKeys}). */
 export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
@@ -180,9 +188,26 @@ export const STUDY_REMOVAL_REFUSALS = {
   newerFormat:
     'This study was saved by a newer Codebook and is kept as it is. Update the extension, then delete it there.',
 } as const
-/** What Saved studies answers a delete request with in a window without a Trash; the reader lists the study's files with it and deletes nothing itself. */
+/** The same reasons as a window without a Trash words them: nothing is deleted there, so none speaks of deleting; each names the removal of the study's files by hand, which the "Remove by hand" disclosure of Saved studies lists. The Study pane shows them and the host repeats them when it refuses a request for a study's files. */
+export const STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH: Record<
+  keyof typeof STUDY_REMOVAL_REFUSALS,
+  string
+> = {
+  nothingChosen:
+    'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.',
+  nodeHistory:
+    'Codebook cannot list the files of a Node test history for removal by hand yet.',
+  runNotStopped: "Stop the run before removing its study's files by hand.",
+  recordingOpen:
+    "Choose Overview or Live to leave Recording before removing this study's files by hand.",
+  studyOpening: STUDY_REMOVAL_REFUSALS.studyOpening,
+  unavailable: STUDY_ARCHIVE_UNAVAILABLE_MESSAGE,
+  newerFormat:
+    'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.',
+}
+/** What Saved studies answers a request for a study's files with in a window without a Trash; the "Remove by hand" disclosure shows it above the files the answer lists, and the reader deletes nothing itself. */
 export const STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE =
-  "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh."
+  'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.'
 // Where the agent server keeps each instance's connection descriptor and each run's raw evidence, below the extension's global storage.
 export const AGENT_STORAGE_DIRECTORY = 'agent'
 export const CONNECTION_DESCRIPTOR_SUFFIX = '.connection.json'
@@ -534,13 +559,19 @@ export const WIKI_UPDATE_RECOVERY_REQUEST =
   '/codebook Recover the unfinished LLM Wiki publish for this project'
 /** What a running Wiki update appends to the output folder's path for its marker file, which tells other editor windows that this Wiki is being updated. */
 export const WIKI_UPDATE_RUN_MARKER_SUFFIX = '.update-run.json'
-/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows; it covers the stop of the agent and the end's own file work, and after it a marker whose process id still answers (a killed editor's, given to another process since) is nobody's run. */
+/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows, before {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} is added; it covers the stop of the agent and the end's own file work, and after both a marker whose owner cannot be judged by its process start (one of another machine, or of 0.2.29.0 whose process id still answers) is nobody's run. */
 export const WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS = 60_000
+/** How far the clocks of two windows on one Wiki, or one clock before and after a correction, may differ without changing what a marker means: a run's marker expires this much later than its bound, a marker whose run starts further ahead of the reader's clock is nobody's, and a marker file without content that was written further ahead is not taken for one being written. */
+export const WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS = 300_000
+/** How long a marker file without readable content counts as one another window is writing at this moment; an older one was left by a killed window and is nobody's. A window of this build links a complete marker into place, so only a window of 0.2.29.0, or one on a file system without hard links, shows such a file, for the time of one write. */
+export const WIKI_UPDATE_MARKER_WRITE_GRACE_MS = 2_000
+/** The mode a Wiki update's marker file is created with: that of any file a project holds, which the process's file mode mask narrows, so a window of another user on a shared project folder can read whose update runs. */
+export const WIKI_UPDATE_MARKER_FILE_MODE = 0o666
 /** How often the end of a Wiki update asks for the exclusive claim on its marker file before it leaves the marker as it is; another window holds that claim for the time of one read and one removal. */
 export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
 /** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */
 export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
-/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, whatever process has its id now; a running window holds the claim for milliseconds. */
+/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, where its owner cannot be judged by this process ({@link canJudgeOwnerHere}: a claim of another machine, of 0.2.29.0, or of a window whose process start could not be read); a running window holds the claim for milliseconds. */
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
@@ -548,8 +579,9 @@ export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
 /** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
 export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
-/** Milliseconds in one second, for naming a bound in seconds. */
-export const MS_PER_SECOND = 1_000
+/** What a Wiki update says when it was blocked by a conflict that names no file, so that the learner cannot be told what to move: the reason of the `failed` state {@link WikiUpdateRun} records for a finished update and for a refused start alike. */
+export const WIKI_UPDATE_UNNAMED_BLOCK_REASON =
+  'The update was blocked, but no blocking file was named.'
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */
 export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
 /** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. */

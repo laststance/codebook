@@ -180,7 +180,7 @@ export class OwnedNodeTestRun {
           ...request,
           node: this.node,
           signal,
-          // The listing's own outcome decides the run; what a failed release left behind is journaled with its group and folder.
+          // A failed release is journaled with its group and folder. A listing that failed keeps its own reason; a listing that finished but whose process group could not be confirmed as ended refuses the run, so the test is not started.
           onReleaseFailed: (failure) => {
             this.record('node-test.vitest-listing-not-released', failure)
           },

@@ -51,6 +51,7 @@ import {
   STUDY_PRESENTATIONS,
   STUDY_REFRESH_INTERVAL_MS,
   STUDY_REMOVAL_REFUSALS,
+  STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH,
   STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE,
   STUDY_SOURCE_SCHEME,
   SUMMARY_DISPLACED_OFFER,
@@ -136,6 +137,7 @@ import {
 import { itemSchema, type StudyCatalogEntry } from './studySchemas'
 import {
   studyHtml,
+  type StudyFilesCopied,
   type StudyRemovalView,
   type StudyViewMessage,
 } from './ui/studyHtml'
@@ -12002,7 +12004,7 @@ export class StudyWorkspace {
       return
     }
     if (message.type === 'copy-study-files') {
-      await this.copyStudyFiles(message.studyId)
+      await this.copyStudyFiles(message.studyId, owner?.webview)
       return
     }
     // Choosing another entry retires the last removal's outcome line.
@@ -12564,33 +12566,34 @@ export class StudyWorkspace {
   /**
    * Says why a saved study cannot be removed right now; checked when the request arrives and again after the confirmation dialog, which can stay open while the reader changes.
    * @param studyId - The entry the learner chose in Saved studies.
-   * @returns The refusal sentence, first match wins: another entry that is still opening, a Node test history, an entry no catalog lists, a study a newer Codebook saved, the study of a run that has not stopped, a Recording that is open or opening. `undefined` when the study can be removed.
+   * @returns The refusal sentence, first match wins: another entry that is still opening, a Node test history, an entry no catalog lists, a study a newer Codebook saved, the study of a run that has not stopped, a Recording that is open or opening. In a window without a Trash the sentence names the removal of the study's files by hand, because a request there asks for those files and nothing is deleted. `undefined` when the study can be removed.
    * @example this.studyRemovalRefusal(nodeHistoryId) // => 'Node test histories cannot be deleted here yet.'
    */
   private studyRemovalRefusal(studyId: string): string | undefined {
+    const sentences =
+      this.studyRemovalAvailability() === 'no-trash'
+        ? STUDY_REMOVAL_REFUSALS_WITHOUT_TRASH
+        : STUDY_REMOVAL_REFUSALS
     const refusals: [applies: boolean, sentence: string][] = [
       // The pane may still show the entry before the one the learner chose; a delete names what is shown once it has opened.
-      [this.studyOpening(), STUDY_REMOVAL_REFUSALS.studyOpening],
+      [this.studyOpening(), sentences.studyOpening],
       [
         this.nodeHistoryCatalog.some((history) => history.studyId === studyId),
-        STUDY_REMOVAL_REFUSALS.nodeHistory,
+        sentences.nodeHistory,
       ],
       [
         !this.catalog.some((entry) => entry.id === studyId),
-        STUDY_REMOVAL_REFUSALS.unavailable,
+        sentences.unavailable,
       ],
       // Which files a newer format keeps is not known here, so nothing of such a study is moved.
       [
         this.catalog.some(
           (entry) => entry.id === studyId && entry.format === 'newer',
         ),
-        STUDY_REMOVAL_REFUSALS.newerFormat,
+        sentences.newerFormat,
       ],
-      [
-        this.unstoppedStudyId() === studyId,
-        STUDY_REMOVAL_REFUSALS.runNotStopped,
-      ],
-      [this.recordingOpenOrOpening(), STUDY_REMOVAL_REFUSALS.recordingOpen],
+      [this.unstoppedStudyId() === studyId, sentences.runNotStopped],
+      [this.recordingOpenOrOpening(), sentences.recordingOpen],
     ]
     return refusals.find(([applies]) => applies)?.[1]
   }
@@ -12676,18 +12679,51 @@ export class StudyWorkspace {
   }
 
   /**
-   * Copies the files the reader listed for the removal by hand of one study to the clipboard, one path a line; called by {@link receive} for the pane's `copy-study-files` message.
-   * Only the reader's own list for that study is copied, never text a pane sends.
+   * Copies the files the reader listed for the removal by hand of one study to the clipboard and tells the asking pane what became of it; called by {@link receive} for the pane's `copy-study-files` message.
+   * The answer goes to the asking webview only, after the clipboard write settled: the pane writes "Copied N paths." from it, so it never confirms a copy the clipboard refused.
    * @param studyId - The study the pane shows the list of.
-   * @example await this.copyStudyFiles(message.studyId)
+   * @param asking - The webview that sent the request; a caller that is no pane gets no answer.
+   * @example await this.copyStudyFiles(message.studyId, owner?.webview)
    */
-  private async copyStudyFiles(studyId: string): Promise<void> {
-    const files = this.removalFilesOf(studyId)
-    if (files?.length) await vscode.env.clipboard.writeText(files.join('\n'))
+  private async copyStudyFiles(
+    studyId: string,
+    asking?: Pick<vscode.Webview, 'postMessage'>,
+  ): Promise<void> {
+    const answer = await this.writeStudyFilesToClipboard(studyId)
+    void asking?.postMessage(answer)
   }
 
   /**
-   * Gives the files the reader listed for the removal by hand of one study; read by {@link copyStudyFiles} before it writes the clipboard.
+   * Writes the files the reader listed for the removal by hand of one study to the clipboard, one path a line; called by {@link copyStudyFiles}.
+   * Only the reader's own list for that study is copied, never text a pane sends.
+   * @param studyId - The study the pane shows the list of.
+   * @returns
+   * - The clipboard took the list: `copied` with the number of paths
+   * - The reader keeps no list for that study, or the clipboard refused the write: `failed`; nothing was copied
+   * @example await this.writeStudyFilesToClipboard(studyId) // => { type: 'study-files-copied', studyId, status: 'copied', count: 4 }
+   */
+  private async writeStudyFilesToClipboard(
+    studyId: string,
+  ): Promise<StudyFilesCopied> {
+    const files = this.removalFilesOf(studyId)
+    if (!files?.length)
+      return { type: 'study-files-copied', studyId, status: 'failed' }
+    try {
+      await vscode.env.clipboard.writeText(files.join('\n'))
+    } catch {
+      // The pane names the failure and what the learner does instead; the cause is the editor's and adds nothing the learner can act on.
+      return { type: 'study-files-copied', studyId, status: 'failed' }
+    }
+    return {
+      type: 'study-files-copied',
+      studyId,
+      status: 'copied',
+      count: files.length,
+    }
+  }
+
+  /**
+   * Gives the files the reader listed for the removal by hand of one study; read by {@link writeStudyFilesToClipboard} before it writes the clipboard.
    * @param studyId - The study the pane shows the list of.
    * @returns The list the reader made for that study, also when a later request listed another study; `undefined` when it listed none.
    * @example const files = this.removalFilesOf(studyId)

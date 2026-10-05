@@ -19,13 +19,13 @@ const recordedOwnerSchema = z.object({
   processStart: z.string().min(1).optional(),
 })
 
-/** The process a storage lock, a takeover claim, a connection descriptor or a profile marker says wrote it, with the machine and the boot it ran under and the start of the process; a file of an earlier build records the process id alone, with the host name, or without the start. @example const owner: RecordedOwner = { pid: 4242, hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux:16362446' } */
+/** The process a storage lock, a takeover claim, a connection descriptor or a profile marker says wrote it, with the machine and the boot it ran under and the start of the process; a file of an earlier build records the process id alone, with the host name, or without the start. @example const owner: RecordedOwner = { pid: 4242, hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux@4026531836:16362446' } */
 export type RecordedOwner = z.infer<typeof recordedOwnerSchema>
 
 /** Which start of its machine a process ran under: the kernel's boot id where the system publishes one, else the time the machine started ({@link readBootIdentity}). @example const boot: BootIdentity = { startedAtMs: 1_790_000_000_000 } */
 export type BootIdentity = NonNullable<RecordedOwner['boot']>
 
-/** The machine, the boot and the process start a process writes into what it owns and judges other owners by: a {@link RecordedOwner} without its process id, whose host name is always known ({@link currentStorageOwner}). @example const identity: StorageOwnerIdentity = { hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux:16362446' } */
+/** The machine, the boot and the process start a process writes into what it owns and judges other owners by: a {@link RecordedOwner} without its process id, whose host name is always known ({@link currentStorageOwner}). @example const identity: StorageOwnerIdentity = { hostname: 'workstation', machineId: 'f3a1…', machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', boot: { id: '0c1d…' }, processStart: 'linux@4026531836:16362446' } */
 export type StorageOwnerIdentity = Omit<RecordedOwner, 'pid' | 'hostname'> & {
   hostname: string
 }

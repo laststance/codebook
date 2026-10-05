@@ -1,3 +1,5 @@
+import { WIKI_UPDATE_UNNAMED_BLOCK_REASON } from '../constants'
+
 /** Editor host that runs a Wiki update. */
 export type WikiUpdateHost = 'vscode' | 'cursor'
 
@@ -145,7 +147,7 @@ function endedStatus(
     return {
       ...ended,
       state: 'failed',
-      reason: 'The update was blocked, but no blocking file was named.',
+      reason: WIKI_UPDATE_UNNAMED_BLOCK_REASON,
       isCodebookSentence: true,
       site: result.site,
     }
@@ -177,7 +179,7 @@ function refusalReason(
       site: refusal.site ?? 'kept',
     }
   return {
-    reason: 'The update was blocked, but no blocking file was named.',
+    reason: WIKI_UPDATE_UNNAMED_BLOCK_REASON,
     isCodebookSentence: true,
     site: 'kept',
   }

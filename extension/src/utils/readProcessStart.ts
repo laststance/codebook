@@ -11,6 +11,11 @@ import {
   PROCESS_START_RETRY_AFTER_FAILURE_MS,
 } from '../constants'
 
+import {
+  processStartFormHere,
+  type ProcessStartFormInputs,
+} from './processStartFormHere'
+
 /** What a start query is run with: its bounds, no console window on Windows, and for `ps` the locale and time zone its answer is printed in. */
 type ProcessStartQueryOptions = {
   timeout: number
@@ -26,10 +31,8 @@ type OwnProcessStart = {
   read?: { start: string | undefined; atMs: number }
 }
 
-/** What {@link readProcessStart} reads with; each is the real one unless a caller or a test names its own. */
-export type ProcessStartInputs = {
-  /** The system whose query is used; `process.platform` when left out. */
-  platform?: NodeJS.Platform
+/** What {@link readProcessStart} reads with; each is the real one unless a caller or a test names its own. `platform` is the system whose query is used, and `readLink` reads the pid namespace a Linux start is named with ({@link ProcessStartFormInputs}). */
+export type ProcessStartInputs = ProcessStartFormInputs & {
   /** Reads `/proc/<pid>/stat` as text (Linux). */
   readFile?: (path: string) => Promise<string>
   /** Runs `ps` (macOS) or PowerShell (Windows) without a shell and answers what it printed; it rejects when the query fails, runs too long or prints too much. */
@@ -93,13 +96,13 @@ const monotonicNow: NonNullable<ProcessStartInputs['now']> = () =>
  * Reads the start time out of the text of `/proc/<pid>/stat`; called by {@link linuxStartOf}.
  * @param stat - The file's text. Its second field, the command name, is in parentheses and may itself hold spaces and parentheses.
  * @returns
- * - `linux:<ticks>` with field 22, the start in clock ticks since the boot
+ * - Field 22, the start in clock ticks since the boot, as its digits
  * - `undefined` for a text without a command name, with too few fields, or whose field 22 is not a number
  * @example
- * startInLinuxStat('4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 16362446 1 1') // => 'linux:16362446'
- * startInLinuxStat('4242 (node) S 1')                                                              // => undefined
+ * startTicksInLinuxStat('4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 16362446 1 1') // => '16362446'
+ * startTicksInLinuxStat('4242 (node) S 1')                                                              // => undefined
  */
-function startInLinuxStat(stat: string): string | undefined {
+function startTicksInLinuxStat(stat: string): string | undefined {
   const nameEnd = stat.lastIndexOf(')')
   if (nameEnd === -1) return undefined
   // The fields are counted after the last ")": a command name can hold any text, also ") S 1".
@@ -107,27 +110,32 @@ function startInLinuxStat(stat: string): string | undefined {
     .slice(nameEnd + 1)
     .trim()
     .split(' ')[LINUX_STAT_START_TIME_INDEX]
-  return ticks !== undefined && CLOCK_TICKS.test(ticks)
-    ? `${PROCESS_START_FORMS.linux}:${ticks}`
-    : undefined
+  return ticks !== undefined && CLOCK_TICKS.test(ticks) ? ticks : undefined
 }
 
 /**
  * Reads when a process began from the kernel's own record of it; the query of {@link START_QUERIES} on Linux.
+ * The start is named with the pid namespace it was read in ({@link processStartFormHere}): the same process id and the same clock tick in another namespace of this kernel are another process.
  * @param pid - A positive safe integer.
- * @param inputs - The file read of {@link ProcessStartInputs}.
- * @returns What {@link startInLinuxStat} reads in `/proc/<pid>/stat`.
+ * @param inputs - The file read and the read of the namespace link of {@link ProcessStartInputs}.
+ * @returns `linux@<namespace>:<ticks>` with what {@link startTicksInLinuxStat} reads in `/proc/<pid>/stat`, or `linux:<ticks>` when the namespace cannot be read; `undefined` when the stat holds no start.
  * @throws What the file read rejects with, for example when no process has the id.
  * @example
- * await linuxStartOf(4242, {}) // => 'linux:16362446'
+ * await linuxStartOf(4242, {}) // => 'linux@4026531836:16362446'
  */
 async function linuxStartOf(
   pid: number,
   inputs: ProcessStartInputs,
 ): Promise<string | undefined> {
-  return startInLinuxStat(
+  const ticks = startTicksInLinuxStat(
     await (inputs.readFile ?? readText)(`/proc/${pid}/stat`),
   )
+  if (ticks === undefined) return undefined
+  const form = processStartFormHere({
+    platform: 'linux',
+    readLink: inputs.readLink,
+  })
+  return `${form}:${ticks}`
 }
 
 /**
@@ -196,9 +204,9 @@ const START_QUERIES: Partial<
  * Asks the system now when a process began; called by {@link readThroughCache} for a start that no kept one answers, and by {@link shareOwnRead}.
  * @param pid - A positive safe integer.
  * @param inputs - The platform, the file read and the runner of {@link ProcessStartInputs}.
- * @returns The start with its platform's prefix (`linux:`, `ps:`, `win:`); `undefined` when no process has the id, when the read or the query fails, and on any other platform. Nothing here throws.
+ * @returns The start with its form as prefix (`linux@<namespace>:`, `ps:`, `win:`); `undefined` when no process has the id, when the read or the query fails, and on any other platform. Nothing here throws.
  * @example
- * await queryProcessStart(4242, {}) // => 'linux:16362446'
+ * await queryProcessStart(4242, {}) // => 'linux@4026531836:16362446'
  */
 async function queryProcessStart(
   pid: number,
@@ -242,7 +250,7 @@ function heldOwnRead(
  * @param inputs - The platform, the file read and the runner of {@link ProcessStartInputs}.
  * @returns The read that is under way.
  * @example
- * await shareOwnRead(ownProcessStart, monotonicNow, {}) // => 'linux:16362446'
+ * await shareOwnRead(ownProcessStart, monotonicNow, {}) // => 'linux@4026531836:16362446'
  */
 function shareOwnRead(
   kept: OwnProcessStart,
@@ -263,7 +271,7 @@ function shareOwnRead(
  * @param inputs - The inputs of {@link ProcessStartInputs}; `ownStart` and `now` are a test's own state and clock.
  * @returns This process's start, or `undefined` while it cannot be read. Callers that ask while a read is under way share that read.
  * @example
- * await readOwnProcessStart({}) // => 'linux:16362446', and no second read is made for the same answer later
+ * await readOwnProcessStart({}) // => 'linux@4026531836:16362446', and no second read is made for the same answer later
  */
 function readOwnProcessStart(
   inputs: ProcessStartInputs,
@@ -282,7 +290,7 @@ function readOwnProcessStart(
  * @param inputs - The cache, the expected start, the platform, the file read and the runner of {@link ProcessStartInputs}.
  * @returns The kept start when it equals the expected one, else the start the system names now.
  * @example
- * await readThroughCache(4242, { cache, expectedStart: 'linux:16362446' }) // => 'linux:16362446'
+ * await readThroughCache(4242, { cache, expectedStart: 'linux@4026531836:16362446' }) // => 'linux@4026531836:16362446'
  */
 async function readThroughCache(
   pid: number,
@@ -300,18 +308,18 @@ async function readThroughCache(
 /**
  * Reads when the process with an id began, as a text that is compared for equality only, so that a process id that is in use again is not taken for the process a storage lock, a takeover claim, a connection descriptor or a profile marker recorded; called by {@link currentStorageOwner} for this process and by {@link isRecordedOwnerGone} for a recorded owner.
  *
- * Linux reads field 22 of `/proc/<pid>/stat`; macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell for the creation time in UTC. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS} and {@link PROCESS_START_QUERY_MAX_BYTES}.
+ * Linux reads field 22 of `/proc/<pid>/stat` and names it with the pid namespace it was read in ({@link processStartFormHere}); macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell for the creation time in UTC. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS} and {@link PROCESS_START_QUERY_MAX_BYTES}.
  * A read of `process.pid` answers this process's kept start and asks the system at most once ({@link readOwnProcessStart}).
  * With a `cache`, a kept start may only confirm that the process is the recorded one: it is answered when it equals `expectedStart`. Every other start is read now, so a process id that was given to another process between two looks is never judged by the earlier process's start ({@link readThroughCache}).
  *
  * @param pid - The process id a record names. One that is not a positive safe integer reaches neither a path nor a command line.
- * @param inputs - The platform, the file read, the runner and a caller's cache; the real ones when left out.
+ * @param inputs - The platform, the file read, the read of the namespace link, the runner and a caller's cache; the real ones when left out.
  * @returns
- * - The start with its platform's prefix: `linux:<ticks>`, `ps:<text>`, `win:<UTC time>`
+ * - The start with its form as prefix: `linux@<namespace>:<ticks>` (`linux:<ticks>` when the namespace cannot be read), `ps:<text>`, `win:<UTC time>`
  * - `undefined` when no process has the id, when the read or the query fails, runs too long or answers something that is no start, and on any other platform; nothing here throws
  * @example
- * await readProcessStart(4242)                                               // => 'linux:16362446'
- * await readProcessStart(4242, { cache, expectedStart: 'linux:16362446' })   // => 'linux:16362446', read once for the sweep that owns `cache`
+ * await readProcessStart(4242)                                               // => 'linux@4026531836:16362446'
+ * await readProcessStart(4242, { cache, expectedStart: 'linux@4026531836:16362446' })   // => 'linux@4026531836:16362446', read once for the sweep that owns `cache`
  * await readProcessStart(-1)                                                 // => undefined
  */
 export async function readProcessStart(

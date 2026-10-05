@@ -59,7 +59,7 @@ type RecordEvent = (type: string, detail?: unknown) => unknown
 /** A managed run's own profile folder that its close could not remove, with the removal's error as text; the run shows it in its cleanup record. */
 export type ProfileLeft = { profile: string; reason: string }
 
-/** Owns host-specific browser acquisition/reveal/cleanup for {@link ExperimentRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
+/** Owns host-specific browser acquisition/reveal/cleanup for {@link ConfiguredBrowserRun}; correctness stays in the shared coordinator. @example await browser.launch(configuration, signal) */
 export class HostBrowser {
   private tab?: vscode.Tab
   private readonly cursorIds = new Set<string>()
@@ -340,7 +340,7 @@ export class HostBrowser {
     }
   }
 
-  /** Binds the owned viewport only after {@link ExperimentRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
+  /** Binds the owned viewport only after {@link ConfiguredBrowserRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */
   async attachViewport(cdp: Cdp, signal: AbortSignal): Promise<void> {
     if (!this.viewport || !this.managedProfile) return
     const profile = this.managedProfile
@@ -398,7 +398,7 @@ export class HostBrowser {
     this.viewport?.recordCapture(data, phase)
   }
 
-  /** Retires only viewport pause presentation; debugger control remains in {@link ExperimentRun}. @example browser.resumeViewport() */
+  /** Retires only viewport pause presentation; debugger control remains in {@link ConfiguredBrowserRun}. @example browser.resumeViewport() */
   resumeViewport(): void {
     this.viewport?.resume()
   }
@@ -524,7 +524,7 @@ export class HostBrowser {
     this.record('browser.revealed', { title: browser.tab.label, index })
   }
 
-  /** Releases known handles even if acquisition is unresolved, waits for the sweep of abandoned profile folders its launch started, then removes a managed run's own profile folder; {@link ExperimentRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
+  /** Releases known handles even if acquisition is unresolved, waits for the sweep of abandoned profile folders its launch started, then removes a managed run's own profile folder; {@link ConfiguredBrowserRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
   async close(): Promise<void> {
     this.closing = true
     const failures = await settleCleanup([
