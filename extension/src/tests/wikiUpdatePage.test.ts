@@ -1268,9 +1268,12 @@ test('the update group is a bordered panel with a filled button, and keeps a bou
   for (const rule of [
     '[data-codebook-update-group]{background:var(--panel-2,Canvas);border:1px solid var(--border,#777);border-radius:6px;padding:.6rem}',
     filledButton,
-    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
   ])
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+  assert.match(
+    styles,
+    /@media\(min-width:701px\) and \(max-width:1000px\)\{[^@]*\[data-codebook-update-group\]\{flex:0 1 28rem;min-width:0;align-self:flex-start\}/,
+  )
   // Both rules weigh the same, so the held-back look must come later to win.
   assert.ok(
     styles.indexOf('.wiki-update[aria-disabled=true]{') >
@@ -1926,52 +1929,213 @@ test('the update button and the reload button change under the pointer and while
   )
 })
 
+// Value: protects=the rail entry that opens a page's first cited source, on a served page of any age (an older site carries its own older stylesheet, which draws the block on the link); fails_when=the page script stops injecting the entry's rest, hover, active or focus rule, so an older site's entry gives no feedback and its focus ring is cut by the rail, or the link no longer covers the whole entry, so a press on the file and line opens nothing, or an older site's link keeps its own box inside the entry's, or the label and target lose their two-line form; why_new=Cycle 0046 row 28 (design review DR-8, DR-9), row 69; seam=none
+test('the entry that opens the page’s source answers the pointer, a press and the keyboard on a served page of any age, with its label on one line and its target under it', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    // The block is the entry; the link inside it has no box of its own (a site of 0.2.29.0 drew one on it) and covers the whole entry.
+    '.open-in-editor{position:relative;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;overflow-wrap:anywhere}',
+    '.open-in-editor a{display:block;border:0;border-radius:0;padding:0;font-size:inherit;white-space:nowrap;text-decoration:none}',
+    '.open-in-editor a::after{content:"";position:absolute;inset:-1px;border-radius:6px}',
+    '.open-in-editor:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
+    '.open-in-editor:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
+    '.open-in-editor a:focus-visible{outline:none}',
+    '.open-in-editor a:focus-visible::after{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
+    '.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted,GrayText);overflow-wrap:anywhere}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+  // The entry changes at once: no rule of it names a transition or an animation.
+  assert.doesNotMatch(
+    styles,
+    /\.open-(?:in-editor|target)[^{}]*\{[^}]*(?:animation|transition)/,
+  )
+})
+
+// Value: protects=the Wiki reader between 701 and 1000 px on a served page of any age, where the right rail is a row below the article; fails_when=the injected rules cap the rail again or stop capping the outline and an open detail, so the update panel's sentence is cut behind a scrollbar or a long outline takes the article's room, or the detail's cap no longer follows a short window (14vh), so the rail passes 45vh at 960 x 600, or the output block shrinks until Change location breaks, or the ring of the detail's summary is cut by the detail, or the rules reach the single column below 701 px; why_new=Cycle 0046 row 28 (design review DR-10, second measurement), package SPB (the summary's ring); seam=none
+test('where the rail is a row a served page caps the outline and an open update detail and never the rail or the update panel, keeps the output block’s longest line whole and the ring of the detail’s summary inside the detail, and leaves the single column alone', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes(
+      '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}.right-rail .output{min-width:max-content}}',
+    ),
+  )
+  // The injected sheet comes after the site's own, so a rule of it for 1000 px and narrower would also win in the single column.
+  assert.deepEqual(styles.match(/@media\(max-width:1000px\)/g), null)
+})
+
+// Value: protects=keyboard focus in the chapter list and the right rail of a served page of any age; fails_when=the ring of a full-width link lies outside its link again, where the scrolling column cuts its sides, or the rail loses the room for the ring of its last link; why_new=Cycle 0046 row 61 (design review ND-3); seam=none
+test('a served page of any age draws the focus ring of a chapter link and of an outline link inside the link, and keeps room in the rail for the ring of its last link', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
+    '.right-rail{padding-left:5px;margin-left:-5px;scroll-padding-block:6px}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+// Value: protects=keyboard focus in the article and the composer of a served page of any age, which scroll and cut whatever lies outside them; fails_when=the page script stops giving an older site's article and composer their room for the focus ring, so the ring of the question field or of Ask Codebook is cut at the side, or gives the room without taking it back, so the reading column of an older site moves, or leaves the composer of the single column with the wide layout's height limit and margin; why_new=Cycle 0046 row 67; seam=none
+test('a served page of any age keeps room for the focus ring at the sides of the article and around the composer and takes the room back, and leaves the composer of the single column its own bottom padding', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.wiki-article{padding-left:5px;margin-left:-5px;scroll-padding-bottom:6px}',
+    '.composer{max-height:calc(34% + 5px);border-image:linear-gradient(to right,transparent 5px,var(--border,#777) 5px calc(100% - 5px),transparent calc(100% - 5px)) 1 0 0;padding-left:5px;padding-right:5px;padding-bottom:5px;margin:0 -5px -5px;scroll-padding-block:6px}',
+    '@media(max-width:700px){.composer{max-height:none;padding-bottom:.6rem;margin-bottom:0}}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+// Value: protects=the chapter list and the outline of a served page of any age, where they are columns that scroll; fails_when=a chapter title or an outline entry that cannot break (an identifier) is wider than its column on a site published before the shell wrapped it, so the column gets a sideways scrollbar; why_new=Cycle 0046 package SPB, found while measuring row 28 at 1200 px on a site published by 0.2.29.0; seam=none
+test('a served page of any age wraps a chapter title and an outline entry that cannot break inside their column', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes('.chapters a,.outline a{overflow-wrap:anywhere}'),
+    'the page lacks the rule .chapters a,.outline a{overflow-wrap:anywhere}',
+  )
+})
+
 test('the overview opened in place of a missing page says which page is missing', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
-  // Act: the reader sent the request for a removed page to the overview.
+  // Act: the reader sent the request for a removed page to the overview; the page script has run and the window has not loaded yet.
   const page = await openFakeWikiPage(
     script,
     'current-shell',
     {},
     { search: '?missing=pages%2Fremoved.html' },
   )
-
-  // Assert: the line is the first element of the reading column, above the article and its title.
   const readingColumn = page.find('.reading-column')
   const line = page.find('[data-codebook-missing-page]')
+  const rightAfterTheScript = {
+    text: line?.textContent,
+    role: line?.getAttribute('role'),
+    readingColumn: readingColumn?.children.map((child) => child.tagName),
+    isFirstOfReadingColumn: readingColumn?.children[0] === line,
+    title: page.title(),
+    address: page.address(),
+  }
+  await page.advance(1_000)
+  const textBeforeTheLoad = line?.textContent
+  await page.finishLoading()
+  await page.advance(149)
+  const text149MsAfterTheLoad = line?.textContent
+  await page.advance(1)
+
+  // Assert: the line is in the page, empty, as the first element of the reading column, and the title carries the notice at once; the sentence arrives 150 ms after the load.
+  assert.deepEqual(rightAfterTheScript, {
+    text: '',
+    role: 'status',
+    readingColumn: ['p', 'article'],
+    isFirstOfReadingColumn: true,
+    title: 'Page not in this Wiki · Overview · sample DeepWiki',
+    // Shown once: the address no longer names the missing page.
+    address: '/w/fake-reader-token/index.html',
+  })
+  assert.equal(textBeforeTheLoad, '')
+  assert.equal(text149MsAfterTheLoad, '')
   assert.equal(
     line?.textContent,
     'The page pages/removed.html is not in this Wiki. The last update may have removed it. This is the overview.',
   )
-  assert.equal(line?.getAttribute('role'), 'status')
-  assert.deepEqual(
-    readingColumn?.children.map((child) => child.tagName),
-    ['p', 'article'],
-  )
-  assert.equal(readingColumn?.children[0], line)
+  const styles = page.injectedStyles()
   assert.ok(
-    page
-      .injectedStyles()
-      .includes(
-        '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
-      ),
+    styles.includes(
+      '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
+    ),
   )
-  // Shown once: the address no longer names the missing page.
-  assert.equal(page.address(), '/w/fake-reader-token/index.html')
+  // The empty line shows no box, so it can wait in the page for its sentence.
+  assert.ok(
+    styles.includes(
+      '[data-codebook-missing-page]:empty{margin:0;padding:0;border:0}',
+    ),
+  )
+})
+
+// Value: protects=the missing-page line on a page whose script runs after the window has loaded; fails_when=the sentence waits for a `load` event that has already passed and never arrives, or arrives together with the line; why_new=Cycle 0046 row 28 (design review DR-11); seam=none
+test('a page that had already loaded when its script ran gets the sentence of a missing page 150 ms later', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    {},
+    {
+      search: '?missing=pages%2Fremoved.html',
+      isLoadedBeforeTheScript: true,
+    },
+  )
+  const line = page.find('[data-codebook-missing-page]')
+  const textRightAfterTheScript = line?.textContent
+  await page.advance(149)
+  const text149MsLater = line?.textContent
+  await page.advance(1)
+
+  // Assert
+  assert.equal(textRightAfterTheScript, '')
+  assert.equal(text149MsLater, '')
+  assert.equal(
+    line?.textContent,
+    'The page pages/removed.html is not in this Wiki. The last update may have removed it. This is the overview.',
+  )
+  assert.equal(
+    page.title(),
+    'Page not in this Wiki · Overview · sample DeepWiki',
+  )
 })
 
 test('a missing parameter that is not a page path is shown as a missing page without its text', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
-  // Act: three addresses somebody wrote by hand: a sentence, a path that climbs out, and a file that is no page.
+  // Act: four addresses somebody wrote by hand: a sentence, a path that climbs out, a file that is no page, and a page path of 1,000 characters.
   const lines = []
   for (const missing of [
     'Your session expired: sign in at example.test',
     '../../etc/passwd.html',
     'pages/notes.txt',
+    `${'a'.repeat(995)}.html`,
   ]) {
     const page = await openFakeWikiPage(
       script,
@@ -1979,20 +2143,73 @@ test('a missing parameter that is not a page path is shown as a missing page wit
       {},
       { search: `?missing=${encodeURIComponent(missing)}` },
     )
-    lines.push(page.find('[data-codebook-missing-page]')?.textContent)
+    const line = page.find('[data-codebook-missing-page]')
+    const textRightAfterTheScript = line?.textContent
+    await page.finishLoading()
+    await page.advance(149)
+    const text149MsAfterTheLoad = line?.textContent
+    await page.advance(1)
+    lines.push({
+      textRightAfterTheScript,
+      text149MsAfterTheLoad,
+      text: line?.textContent,
+      title: page.title(),
+    })
   }
   const withoutTheParameter = await openFakeWikiPage(script, 'current-shell')
+  await withoutTheParameter.finishLoading()
+  await withoutTheParameter.advance(150)
 
   // Assert
+  const sentenceWithoutThePath = {
+    textRightAfterTheScript: '',
+    text149MsAfterTheLoad: '',
+    text: 'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+    title: 'Page not in this Wiki · Overview · sample DeepWiki',
+  }
   assert.deepEqual(lines, [
-    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
-    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
-    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+    sentenceWithoutThePath,
+    sentenceWithoutThePath,
+    sentenceWithoutThePath,
+    sentenceWithoutThePath,
   ])
   assert.equal(
     withoutTheParameter.find('[data-codebook-missing-page]'),
     undefined,
   )
+  assert.equal(withoutTheParameter.title(), 'Overview · sample DeepWiki')
+})
+
+// Value: protects=the reading column of the overview opened in place of a missing page; fails_when=the line prints a page path of any length from the address, which anyone can write, so a long one fills the column above the article; why_new=Cycle 0046 row 64 (design review ND-6); seam=none
+test('the missing-page line names a page path of 200 characters and leaves out one of 201', async () => {
+  // Arrange: two page paths as the publisher allows them, one at the limit and one a character over it.
+  const script = await readServedWikiScript()
+  const pathOf200Characters = `pages/${'a'.repeat(189)}.html`
+  const pathOf201Characters = `pages/${'a'.repeat(190)}.html`
+
+  // Act
+  const shown = []
+  for (const missing of [pathOf200Characters, pathOf201Characters]) {
+    const page = await openFakeWikiPage(
+      script,
+      'current-shell',
+      {},
+      { search: `?missing=${encodeURIComponent(missing)}` },
+    )
+    await page.finishLoading()
+    await page.advance(150)
+    shown.push(page.find('[data-codebook-missing-page]')?.textContent)
+  }
+
+  // Assert
+  assert.deepEqual(
+    [pathOf200Characters.length, pathOf201Characters.length],
+    [200, 201],
+  )
+  assert.deepEqual(shown, [
+    `The page pages/${'a'.repeat(189)}.html is not in this Wiki. The last update may have removed it. This is the overview.`,
+    'The page you asked for is not in this Wiki. The last update may have removed it. This is the overview.',
+  ])
 })
 
 test('each new sentence changes the announced status region once, and a look that finds nothing new does not change it', async () => {
