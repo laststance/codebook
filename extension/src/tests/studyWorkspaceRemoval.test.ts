@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fsPromises, {
   mkdir,
@@ -3904,6 +3905,50 @@ test('a removal leaves the raw evidence in place and says so while another Codeb
     assert.equal(
       harness.reader.inspect().view!.studyRemoval?.text,
       `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies. The run's raw evidence was left in place because its Codebook window may still be open.`,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=deleting a saved study of a window of a build up to 0.2.28 that crashed also takes its raw evidence out of the agent storage; fails_when=a connection descriptor that names a process and no machine holds the evidence back for good, although its process has ended (Cycle 0046 row 10, PL-2); why_new=the removal tests wrote descriptors without a process id only; seam=the editor's dialog and Trash, stubbed at the vscode boundary, and a real exited process
+test('a removal also moves the raw evidence of a crashed window whose connection descriptor names an ended process and no machine', async () => {
+  // Arrange: the study's run belongs to another instance; that window crashed and left its descriptor, written by a build up to 0.2.28, in the agent storage.
+  const harness = await workspaceHarness()
+  try {
+    const study = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z')
+    const evidenceDirectory = evidenceDirectoryOf(harness, study)
+    await mkdir(evidenceDirectory, { recursive: true })
+    await writeFile(
+      join(
+        harness.directory,
+        'storage',
+        'agent',
+        `${study.instanceId}.connection.json`,
+      ),
+      JSON.stringify({ pid: spawnSync(process.execPath, ['-e', '']).pid }),
+    )
+    harness.answerWarningDialogs(async ([confirm]) => confirm)
+    // Act
+    await requestRemoval(harness, study.id)
+    // Assert
+    assert.deepEqual(
+      harness.trashMoves.map((move) => move.path),
+      [
+        evidenceDirectory,
+        join(
+          harness.reader.inspect().libraryDirectory!,
+          `${study.id}.study.meta.v3.json`,
+        ),
+        join(
+          harness.reader.inspect().libraryDirectory!,
+          `${study.id}.study.v3.json`,
+        ),
+      ],
+    )
+    assert.equal(
+      harness.reader.inspect().view!.studyRemoval?.text,
+      `Saved study moved to the ${TRASH}. The library now holds 0 of 64 saved studies.`,
     )
   } finally {
     await harness.close()

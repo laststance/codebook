@@ -17,6 +17,9 @@ import { test, type TestContext } from 'node:test'
 
 import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandonedProfiles'
+import { readProcessStart } from '../utils/readProcessStart'
+
+import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /**
  * Creates a profile root of the test's own, never the real `/tmp`, and removes it when the test ends.
@@ -260,4 +263,66 @@ test('a sweep that finds only a folder of a running editor does not list the pro
   assert.deepEqual(removed, [])
   assert.equal(processListings, 0)
   assert.deepEqual(await readdir(root), ['codebook-browser-running'])
+})
+
+// Value: protects=the profile folders a killed editor left are removed in the same boot although another process has its process id, and the folder of a running editor is never removed; fails_when=a marker is judged by process id and kernel boot alone, so such a folder stays until the next restart (Cycle 0046 rows 2 and 9), or the judgement is not awaited, so every folder counts as abandoned; why_new=every marker test named a process id that no longer exists, a running one without a start, or another kernel boot; seam=none (the markers name this running test process, with another start and with its real one)
+test('a marked profile folder of a killed editor whose process id is in use again is removed, and the folder of a running editor with that id stays', async (context) => {
+  // Arrange: a killed editor began long ago; this test process has its process id now. A second folder is marked with the real start of this process.
+  const root = await profileRoot(context)
+  const ofKilledEditor = join(root, 'codebook-browser-of-killed-editor'),
+    ofRunningEditor = join(root, 'codebook-browser-of-running-editor')
+  await profileFolder(ofKilledEditor, {
+    pid: process.pid,
+    hostname: 'workstation',
+    processStart: startOfKilledWindow(),
+  })
+  await profileFolder(ofRunningEditor, {
+    pid: process.pid,
+    hostname: 'workstation',
+    processStart: await readProcessStart(process.pid),
+  })
+  // Act
+  const removed = await removeAbandonedProfiles(root, {
+    hostname: 'workstation',
+  })
+  // Assert
+  assert.deepEqual(removed, [ofKilledEditor])
+  assert.deepEqual(await readdir(root), ['codebook-browser-of-running-editor'])
+})
+
+// Value: protects=a sweep over the folders of one running editor costs one read of its start (one spawned ps or PowerShell on macOS and Windows), not one per folder; fails_when=the sweep reads the start again for every marker (ER-12, decision D7); why_new=the marker carries its owner's start since Cycle 0046; seam=the process probe and the file read of the start reader, which counts
+test('three profile folders of one running editor are judged with one read of its start', async (context) => {
+  // Arrange: this editor is a Linux process begun at tick 16362446; three marked folders of running process 4242, which began at clock tick 200.
+  const root = await profileRoot(context)
+  for (const name of [
+    'codebook-browser-a',
+    'codebook-browser-b',
+    'codebook-browser-c',
+  ])
+    await profileFolder(join(root, name), {
+      pid: 4242,
+      hostname: 'workstation',
+      processStart: 'linux:200',
+    })
+  context.mock.method(process, 'kill', (): true => true)
+  let startReads = 0
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation', processStart: 'linux:16362446' },
+    listProcesses,
+    (pid, inputs) =>
+      readProcessStart(pid, {
+        ...inputs,
+        platform: 'linux',
+        readFile: async () => {
+          startReads += 1
+          return '4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 200 16637952 1813'
+        },
+      }),
+  )
+  // Assert
+  assert.deepEqual(removed, [])
+  assert.equal(startReads, 1)
+  assert.equal((await readdir(root)).length, 3)
 })

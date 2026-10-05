@@ -8,6 +8,7 @@ import type { BootIdentity } from './readRecordedOwner'
 /**
  * Reads which start of this machine the process runs under, so that a storage owner recorded before a restart is recognised although its process id is in use again; called by {@link currentStorageOwner} each time an owner is recorded or judged.
  * The kernel's boot id needs no clock. Where the system publishes none, the boot time is the wall clock minus the uptime, which a clock correction moves; {@link isFromEarlierBoot} compares it with a tolerance.
+ * The boot time serves records without a process start: those a window of 0.2.29.0 wrote or reads, and those of a window whose start could not be read. Between two windows of this build the owner's process start decides ({@link readProcessStart}), and {@link currentStorageOwner} records no boot time while its own start is unknown.
  * @param kernelBootIdPath - The file that holds the kernel's boot id; tests name one of their own.
  * @returns
  * - `{ id }` with the kernel's boot id, where that file can be read and is not empty (Linux)

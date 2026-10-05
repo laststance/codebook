@@ -26,6 +26,7 @@ function startedClearlyBefore(
 /**
  * Says whether a storage owner was recorded before this machine's last restart, so that {@link isRecordedOwnerGone} does not take a process id that is in use again for the owner.
  * Only what is certain counts: two different kernel boot ids, or a recorded boot time that lies before this boot's by more than {@link STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS}. Two clocks that disagree never make an owner one of an earlier boot.
+ * The boot time serves a record without a process start (written by 0.2.29.0, or by a window whose start could not be read). A record with a start is judged by that start, and the caller hands this function no boot time for it ({@link withoutBootTime}): a clock set forward by more than the tolerance while a lock is held would otherwise make its live owner one of an earlier boot.
  * @param recorded - The boot the owner wrote; `undefined` for a file of an earlier build.
  * @param current - The boot this process runs under.
  * @returns

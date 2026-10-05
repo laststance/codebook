@@ -13,6 +13,24 @@ export const PRIVATE_FILE_MODE = 0o600
 export const KERNEL_BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id'
 /** How far the boot time a storage owner recorded may lie before this boot's and still be the same boot. Each is the wall clock minus the uptime, so a clock correction moves it by seconds, while a restart moves it by at least the earlier session's length. */
 export const STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS = 60_000
+/** How long the query for one process's start (`ps` on macOS, PowerShell on Windows) may run before it is ended and the start counts as unreadable. */
+export const PROCESS_START_QUERY_TIMEOUT_MS = 3_000
+/** The most bytes the query for one process's start may print; a longer answer is no start. */
+export const PROCESS_START_QUERY_MAX_BYTES = 1_024
+/** How long a failed read of this process's own start is kept before the start is read again. */
+export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
+/** The longest text `ps -o lstart=` may answer and still be taken for a process's start ("Mon Oct  5 09:12:33 2026" has 24 characters). */
+export const PROCESS_START_PS_TEXT_MAX_LENGTH = 64
+/** Where the start time (field 22 of `/proc/<pid>/stat`) is among the values that follow the command name's closing parenthesis; the first of them is field 3. */
+export const LINUX_STAT_START_TIME_INDEX = 19
+/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. Two starts of different forms were read in two spaces of process ids and are never compared ({@link canJudgeOwnerHere}). */
+export const PROCESS_START_FORMS = {
+  linux: 'linux',
+  darwin: 'ps',
+  win32: 'win',
+} as const satisfies Partial<Record<NodeJS.Platform, string>>
+/** How many hex characters of a SHA-256 name a machine in a storage owner record ({@link deriveMachineKeys}). */
+export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */
 export const STORAGE_LOCK_UNWRITTEN_GRACE_MS = 10_000
 /** What an editor that runs without its telemetry service answers as `vscode.env.machineId` on every computer; it identifies none. */

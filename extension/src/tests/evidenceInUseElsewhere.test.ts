@@ -7,6 +7,8 @@ import { test, type TestContext } from 'node:test'
 
 import { evidenceInUseElsewhere } from '../utils/evidenceInUseElsewhere'
 
+import { startOfKilledWindow } from './utils/startOfKilledWindow'
+
 /** Creates an agent storage with one other instance's run evidence, so a test only adds or leaves out that instance's connection descriptor. @example const agent = await agentStorage(context) */
 async function agentStorage(context: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'codebook-evidence-in-use-'))
@@ -147,9 +149,9 @@ test('the evidence of a running window stays in use elsewhere although the boot 
   assert.equal(inUse, true)
 })
 
-// Value: protects=a descriptor of an earlier build, which names a process id and no machine, is never taken for one of this machine; fails_when=a missing host counts as this machine, so on shared storage a running window's evidence is moved; why_new=the machine is judged since Cycle 0045; seam=a real exited process
-test('the evidence of a window whose connection descriptor names a process and no machine stays in use elsewhere', async (context) => {
-  // Arrange: a descriptor as an earlier build wrote it, with a process id that no longer exists on this machine.
+// Value: protects=deleting a study of a window of a build up to 0.2.28 that crashed also removes its evidence (frames, captured values); fails_when=a descriptor that names a process and no machine is taken for another machine's, so the evidence of every crashed window of such a build stays on disk for good (Cycle 0046 row 10, PL-2); why_new=the retired test "the evidence of a window whose connection descriptor names a process and no machine stays in use elsewhere" stated the old behavior; seam=a real exited process
+test('the evidence of a crashed window whose connection descriptor names a process and no machine moves with its study', async (context) => {
+  // Arrange: a descriptor as a build up to 0.2.28 wrote it, with the id of a process that has ended.
   const agent = await agentStorage(context)
   const exited = spawnSync(process.execPath, ['-e', ''])
   await writeFile(agent.descriptor, JSON.stringify({ pid: exited.pid }))
@@ -159,5 +161,43 @@ test('the evidence of a window whose connection descriptor names a process and n
     'own-instance',
   )
   // Assert
+  assert.equal(inUse, false)
+})
+
+// Value: protects=the evidence of a running window of a build up to 0.2.28 is never moved to the Trash under it; fails_when=a descriptor that names no machine counts as left behind whatever its process does; why_new=Cycle 0046 row 10 judges such a descriptor by its process id; seam=none (the descriptor names this running process)
+test('the evidence of a running window whose connection descriptor names a process and no machine stays in use elsewhere', async (context) => {
+  // Arrange: a descriptor as a build up to 0.2.28 wrote it, with the id of a process that runs.
+  const agent = await agentStorage(context)
+  await writeFile(agent.descriptor, JSON.stringify({ pid: process.pid }))
+  // Act
+  const inUse = await evidenceInUseElsewhere(
+    agent.evidenceDirectory,
+    'own-instance',
+  )
+  // Assert
   assert.equal(inUse, true)
+})
+
+// Value: protects=a descriptor a crashed window of this build left does not keep its evidence in place because another process got its id in the same boot; fails_when=the descriptor's owner is judged by its process id and boot alone (Cycle 0046 rows 2 and 9); why_new=the descriptor records its owner's start since Cycle 0046; seam=the injected machine identity (the descriptor names this running process with another start)
+test('the evidence of a crashed window moves with its study although another process has its process id now', async (context) => {
+  // Arrange: the descriptor of a window that began long ago and was killed; this test process has its id now, under the same boot.
+  const agent = await agentStorage(context)
+  await writeFile(
+    agent.descriptor,
+    JSON.stringify({
+      pid: process.pid,
+      hostname: 'workstation',
+      machineId: 'machine-a',
+      boot: { id: 'boot-1' },
+      processStart: startOfKilledWindow(),
+    }),
+  )
+  // Act
+  const inUse = await evidenceInUseElsewhere(
+    agent.evidenceDirectory,
+    'own-instance',
+    { hostname: 'workstation', machineId: 'machine-a', boot: { id: 'boot-1' } },
+  )
+  // Assert
+  assert.equal(inUse, false)
 })
