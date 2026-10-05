@@ -510,14 +510,15 @@ test('a stray x.study.v5.json in the library leaves the list, save admission, re
   )
 })
 
-// Value: protects=Retry storage still repairs the library when one study's known file holds the format of a newer Codebook; fails_when=the repair reads that study's archive, which is refused as a newer format, and the whole Retry storage fails with that study's sentence; why_new=found in Cycle 0046 while the repair was changed to read each study from the one listing; seam=the library directory, into which the test writes the files a newer Codebook would write under a known name
+// Value: protects=Retry storage still repairs the library when one study's known file holds the format of a newer Codebook, and writes over neither that study's archive nor its catalog sidecar; fails_when=the repair reads that study's archive, which is refused as a newer format, and the whole Retry storage fails with that study's sentence, or a sidecar of a newer format beside a readable archive counts as a failed checkpoint and is written again in this Codebook's format, although the list shows the study as kept as it is (Cycle 0046 row 94); why_new=found in Cycle 0046 while the repair was changed to read each study from the one listing; the sidecar was added by the delegated review of that change; seam=the library directory, into which the test writes the files a newer Codebook would write under a known name
 test('Retry storage over a library with a study a newer Codebook saved under a known file name repairs the other studies and keeps that study as it is', async (context) => {
-  // Arrange: one saved study whose sidecar is gone, and one study whose format 4 files hold format 6.
+  // Arrange: one saved study whose sidecar is gone, one study whose format 4 archive holds format 6, and one saved study whose sidecar a newer Codebook wrote again in format 6 beside the readable archive.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-learning-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const library = new LearningLibrary(directory, workspaceKey, () => 16),
     repaired = capturedStudy(),
-    newerInKnownFile = capturedStudy()
+    newerInKnownFile = capturedStudy(),
+    newerSidecarOnly = capturedStudy()
   await library.saveStudy(repaired)
   await rm(join(directory, `${repaired.id}.study.meta.v3.json`))
   const newerBytes = JSON.stringify({ ...newerInKnownFile, version: 6 })
@@ -525,11 +526,24 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
     join(directory, `${newerInKnownFile.id}.study.v4.json`),
     newerBytes,
   )
+  await library.saveStudy(newerSidecarOnly)
+  const newerSidecar = join(
+      directory,
+      `${newerSidecarOnly.id}.study.meta.v3.json`,
+    ),
+    newerSidecarBytes = JSON.stringify({ version: 6, id: newerSidecarOnly.id })
+  await writeFile(newerSidecar, newerSidecarBytes)
   // Act
   const retry = await library.reconcile().then(
     () => 'reconciled',
     (error: unknown) => String(error),
   )
+  const checkpointOfNewerSidecar = await library
+    .readCheckpoint(newerSidecarOnly.id)
+    .then(
+      (checkpoint) => checkpoint.status,
+      (error: unknown) => String(error),
+    )
   // Assert
   assert.equal(retry, 'reconciled')
   assert.equal((await library.readCheckpoint(repaired.id)).status, 'saved')
@@ -539,5 +553,16 @@ test('Retry storage over a library with a study a newer Codebook saved under a k
       'utf8',
     ),
     newerBytes,
+  )
+  assert.equal(await readFile(newerSidecar, 'utf8'), newerSidecarBytes)
+  assert.equal(
+    checkpointOfNewerSidecar,
+    'Error: This study was saved in format 6 by a newer Codebook; this Codebook reads formats up to 4. Update the extension to open it. The study is kept as it is.',
+  )
+  assert.deepEqual(
+    (await library.list())
+      .filter((entry) => entry.id === newerSidecarOnly.id)
+      .map((entry) => ({ format: entry.format, outcome: entry.outcome })),
+    [{ format: 'newer', outcome: 'Saved by a newer Codebook; kept as it is' }],
   )
 })
