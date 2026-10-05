@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { listProcesses } from '../runtimeSupport/utils/listProcesses'
 import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandonedProfiles'
 
 /**
@@ -204,4 +205,59 @@ test('a profile root that does not exist is answered with nothing removed', asyn
   })
   // Assert
   assert.deepEqual(removed, [])
+})
+
+// Value: protects=the sweep after crashes costs one process listing, however many folders killed editors left (Cycle 0045 review PL-6); fails_when=each folder whose owner is gone runs its own `ps -axww`; why_new=no test counted the listings; seam=the process lister the sweep is given, which counts and lists the real processes
+test('three profile folders of killed editors are removed with one listing of the processes', async (context) => {
+  // Arrange: three marked folders whose editor, an impossible process id, is gone.
+  const root = await profileRoot(context)
+  const owner = { pid: 2 ** 22 + 1, hostname: 'workstation' }
+  for (const name of [
+    'codebook-browser-a',
+    'codebook-browser-b',
+    'codebook-browser-c',
+  ])
+    await profileFolder(join(root, name), owner)
+  let processListings = 0
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    () => {
+      processListings += 1
+      return listProcesses()
+    },
+  )
+  // Assert
+  assert.deepEqual([...removed].sort(), [
+    join(root, 'codebook-browser-a'),
+    join(root, 'codebook-browser-b'),
+    join(root, 'codebook-browser-c'),
+  ])
+  assert.equal(processListings, 1)
+  assert.deepEqual(await readdir(root), [])
+})
+
+// Value: protects=a sweep that finds no folder of a killed editor does not list the processes at all; fails_when=the sweep lists the processes up front, on every managed launch; why_new=the listing is shared by the sweep since Cycle 0046; seam=the process lister the sweep is given
+test('a sweep that finds only a folder of a running editor does not list the processes', async (context) => {
+  // Arrange: one marked folder whose editor is this running process.
+  const root = await profileRoot(context)
+  await profileFolder(join(root, 'codebook-browser-running'), {
+    pid: process.pid,
+    hostname: 'workstation',
+  })
+  let processListings = 0
+  // Act
+  const removed = await removeAbandonedProfiles(
+    root,
+    { hostname: 'workstation' },
+    () => {
+      processListings += 1
+      return listProcesses()
+    },
+  )
+  // Assert
+  assert.deepEqual(removed, [])
+  assert.equal(processListings, 0)
+  assert.deepEqual(await readdir(root), ['codebook-browser-running'])
 })
