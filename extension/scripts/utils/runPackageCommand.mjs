@@ -7,9 +7,29 @@ import {
   PACKAGE_COMMAND_TIMEOUT_MS,
   PACKAGE_COMMAND_EXIT_TIMEOUT_MS,
   PACKAGE_COMMAND_EXIT_POLL_MS,
+  PROCESS_ID_MAX,
+  SIGNALLED_PROCESS_GROUP_ID_MIN,
 } from './packageConstants.mjs'
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Says whether a number `ps` printed as a process group id names a group the package command can stop; called by {@link trackPackageGroups} for every group it is about to keep, so that the stop step of {@link runPackageCommand}, which signals the kept groups, never gets an id it cannot signal.
+ * `ps` prints the group id of a process it could not read (one that is going away) as 4294967295, a -1 read as unsigned. `process.kill` refuses such a number with an argument error that is no `ESRCH`, which ended a finished package command as a failure.
+ * @param groupId - The third column of one `ps` line as a number; `NaN` for a column that is no number.
+ * @returns `true` for a whole number from {@link SIGNALLED_PROCESS_GROUP_ID_MIN} to {@link PROCESS_ID_MAX}; `false` for 0, 1, a negative number, a fraction, `NaN` and a number above what a process id can be.
+ * @example
+ * isSignalledGroupId(48213)      // => true
+ * isSignalledGroupId(4294967295) // => false
+ * isSignalledGroupId(1)          // => false
+ */
+function isSignalledGroupId(groupId) {
+  return (
+    Number.isInteger(groupId) &&
+    groupId >= SIGNALLED_PROCESS_GROUP_ID_MIN &&
+    groupId <= PROCESS_ID_MAX
+  )
+}
 
 /** Finds process groups reached from a package leader before an exited parent can orphan its children. @example await inspectOwnedGroups(1234, new Set([1234])) */
 async function inspectOwnedGroups(leaderPid, ownedPids) {
@@ -54,8 +74,9 @@ function trackPackageGroups(leaderPid) {
   const sample = async () => {
     if (stopped) return
     const entries = await inspectOwnedGroups(leaderPid, ownedPids)
+    // Only an id that names a group is kept: the stop step signals every kept group.
     for (const entry of entries)
-      if (ownedPids.has(entry.pid) && entry.groupPid > 0)
+      if (ownedPids.has(entry.pid) && isSignalledGroupId(entry.groupPid))
         groups.add(entry.groupPid)
   }
   const recordFailure = (error) => {

@@ -150,24 +150,118 @@ function withoutComments(source) {
 }
 
 /**
- * Lists the files a TypeScript source loads by a relative path, in every form the extension's sources and tests use, so the closure of a test file leaves none of them out.
+ * Names the way a call loads a file by a path, for {@link unreadableLoadsOf}: a dynamic `import(…)`, `require(…)`, `require.resolve(…)`, or a path built from `__dirname` with `resolve` or `join`.
+ * @param call - A call expression of the source.
+ * @returns `import`, `require`, `require.resolve` or `__dirname`; `undefined` for every other call.
+ * @example
+ * loadFormOf(callOf("require.resolve('../utils/lock')")) // => 'require.resolve'
+ * loadFormOf(callOf("readFile('notes.md')"))             // => undefined
+ */
+function loadFormOf(call) {
+  const callee = call.expression
+  if (callee.kind === ts.SyntaxKind.ImportKeyword) return 'import'
+  if (ts.isIdentifier(callee) && callee.text === 'require') return 'require'
+  if (ts.isPropertyAccessExpression(callee))
+    return ts.isIdentifier(callee.expression) &&
+      callee.expression.text === 'require' &&
+      callee.name.text === 'resolve'
+      ? 'require.resolve'
+      : undefined
+  const [base] = call.arguments
+  return ts.isIdentifier(callee) &&
+    ['resolve', 'join'].includes(callee.text) &&
+    base !== undefined &&
+    ts.isIdentifier(base) &&
+    base.text === '__dirname'
+    ? '__dirname'
+    : undefined
+}
+
+/**
+ * Says whether {@link loadedPathsOf} can read the path of a call that loads a file, for {@link unreadableLoadsOf}.
+ * @param form - What {@link loadFormOf} named.
+ * @param call - The call expression.
+ * @returns
+ * - `import`, `require`, `require.resolve`: `true` when the path is one string in single or double quotes
+ * - `__dirname`: `true` when every part after `__dirname` is such a string, and when the last part is such a string that names no `.js` module: a document or a folder below a folder named by a variable is data the test reads
+ * - `false` for a template literal, a variable and any other expression in the path
+ * @example
+ * isReadableLoad('import', callOf('import(`../utils/${name}`)'))                // => false
+ * isReadableLoad('__dirname', callOf("join(__dirname, folder, 'README.md')"))   // => true
+ * isReadableLoad('__dirname', callOf("join(__dirname, folder, 'lock.js')"))     // => false
+ */
+function isReadableLoad(form, call) {
+  const [first, ...parts] = call.arguments
+  if (form !== '__dirname')
+    return first !== undefined && ts.isStringLiteral(first)
+  if (parts.every((part) => ts.isStringLiteral(part))) return true
+  const last = parts.at(-1)
+  return ts.isStringLiteral(last) && !last.text.endsWith('.js')
+}
+
+/**
+ * Lists the loads of a TypeScript source whose path {@link loadedPathsOf} cannot read, so that the closure of a test file fails by name instead of leaving the loaded file out of a path filter unseen.
+ * The source is read by the TypeScript parser, so a comment holds no load. A load written inside a string (a script a test hands a process as text) is not looked at here.
+ * @param source - The source's text.
+ * @returns One entry per such load in file order: its one-based line and its text on one line; empty when every load is written with a path {@link loadedPathsOf} reads.
+ * @example
+ * unreadableLoadsOf("const lock = await import(`../utils/${name}`)\n") // => [{ line: 1, text: 'import(`../utils/${name}`)' }]
+ * unreadableLoadsOf("const lock = await import('../utils/lock')\n")    // => []
+ */
+function unreadableLoadsOf(source) {
+  const file = ts.createSourceFile(
+    'source.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  )
+  const unreadable = []
+  const visit = (node) => {
+    const form = ts.isCallExpression(node) ? loadFormOf(node) : undefined
+    if (form !== undefined && !isReadableLoad(form, node))
+      unreadable.push({
+        line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+        text: node.getText(file).replace(/\s+/g, ' '),
+      })
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return unreadable
+}
+
+/**
+ * Lists the files a TypeScript source loads by a relative path, so the closure of a test file leaves none of them out; called by {@link sourcesLoadedBy} for every TypeScript file of a closure.
  *
- * The forms: `from '…'` (also of `import type` and of `export`), a side-effect `import '…'`, `import('…')`, `require('…')`, and a compiled module named from `__dirname` (`loadModule(resolve(__dirname, '../x.js'), …)`, `join(__dirname, 'utils', 'x.js')`). A `__dirname` path that is no `.js` module (a document, a manifest, a folder) is data the test reads and is not listed. A package or a Node module is not part of a path filter.
+ * The forms it reads: `from '…'` (also of `import type` and of `export`), a side-effect `import '…'`, `import('…')`, `require('…')`, `require.resolve('…')`, and a compiled module named from `__dirname` (`loadModule(resolve(__dirname, '../x.js'), …)`, `join(__dirname, 'utils', 'x.js')`), each with its path as one string in single or double quotes. A `__dirname` path that is no `.js` module (a document, a manifest, a folder) is data the test reads and is not listed. A package or a Node module is not part of a path filter.
+ * A load whose path it cannot read (a template literal, a variable or another expression in `import()`, `require()`, `require.resolve()` or after `__dirname`) fails by name ({@link unreadableLoadsOf}): the file it names would stay outside the path filter unseen.
  *
  * A comment is not read ({@link withoutComments}): an import that a docstring's example quotes loads nothing, and would widen a path filter unseen. A string is read like code, because a test can hand a process its script as text; a quoted import there widens the filter, or fails the pin by name when it names no file.
  *
  * @param source - The source's text.
+ * @param path - The source's path, for the failure's sentence.
  * @returns The paths as written, relative to the source's folder: the specifiers first, then the compiled modules.
+ * @throws When the source loads a file by a path this function cannot read, with the source's path, the line and the load's text.
  * @example
- * loadedPathsOf("import './setup'\nconst lock = require('../utils/lock') // not require('../utils/old')\n") // => ['./setup', '../utils/lock']
+ * loadedPathsOf("import './setup'\nconst lock = require('../utils/lock') // not require('../utils/old')\n", 'src/tests/lock.test.ts') // => ['./setup', '../utils/lock']
+ * loadedPathsOf('const lock = await import(`../utils/${name}`)\n', 'src/tests/lock.test.ts')
+ * // throws "src/tests/lock.test.ts:1 loads a file by a path this pin cannot read: import(`../utils/${name}`). …"
  */
-function loadedPathsOf(source) {
+function loadedPathsOf(source, path) {
+  const [unreadable] = unreadableLoadsOf(source)
+  if (unreadable)
+    throw new Error(
+      `${path}:${unreadable.line} loads a file by a path this pin cannot read: ${unreadable.text}. Write the path as one string in quotes, so that the path filter can name the file.`,
+    )
   const code = withoutComments(source)
   const relativePath = `['"](\\.{1,2}/[^'"]+)['"]`
   const specifiers = [
     new RegExp(`\\bfrom\\s*${relativePath}`, 'g'),
     new RegExp(`\\bimport\\s*${relativePath}`, 'g'),
-    new RegExp(`\\b(?:import|require)\\(\\s*${relativePath}`, 'g'),
+    new RegExp(
+      `\\b(?:import|require(?:\\.resolve)?)\\(\\s*${relativePath}`,
+      'g',
+    ),
   ].flatMap((form) => [...code.matchAll(form)].map((match) => match[1]))
   const compiledModules = [
     ...code.matchAll(
@@ -217,7 +311,7 @@ async function sourceNamedBy(path, loadedPath, root) {
  * @param entries - The test files, as paths from the root.
  * @param root - The folder the paths start at; the repository unless a test of these helpers hands a folder of its own.
  * @returns The entries and every file they load by a relative path ({@link loadedPathsOf}), as sorted paths from the root with forward slashes.
- * @throws When a loaded path names no file ({@link sourceNamedBy}).
+ * @throws When a loaded path names no file ({@link sourceNamedBy}), and when a file of the closure loads by a path that cannot be read ({@link loadedPathsOf}).
  * @example
  * await sourcesLoadedBy(['extension/src/tests/isProcessGone.test.ts'])
  * // => ['extension/src/tests/isProcessGone.test.ts', 'extension/src/utils/isProcessGone.ts', 'extension/src/utils/systemErrorCode.ts']
@@ -231,10 +325,40 @@ async function sourcesLoadedBy(entries, root = repositoryRoot) {
     loaded.add(path)
     // Only a TypeScript source loads further files; a manifest or a script it reads ends the walk.
     if (!path.endsWith('.ts')) continue
-    for (const loadedPath of loadedPathsOf(await repositoryText(path, root)))
+    for (const loadedPath of loadedPathsOf(
+      await repositoryText(path, root),
+      path,
+    ))
       waiting.push(await sourceNamedBy(path, loadedPath, root))
   }
   return [...loaded].toSorted()
+}
+
+/**
+ * Lists the test sources a job runs, taken from its `node --test` commands, so that the Windows pin follows the files the job runs and not a list of its own, which the command can outgrow unseen.
+ * The job runs compiled files from the folder `extension` (`dist/tests/<name>.test.js`); each stands for its source, `extension/src/tests/<name>.test.ts`.
+ * @param workflow - The workflow's text.
+ * @returns The sources in the order the commands name them; empty when the workflow runs no `node --test` command.
+ * @throws When an argument of such a command is neither an option that begins with `--` nor one compiled test file of `dist/tests` (a glob, a folder, a file of another folder): the closure cannot start from it.
+ * @example
+ * testSourcesRunBy('      - run: node --test dist/tests/isProcessGone.test.js\n') // => ['extension/src/tests/isProcessGone.test.ts']
+ */
+function testSourcesRunBy(workflow) {
+  return (
+    runCommandsOf(workflow)
+      .filter((command) => /^node --test(?:\s|$)/.test(command))
+      .flatMap((command) => command.split(/\s+/).slice(2))
+      // An option of the runner (--test-concurrency=1) names no file.
+      .filter((argument) => !argument.startsWith('--'))
+      .map((argument) => {
+        const name = /^dist\/tests\/([\w.-]+)\.test\.js$/.exec(argument)?.[1]
+        if (name === undefined)
+          throw new Error(
+            `The job runs 'node --test' with '${argument}', which names no single compiled test file of dist/tests, so the pin cannot tell which sources that run loads.`,
+          )
+        return `extension/src/tests/${name}.test.ts`
+      })
+  )
 }
 
 test('the fast build writes the build metadata once: neither the build:fast script nor the Reader DOM job runs build-metadata.mjs after it', async () => {
@@ -333,7 +457,10 @@ test('the Reader DOM job runs the Wiki reader DOM cases after the Study reader�
     workflow,
     'Keep the DOM reports, screenshots and video after a failure',
   )
-  const sessionOf = (script) => /\bsession = `([^`]+)`/.exec(script)?.[1]
+  const namedCheckOf = (script) =>
+    /\bsession = readerDomSessionName\('([a-z-]+)', mode, output\)/.exec(
+      script,
+    )?.[1]
 
   // Assert
   assert.deepEqual(checks, [
@@ -342,6 +469,7 @@ test('the Reader DOM job runs the Wiki reader DOM cases after the Study reader�
   ])
   assert.deepEqual(stepLines(workflow, 'Run the Wiki reader DOM cases'), [
     '- name: Run the Wiki reader DOM cases',
+    "if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}",
     'run: node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom',
   ])
   assert.equal(
@@ -361,9 +489,32 @@ test('the Reader DOM job runs the Wiki reader DOM cases after the Study reader�
     'artifacts/wiki-reader-dom',
     'if-no-files-found: ignore',
   ])
+  // Each check names its session after itself, its mode and its output folder (readerDomSessionName), and the two name themselves differently.
   assert.deepEqual(
-    { wiki: sessionOf(wikiCheck), study: sessionOf(studyCheck) },
-    { wiki: 'cb-wiki-reader-${mode}', study: 'cb-bootstrap-${mode}' },
+    { wiki: namedCheckOf(wikiCheck), study: namedCheckOf(studyCheck) },
+    { wiki: 'wiki-reader', study: 'bootstrap' },
+  )
+})
+
+// Value: protects=a pull request that breaks both readers seeing both failures in one run, and the artifact of a failed job holding the folder of the Wiki reader's check; fails_when=the Wiki reader's step runs only after a passed Study step again, or also runs after a failed build or in a cancelled job, where it has no build to read; why_new=Cycle 0046 row 127; seam=none
+test('the Wiki reader DOM cases also run after the Study reader’s cases failed, and neither after a step before them failed nor in a cancelled job', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/reader-dom.yml')
+
+  // Act: the Study reader's step, whose outcome the condition reads, and the condition of the Wiki reader's step.
+  const studyStep = stepLines(workflow, 'Run the reader DOM cases')
+  const [, wikiCondition] = stepLines(workflow, 'Run the Wiki reader DOM cases')
+
+  // Assert: `!cancelled()` replaces the default `success()`, so a failed step before does not skip this one; a Study step
+  // that was skipped, because the build or the browser tools failed, has neither of the two outcomes.
+  assert.deepEqual(studyStep, [
+    '- name: Run the reader DOM cases',
+    'id: study',
+    'run: node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom',
+  ])
+  assert.equal(
+    wikiCondition,
+    "if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}",
   )
 })
 
@@ -414,28 +565,8 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   // Act
   const [pushFilter, pullRequestFilter, ...otherFilters] =
     pathFiltersOf(workflow)
-  const loadedSources = await sourcesLoadedBy([
-    'extension/src/tests/withStorageLock.test.ts',
-    'extension/src/tests/isProcessGone.test.ts',
-    'extension/src/tests/currentStorageOwner.test.ts',
-    'extension/src/tests/isFromEarlierBoot.test.ts',
-    'extension/src/tests/isSameStorageMachine.test.ts',
-    'extension/src/tests/readBootIdentity.test.ts',
-    'extension/src/tests/readProcessStart.test.ts',
-    'extension/src/tests/isRecordedOwnerGone.test.ts',
-    'extension/src/tests/readRecordedOwner.test.ts',
-    'extension/src/tests/removeStaleStorageClaims.test.ts',
-    'extension/src/tests/removeStaleStorageLock.test.ts',
-    'extension/src/tests/canJudgeOwnerHere.test.ts',
-    'extension/src/tests/claimWikiUpdateMarker.test.ts',
-    'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
-    'extension/src/tests/processStartFormHere.test.ts',
-    'extension/src/tests/namesMachineInClear.test.ts',
-    'extension/src/tests/readWikiRegularFile.test.ts',
-    'extension/src/tests/openWithoutFollowing.test.ts',
-    'extension/src/tests/hashFileSha256.test.ts',
-    'extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts',
-  ])
+  // The files the job runs are read from its run command: a list of the pin's own could fall behind the command unseen.
+  const loadedSources = await sourcesLoadedBy(testSourcesRunBy(workflow))
   const actionReferences = workflow
     .split('\n')
     .map((line) => line.trim().replace(/^- /, ''))
@@ -445,7 +576,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .split('\n')
     .filter((line) => line.trim().startsWith('paths:'))
 
-  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the twenty test files
+  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the test files of the run command
   // load; only the two constants files, which most pull requests change, are left out.
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
@@ -695,6 +826,141 @@ test('a loaded path that names no source file fails the pin with the file that l
       message:
         "src/tests/lock.test.ts loads '../utils/probe', which names no source file (looked for src/utils/probe.ts, src/utils/probe/index.ts).",
     })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0046 row 125: the Windows pin named its test files in a list of its own, so a file added to the job's run command, but not to that list or the path filter, left the pin green.
+test('the test files the Windows pin follows are the ones the job’s node --test command names, also one no list of the pin names, and an argument that is no single compiled test file fails by name', async () => {
+  // Arrange: a job that runs two test files, one of them with a runner option before it, and a job that runs a glob.
+  const root = await mkdtemp(join(tmpdir(), 'codebook-workflow-pins-'))
+  try {
+    await mkdir(join(root, 'extension/src/tests'), { recursive: true })
+    await mkdir(join(root, 'extension/src/utils'), { recursive: true })
+    await writeFile(
+      join(root, 'extension/src/tests/lock.test.ts'),
+      "import { lock } from '../utils/lock'\n",
+    )
+    await writeFile(
+      join(root, 'extension/src/tests/addedToTheCommandOnly.test.ts'),
+      "import { probe } from '../utils/probe'\n",
+    )
+    await writeFile(join(root, 'extension/src/utils/lock.ts'), '')
+    await writeFile(join(root, 'extension/src/utils/probe.ts'), '')
+    const workflow = [
+      'jobs:',
+      '  windows:',
+      '    steps:',
+      '      - name: Emit the compiled tests',
+      '        run: node scripts/build-fast.mjs',
+      '      - name: Run the tests',
+      '        working-directory: extension',
+      '        run: node --test --test-concurrency=1 dist/tests/lock.test.js dist/tests/addedToTheCommandOnly.test.js',
+      '',
+    ].join('\n')
+    const workflowWithAGlob = '      - run: node --test dist/tests/*.test.js\n'
+
+    // Act
+    const testSources = testSourcesRunBy(workflow)
+    const loadedSources = await sourcesLoadedBy(testSources, root)
+    const readingAGlob = () => testSourcesRunBy(workflowWithAGlob)
+
+    // Assert: both files of the command with what they load; the build is no test run.
+    assert.deepEqual(testSources, [
+      'extension/src/tests/lock.test.ts',
+      'extension/src/tests/addedToTheCommandOnly.test.ts',
+    ])
+    assert.deepEqual(loadedSources, [
+      'extension/src/tests/addedToTheCommandOnly.test.ts',
+      'extension/src/tests/lock.test.ts',
+      'extension/src/utils/lock.ts',
+      'extension/src/utils/probe.ts',
+    ])
+    assert.throws(readingAGlob, {
+      message:
+        "The job runs 'node --test' with 'dist/tests/*.test.js', which names no single compiled test file of dist/tests, so the pin cannot tell which sources that run loads.",
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0046 row 125: a load whose path the closure could not read (a template literal, a variable, require.resolve) was left out silently, so the file it names could be missing from a path filter unseen.
+test('a load whose path is a template literal, a variable or an expression fails the pin with the file, the line and the load, while a document read below a folder named by a variable does not', async () => {
+  // Arrange: four test files that each load by a path the closure cannot read, and one that only reads a document that way and resolves a module by a quoted path.
+  const root = await mkdtemp(join(tmpdir(), 'codebook-workflow-pins-'))
+  try {
+    await mkdir(join(root, 'src/tests'), { recursive: true })
+    await mkdir(join(root, 'src/utils'), { recursive: true })
+    await writeFile(
+      join(root, 'src/tests/template.test.ts'),
+      [
+        "import assert from 'node:assert/strict'",
+        "const name = 'lock'",
+        'const lock = await import(`../utils/${name}`)',
+      ].join('\n'),
+    )
+    await writeFile(
+      join(root, 'src/tests/variable.test.ts'),
+      "const modulePath = '../utils/lock'\nconst lock = require(modulePath)\n",
+    )
+    await writeFile(
+      join(root, 'src/tests/resolved.test.ts'),
+      "const name = 'lock'\n\nconst lockPath = require.resolve('../utils/' + name)\n",
+    )
+    await writeFile(
+      join(root, 'src/tests/fromDirname.test.ts'),
+      [
+        "const target = { relativePath: '../utils/lock.js' }",
+        'const lock = await loadModule(',
+        '  resolve(__dirname, target.relativePath),',
+        '  {},',
+        ')',
+      ].join('\n'),
+    )
+    await writeFile(
+      join(root, 'src/tests/readable.test.ts'),
+      [
+        "const folder = '../..'",
+        "const guide = await readFile(join(__dirname, folder, 'README.md'), 'utf8')",
+        "const lockPath = require.resolve('../utils/lock')",
+      ].join('\n'),
+    )
+    await writeFile(join(root, 'src/utils/lock.ts'), '')
+
+    // Act
+    const failureOf = (testFile) =>
+      sourcesLoadedBy([testFile], root).then(
+        () => 'no failure',
+        (error) => error.message,
+      )
+    const failures = {
+      template: await failureOf('src/tests/template.test.ts'),
+      variable: await failureOf('src/tests/variable.test.ts'),
+      resolved: await failureOf('src/tests/resolved.test.ts'),
+      fromDirname: await failureOf('src/tests/fromDirname.test.ts'),
+    }
+    const readableSources = await sourcesLoadedBy(
+      ['src/tests/readable.test.ts'],
+      root,
+    )
+
+    // Assert
+    assert.deepEqual(failures, {
+      template:
+        'src/tests/template.test.ts:3 loads a file by a path this pin cannot read: import(`../utils/${name}`). Write the path as one string in quotes, so that the path filter can name the file.',
+      variable:
+        'src/tests/variable.test.ts:2 loads a file by a path this pin cannot read: require(modulePath). Write the path as one string in quotes, so that the path filter can name the file.',
+      resolved:
+        "src/tests/resolved.test.ts:3 loads a file by a path this pin cannot read: require.resolve('../utils/' + name). Write the path as one string in quotes, so that the path filter can name the file.",
+      fromDirname:
+        'src/tests/fromDirname.test.ts:3 loads a file by a path this pin cannot read: resolve(__dirname, target.relativePath). Write the path as one string in quotes, so that the path filter can name the file.',
+    })
+    assert.deepEqual(readableSources, [
+      'src/tests/readable.test.ts',
+      'src/utils/lock.ts',
+    ])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

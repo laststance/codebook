@@ -13,6 +13,7 @@ import { selectStudy } from '../dist/utils/selectStudy.js'
 
 import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
 import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
+import { readerDomSessionName } from './utils/readerDomSessionName.mjs'
 
 const [
   mode = 'verify',
@@ -20,7 +21,7 @@ const [
 ] = process.argv.slice(2)
 assert.ok(['red', 'verify'].includes(mode))
 const output = resolve(outputPath),
-  session = `cb-bootstrap-${mode}`
+  session = readerDomSessionName('bootstrap', mode, output)
 await mkdir(output, { recursive: true })
 const study = createConfiguredStudy(),
   baseline = {
