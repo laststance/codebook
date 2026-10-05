@@ -3308,6 +3308,38 @@ async function check(page, options, collected) {
       railRow.openLabelLines === 1 &&
       railRow.outlineWidth >= railRow.openControlWidth,
   })
+  // Arrange: the same page at 960 px with the sentence of a refused update in the panel, as the owned clone's native check W-3 showed it (about 300 characters in a 288 px panel).
+  await page.setViewportSize({ width: 960, height: 720 })
+  await page.goto(options.url)
+  await page.setContent(options.wikiShell)
+  // Act: the rail's content is measured against the rail's own box.
+  const railStrip = await page.evaluate(() => {
+    document.querySelector('[data-codebook-update-status]').innerHTML =
+      '<strong>Update failed</strong> at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.'
+    const rail = document.querySelector('.right-rail')
+    const railBox = rail.getBoundingClientRect()
+    const groupBox = document
+      .querySelector('[data-codebook-update-group]')
+      .getBoundingClientRect()
+    return {
+      railDisplay: getComputedStyle(rail).display,
+      railHeight: Math.round(railBox.height),
+      railScrollHeight: rail.scrollHeight,
+      groupBottomBelowRailBottom: Math.round(groupBox.bottom - railBox.bottom),
+    }
+  })
+  await page
+    .locator('.right-rail')
+    .screenshot({ path: `${options.output}/wiki-rail-refusal-960.png` })
+  // Assert
+  cases.push({
+    name: 'in the Wiki reader at 960 px the update panel shows the whole sentence of a refused update, with no scroll in the right rail',
+    actual: railStrip,
+    passed:
+      railStrip.railDisplay === 'flex' &&
+      railStrip.railScrollHeight <= railStrip.railHeight &&
+      railStrip.groupBottomBelowRailBottom <= 0,
+  })
 }
 
 /**

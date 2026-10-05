@@ -251,14 +251,44 @@ test('where the right rail is a row the open control keeps its own width and no 
   // Assert
   assert.ok(
     railRowRules?.includes(
-      '.right-rail{grid-column:1/-1;max-height:10rem;display:flex;gap:1rem}.right-rail nav{flex:1}.right-rail .open-in-editor{flex:none;margin:0;align-self:flex-start}',
+      '.right-rail{grid-column:1/-1;max-height:min(24rem,50vh);display:flex;gap:1rem}.right-rail nav{flex:1}.right-rail .open-in-editor{flex:none;margin:0;align-self:flex-start}',
     ),
     'the open control has no rule in the row layout',
   )
   assert.ok(
     columnRules?.includes(
-      '.right-rail{display:block;margin-top:1rem}.right-rail .open-in-editor{margin:0 0 1rem}',
+      '.right-rail{display:block;margin-top:1rem;max-height:none}.right-rail .open-in-editor{margin:0 0 1rem}',
     ),
     'the open control keeps the row layout’s margin in the column layout',
+  )
+})
+
+// Value: protects=the update panel of the Wiki reader's right rail in a window narrower than 1000 px, where the rail is a strip below the article; fails_when=the strip is capped at 10rem, so the sentence of a failed or refused update (about 17rem tall in a 288 px panel) is cut off behind a scrollbar with its advice unread; why_new=Cycle 0045 native check W-3 on the owned clone (a 960 px still of a refused update; the measured case is in the Reader DOM check); seam=none
+test('where the right rail is a strip below the article it can grow to show a whole update sentence, and in the single column it is not capped at all', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const stripRules =
+    /@media\(max-width:1000px\)\{(.*)\}\n@media\(max-width:700px\)/.exec(
+      shell,
+    )?.[1]
+  const columnRules = /@media\(max-width:700px\)\{(.*)\}\n/.exec(shell)?.[1]
+
+  // Assert
+  assert.ok(
+    stripRules?.includes(
+      '.right-rail{grid-column:1/-1;max-height:min(24rem,50vh);',
+    ),
+    'the strip is capped below the height of a failed update’s sentence',
+  )
+  assert.equal(
+    stripRules?.includes('max-height:10rem'),
+    false,
+    'the old cap of 10rem is back',
+  )
+  assert.ok(
+    columnRules?.includes(
+      '.right-rail{display:block;margin-top:1rem;max-height:none}',
+    ),
+    'the single column keeps the strip’s cap',
   )
 })
