@@ -59,6 +59,7 @@ async function readUpToLimit(
 /**
  * Says whether an open file is the file a look at its path found, by the device and the inode number of both; called by {@link openFileLookedAtFirst}.
  * Both are read as `bigint`, because an inode number can be larger than a `number` holds exactly. Node.js documents `dev` as the id of the device that holds the file and `ino` as the file system's inode number of the file, and nothing of its own for Windows; there its library (libuv) fills them, for a path and for an open file by one routine, with the volume's serial number and the file's id on that volume. A file system that numbers no files answers one value for all of them, and then only the look's refusal of a link is left.
+ * {@link unchangedSource} is not used here: it also asks that size and times did not change, and would refuse a marker another window is writing at that moment.
  * @param file - The file that was opened.
  * @param lookedAt - What `lstat` answered for the path before the open.
  * @returns `true` when both name one file; `false` for another file, which the path came to name between the look and the open.
