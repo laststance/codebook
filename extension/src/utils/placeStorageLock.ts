@@ -8,7 +8,7 @@ import { systemErrorCode } from './systemErrorCode'
 
 /**
  * Places a storage lock that names its owner from the moment it exists, so that a writer killed at any point leaves no empty lock that nobody can judge; called by {@link withStorageLock} for each attempt to take the lock, and by {@link claimWikiUpdateMarker} to create a Wiki update's marker, which other windows read the same way.
- * The owner is written into `<lock>.pending-<uuid>` first and that file is then given the lock's name with a hard link, which succeeds only while no lock is present. A prepared file left by a kill is removed by the next writer that holds the lock ({@link removeStaleStorageClaims}).
+ * The owner is written into `<lock>.pending-<uuid>` first and that file is then given the lock's name with a hard link, which succeeds only while no lock is present. A prepared file left by a kill is removed by a later sweep of {@link removeStaleStorageClaims}, once its owner is gone: beside a storage lock at a process's first hold of the storage directory and at every takeover of a stale lock ({@link withStorageLock}), beside a marker at every claim on it ({@link claimWikiUpdateMarker}), which also removes one by its age where its owner cannot be judged.
  * Limit: on a file system that cannot link, the lock is created in place and exists without content for the time of one write.
  * @param lockPath - The `writer.lock` file, or the marker file, to create.
  * @param owner - The process that takes the lock, with its machine and boot; a marker's record adds its own fields, and the whole record is written.

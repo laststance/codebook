@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { WIKI_MANIFEST_FILE, WIKI_PUBLICATION_RECEIPT_FILE } from '../constants'
 
+import { modifiedAtMsOf } from './modifiedAtMsOf'
 import {
   readWikiRegularFile,
   type WikiRegularFile,
@@ -35,7 +36,7 @@ function isReceiptOfManifest(
  * @param receiptFile - The publisher's receipt file.
  * @param manifestFile - The manifest file.
  * @returns
- * - The receipt names the manifest's hash: `<that hash>@<inode of the receipt file>`
+ * - The receipt names the manifest's hash: `<that hash>@<inode number of the receipt file, in decimal digits>`
  * - A receipt that is no JSON, or that does not name this manifest (edited, or mid-replacement): `undefined`
  * @example
  * publicationIdentityOf(receiptFile, manifestFile) // => 'dc9d3160…@1837466'
@@ -64,14 +65,14 @@ const identityByFolder = new Map<
 >()
 
 /**
- * Stamps a file by its inode, modification time and size; called by {@link readStampsOnDisk} and {@link readWikiPublicationIdentity}, so the identity is read and hashed again only after a file changed.
- * @param file - The inode, the modification time and the size of one file.
+ * Stamps a file by its inode number, modification time and size; called by {@link readStampsOnDisk} and {@link readWikiPublicationIdentity}, so the identity is read and hashed again only after a file changed.
+ * @param file - The inode number as decimal text (read exactly: a number would round one above 2^53), the modification time and the size of one file.
  * @returns The three values in one text.
  * @example
- * fileStamp({ inode: 1837466, modifiedAtMs: 1790000000000.5, size: 412 }) // => '1837466:1790000000000.5:412'
+ * fileStamp({ inode: '1837466', modifiedAtMs: 1790000000000.5, size: 412 }) // => '1837466:1790000000000.5:412'
  */
 function fileStamp(file: {
-  inode: number
+  inode: string
   modifiedAtMs: number
   size: number
 }): string {
@@ -90,14 +91,14 @@ function fileStamp(file: {
 async function readStampsOnDisk(paths: string[]): Promise<string | undefined> {
   const stamps: string[] = []
   for (const path of paths) {
-    // A link is not followed, as the read itself does not follow it.
-    const fileStat = await lstat(path).catch(() => undefined)
+    // A link is not followed, as the read itself does not follow it. The numbers are exact, as those of the read are.
+    const fileStat = await lstat(path, { bigint: true }).catch(() => undefined)
     if (!fileStat?.isFile()) return undefined
     stamps.push(
       fileStamp({
-        inode: fileStat.ino,
-        modifiedAtMs: fileStat.mtimeMs,
-        size: fileStat.size,
+        inode: fileStat.ino.toString(),
+        modifiedAtMs: modifiedAtMsOf(fileStat),
+        size: Number(fileStat.size),
       }),
     )
   }
@@ -138,7 +139,7 @@ async function readIdentityFromFiles(
  *
  * @param outputDirectory - Resolved Wiki output folder.
  * @returns
- * - The receipt names the hash of the manifest now on disk: `<that hash>@<inode of the receipt file>`
+ * - The receipt names the hash of the manifest now on disk: `<that hash>@<inode number of the receipt file, in decimal digits>`; the number is read exactly, so two receipt files are told apart also where a JavaScript number would round both ids to one value (file ids on NTFS can pass 2^53)
  * - No receipt, no manifest, either one not a regular file, or a manifest the receipt does not name (edited, or mid-replacement): undefined
  *
  * @example

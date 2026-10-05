@@ -11,7 +11,6 @@ import {
   rename,
   rm,
   stat,
-  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -21,40 +20,23 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import * as constants from '../constants'
+import {
+  openWithoutFollowing,
+  type NoFollowOpenConstants,
+} from '../utils/openWithoutFollowing'
 import type * as ReadWikiRegularFileModule from '../utils/readWikiRegularFile'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
+import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
+import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 
 /** The open flags of a system whose open cannot refuse a link: Windows defines neither `O_NOFOLLOW` nor `O_NONBLOCK`. Handed to the reader, it takes the way it takes on Windows on every system. */
 const OPEN_FLAGS_WITHOUT_NOFOLLOW = { O_RDONLY: openConstants.O_RDONLY }
-
-/** Why a test of a link was skipped; printed in the test run's output. */
-const LINK_NOT_ALLOWED =
-  'creating a symbolic link was refused with EPERM: this user lacks the right (on Windows: no administrator and no developer mode)'
-
-/**
- * Creates a symbolic link for a test, and says so when this user may not: Windows refuses the creation with `EPERM` for a user without the privilege (an administrator and a user in developer mode have it).
- * @param targetPath - The file the link points to.
- * @param linkPath - Where the link is created.
- * @returns `true` when the link exists; `false` when the system refused it for a missing right, so the test skips with that reason instead of failing.
- * @throws Every other error of the creation.
- * @example
- * if (!(await createLinkIfAllowed(targetPath, linkPath))) return context.skip(LINK_NOT_ALLOWED)
- */
-async function createLinkIfAllowed(
-  targetPath: string,
-  linkPath: string,
-): Promise<boolean> {
-  try {
-    await symlink(targetPath, linkPath)
-    return true
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'EPERM')
-      return false
-    throw error
-  }
-}
 
 /**
  * Loads the reader of Wiki metadata files with an `lstat` that answers the real look at the path and then lets the test replace what the path names, the moment between the look and the open on a system whose open cannot refuse a link.
@@ -64,24 +46,26 @@ async function createLinkIfAllowed(
 async function loadReaderWhosePathIsReplacedAfterTheLook(
   replacePath: () => Promise<void>,
 ): Promise<typeof ReadWikiRegularFileModule.readWikiRegularFile> {
-  const loaded = await loadModule<typeof ReadWikiRegularFileModule>(
-    resolve(__dirname, '../utils/readWikiRegularFile.js'),
-    {
-      'node:fs/promises': {
-        ...fileSystem,
-        lstat: async (path: string, options: { bigint: true }) => {
-          const lookBeforeTheReplacement = await fileSystem.lstat(path, options)
-          await replacePath()
-          return lookBeforeTheReplacement
-        },
+  // The look and the open are the opener's, so the stand-in is the opener's `lstat`, and the reader opens through that opener.
+  const openingAfterAReplacedLook = await loadOpenWithoutFollowing({
+    fileSystem: {
+      ...fileSystem,
+      lstat: async (path: string, options: { bigint: true }) => {
+        const lookBeforeTheReplacement = await fileSystem.lstat(path, options)
+        await replacePath()
+        return lookBeforeTheReplacement
       },
     },
+  })
+  const loaded = await loadModule<typeof ReadWikiRegularFileModule>(
+    resolve(__dirname, '../utils/readWikiRegularFile.js'),
+    { './openWithoutFollowing': openingAfterAReplacedLook },
   )
   return loaded.readWikiRegularFile
 }
 
 /**
- * Loads the reader of Wiki metadata files with a limit of 16 bytes and an `open` whose file grows by `grownText` right after its `stat` was taken, the moment between the size check and the read.
+ * Loads the reader of Wiki metadata files with a limit of 16 bytes and an opener whose file grows by `grownText` right after the reader took its `stat`, the moment between the size check and the read. The opener is the real one: where the open cannot refuse a link it has asked which file it opened before the reader gets the file, and the file does not grow at that question.
  * @param grownText - What another process appends to the file after the reader looked at its size.
  * @returns The loaded `readWikiRegularFile`.
  */
@@ -92,17 +76,14 @@ async function loadReaderWhoseFileGrowsAfterStat(
     resolve(__dirname, '../utils/readWikiRegularFile.js'),
     {
       '../constants': { ...constants, WIKI_METADATA_FILE_LIMIT_BYTES: 16 },
-      'node:fs/promises': {
-        ...fileSystem,
-        open: async (
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
           path: string,
-          flags: number,
+          flagsOfTheSystem?: NoFollowOpenConstants,
         ): Promise<fileSystem.FileHandle> => {
-          const file = await fileSystem.open(path, flags)
+          const file = await openWithoutFollowing(path, flagsOfTheSystem)
           const statOfOpenedFile = file.stat.bind(file)
           file.stat = (async (options?: StatOptions) => {
-            // Where the open cannot refuse a link the reader first asks, with exact numbers, which file it opened; the file does not grow at that question.
-            if (options?.bigint) return statOfOpenedFile(options)
             // The size the reader checks is taken first; the file grows before the reader reads it.
             const statBeforeGrowth = await statOfOpenedFile(options)
             await appendFile(path, grownText)
@@ -153,7 +134,7 @@ test('a manifest that grows while it is read but stays within the limit is read 
   }
 })
 
-// Value: protects=the size limit of a Wiki metadata read on Windows, where the reader asks twice about the opened file; fails_when=the question which file was opened counts as the size check, so the file of this test grows twice and the bytes differ, or the growth stand-in answers numbers that are not exact and every file is refused; why_new=Cycle 0046 row 71: the reader's tests never ran on a system without O_NOFOLLOW; seam=the open flags handed to the reader, and node:fs/promises open of the loaded reader
+// Value: protects=the size limit of a Wiki metadata read on Windows, where the opener asks which file it opened before the reader checks the size; fails_when=a file that grows after the size check is refused or cut where the path was looked at first, although it stays within the limit; why_new=Cycle 0046 row 71: the reader's tests never ran on a system without O_NOFOLLOW; seam=the open flags handed to the reader, and the opener of the loaded reader, whose file grows after the reader's stat
 test('a manifest that grows while it is read but stays within the limit is read whole where the system’s open cannot refuse a link, as on Windows', async () => {
   // Arrange: a manifest of 10 bytes grows by 6 bytes to exactly the limit of 16 before it is read.
   const folder = await mkdtemp(join(tmpdir(), 'codebook-wiki-regular-file-'))
@@ -263,7 +244,7 @@ test('a manifest that is a regular file is read with its bytes, inode and modifi
   const manifestPath = join(folder, 'codebook-wiki.json')
   await writeFile(manifestPath, '{"a":"12"}')
   await utimes(manifestPath, 1_790_000_000, 1_790_000_000)
-  const inodeOfTheManifest = (await stat(manifestPath)).ino
+  const inodeOfTheManifest = (await stat(manifestPath, { bigint: true })).ino
   try {
     // Act
     const read = await readWikiRegularFile(
@@ -282,7 +263,7 @@ test('a manifest that is a regular file is read with its bytes, inode and modifi
           },
       {
         bytes: '{"a":"12"}',
-        inode: inodeOfTheManifest,
+        inode: inodeOfTheManifest.toString(),
         modifiedAtMs: 1_790_000_000_000,
       },
     )
@@ -351,6 +332,33 @@ test('a manifest that another file replaces between the look at its path and its
         pathHolds: await readFile(manifestPath, 'utf8'),
       },
       { read: undefined, pathHolds: '{"another":1}' },
+    )
+  } finally {
+    await rm(folder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the publish token and the publication identity of a Wiki on an NTFS volume, which name a file by its id; fails_when=the reader takes the inode number as a JavaScript number, so an id above 2^53 is rounded (210824757556437109 becomes 210824757556437120) and two files share one value; why_new=Cycle 0046 row 79: a file id above 2^53 was observed on the development host; seam=node:fs/promises of the opener the loaded reader opens through, whose files have ids above 2^53
+test('a manifest whose file id is above 2^53, as on an NTFS volume, is read with that id in exact decimal digits', async () => {
+  // Arrange: the manifest is the first file a status is asked for, so its id is 210824757556437109.
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-wiki-regular-file-'))
+  const manifestPath = join(folder, 'codebook-wiki.json')
+  await writeFile(manifestPath, '{"a":"12"}')
+  const { readWikiRegularFile: readFileWithALargeId } = await loadModule<
+    typeof ReadWikiRegularFileModule
+  >(resolve(__dirname, '../utils/readWikiRegularFile.js'), {
+    './openWithoutFollowing': await loadOpenWithoutFollowing({
+      fileSystem: fileSystemWithLargeFileIds(),
+    }),
+  })
+  try {
+    // Act
+    const read = await readFileWithALargeId(manifestPath)
+
+    // Assert
+    assert.deepEqual(
+      { bytes: read?.bytes.toString('utf8'), inode: read?.inode },
+      { bytes: '{"a":"12"}', inode: '210824757556437109' },
     )
   } finally {
     await rm(folder, { recursive: true, force: true })
