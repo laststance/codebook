@@ -265,7 +265,7 @@ export async function workspaceHarness(
   type SourceEditor = {
     document: { uri: Uri; getText(): string }
     readonly viewColumn: number
-    setDecorations(): void
+    setDecorations(decoration?: unknown, ranges?: readonly unknown[]): void
     selections: { active: Position; anchor: Position }[]
     visibleRanges: Range[]
     revealRange(range: Range, revealType?: number): void
@@ -298,7 +298,9 @@ export async function workspaceHarness(
   const visibleSourceEditors: (SourceEditor & {
       group: (typeof groups)[number]
     })[] = [],
-    decoratedColumns: number[] = []
+    decoratedColumns: number[] = [],
+    /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. */
+    decoratedRangeCounts: number[] = []
   let retainedReadingRange: Range | undefined
   /** Models native scrolling for display and explicit reveal without conflating their callbacks. @example scrollReadingRange(new Range(position, position)) */
   const scrollReadingRange = (range: Range, revealType?: number): void => {
@@ -328,8 +330,12 @@ export async function workspaceHarness(
     get viewColumn() {
       return reportedColumn ?? group.viewColumn
     },
-    setDecorations(): void {
+    setDecorations(
+      _decoration?: unknown,
+      ranges: readonly unknown[] = [],
+    ): void {
       decoratedColumns.push(reportedColumn ?? group.viewColumn)
+      decoratedRangeCounts.push(ranges.length)
     },
     selections: [{ anchor: new Position(22, 0), active: new Position(22, 0) }],
     get visibleRanges() {
@@ -3220,6 +3226,8 @@ export async function workspaceHarness(
       decoratedColumns.length = 0
     },
     decoratedColumns: () => [...decoratedColumns],
+    /** How many lines each source highlight call marked, in order; 0 is a cleared highlight. @example harness.decoratedRangeCounts().at(-1) // => 0 once the stop's highlight was cleared */
+    decoratedRangeCounts: () => [...decoratedRangeCounts],
     moveSource(column: number): void {
       const editor = lastSourceEditor
       assert.ok(editor)

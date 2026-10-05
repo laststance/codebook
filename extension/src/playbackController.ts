@@ -2,6 +2,7 @@ import { PLAYBACK_TICK_INTERVAL_MS } from './constants'
 import type { PlaybackCommand } from './playbackSchemas'
 import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
+import { leavesStopOnSameFrame } from './utils/leavesStopOnSameFrame'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
 import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
@@ -29,7 +30,7 @@ export interface PlaybackDependencies {
   load(studyId: string, signal: AbortSignal): Promise<PlaybackData>
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
-  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded: its frame stays until the reloaded moment paints, instead of a blank pane. */
+  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, or when Play leaves a stop's pause on an unchanged frame: the frame stays until the next moment paints, instead of a blank pane. */
   invalidate(keepPixels?: boolean): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
@@ -470,7 +471,10 @@ export class PlaybackController {
               this.presented.projection.observation?.id
           if (stopChanged && !this.cleared) {
             this.cleared = true
-            this.dependencies.invalidate()
+            // The end of a stop's pause on an unchanged frame keeps that image; every other stop change clears it until the next moment paints.
+            this.dependencies.invalidate(
+              leavesStopOnSameFrame(this.presented?.projection, projection),
+            )
             this.dependencies.changed()
           }
           if (changed) {

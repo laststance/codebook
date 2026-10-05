@@ -6121,7 +6121,7 @@ export class StudyWorkspace {
           this.lastRendered = undefined
           this.sourceRevision = undefined
           this.lastSelectionKey = undefined
-          // A reload of the displayed recording keeps its frame until the reloaded moment paints.
+          // A reload of the displayed recording, or the end of a stop's pause on the same frame, keeps that frame until the next moment paints.
           if (!keepPixels) this.replayViewport?.clearRecorded()
         },
         changed: () => {

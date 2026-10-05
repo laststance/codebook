@@ -1464,17 +1464,17 @@ test('Play across a new recorded frame of the stop on screen presents that frame
   await player.controller.dispose()
 })
 
-// Value: protects=Play retiring the moment before a recorded stop and presenting the stop when it reaches it; fails_when=the controller treats the stop as the same moment, so the Application pane and Run and Debug keep the moment before it; why_new=Cycle 0045 FXU narrowed the presentation key; seam=none
-test('Play that reaches a recorded stop retires the moment before it and presents the stop', async () => {
-  // Arrange: the playhead stands at 50 ms, before the stop committed at 100 ms.
+// Value: protects=Play retiring the moment before a recorded stop and presenting the stop when it reaches it; fails_when=the controller treats the stop as the same moment, so the Application pane and Run and Debug keep the moment before it, or keeps the previous image while the stop's new frame loads; why_new=Cycle 0045 FXU narrowed the presentation key and keeps the image only where a stop's pause ends; seam=none
+test('Play that reaches a recorded stop retires the moment before it, clears its image and presents the stop', async () => {
+  // Arrange: the playhead stands at 50 ms, before the stop committed at 100 ms with a frame of its own.
   const presentedPositions: number[] = []
-  let invalidations = 0
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
   const player = playbackHarness({
     present: async (bundle) => {
       presentedPositions.push(bundle.projection.positionMs)
     },
-    invalidate: () => {
-      invalidations++
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
     },
   })
   player.open()
@@ -1482,7 +1482,7 @@ test('Play that reaches a recorded stop retires the moment before it and present
   player.seek(50)
   await player.controller.settle()
   player.play()
-  const invalidationsAtPlay = invalidations
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
 
   // Act: Play moves 100 ms on and stops at the stop's time.
   player.clock(100)
@@ -1493,23 +1493,57 @@ test('Play that reaches a recorded stop retires the moment before it and present
   assert.equal(player.controller.state().presentedMs, 100)
   assert.equal(player.controller.state().observationId, 'browser-session:1')
   assert.deepEqual(presentedPositions, [0, 50, 100])
-  assert.equal(invalidations - invalidationsAtPlay, 1)
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    false,
+  ])
   await player.controller.dispose()
 })
 
-// Value: protects=Play retiring a stop's recorded values when the stop's recorded pause ends; fails_when=the controller keeps the stop and its debugger snapshot on screen after the recording says the application continued; why_new=Cycle 0045 FXU: native check F18 blanked at such pause ends (153.24, 168.80 and 183.56 s), not at an explanation's saved time; seam=none
-test('Play that reaches the end of a stop’s recorded pause retires the stop’s values and presents the moment without a stop', async () => {
-  // Arrange: the stop committed at 100 ms carries recorded debugger state and its pause ended at 150 ms.
+// Value: protects=a stop entered on the frame already on screen still showing its loading state until its values are presented; fails_when=the kept image extends from a pause end to a stop entry; why_new=Cycle 0045 NF-13c keeps the image only where a stop's pause ends; seam=none
+test('Play that reaches a recorded stop on the frame already on screen still clears the image until the stop is presented', async () => {
+  // Arrange: the stop was committed at 70 ms, while the frame of 50 ms was still the latest; the playhead stands at 60 ms.
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.data.context!.study.observations[0]!.elapsedMs = 70
+  player.open()
+  await player.controller.settle()
+  player.seek(60)
+  await player.controller.settle()
+  player.play()
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
+
+  // Act: Play moves 100 ms on and stops at the stop's time.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 70)
+  assert.equal(player.controller.state().observationId, 'browser-session:1')
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-50'))
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    false,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=the recorded image staying on screen when a stop's recorded pause ends on the same frame, while the stop's values retire; fails_when=the pause end clears the Application pane to its loading state (native check F18: 17 to 35 dark frames at 153.24, 168.80 and 183.56 s), or keeps the stop and its debugger snapshot after the recording says the application continued; why_new=Cycle 0045 NF-13c; seam=none
+test('Play that reaches the end of a stop’s recorded pause on the same frame keeps the image, retires the stop’s values and presents the moment without a stop', async () => {
+  // Arrange: the stop committed at 100 ms carries recorded debugger state and its pause ended at 150 ms, before the next frame (200 ms).
   const presentedPositions: number[] = []
   const presentedSnapshots: boolean[] = []
-  let invalidations = 0
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
   const player = playbackHarness({
     present: async (bundle) => {
       presentedPositions.push(bundle.projection.positionMs)
       presentedSnapshots.push(Boolean(bundle.projection.debugger))
     },
-    invalidate: () => {
-      invalidations++
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
     },
   })
   const context = player.data.context!
@@ -1539,7 +1573,7 @@ test('Play that reaches the end of a stop’s recorded pause retires the stop’
   player.seek(100)
   await player.controller.settle()
   player.play()
-  const invalidationsAtPlay = invalidations
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
 
   // Act: Play moves 100 ms on and stops at the end of the pause.
   player.clock(100)
@@ -1549,9 +1583,70 @@ test('Play that reaches the end of a stop’s recorded pause retires the stop’
   // Assert
   assert.equal(player.controller.state().presentedMs, 150)
   assert.equal(player.controller.state().observationId, undefined)
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-100'))
   assert.deepEqual(presentedPositions, [0, 100, 150])
   assert.deepEqual(presentedSnapshots, [false, true, false])
-  assert.equal(invalidations - invalidationsAtPlay, 1)
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    true,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=the previous image never shown beside a moment whose recorded frame differs when a stop's pause ends; fails_when=the kept image extends to a pause end whose next moment has another frame; why_new=Cycle 0045 NF-13c keeps the image only when the frame hash is unchanged; seam=none
+test('Play that reaches the end of a stop’s recorded pause on a new frame clears the image until that frame is presented', async () => {
+  // Arrange: the stop committed at 100 ms carries recorded debugger state and its pause ended at 200 ms, when the next frame arrived.
+  const presentedPositions: number[] = []
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  const context = player.data.context!
+  const stop = context.study.observations[0]!
+  stop.debugger = {
+    version: 1,
+    frames: [
+      {
+        name: 'applyTheme',
+        line: 1,
+        column: 1,
+        source: {
+          name: 'theme.ts',
+          text: stop.source.text,
+          hash: stop.source.hash,
+          line: 1,
+        },
+        scopes: [{ name: 'Local', variables: [0] }],
+      },
+    ],
+    variables: [{ name: 'nextTheme', value: 'dark', children: [] }],
+    limitations: [],
+  }
+  context.pausedIntervals = [{ snapshotId: stop.id, startMs: 100, endMs: 200 }]
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.play()
+  const invalidationsAtPlay = invalidationsKeepingPixels.length
+
+  // Act: Play moves 100 ms on and stops at the end of the pause.
+  player.clock(100)
+  player.controller.tick()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().presentedMs, 200)
+  assert.equal(player.controller.state().observationId, undefined)
+  assert.equal(player.controller.state().frame?.hash, sha256('frame-200'))
+  assert.deepEqual(presentedPositions, [0, 100, 200])
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    false,
+  ])
   await player.controller.dispose()
 })
 

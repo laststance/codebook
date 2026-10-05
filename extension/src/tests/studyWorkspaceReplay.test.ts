@@ -2368,12 +2368,103 @@ test('Play across an explanation’s saved time inside the stop’s recorded pau
       ['This stop holds the dark theme before it is applied.', undefined],
     ])
     assert.deepEqual(imagePresentedAtMs, [900])
-    assert.deepEqual(imageClearedAtMs, [900])
+    assert.deepEqual(imageClearedAtMs, [])
     assert.deepEqual(
       harness.historicalDebugPresentations
         .slice(debugPresentationsAtStop)
         .map((presentation) => presentation.label),
       ['Not recorded at this moment'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the recorded application image staying on screen when Play reaches the end of a stop's recorded pause on the same frame, while Run and Debug, the stop's native session and its source highlight end there; fails_when=the pause end clears the Application pane to "Loading recorded position…" (native check F18: 17 to 35 dark frames at 153.24, 168.80 and 183.56 s), or the stop's values or highlight stay after the recording says the application continued; why_new=Cycle 0045 NF-13c; seam=the test counts the recording viewport's image presentations and clears and the fake historical debugger's retirements
+test('Play across the end of a stop’s recorded pause on the same frame keeps the recorded image while Run and Debug, the stop’s session and its source highlight end', async () => {
+  // Arrange: a stop with recorded debugger state committed at 100 ms and paused until 900 ms of a film that ended at 1,000 ms, with no new frame after the stop.
+  const harness = await recordedReaderHarness(true, true)
+  try {
+    const { controller, studyId, png } = harness
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    const atStop = harness.postedMessages().slice(-1)[0]!
+    const imageAtStop = harness.displayedImage()
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const imagePresentedAtMs: Array<number | undefined> = [],
+      imageClearedAtMs: Array<number | undefined> = [],
+      retiredAtMs: Array<[number | undefined, boolean]> = []
+    const presentImage = viewport.present.bind(viewport),
+      clearImage = viewport.clearRecorded.bind(viewport)
+    viewport.present = async (image: string): Promise<void> => {
+      imagePresentedAtMs.push(controller.state().requestedMs)
+      await presentImage(image)
+    }
+    viewport.clearRecorded = (): void => {
+      imageClearedAtMs.push(controller.state().requestedMs)
+      clearImage()
+    }
+    const historicalDebugger = harness.historicalDebuggers[0]!,
+      retire = historicalDebugger.retire.bind(historicalDebugger)
+    historicalDebugger.retire = async (snapshot, signal): Promise<void> => {
+      retiredAtMs.push([controller.state().requestedMs, Boolean(snapshot)])
+      await retire(snapshot, signal)
+    }
+    const debugPresentationsAtStop =
+        harness.historicalDebugPresentations.length,
+      debugInvalidationsAtStop = harness.historicalDebugInvalidations(),
+      highlightsAtStop = harness.decoratedRangeCounts().length
+
+    // Act: Play runs from the stop to the end of the recording.
+    controller.command({
+      action: 'play',
+      studyId,
+      expectedRevision: controller.state().revision,
+    })
+    await waitUntil(
+      () =>
+        controller.state().mode === 'paused' &&
+        controller.state().presentedMs === 1_000,
+      'Play reaches the end of the recording',
+      5_000,
+    )
+    await controller.settle()
+
+    // Assert
+    const atEnd = harness.postedMessages().slice(-1)[0]!
+    assert.equal(atStop.model.observation?.id, 'browser-session:1')
+    assert.equal(imageAtStop, png.toString('base64'))
+    assert.equal(atEnd.model.observation, undefined)
+    assert.deepEqual(imagePresentedAtMs, [900])
+    assert.deepEqual(imageClearedAtMs, [])
+    assert.equal(harness.displayedImage(), png.toString('base64'))
+    assert.deepEqual(retiredAtMs, [[900, false]])
+    assert.equal(
+      harness.historicalDebugInvalidations() - debugInvalidationsAtStop,
+      1,
+    )
+    assert.deepEqual(
+      harness.historicalDebugPresentations
+        .slice(debugPresentationsAtStop)
+        .map((presentation) => [
+          presentation.label,
+          Boolean(presentation.snapshot),
+        ]),
+      [['Not recorded at this moment', false]],
+    )
+    // The pause end clears the stop's line in both visible captured-source editors of the harness and marks no line again.
+    assert.deepEqual(
+      harness.decoratedRangeCounts().slice(highlightsAtStop),
+      [0, 0],
     )
   } finally {
     await harness.close()
