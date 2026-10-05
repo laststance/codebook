@@ -2,7 +2,7 @@
 
 ## Current specification and existing preview
 
-[Goal version 9](https://github.com/laststance/codebook/blob/main/PRODUCT_GOAL.md) defines standard-chat live explanation with the native debugger, synchronized application/source/native-debugger learning replay and time travel with summary/sequence diagram, and skill-driven reproduction of DeepWiki itself, including reader/diagrams/citations/Q&A and local-editor source links, independent of runtime/debug MCP. Wiki output defaults to the project with a configurable location; chat/button updates and source deep links are required. Three selectable UI themes and Codebook's custom runtime-value display are retired requirements. Replay and Wiki retain their own screens.
+[Goal version 10](https://github.com/laststance/codebook/blob/main/PRODUCT_GOAL.md) defines standard-chat live explanation with the native debugger, synchronized application/source/native-debugger learning replay and time travel with summary/sequence diagram, and skill-driven reproduction of DeepWiki itself, including reader/diagrams/citations/Q&A and local-editor source links, independent of runtime/debug MCP. Wiki output defaults to the project with a configurable location; chat/button updates and source deep links are required. Three selectable UI themes and Codebook's custom runtime-value display are retired requirements. Replay and Wiki retain their own screens.
 
 **Implementation transition:** This development candidate uses externally opened repositories only. Runtime, source inspection, recording and storage remain under active development; the accepted replay/DeepWiki design is not yet complete. See [current state](https://github.com/laststance/codebook/blob/main/PROJECT_STATE.md) for verified scope.
 
@@ -132,7 +132,7 @@ CI runs the product/runtime tests and real packaging/failure tests before upload
 
 ## Shared presentations (API 1.7)
 
-The interface arrived with API 1.5, and API 1.6 and 1.7 changed nothing in it: 1.6 added fields to a configured run's resources, an answer option to its continuation and `numberedText` to the source answers, and 1.7 removed `text` from those source answers (see [Run one configured repository action](#run-one-configured-repository-action)). This existing three-variant interface is scheduled for retirement. It is not the current design target and must not be confused with the separate learning replay and Wiki screens retained by version 9.
+The interface arrived with API 1.5, and API 1.6 and 1.7 changed nothing in it: 1.6 added fields to a configured run's resources, an answer option to its continuation and `numberedText` to the source answers, and 1.7 removed `text` from those source answers (see [Run one configured repository action](#run-one-configured-repository-action)). This existing three-variant interface is scheduled for retirement. It is not the current design target and must not be confused with the separate learning replay and Wiki screens retained since goal version 9.
 
 Codebook arranges the Study workspace layout: application above source beside the explanation. 0.2.12 removed the **Presentation** selector from the explanation pane, and the **Codebook: Select Presentation** command is removed as well; the Living book and Guided walkthrough layouts are retired (`codebook_presentation` refuses to select them and keeps one only where a saved preference already shows it). Overview, Live and Recording remain independent content tabs. The same learner selection, understanding and runtime remain in place.
 

@@ -54,7 +54,7 @@ Final completion requires the full [protocol](docs/acceptance/FINAL_REVIEW.md), 
 
 ## Product acceptance map
 
-This inventory covers G01–G07 and G10–G12 under [goal version 9](PRODUCT_GOAL.md); G08/G09 are retired. Linked contracts control details. The map defines outcomes; [PROJECT_STATE.md](PROJECT_STATE.md#current-product-gaps) records implementation/proof/next actions. Keep all 13 rows when updating either document.
+This inventory covers G01–G07 and G10–G12 under [goal version 10](PRODUCT_GOAL.md); G08/G09 are retired. Linked contracts control details. The map defines outcomes; [PROJECT_STATE.md](PROJECT_STATE.md#current-product-gaps) records implementation/proof/next actions. Keep all 13 rows when updating either document.
 
 ### Observable completion checks
 

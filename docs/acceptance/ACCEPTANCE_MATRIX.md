@@ -1,6 +1,6 @@
 # Required project acceptance matrix
 
-Authority: PRODUCT_GOAL version 9, D029 and D030/D032/D033 (2026-09-26). This is a fixed required set, not a candidate pool. All results below are unexecuted under the new protocol. Historical fixture, demo and development preflight results do not populate these cells.
+Authority: PRODUCT_GOAL version 10, D029 and D030/D032/D033 (2026-09-26). Version 10 names three target systems (macOS, Windows, Ubuntu); on which of them the rows below are run is proposed by the cycle that brings native use in a Windows editor and is not decided here. This is a fixed required set, not a candidate pool. All results below are unexecuted under the new protocol. Historical fixture, demo and development preflight results do not populate these cells.
 
 | ID | Required project | Revision / execution mapping | Stage 1 VS Code / Cursor | Stage 2 VS Code / Cursor |
 | --- | --- | --- | --- | --- |

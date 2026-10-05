@@ -1,7 +1,7 @@
 # DeepWiki generation skill — implementation contract
 
 Status: specification only; no skill implementation or generation PASS.\
-Authority: PRODUCT_GOAL version 9, G02/G12, D033 and [independent DeepWiki specification](../specs/llm-wiki.md)\
+Authority: PRODUCT_GOAL version 10, G02/G12, D033 and [independent DeepWiki specification](../specs/llm-wiki.md)\
 Cycle: [0029](../cycles/0029-feature-specification.md)
 
 ## Outcome and ownership

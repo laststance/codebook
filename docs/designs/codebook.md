@@ -1,6 +1,6 @@
 # Design: Codebook feature relationships and behavior
 
-Authority: PRODUCT_GOAL version 9 and D030–D036, owner direction and clarification of 2026-09-26.\
+Authority: PRODUCT_GOAL version 10 and D030–D036, owner direction and clarification of 2026-09-26.\
 Status: functional specification and GStack screen review complete; [v9 visual specification](../../DESIGN.md) approved under D036. Implementation remains unverified.
 
 The [2026-09-18 design](https://github.com/laststance/codebook/blob/22e25c5ace8773214649bf085fb8cf6fdea3facc/docs/designs/codebook.md) and its three images preserve their historical approval. Their required display variants, combined Wiki/learning model, custom runtime-value pane and first cart-fixture assignment are superseded by the current contracts below. Their recorded review score is not a review of this revision.
@@ -110,6 +110,6 @@ Use supported editor APIs and commands; unrestricted workbench DOM mutation is n
 
 ## Validation and delivery
 
-The [final protocol](../acceptance/FINAL_REVIEW.md) applies to all active capabilities and nine required real projects in both hosts. Mechanism/unit checks remain useful but neither fixtures nor old mode checks prove version 9 behavior. Runtime, replay and independent Wiki/source-link evidence must identify their own source/package/host versions.
+The [final protocol](../acceptance/FINAL_REVIEW.md) applies to all active capabilities and nine required real projects in both hosts. Mechanism/unit checks remain useful but neither fixtures nor old mode checks prove the behavior versions 9 and 10 require. Runtime, replay and independent Wiki/source-link evidence must identify their own source/package/host versions.
 
 Current phase and next action: [PROJECT_STATE.md](../../PROJECT_STATE.md). Follow [IMPLEMENTATION.md](../../IMPLEMENTATION.md) to audit source gaps, select bounded work and preserve distinct implementation/native/acceptance evidence.
