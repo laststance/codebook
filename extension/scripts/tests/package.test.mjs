@@ -89,7 +89,7 @@ test('a real VSIX loads outside the checkout and excludes bundled applications a
   const checked = await verifyPackageContent(original)
   // Assert
   assert.equal(receipt.isolatedModuleLoad, true)
-  assert.equal(checked.extension.version, '0.2.28')
+  assert.equal(checked.extension.version, '0.2.29')
   assert.equal(checked.extension.apiVersion, '1.6')
   assert.equal(checked.entries, 29)
   assert.equal(receipt.dependencies.length, 14)
