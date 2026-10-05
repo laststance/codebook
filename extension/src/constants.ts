@@ -528,13 +528,19 @@ export const WIKI_UPDATE_RECOVERY_REQUEST =
   '/codebook Recover the unfinished LLM Wiki publish for this project'
 /** What a running Wiki update appends to the output folder's path for its marker file, which tells other editor windows that this Wiki is being updated. */
 export const WIKI_UPDATE_RUN_MARKER_SUFFIX = '.update-run.json'
-/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows; it covers the stop of the agent and the end's own file work, and after it a marker whose process id still answers (a killed editor's, given to another process since) is nobody's run. */
+/** How long past its host's longest run a running Wiki update's marker still counts for other editor windows, before {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} is added; it covers the stop of the agent and the end's own file work, and after both a marker whose owner cannot be judged by its process start (one of another machine, or of 0.2.29.0 whose process id still answers) is nobody's run. */
 export const WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS = 60_000
+/** How far the clocks of two windows on one Wiki, or one clock before and after a correction, may differ without changing what a marker means: a run's marker expires this much later than its bound, a marker whose run starts further ahead of the reader's clock is nobody's, and a marker file without content that was written further ahead is not taken for one being written. */
+export const WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS = 300_000
+/** How long a marker file without readable content counts as one another window is writing at this moment; an older one was left by a killed window and is nobody's. A window of this build links a complete marker into place, so only a window of 0.2.29.0, or one on a file system without hard links, shows such a file, for the time of one write. */
+export const WIKI_UPDATE_MARKER_WRITE_GRACE_MS = 2_000
+/** The mode a Wiki update's marker file is created with: that of any file a project holds, which the process's file mode mask narrows, so a window of another user on a shared project folder can read whose update runs. */
+export const WIKI_UPDATE_MARKER_FILE_MODE = 0o666
 /** How often the end of a Wiki update asks for the exclusive claim on its marker file before it leaves the marker as it is; another window holds that claim for the time of one read and one removal. */
 export const WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS = 20
 /** How long the end of a Wiki update waits between two attempts to claim its marker file; with the attempts about half a second. */
 export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
-/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, whatever process has its id now; a running window holds the claim for milliseconds. */
+/** How old a claim on a Wiki update's marker file must be to count as left by a killed window, where its owner cannot be judged by this process ({@link canJudgeOwnerHere}: a claim of another machine, of 0.2.29.0, or of a window whose process start could not be read); a running window holds the claim for milliseconds. */
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000

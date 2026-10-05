@@ -28,18 +28,14 @@ export async function removeStaleStorageLock(
   // The lock of a running or foreign writer needs no claim.
   if (!(await isStaleStorageLock(lockPath, identity, readForBothLooks)))
     return false
-  const releaseClaim = await claimStorageLockTakeover(
-    lockPath,
-    identity,
-    readStart,
-  )
-  if (!releaseClaim) return false
+  const claim = await claimStorageLockTakeover(lockPath, identity, readStart)
+  if (!claim) return false
   try {
     // Another window may have taken the lock over since the look above; only a lock that is still stale is removed.
     if (await isStaleStorageLock(lockPath, identity, readForBothLooks))
       await unlink(lockPath).catch(() => undefined)
     return true
   } finally {
-    await releaseClaim()
+    await claim.release()
   }
 }
