@@ -528,3 +528,40 @@ test('a window’s own marker, a leftover of a run that ended, is nobody’s alt
   // Assert
   assert.deepEqual(look, { kind: 'unowned' })
 })
+
+// Value: protects=a running update of a later build beside a window of this build; fails_when=a marker whose boot is written in a form this build does not write (a boot time instead of a kernel boot id) fails to parse as a whole, counts as a file without content, and is removed 2 s after its write, so both windows update the Wiki; why_new=the marker records a boot since Cycle 0046 (ER-6); seam=none
+test('a marker whose boot is written in another form than a kernel boot id is still read, without the boot', async (context) => {
+  // Arrange: a marker of another machine that records the time its machine started.
+  const marked = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: PID_OF_NO_PROCESS,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: '5f0c1a8d2e3b4a69',
+      boot: { startedAtMs: 1_789_990_000_000 },
+      processStart: 'win:2026-10-05T09:12:33.1234567Z',
+    }),
+    NOW_MS,
+  )
+
+  // Act
+  const look = await lookAt(marked, NOW_MS + 60_000)
+
+  // Assert
+  assert.deepEqual(look, {
+    kind: 'live',
+    heldBy: {
+      pid: 4_194_305,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: 1_790_000_000_000,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: '5f0c1a8d2e3b4a69',
+      boot: undefined,
+      processStart: 'win:2026-10-05T09:12:33.1234567Z',
+    },
+  })
+})
