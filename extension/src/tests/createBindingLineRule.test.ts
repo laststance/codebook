@@ -133,7 +133,7 @@ test('a line that is not a whole number is never the stop’s binding', () => {
   assert.deepEqual(answers, [false, false, false])
 })
 
-// Cycle 0045 (SS-15): red while the fourth parameter defaulted to the declared line, so a call that forgot it measured the rule from the declared line again (the directive below was then unused and the build failed; the function declared three parameters). Cycle 0046 (row 8) added the optional fifth parameter, the debugger's break locations, which has no default either.
+// Cycle 0045 (SS-15): red while the fourth parameter defaulted to the declared line, so a call that forgot it measured the rule from the declared line again (the directive below was then unused and the build failed; the function declared three parameters). Cycle 0046 (row 8) added the optional fifth parameter, the debugger's break locations, which has no default either. Row 77 added the optional sixth, the binding whose generated place is known.
 test('a binding rule cannot be built without the line its breakpoint is requested on', () => {
   // Arrange
   const scan = scanOf([22, 23])
@@ -141,7 +141,7 @@ test('a binding rule cannot be built without the line its breakpoint is requeste
   // @ts-expect-error the requested line is required
   createBindingLineRule(22, citation, scan)
   // Assert
-  assert.equal(createBindingLineRule.length, 5)
+  assert.equal(createBindingLineRule.length, 6)
 })
 
 // Cycle 0046 (row 8, F21-F2): red while every mapped line between counted, so a stop the debugger bound on the first statement of a function, past its head, its parameters and `try {`, was refused (natively "line 27 between the declared line 26 and line 32 has a mapped position").
@@ -189,6 +189,59 @@ test('a binding two lines below is accepted with the debugger’s break location
   const accepted = rule.accepts(24)
   // Assert
   assert.equal(accepted, true)
+})
+
+// Cycle 0046 (row 77): red while a line counted because the map puts a break location on it, wherever that location lies in the generated module: the registration call a build appends at the module's end is mapped to the function's name, and the stop declared on the line above was refused with "line 27 between the declared line 26 and line 32 has a break location".
+test('a binding whose generated place is known is refused only for a break location between the two generated places, and every other line is still measured by all lines', () => {
+  // Arrange: the debugger lists break locations on lines 27, 32 and 35; the one of line 27 lies at the end of the generated module, so nothing lies between the requested place and the binding on line 32.
+  const scan = scanOf([26, 27, 28, 29, 31, 32, 33, 35])
+  const sourceOrderRule = createBindingLineRule(
+      26,
+      { endLine: 41 },
+      scan,
+      26,
+      [27, 32, 35],
+    ),
+    generatedOrderRule = createBindingLineRule(
+      26,
+      { endLine: 41 },
+      scan,
+      26,
+      [27, 32, 35],
+      { line: 32, breakLocationLinesBetween: [] },
+    )
+  // Act
+  const answers = [
+    sourceOrderRule.refusal(32),
+    generatedOrderRule.refusal(32),
+    generatedOrderRule.refusal(35),
+  ]
+  // Assert: line 35 was not judged, so line 27 still lies between for it.
+  assert.deepEqual(answers, [
+    'line 27 between the declared line 26 and line 32 has a break location',
+    undefined,
+    'line 27 between the declared line 26 and line 35 has a break location',
+  ])
+})
+
+// Cycle 0046 (row 77): the refusal for a real case stays, and names the line whose break location was passed over.
+test('a binding whose generated place is known is refused naming the first line with a break location between the two generated places', () => {
+  // Arrange: break locations of lines 29 and 30 lie between the requested generated place and the binding on line 32; the one of line 27 lies elsewhere in the module.
+  const rule = createBindingLineRule(
+    26,
+    { endLine: 41 },
+    scanOf([26, 27, 28, 29, 30, 32]),
+    26,
+    [27, 29, 30, 32],
+    { line: 32, breakLocationLinesBetween: [26, 29, 30] },
+  )
+  // Act
+  const answers = [rule.accepts(32), rule.refusal(32)]
+  // Assert
+  assert.deepEqual(answers, [
+    false,
+    'line 29 between the declared line 26 and line 32 has a break location',
+  ])
 })
 
 // Cycle 0044 (0041-N10-1b): red while the rule of a stop on a line without a mapped position was measured from its declared line, so the debugger's move from the requested line to the next one was refused (natively: "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position").

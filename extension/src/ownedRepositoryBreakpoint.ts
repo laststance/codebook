@@ -53,6 +53,15 @@ export const verifiedPlaceSchema = z.object({
   column: z.number().int(),
 })
 /**
+ * A verified adapter breakpoint as an editor answers it for {@link vscode.DebugSession.getDebugProtocolBreakpoint}: always its line, its column only when the editor kept it.
+ * VS Code and Cursor remove the column from the adapter's `changed` news about a breakpoint that has no column of its own, and a breakpoint the extension API adds at character 0 has none: every stop requested at column 1 is answered without a column once the adapter sent news about it. {@link ConfiguredBrowserRun} reads a binding with this schema and takes the missing column from the adapter's own report ({@link OwnedRepositoryBreakpoint.reportedPlace}).
+ * @example
+ * verifiedLineSchema.safeParse({ id: 0, verified: true, line: 32 }).success // => true
+ */
+export const verifiedLineSchema = verifiedPlaceSchema.extend({
+  column: z.number().int().optional(),
+})
+/**
  * The failure of a registration read whose owned breakpoint is gone from the editor (retired, or removed by the learner); it says nothing about the requested line.
  * {@link OwnedRepositoryBreakpoint.registration} throws it, so a caller tells it from an adapter's refusal by its type and not by its text: {@link ConfiguredBrowserRun} leaves the next step and the mapping hints out for it, because another line would not help.
  * @example
@@ -610,6 +619,21 @@ export class OwnedRepositoryBreakpoint {
    */
   verifiedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
     return this.standingRegistration(session)?.verifiedAt
+  }
+
+  /**
+   * Reads where the adapter itself last reported this breakpoint verified, in its registration reply or in a later `breakpoint` event, whether the owner accepts that place or refuses it; {@link ConfiguredBrowserRun} asks it for the column of a binding the editor answered without one.
+   * The tracker reads the adapter's messages before the editor does, so this place keeps the column the editor drops for a breakpoint requested at column 1. Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns
+   * - The refused line and column while the adapter's latest report is refused for its place
+   * - Otherwise the verified line and column of the standing acknowledgement
+   * - `undefined` while pending, when no report named a whole position, and when the registration was refused for another reason or is gone
+   * @example
+   * owned.reportedPlace(session) // => { line: 32, column: 11 } for a breakpoint requested at 27:1 that the adapter verified at 32:11
+   */
+  reportedPlace(session: vscode.DebugSession): VerifiedPlace | undefined {
+    return this.refusedPlace(session) ?? this.verifiedPlace(session)
   }
 
   /**
