@@ -538,8 +538,9 @@ export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
 /** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
 export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
-/** Milliseconds in one second, for naming a bound in seconds. */
-export const MS_PER_SECOND = 1_000
+/** What a Wiki update says when it was blocked by a conflict that names no file, so that the learner cannot be told what to move: the reason of the `failed` state {@link WikiUpdateRun} records for a finished update and for a refused start alike. */
+export const WIKI_UPDATE_UNNAMED_BLOCK_REASON =
+  'The update was blocked, but no blocking file was named.'
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */
 export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
 /** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. */

@@ -53,7 +53,7 @@ async function readUpToLimit(
  * Reads a manifest or a publication receipt of a Wiki or candidate folder only when it is a regular file of bounded size, without following a link and without waiting on a pipe.
  *
  * Why: these files are read before an update's timeout and cancel exist; a link to a named pipe would hold that read forever and a link to an endless device would fill memory. The publisher refuses such entries too. The size is checked at `stat` and again while reading, so a file that grows meanwhile is not read past the limit.
- * Trigger: {@link readWikiPublishToken}, {@link readWikiPublicationIdentity}, {@link listWikiCandidates}, {@link readWikiOwnedPaths} and {@link findWikiUpdateStartBlock} read every Wiki metadata file through it.
+ * Trigger: {@link readWikiPublishToken}, {@link readWikiPublicationIdentity}, {@link listWikiCandidates}, {@link readWikiOwnedPaths} and {@link findWikiUpdateStartBlock} read every Wiki metadata file through it, and {@link readLiveWikiUpdateMarker} and {@link claimWikiUpdateMarker} read the update marker through it.
  *
  * @param path - Absolute path of the manifest or receipt.
  * @returns

@@ -16,7 +16,6 @@ import {
   AGENT_STORAGE_DIRECTORY,
   CONNECTION_DESCRIPTOR_SUFFIX,
   EXTENSION_VERSION,
-  MS_PER_SECOND,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
@@ -93,6 +92,7 @@ import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
+import { secondsText } from './utils/secondsText'
 import {
   selectActiveWikiCandidate,
   wikiLastRunSchema,
@@ -1262,7 +1262,7 @@ export function activate(
           }
           if (answer.outcome === 'unanswered') {
             await finishWikiUpdate(run, {
-              failure: `The editor chat did not answer within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`,
+              failure: `The editor chat did not answer within ${secondsText(WIKI_CHAT_OPEN_TIMEOUT_MS)}, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`,
               isFailureCodebookSentence: true,
             })
             return

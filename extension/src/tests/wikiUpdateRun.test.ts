@@ -165,6 +165,31 @@ test('a conflict with no path is not recorded as a conflict', () => {
   )
 })
 
+test('a start refused for a conflict that names no file is recorded as failed with the sentence a finished update has for it', () => {
+  // Arrange
+  const run = new WikiUpdateRun(fixedClock)
+
+  // Act
+  run.refuseStart('vscode', output, {
+    kind: 'conflict',
+    paths: [],
+    cause: 'edited-page',
+  })
+
+  // Assert
+  const status = run.status()
+  assert.equal(status.state, 'failed')
+  assert.equal(
+    status.state === 'failed' ? status.reason : undefined,
+    'The update was blocked, but no blocking file was named.',
+  )
+  assert.equal(
+    status.state === 'failed' ? status.isCodebookSentence : undefined,
+    true,
+  )
+  assert.equal(status.state === 'failed' ? status.site : undefined, 'kept')
+})
+
 test('a late result after a run ended cannot overwrite the newer state', () => {
   // Arrange
   const run = new WikiUpdateRun(fixedClock)
