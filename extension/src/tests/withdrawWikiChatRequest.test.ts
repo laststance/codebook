@@ -33,15 +33,15 @@ function manualSleep(): {
 const untilItWaits = (): Promise<void> =>
   new Promise((resolveWait) => setImmediate(resolveWait))
 
-// Value: protects=the chat after a reply that reports an error, or after a chat command that made no request; fails_when=the withdrawal runs the chat's commands although the hand-over command has returned, so they act on a request of the learner; why_new=Cycle 0046 row 82; seam=none
-test('a hand-over command that has already returned leaves nothing to take back, and no chat command runs', async () => {
+// Value: protects=the chat after a chat command that returned without a reply (the chat made no response, so it holds no request); fails_when=the withdrawal runs the chat's commands for a request that does not exist, so they act on a request of the learner, or reports a request as taken back that was never there; why_new=Cycle 0046 rows 82 and 150; seam=none
+test('a hand-over command that has already returned without a reply is reported as a request the chat never held, and no chat command runs', async () => {
   // Arrange
   const ranCommands: string[] = []
   const { sleep } = manualSleep()
 
   // Act
   const withdrawal = await withdrawWikiChatRequest({
-    handOver: Promise.resolve({ errorDetails: { message: 'Sorry.' } }),
+    handOver: Promise.resolve(undefined),
     runChatCommand: async (command) => {
       ranCommands.push(command)
     },
@@ -52,12 +52,12 @@ test('a hand-over command that has already returned leaves nothing to take back,
   })
 
   // Assert
-  assert.equal(withdrawal, 'withdrawn')
+  assert.equal(withdrawal, 'not-sent')
   assert.deepEqual(ranCommands, [])
 })
 
 // Value: protects=the chat after a chat command that threw (no request was made); fails_when=only a hand-over command that resolved counts as returned, so the chat's commands run for a request that does not exist and act on a request of the learner; why_new=Cycle 0046 row 82; seam=none
-test('a hand-over command that threw before the withdrawal leaves nothing to take back, and no chat command runs', async () => {
+test('a hand-over command that threw before the withdrawal is reported as a request the chat never held, and no chat command runs', async () => {
   // Arrange
   const ranCommands: string[] = []
   const { sleep } = manualSleep()
@@ -75,7 +75,7 @@ test('a hand-over command that threw before the withdrawal leaves nothing to tak
   })
 
   // Assert
-  assert.equal(withdrawal, 'withdrawn')
+  assert.equal(withdrawal, 'not-sent')
   assert.deepEqual(ranCommands, [])
 })
 

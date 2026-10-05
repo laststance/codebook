@@ -3,7 +3,6 @@ import { resolve } from 'node:path'
 import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
-import { handWikiRequestToChat } from '../../utils/handWikiRequestToChat'
 import {
   inspectDeepWikiFreshness,
   type WikiFreshness,
@@ -11,10 +10,9 @@ import {
 import { listWikiCandidates } from '../../utils/listWikiCandidates'
 import { readWikiPublishToken } from '../../utils/readWikiPublishToken'
 import { readWikiWatchStamp } from '../../utils/readWikiWatchStamp'
-import { waitForWikiChatAnswer } from '../../utils/waitForWikiChatAnswer'
+import { startWikiChatUpdate } from '../../utils/startWikiChatUpdate'
 import { waitForWikiPublish } from '../../utils/waitForWikiPublish'
 import type { WikiUpdateStatus } from '../../utils/wikiUpdateRun'
-import { withdrawWikiChatRequest } from '../../utils/withdrawWikiChatRequest'
 
 import { assertConstantsReadBy } from './assertConstantsReadBy'
 import { keepLocalAddress, parseFakeUri } from './fakeEditorAddresses'
@@ -30,6 +28,9 @@ type UriHandler = (uri: { path: string; query: string }) => Promise<void>
 
 /** A document the fake editor reports as opened: only the address the extension looks at. */
 type FakeTextDocument = { uri: { scheme: string; fsPath: string } }
+
+/** A command the fake editor reports as started in a terminal: only the command line the extension looks at. */
+type FakeShellExecution = { execution: { commandLine: { value: string } } }
 
 /** Names of the extension's numeric constants, the ones a test may replace by a shorter value. */
 type NumericConstantName = {
@@ -55,8 +56,9 @@ export type HeldUpdateStep =
  * @param options.outputSetting - Value of `codebook.wikiOutputDirectory`; `.codebook/wiki` when omitted.
  * @param options.cursor - Whether the host is Cursor (the agent runs through its CLI) instead of VS Code (chat plus watch).
  * @param options.chatFails - Makes VS Code's chat command throw: "Chat is unavailable" for `true`, the given message for a text.
- * @param options.chatReply - What VS Code's chat command resolves with once it took the request, as it does with `blockOnResponse` when the chat's response completed or waits for a confirmation; a reply at once (`{}`) when omitted. A promise that never settles is a chat that never answers.
- * @param options.chatAnswerClock - Sleep handed to the hand-over of the request, to the wait for the chat's first answer and to the withdrawal of an unanswered request, so a test can pass the bound of the session's start, the 30 second bound and the withdrawal's settle time without waiting.
+ * @param options.chatReply - What VS Code's chat command resolves with once it took the request, as it does with `blockOnResponse` when the chat's response completed (`{}`), completed with an error (`{ errorDetails }`) or waits for a confirmation (`{ type: 'confirmation' }`); a reply that waits for a confirmation, at once, when omitted, so the chat counts as working. A promise that never settles is a chat that never answers.
+ * @param options.chatAnswerClock - Sleep handed to the start of the update in the chat (the hand-over of the request, the looks at the Wiki's output, the wait for the first answer and the withdrawal of an unanswered request), so a test can pass the bound of the session's start, the 30 second bound and the withdrawal's settle time without waiting.
+ * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
  * @param options.cancellable - Collects the Cancel button of each progress notification; the window shows the notification and records its title also when omitted.
@@ -69,7 +71,7 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
- * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when the chat reads a file, opens a terminal or runs a command there) and `close`.
+ * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
  *
  * @example
  * ```ts
@@ -89,6 +91,7 @@ export async function openWikiUpdateWindow(options: {
     sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
   }
   editorCommand?: (name: string) => unknown
+  signWatchFails?: string
   cursorAgent?: (
     root: string,
     prompt: string,
@@ -123,9 +126,10 @@ export async function openWikiUpdateWindow(options: {
   progressTitles: string[]
   looks: { candidateListings: number; stampReads: number }
   openWorkspace(nextProjectRoot: string): void
-  openDocument(path: string): void
+  openDocument(path: string, scheme?: string): void
   openTerminal(): void
-  runTerminalCommand(): void
+  runTerminalCommand(commandLine: string): void
+  signListenerCount(): number
   clickUpdate(): Promise<void>
   runUpdateCommand(): Promise<void>
   status(): WikiUpdateStatus
@@ -167,7 +171,8 @@ export async function openWikiUpdateWindow(options: {
   // What the editor reports while the chat works: a document it opened, a terminal it opened, a command it started there.
   const documentOpenListeners: Array<(document: FakeTextDocument) => void> = []
   const terminalOpenListeners: Array<() => void> = []
-  const terminalCommandListeners: Array<() => void> = []
+  const terminalCommandListeners: Array<(event: FakeShellExecution) => void> =
+    []
   /** Registers one listener of a fake editor event and hands back its disposable. */
   const listenTo = <Listener>(
     listeners: Listener[],
@@ -260,8 +265,10 @@ export async function openWikiUpdateWindow(options: {
             if (query === undefined) return options.editorCommand?.(name)
             await passHold('chat-open')
             chatRequests.push({ name, query })
-            // The chat's reply, as `blockOnResponse` returns it.
-            return options.chatReply ? options.chatReply() : {}
+            // The chat's reply, as `blockOnResponse` returns it; a chat nobody describes works on the request and waits for a confirmation.
+            return options.chatReply
+              ? options.chatReply()
+              : { type: 'confirmation', kind: 'toolInvocation' }
           },
         },
         workspace: {
@@ -269,7 +276,11 @@ export async function openWikiUpdateWindow(options: {
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
           onDidOpenTextDocument: (
             listener: (document: FakeTextDocument) => void,
-          ) => listenTo(documentOpenListeners, listener),
+          ) => {
+            if (options.signWatchFails !== undefined)
+              throw new Error(options.signWatchFails)
+            return listenTo(documentOpenListeners, listener)
+          },
           // The opened Wiki watches the project's files; these tests report no file event.
           createFileSystemWatcher:
             createFakeFileWatching().createFileSystemWatcher,
@@ -310,8 +321,9 @@ export async function openWikiUpdateWindow(options: {
             showNotification(errors, message, actions),
           onDidOpenTerminal: (listener: () => void) =>
             listenTo(terminalOpenListeners, listener),
-          onDidStartTerminalShellExecution: (listener: () => void) =>
-            listenTo(terminalCommandListeners, listener),
+          onDidStartTerminalShellExecution: (
+            listener: (event: FakeShellExecution) => void,
+          ) => listenTo(terminalCommandListeners, listener),
           // A real editor always has it, so every test runs the product's notification path; only collecting the Cancel buttons is optional.
           withProgress,
         },
@@ -399,33 +411,13 @@ export async function openWikiUpdateWindow(options: {
             : freshness
         },
       },
-      // The real wait for the chat's answer runs; only its sleep is replaced by the test's clock when one is given.
-      './utils/waitForWikiChatAnswer': {
-        waitForWikiChatAnswer: (
-          answerOptions: Parameters<typeof waitForWikiChatAnswer>[0],
+      // The real start in the chat runs (the hand-over, the wait for the first answer, the withdrawal); only its sleep is replaced by the test's clock when one is given.
+      './utils/startWikiChatUpdate': {
+        startWikiChatUpdate: (
+          startOptions: Parameters<typeof startWikiChatUpdate>[0],
         ) =>
-          waitForWikiChatAnswer({
-            ...answerOptions,
-            ...options.chatAnswerClock,
-          }),
-      },
-      // The real hand-over runs; only its sleep is replaced by the test's clock when one is given.
-      './utils/handWikiRequestToChat': {
-        handWikiRequestToChat: (
-          handOverOptions: Parameters<typeof handWikiRequestToChat>[0],
-        ) =>
-          handWikiRequestToChat({
-            ...handOverOptions,
-            ...options.chatAnswerClock,
-          }),
-      },
-      // The real withdrawal runs; only its sleep is replaced by the test's clock when one is given.
-      './utils/withdrawWikiChatRequest': {
-        withdrawWikiChatRequest: (
-          withdrawalOptions: Parameters<typeof withdrawWikiChatRequest>[0],
-        ) =>
-          withdrawWikiChatRequest({
-            ...withdrawalOptions,
+          startWikiChatUpdate({
+            ...startOptions,
             ...options.chatAnswerClock,
           }),
       },
@@ -470,16 +462,21 @@ export async function openWikiUpdateWindow(options: {
     openWorkspace(nextProjectRoot: string): void {
       openedWorkspace = nextProjectRoot
     },
-    openDocument(path: string): void {
+    openDocument(path: string, scheme = 'file'): void {
       for (const listener of [...documentOpenListeners])
-        listener({ uri: { scheme: 'file', fsPath: path } })
+        listener({ uri: { scheme, fsPath: path } })
     },
     openTerminal(): void {
       for (const listener of [...terminalOpenListeners]) listener()
     },
-    runTerminalCommand(): void {
-      for (const listener of [...terminalCommandListeners]) listener()
+    runTerminalCommand(commandLine: string): void {
+      for (const listener of [...terminalCommandListeners])
+        listener({ execution: { commandLine: { value: commandLine } } })
     },
+    signListenerCount: (): number =>
+      documentOpenListeners.length +
+      terminalOpenListeners.length +
+      terminalCommandListeners.length,
     async clickUpdate(): Promise<void> {
       if (!handleUri) throw new Error('The window registered no URI handler.')
       await handleUri({

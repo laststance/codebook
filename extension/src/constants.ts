@@ -575,7 +575,7 @@ export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
-/** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the chat's first answer (a reply, or a tool call it makes for the request) before the run ends as failed. */
+/** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the first sign that the chat works on it (its reply or its wait for a confirmation, a step of the update the editor reports, a folder the publisher prepares) before the request is taken back and the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
 /** How long a VS Code Wiki update gives each of the two editor commands that start a chat session of its own (the reveal of the chat and New Chat) to return before it sends the request into the session the learner has open. */
 export const WIKI_CHAT_SESSION_START_TIMEOUT_MS = 5_000

@@ -1314,7 +1314,7 @@ test('a chat command that never returns, also after the chat’s Cancel, ends th
     assert.equal(afterFirstPress.state, 'failed')
     assert.equal(
       afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
-      'The editor chat did not answer within 0.1 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 0.1 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
     )
     assert.equal(wiki.status().state, 'running')
   } finally {
@@ -1380,7 +1380,7 @@ function heldChatRequest(): {
 }
 
 // Value: protects=the end of a VS Code update whose chat cannot answer (Copilot Chat disabled for the launch); fails_when=the bound ends when the chat command returns, so a command that returns at once while the chat never answers leaves the update watching for 15 minutes; why_new=Cycle 0045 native check F33 (row 3 of Cycle 0046); seam=the sleep of the wait for the chat's answer, on a manual clock
-test('a chat that takes the request and never answers ends the update after 30 seconds, on the page and as an error notice, with the sentence that it did not answer', async () => {
+test('a chat that takes the request and never answers ends the update after 30 seconds, on the page and as an error notice, with the sentence that Codebook saw no sign of the update and took its request back', async () => {
   // Arrange: the chat takes the request at once, and no reply and no tool call ever come; its Cancel stops the request.
   const { clock, sleep } = manualAnswerClock()
   const request = heldChatRequest()
@@ -1408,13 +1408,13 @@ test('a chat that takes the request and never answers ends the update after 30 s
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: The editor chat did not answer within 30 seconds, so the update was not started\\. Check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running\\. Check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
       ),
     )
     assert.deepEqual(wiki.progressTitles, [])
@@ -1497,7 +1497,7 @@ test('at the 30 second bound Codebook stops its unanswered request with the chat
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
     )
     assert.equal(wiki.errors.length, 1)
   } finally {
@@ -1530,13 +1530,13 @@ test('a chat whose Cancel fails ends the update with the sentence that the reque
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
     )
     assert.equal(wiki.errors.length, 1)
     assert.match(
       wiki.errors[0] ?? '',
       new RegExp(
-        `^Update failed at ${CLOCK_TIME}: The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
+        `^Update failed at ${CLOCK_TIME}: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat\\. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
       ),
     )
   } finally {
@@ -1568,7 +1568,7 @@ test('a request that is still pending after the chat’s Cancel returned is repo
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
     )
   } finally {
     await wiki.close()
@@ -1613,7 +1613,7 @@ test('in an editor without the New Chat command the request goes into the open c
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, so the update was not started. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
     )
   } finally {
     await wiki.close()
@@ -1665,7 +1665,7 @@ test('in an editor without the New Chat command an unanswered request in progres
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, so the update was not started. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
     )
   } finally {
     await wiki.close()
@@ -1711,7 +1711,7 @@ test('in an editor without the New Chat command a failing queue command is follo
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
     )
   } finally {
     await wiki.close()
@@ -1787,13 +1787,135 @@ test('a reply that reports an error ends the update without the chat’s Cancel 
   }
 })
 
-test('a chat that replies 20 seconds after it took the request is watched for its publish and not refused at 30 seconds', async () => {
-  // Arrange: the chat's reply comes 20 seconds after the request was handed to it.
+// Value: protects=the case row 3 was written for: an editor whose chat command returns at once with nothing while no chat ever replies; fails_when=a command that returned is taken for a chat that answered, so the update watches for 15 minutes, or the rule that an empty reply says nothing is removed; why_new=Cycle 0046 row 150 (the test named for this case used a command that never returns); seam=the sleep of the start, on a manual clock
+test('a chat command that returns at once with nothing while no chat replies leaves the update running until one millisecond before the bound and ends it at the bound, with no command run against the chat', async () => {
+  // Arrange: the command resolves with `undefined` at once; no reply and no sign ever come.
+  const { clock, sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: async () => undefined,
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act
+    clock.advance(29_999)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    const stateBeforeTheBound = wiki.status().state
+    clock.advance(1)
+    await press
+
+    // Assert: the chat made no response, so it holds no request and nothing is cancelled.
+    assert.equal(stateBeforeTheBound, 'running')
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the bound of row 3 while the learner goes on working in the window; fails_when=any file the learner opens, any terminal that opens or any command the learner runs within the 30 seconds counts as the chat's first answer, so a chat that cannot answer is watched for 15 minutes; why_new=Cycle 0046 row 146 (the signs were events of the whole window); seam=the editor's events, which the test raises as the learner's
+test('a file the learner opens, a terminal that opens and a command the learner runs while the chat does not answer are not taken for the chat’s work: the update still ends at the 30 seconds', async () => {
+  // Arrange: the chat never answers; its Cancel stops the request.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.cancel') request.end({})
+    },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: the learner opens a source file, opens a terminal and runs the tests; then the bound passes.
+    clock.advance(5_000)
+    wiki.openDocument(join(wiki.projectRoot, 'src', 'a.ts'))
+    wiki.openTerminal()
+    wiki.runTerminalCommand('pnpm test')
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    clock.advance(25_000)
+    await press
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=a chat that works on the request without a step Codebook can see and answers only after the bound; fails_when=the bound ends the update and the chat goes on and can publish with no watch, or the late answer starts a watch for an update the page already called ended; why_new=Cycle 0046 row 147; seam=the chat's reply, which comes at 40 seconds unless the chat's Cancel stopped the request
+test('a chat whose first answer would come after 40 seconds is stopped at the 30 seconds, and nothing of the update goes on after the sentence was shown', async () => {
+  // Arrange: the chat asks for a confirmation 40 seconds after it took the request, unless its Cancel stopped the request before.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: () => {
+      clock.setTimeout(
+        () => request.end({ type: 'confirmation', kind: 'toolInvocation' }),
+        40_000,
+      )
+      return request.chatReply()
+    },
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.cancel') request.end({})
+    },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: the bound passes, then the time at which the chat would have answered.
+    clock.advance(30_000)
+    await press
+    const stateAtTheBound = wiki.status().state
+    clock.advance(10_000)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+
+    // Assert
+    assert.equal(stateAtTheBound, 'failed')
+    assert.equal(wiki.executedCommands.at(-1), 'workbench.action.chat.cancel')
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat whose reply waits for a confirmation 20 seconds after it took the request is watched for its publish and not ended at 30 seconds', async () => {
+  // Arrange: 20 seconds after the request was handed over the chat asks to approve a tool call.
   const { clock, sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
     chatReply: () =>
       new Promise((resolveReply) => {
-        clock.setTimeout(() => resolveReply({}), 20_000)
+        clock.setTimeout(
+          () => resolveReply({ type: 'confirmation', kind: 'toolInvocation' }),
+          20_000,
+        )
       }),
     chatAnswerClock: { sleep },
   })
@@ -1818,7 +1940,68 @@ test('a chat that replies 20 seconds after it took the request is watched for it
   }
 })
 
-test('a chat that reads a file for the request before it replies is watched for its publish', async () => {
+// Value: protects=the learner whose chat answered the update request in plain text and stopped; fails_when=a reply that says the response is complete is taken for a chat that works, so Codebook watches for 15 minutes, ends as timed out, keeps a reservation, and refuses the next press with "may still be updating this Wiki"; why_new=Cycle 0046 row 149; seam=none
+test('a chat whose response is complete and that published nothing ends the update at once with the sentence that it finished without publishing: no watch, no marker left, and the next press sends a request', async () => {
+  // Arrange: the chat's reply says that its response is complete.
+  const wiki = await openWikiWindow({ chatReply: async () => ({}) })
+  try {
+    // Act
+    await wiki.clickUpdate()
+    const afterFirstPress = wiki.status()
+    const markerAfterFirstPress = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(afterFirstPress.state, 'failed')
+    assert.equal(
+      afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.equal(markerAfterFirstPress, 'gone')
+    assert.equal(wiki.chatRequests.length, 2)
+    assert.deepEqual(wiki.warnings, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner whose chat published and then said that its response is complete, before Codebook saw a step of it; fails_when=the completed reply ends the run as failed without a look at the disk, or starts a watch that reports the publish only two seconds later; why_new=Cycle 0046 row 149; seam=none
+test('a chat whose response is complete after it published ends the update as Updated at once, without a watch', async () => {
+  // Arrange: the chat publishes a Wiki that matches the source and then completes its response.
+  const wiki = await openWikiWindow({
+    chatReply: async () => {
+      wiki.setFreshness(CURRENT)
+      await wiki.publish('b'.repeat(64))
+      return {}
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'succeeded')
+    assert.deepEqual(wiki.progressTitles, [])
+    assert.equal(wiki.notices.length, 1)
+    assert.match(
+      wiki.notices[0] ?? '',
+      new RegExp(
+        `^Updated at ${CLOCK_TIME} to revision a1b2c3d4e5f6 \\(index [0-9a-f]{8}\\)\\. Reload the browser reader to read the new pages\\.$`,
+      ),
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat that opens the Wiki’s manifest for the request before it replies is watched for its publish', async () => {
   // Arrange: the chat's reply never comes back to the command, as for a chat that works without asking for a confirmation.
   const { clock, sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
@@ -1844,7 +2027,7 @@ test('a chat that reads a file for the request before it replies is watched for 
   }
 })
 
-test('a chat that runs a command for the request before it replies is watched for its publish', async () => {
+test('a chat that runs the publisher in a terminal for the request before it replies is watched for its publish', async () => {
   // Arrange
   const { clock, sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
@@ -1855,9 +2038,11 @@ test('a chat that runs a command for the request before it replies is watched fo
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
 
-    // Act: ten seconds later the chat starts a command in the terminal, then the bound passes.
+    // Act: ten seconds later the chat prepares a folder with the publisher, then the bound passes.
     clock.advance(10_000)
-    wiki.runTerminalCommand()
+    wiki.runTerminalCommand(
+      `node /extensions/codebook/skills/codebook/publish-wiki.mjs --prepare --project ${wiki.projectRoot} --output ${wiki.outputDirectory}`,
+    )
     await new Promise((resolveWait) => setImmediate(resolveWait))
     clock.advance(20_000)
     await press
@@ -1870,22 +2055,30 @@ test('a chat that runs a command for the request before it replies is watched fo
   }
 })
 
-test('a chat that opens a terminal for the request before it replies is watched for its publish', async () => {
-  // Arrange
+// Value: protects=a chat whose steps the editor does not report (no document opened through the extension host, no shell integration) and that has prepared a folder beside the Wiki; fails_when=only the editor's events count, so such a chat is stopped at the bound although its publisher is at work; why_new=Cycle 0046 row 146 (a change Codebook itself sees at the Wiki's output is a sign); seam=the sleep of the start, on a manual clock, which also paces the looks at the output
+test('a folder the publisher prepares beside the Wiki counts as the chat’s work although the editor reported no step, and the update is watched', async () => {
+  // Arrange: the chat never replies and the editor reports nothing.
   const { clock, sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
     chatReply: () => new Promise(() => {}),
     chatAnswerClock: { sleep },
   })
+  const preparedFolder = `${wiki.outputDirectory}.stage-3f6c`
   try {
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
+    // The first look at the output has been taken by now.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
 
-    // Act: fifteen seconds later the chat opens a terminal for its first command, then the bound passes.
-    clock.advance(15_000)
-    wiki.openTerminal()
-    await new Promise((resolveWait) => setImmediate(resolveWait))
-    clock.advance(15_000)
+    // Act: the publisher prepares a folder with its receipt; two seconds later Codebook looks again; then the bound passes.
+    await mkdir(preparedFolder)
+    await writeFile(
+      join(preparedFolder, 'codebook-publication.json'),
+      JSON.stringify({ schemaVersion: 1, kind: 'candidate' }),
+    )
+    clock.advance(2_000)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    clock.advance(28_000)
     await press
 
     // Assert
@@ -1893,17 +2086,50 @@ test('a chat that opens a terminal for the request before it replies is watched 
     assert.deepEqual(wiki.errors, [])
   } finally {
     await wiki.close()
+    await rm(preparedFolder, { recursive: true, force: true })
   }
 })
 
-test('a chat whose reply reports an error ends the update at once with the sentence that it did not answer', async () => {
+// Value: protects=the editor's listeners for opened documents and started commands, which are the window's; fails_when=the start of an update leaves them registered, so every later file the learner opens runs Codebook's check, once more per update; why_new=Cycle 0046 row 150 (the disposal was untested); seam=the editor's events, whose listeners the window counts
+test('the two listeners for signs of the update are registered while Codebook waits for the first answer and gone once the start has ended', async () => {
+  // Arrange: the chat never answers; its Cancel stops the request.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.cancel') request.end({})
+    },
+  })
+  try {
+    const listenersBeforeThePress = wiki.signListenerCount()
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+    const listenersWhileWaiting = wiki.signListenerCount()
+
+    // Act
+    clock.advance(30_000)
+    await press
+
+    // Assert
+    assert.equal(listenersBeforeThePress, 0)
+    assert.equal(listenersWhileWaiting, 2)
+    assert.equal(wiki.signListenerCount(), 0)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner whose chat answered the update request with an error (a quota message, a refused sign-in); fails_when=the update ends with the sentence of a chat that showed no sign within 30 seconds and the advice to check Copilot Chat, although the chat answered after a second and its own message says what to do; why_new=Cycle 0046 row 148; seam=none
+test('a chat whose reply reports an error ends the update at once with a sentence that quotes the chat’s message and names no 30 seconds, on the page and in the notice', async () => {
   // Arrange: the chat answers the request with an error and nothing else.
-  const { sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
     chatReply: async () => ({
-      errorDetails: { message: 'Sorry, your request failed.' },
+      errorDetails: {
+        message: 'You have exceeded your premium request allowance.',
+      },
     }),
-    chatAnswerClock: { sleep },
   })
   try {
     // Act
@@ -1914,9 +2140,49 @@ test('a chat whose reply reports an error ends the update at once with the sente
     assert.equal(status.state, 'failed')
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
+      'The editor chat answered the update request with an error and stopped (You have exceeded your premium request allowance.). Read its message in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.equal(wiki.errors.length, 1)
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The editor chat answered the update request with an error and stopped \\(You have exceeded your premium request allowance\\.\\)\\. Read its message in the Chat view, then press Update LLM Wiki again\\. The last usable site is kept\\.$`,
+      ),
     )
     assert.deepEqual(wiki.progressTitles, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the Update button and the Wiki's marker when a step of the start throws before the request is sent; fails_when=nothing ends the run, so this window answers "already updating" to every press and other windows are refused until the marker expires; why_new=Cycle 0046 row 151; seam=the editor's registration of a listener, which throws
+test('a start whose step throws before the request is sent ends the update as failed with what was thrown, leaves no marker, sends nothing to the chat, and the next press is not answered with "already updating"', async () => {
+  // Arrange: the editor refuses the listener for opened documents.
+  const wiki = await openWikiWindow({
+    signWatchFails: 'The editor refused the listener.',
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+    const afterFirstPress = wiki.status()
+    const markerAfterFirstPress = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(afterFirstPress.state, 'failed')
+    assert.equal(
+      afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
+      'The editor refused the listener.',
+    )
+    assert.equal(markerAfterFirstPress, 'gone')
+    assert.deepEqual(wiki.executedCommands, [])
+    assert.deepEqual(wiki.notices, [])
+    assert.equal(wiki.errors.length, 2)
   } finally {
     await wiki.close()
   }
