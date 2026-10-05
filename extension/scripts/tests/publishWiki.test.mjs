@@ -2563,6 +2563,130 @@ for (const [label, content, error] of [
   })
 }
 
+// Value: protects=a page that explains the reader's own markup, for example a section about how diagrams are published; fails_when=the diagram renderer reads the page's text again, so a page that only shows a generated diagram id in an escaped code example or inside a comment is refused as if an element carried it; why_new=Cycle 0046 row 184 (the check looked for the text id="codebook-diagram-…" anywhere in the page's content); seam=none
+test('a page that only shows a generated diagram id in an escaped code example or inside a comment is published', async () => {
+  // Arrange: the diagram "flow" generates the ids codebook-diagram-4-flow, …-title and …-arrow; the page shows two of them as text and none on an element.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-id-shown-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml +=
+      '<pre><code>&lt;figure id="codebook-diagram-4-flow"&gt;</code></pre>' +
+      '<!-- <p id="codebook-diagram-4-flow-title">An old note</p> -->'
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert: the figure is generated once, and the example and the comment are printed as authored.
+    assert.equal(
+      html.split(
+        '<figure class="codebook-diagram" id="codebook-diagram-4-flow">',
+      ).length - 1,
+      1,
+    )
+    assert.ok(
+      html.includes(
+        '<pre><code>&lt;figure id="codebook-diagram-4-flow"&gt;</code></pre><!-- <p id="codebook-diagram-4-flow-title">An old note</p> -->',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page with a diagram, whose figure, title and arrow marker are found by their ids; fails_when=an element of the page's content carries one of those ids and the page is published all the same, with the id twice, because the id is written without quotes or with a character reference; why_new=Cycle 0046 row 184 (the check accepted quoted ids only); seam=none
+for (const [form, element] of [
+  ['in quotes', '<p id="codebook-diagram-4-flow">A note</p>'],
+  ['without quotes', '<p id=codebook-diagram-4-flow-title>A note</p>'],
+  [
+    'with a character reference',
+    '<p id="codebook&#45;diagram-4-flow-arrow">A note</p>',
+  ],
+])
+  test(`a page whose element carries a generated diagram id ${form} is refused, because the id would stand twice`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-diagram-id-carried-')),
+    )
+    try {
+      const manifest = await diagramInput(root)
+      manifest.pages[0].contentHtml += element
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: 'Article IDs must not collide with generated diagram IDs.' },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot again, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only); seam=none
+test('reader refuses a slot inside a comment that never ends instead of generating the figure into the comment', async () => {
+  // Arrange: the page's only slot stands after the start of a comment that has no end.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-open-comment-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Flow</h2><!-- <figure data-codebook-diagram="flow"></figure>'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      { message: 'Diagram figure slots must not be inside HTML comments.' },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page with a diagram that also writes about slots; fails_when=the diagram renderer counts the slot attribute or a slot in the page's text again, so a comment that shows another element with the attribute, or an attribute value that quotes a slot, gets the page refused or gets a figure written into the attribute; why_new=Cycle 0046 row 184 (the slots and the slot attribute were counted in the raw text); seam=none
+test('a comment that shows an element with the slot attribute and an attribute value that quotes a slot are no slots: the page is published with its one figure', async () => {
+  // Arrange: the page's slot, a commented-out element that carries the slot attribute, and a paragraph whose title quotes a slot.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-shown-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml +=
+      '<!-- <div data-codebook-diagram="flow">An old graph</div> -->' +
+      `<p title='Write <figure data-codebook-diagram="flow"></figure> here'>How a diagram is placed.</p>`
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.equal(html.split('<figure class="codebook-diagram"').length - 1, 1)
+    assert.ok(
+      html.includes(
+        `</figure><!-- <div data-codebook-diagram="flow">An old graph</div> --><p title='Write <figure data-codebook-diagram="flow"></figure> here'>How a diagram is placed.</p>`,
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('a stray file left in a prepared stage cannot be published as Wiki content', async () => {
   // Arrange
   const root = await realpath(
