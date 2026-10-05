@@ -44,6 +44,10 @@ export type WikiUpdatePageSettings = {
   recoveryRequest: string
   /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, handed to the embedded sentence writer like the recovery request, so the running line says what the editor says. */
   outsideOutputApprovalsNote: string
+  /** How long after the window's `load` event the line that says the overview stands in for a missing page gets its sentence (ms); the line is in the page, empty, before that. */
+  missingPageTextDelayMs: number
+  /** How many characters of the missing page's path that line shows at most; a longer value of the address gets the sentence without the path. */
+  missingPagePathLimitChars: number
 }
 
 /**
@@ -73,6 +77,8 @@ export type WikiUpdatePageSettings = {
  *   msPerMinute: 60_000,
  *   recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project',
  *   outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+ *   missingPageTextDelayMs: 150,
+ *   missingPagePathLimitChars: 200,
  * })
  * ```
  */
@@ -95,8 +101,19 @@ export function installWikiUpdateStatus(
     // Both buttons answer the pointer and a press at once, without a transition; a held-back button does not.
     '.wiki-update:not([aria-disabled=true]):hover,[data-codebook-reload]:hover{filter:brightness(.9)}',
     '.wiki-update:not([aria-disabled=true]):active,[data-codebook-reload]:active{filter:brightness(.8)}',
-    // In the narrow layout the rail is a short scrolling row; the group keeps a bounded column of it and its own height, so the panel encloses its text.
-    '@media(max-width:1000px){[data-codebook-update-group]{flex:0 1 18rem;min-width:0;align-self:flex-start}}',
+    // The entry that opens the page's first cited source is an unfilled block: its fill and border answer the pointer, a press darkens it, and its focus ring lies inside it, because the rail scrolls and cuts a ring outside. No transition.
+    '.open-in-editor a{display:block;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;text-decoration:none;font-size:.8rem;overflow-wrap:anywhere}',
+    '.open-in-editor a:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
+    '.open-in-editor a:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
+    '.open-in-editor a:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
+    // Its label keeps one line and the file and line it opens wrap under it; the reader adds that target to a site published before the entry named it.
+    '.open-label{display:block;white-space:nowrap}',
+    '.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted,GrayText);overflow-wrap:anywhere}',
+    // The chapter list and the outline scroll, so the focus ring of their full-width links lies inside the link; the rail keeps room at its left for the ring of the link that changes the output location.
+    '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
+    '.right-rail{padding-left:5px;margin-left:-5px}',
+    // Where the rail is a row below the article (701 to 1000 px) the rail itself has no cap and no scrollbar: the outline and an open detail scroll inside their own bounds, and the update panel keeps a wide column and its own height, so its sentence is never cut. The target adds no width to its entry.
+    '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:6rem;overflow:auto}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
     '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
     // The status line is smaller than the rail text; an empty one takes no room, so it can stay in the accessibility tree.
@@ -118,33 +135,56 @@ export function installWikiUpdateStatus(
     '[data-codebook-update-status]~[data-codebook-update-output]{font-size:.75rem;line-height:1.45;margin:.3rem 0 0;color:var(--muted,#625f59);overflow-wrap:anywhere}',
     // The line that says the overview stands in for a missing page sits above the article's title.
     '[data-codebook-missing-page]{margin:0;padding:.5rem .7rem;font-size:.875rem;line-height:1.45;border:1px solid var(--border,#777);border-radius:6px;background:var(--panel-2,Canvas);color:var(--text,#333);overflow-wrap:anywhere}',
+    // Until its sentence arrives the line shows no box, so it can be in the accessibility tree from the start.
+    '[data-codebook-missing-page]:empty{margin:0;padding:0;border:0}',
   ].join('')
   document.head.append(styles)
 
+  /** Tells whether a text is a relative path as the publisher allows them: no leading slash, no backslash, control character, `?`, `#` or `:`, and no empty, `.` or `..` part; asked by {@link isShownPagePath}. @param value - The text to judge. @returns true for such a path, false for anything else. @example isRelativePath('pages/removed.html') // => true; isRelativePath('../../etc/passwd.html') // => false */
+  const isRelativePath = (value: string): boolean =>
+    !value.startsWith('/') &&
+    !/[\\\x00-\x1f?#:]/.test(value) &&
+    value.split('/').every((part) => !['', '.', '..'].includes(part))
+  /** Tells whether the `missing` value of the address may be shown as a page path; asked by {@link missingPageSentence}, because anyone can write the address. @param value - The value of `missing` as the address carries it. @returns true for a relative path of an HTML page that is no longer than the path limit, false for anything else. @example isShownPagePath('pages/removed.html') // => true; isShownPagePath('pages/notes.txt') // => false */
+  const isShownPagePath = (value: string): boolean =>
+    value.length <= settings.missingPagePathLimitChars &&
+    value.endsWith('.html') &&
+    isRelativePath(value)
+  /** Words the line that says the overview stands in for a missing page; called by {@link announceMissingPage}. @param missingPage - The value of `missing` in the address. @returns The sentence with the page's path when {@link isShownPagePath} allows it, otherwise the sentence that names no path. @example missingPageSentence('pages/removed.html') // => 'The page pages/removed.html is not in this Wiki. The last update may have removed it. This is the overview.' */
+  const missingPageSentence = (missingPage: string): string =>
+    (isShownPagePath(missingPage)
+      ? 'The page ' + missingPage + ' is not in this Wiki.'
+      : 'The page you asked for is not in this Wiki.') +
+    ' The last update may have removed it. This is the overview.'
+  /** Runs a step once the window has loaded: at once on a page that already has, otherwise at its `load` event; called by {@link announceMissingPage}, whose sentence must not arrive while the page itself is still being read out. @param step - What to do then. @returns Nothing. @example afterWindowLoad(() => { window.setTimeout(writeSentence, 150) }) */
+  const afterWindowLoad = (step: () => void): void => {
+    if (document.readyState === 'complete') step()
+    else window.addEventListener('load', step, { once: true })
+  }
+  /** Says that the overview is shown in place of a page the Wiki does not have: an empty status line above the article that gets its sentence after the load, and the notice in front of the document title at once. Called once per page load when the address names a missing page. @param missingPage - The value of `missing` in the address. @returns Nothing; the keyboard focus is not moved. @example announceMissingPage('pages/removed.html') // the title reads "Page not in this Wiki · Overview · sample DeepWiki" at once, the line gets its sentence 150 ms after the load */
+  const announceMissingPage = (missingPage: string): void => {
+    const missingLine = document.createElement('p')
+    missingLine.setAttribute('data-codebook-missing-page', '')
+    missingLine.setAttribute('role', 'status')
+    // The learner's eye lands on the article, so the line is the first element of the reading column, above the title. It goes in empty: a status region is announced when its text changes, not when it appears with its text.
+    const readingColumn =
+      document.querySelector<HTMLElement>('.reading-column') ?? document.body
+    readingColumn.insertBefore(missingLine, readingColumn.firstChild)
+    // The title is what every screen reader reads when a page loads and what the tab shows, so it carries the notice with certainty.
+    document.title = 'Page not in this Wiki · ' + document.title
+    const sentence = missingPageSentence(missingPage)
+    // A timer and not an animation frame: a frame does not run in a background tab, and one frame is too short for the empty region to be registered first.
+    afterWindowLoad(() => {
+      window.setTimeout(() => {
+        missingLine.textContent = sentence
+      }, settings.missingPageTextDelayMs)
+    })
+  }
   // The reader sends a request for a page the Wiki does not have to the overview and names that page in the address.
   const addressQuery = new URLSearchParams(location.search)
   const missingPage = addressQuery.get('missing')
   if (missingPage !== null) {
-    // The address can be written by anyone: its text is shown only when it is a page path as the publisher allows them.
-    const isPagePath =
-      missingPage.endsWith('.html') &&
-      !missingPage.startsWith('/') &&
-      !/[\\\x00-\x1f?#:]/.test(missingPage) &&
-      missingPage
-        .split('/')
-        .every((part) => part !== '' && part !== '.' && part !== '..')
-    const missingLine = document.createElement('p')
-    missingLine.setAttribute('data-codebook-missing-page', '')
-    missingLine.setAttribute('role', 'status')
-    missingLine.textContent =
-      (isPagePath
-        ? 'The page ' + missingPage + ' is not in this Wiki.'
-        : 'The page you asked for is not in this Wiki.') +
-      ' The last update may have removed it. This is the overview.'
-    // The learner's eye lands on the article, so the line is the first element of the reading column, above the title.
-    const readingColumn =
-      document.querySelector<HTMLElement>('.reading-column') ?? document.body
-    readingColumn.insertBefore(missingLine, readingColumn.firstChild)
+    announceMissingPage(missingPage)
     // Shown once: a reload or a copied address no longer names the missing page.
     addressQuery.delete('missing')
     const remainingQuery = addressQuery.toString()

@@ -51,8 +51,10 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
   }
   const template = await readFile(new URL('./reader-shell.html', import.meta.url), 'utf8');
   const sourceLines = new Map(), pages = new Map();
-  /** The editor address of one cited line; {@link sourceLink} wraps it in a citation's anchor, and the rail's "Open in VS Code" opens a page's first one. @example sourceAddress({ path: 'src/a.ts', sha256 }, 1) // => 'vscode://laststance.codebook/source?root=%2Frepo&path=src%2Fa.ts&line=1&sha256=…' */
+  /** The editor address of one cited line; {@link sourceLink} wraps it in a citation's anchor, and the rail's entry ({@link openSourceEntry}) opens a page's first one. @example sourceAddress({ path: 'src/a.ts', sha256 }, 1) // => 'vscode://laststance.codebook/source?root=%2Frepo&path=src%2Fa.ts&line=1&sha256=…' */
   const sourceAddress = (source, line) => `vscode://laststance.codebook/source?${new URLSearchParams({ root: projectRoot, path: source.path, line: String(line), sha256: source.sha256 })}`;
+  /** The rail's entry that opens a page's first cited source: one link with the approved label and, under it, the file and line it opens, so the text and the accessible name say where it leads. A `<wbr>` after each slash lets a long path wrap there. The Codebook reader names the serving editor in the label. @example openSourceEntry({ path: 'src/utils/a.ts', sha256 }, 12) // => '<p class="open-in-editor"><a href="vscode://…"><span class="open-label">Open in VS Code</span> <span class="open-target">src/<wbr>utils/<wbr>a.ts:12</span></a></p>' */
+  const openSourceEntry = (source, line) => `<p class="open-in-editor"><a href="${escapeHtml(sourceAddress(source, line))}"><span class="open-label">Open in VS Code</span> <span class="open-target">${escapeHtml(source.path).replaceAll('/', '/<wbr>')}:${line}</span></a></p>`;
   /** Resolves page and graph citations through the same current-source boundary. @example await sourceLink({ path: 'src/a.ts', line: 1 }) */
   const sourceLink = async (reference, exactQuote = false) => {
     const source = reference && indexedSources.get(reference.path);
@@ -92,7 +94,7 @@ export async function renderWikiPages(manifest, { projectRoot, outputDirectory }
       OUTPUT_LABEL: outputDirectory === join(projectRoot, '.codebook/wiki') ? 'Project folder' : 'Configured folder',
       UPDATE: escapeHtml(`vscode://laststance.codebook/update?${new URLSearchParams({ root: projectRoot })}`),
       SETTINGS: escapeHtml(`vscode://laststance.codebook/settings?${new URLSearchParams({ root: projectRoot })}`),
-      OPEN_SOURCE: `<p class="open-in-editor"><a href="${escapeHtml(sourceAddress(indexedSources.get(firstSource.path), firstSource.line))}">Open in VS Code</a></p>`,
+      OPEN_SOURCE: openSourceEntry(indexedSources.get(firstSource.path), firstSource.line),
     };
     pages.set(page.path, template.replace(/\{\{([A-Z_]+)\}\}/g, (match, key) => {
       if (!Object.hasOwn(values, key)) throw new Error(`Unknown reader template field: ${key}`);

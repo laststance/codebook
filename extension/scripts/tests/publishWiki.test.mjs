@@ -1204,6 +1204,53 @@ test('reader pages preserve authored content and build escaped chapter, outline 
   }
 })
 
+// Value: protects=the rail entry of a published page that opens the page's first cited source; fails_when=the entry names no file and line, so neither its text nor its accessible name says where it leads, or prints the path unescaped or without the break points a long path wraps at; why_new=Cycle 0046 row 28 (design review DR-8); seam=none
+test('the rail entry of a published page names the file and line of the page’s first source under its label, escaped and with a break point after each slash', async () => {
+  // Arrange: a page whose first source is src/utils/a&b.ts at line 12.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-open-target-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const source = Array.from(
+      { length: 12 },
+      (_unused, index) => `export const value${index + 1} = ${index + 1};`,
+    ).join('\n')
+    await mkdir(join(root, 'src/utils'), { recursive: true })
+    await writeFile(join(root, 'src/utils/a&b.ts'), source)
+    manifest.includedSources.push({
+      path: 'src/utils/a&b.ts',
+      sha256: createHash('sha256').update(source).digest('hex'),
+    })
+    manifest.pages[0].sources.unshift({ path: 'src/utils/a&b.ts', line: 12 })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: one link with no label attribute, so its content is its accessible name: "Open in VS Code src/utils/a&b.ts:12".
+    const entry = pages
+      .get('index.html')
+      .match(/<p class="open-in-editor">.*?<\/p>/)?.[0]
+    assert.ok(entry)
+    assert.equal(
+      entry.replace(/href="[^"]+"/, 'href="…"'),
+      '<p class="open-in-editor"><a href="…"><span class="open-label">Open in VS Code</span> <span class="open-target">src/<wbr>utils/<wbr>a&amp;b.ts:12</span></a></p>',
+    )
+    const address = new URL(
+      entry.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&'),
+    )
+    assert.deepEqual(
+      [address.searchParams.get('path'), address.searchParams.get('line')],
+      ['src/utils/a&b.ts', '12'],
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('a page opened from disk shows the freshness label, the update button and an offline note as one group', async () => {
   // Arrange
   const root = await realpath(
