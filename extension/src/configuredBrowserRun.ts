@@ -2102,7 +2102,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Judges the adapter's news about a stop's owned breakpoint once more by the debugger's own break locations when the source map alone refused the place it names, for {@link onEvent} right after a `breakpoint` event changed that place and for {@link judgeNewsRefusedBeforeModule} once the stop's module is announced: when they accept it, the breakpoint stands there ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), so its verified place is what a pause is compared with.
+   * Judges the adapter's news about a stop's owned breakpoint once more by the debugger's own break locations when the source map alone refused the place it names, for {@link onEvent} right after a `breakpoint` event changed that place and for {@link judgeNewsRefusedBeforeModule} once the stop's module is announced: when they accept it, the breakpoint stands there ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), so its verified place is what a pause is compared with, and a pause of the stop that was held meanwhile is taken at once ({@link admitPauseHeldFor}).
    * @param stop - The declared stop whose owned breakpoint the news is about.
    * @param session - The session that sent the news.
    * @example
@@ -2116,8 +2116,31 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     const place = stop.breakpoint?.refusedPlace(session)
     // News that restored an accepted place, or a refusal the break locations keep, leaves the registration as it is.
-    if (place && (await this.acceptsByBreakLocations(stop, place)))
-      stop.breakpoint?.retakeRefusedPlace(session)
+    if (!place || !(await this.acceptsByBreakLocations(stop, place))) return
+    stop.breakpoint?.retakeRefusedPlace(session)
+    // The stop may have paused while the debugger was asked: that pause was held because its line was still refused.
+    this.admitPauseHeldFor(stop)
+  }
+
+  /**
+   * Takes a pause that is held for a stop as that stop's pause once the stop's rule accepts its place, for {@link retakeNewsByBreakLocations}: a pause that arrived while the debugger still had to answer the break-location request was held because its line was refused then, and nothing else looks at it again before the wait for the stop's own pause ends.
+   * The pause is stored as {@link admitPause} would have stored it had the judgement been finished when it arrived, so {@link pauseOfAcceptedStop} finds it at once and no adoption is journaled.
+   * @param stop - The stop whose owned breakpoint just took its verified place.
+   * @example
+   * ```ts
+   * this.admitPauseHeldFor(stop) // the pause held on line 32 becomes the pause of the stop declared on line 26
+   * ```
+   */
+  private admitPauseHeldFor(stop: PreparedStop): void {
+    const participant = this.participants[stop.participant],
+      held = this.pauseHeldForStop(stop)
+    // A pause elsewhere than the verified place stays held: the end of the wait judges it.
+    if (!held || !this.isPauseOfStop(held.event, stop)) return
+    participant.unannouncedPause = undefined
+    // The expected stop's pause becomes current only after the preceding continuation has all its receipts.
+    if (this.continuation)
+      this.pendingCdpStop = { participant: stop.participant, event: held.event }
+    else participant.stopped = { event: held.event }
   }
 
   /**
@@ -3968,8 +3991,10 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.abort.signal,
       )
     } catch (error) {
-      // An announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
-      const held = this.adoptPauseHeldInModule(stop)
+      // The stop's pause may have been taken just as the wait ended, when a judgement by break locations accepted its place ({@link admitPauseHeldFor}); otherwise an announced pause that stayed elsewhere in the stop's module since its turn began is judged by the binding and frame checks, which say what is wrong.
+      const held =
+        this.unboundPauseInModule(participant, stop) ??
+        this.adoptPauseHeldInModule(stop)
       if (held) return held
       throw this.unreachedPauseFailure(stop, error)
     }

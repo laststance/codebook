@@ -802,3 +802,46 @@ test('a page pause at a server stop’s breakpoint that is read only after the r
   assert.equal(failuresWhilePaused, '')
   assert.deepEqual([server.source.line, server.source.column], [1, 1])
 })
+
+// Cycle 0046 (row 158): red while a pause that arrived during the judgement by break locations stayed held after that judgement accepted its place: the stop was adopted only when the 3 s wait for its own pause ended, as the native journals of row 77 show.
+test('a server stop that pauses while the debugger still has to answer the break-location request is taken as soon as that judgement accepts its place, without the wait and without an adoption', async (context) => {
+  // Arrange: the module is announced and the adapter's news names 7:3; the debugger's answer to the judgement that news starts is kept back. The wait for the stop's own pause never ends by itself.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    appendedRegistration('server'),
+  )
+  harness.listPossibleBreakLocations(
+    'server',
+    APPENDED_REGISTRATION_BREAK_LOCATIONS,
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.pauseAt('server', 6, 2)
+  harness.bindAt('server', 7, 3)
+  harness.movePausedFrame(7, 3)
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  const judgement = harness.holdBreakLocationAnswer()
+  harness.announceBreakpointVerified('server', 7, 3)
+  await waitUntil(
+    () => harness.breakLocationRequests.length,
+    'the break locations were asked for',
+  )
+  // Act: the runtime pauses at 7:3 and the debugger announces the stop, both before the debugger answered the judgement; then it answers.
+  harness.emitPause('server')
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the run waits for the stop’s own pause',
+  )
+  judgement.release()
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [7, 3])
+  assert.deepEqual(journaled(harness, 'cdp.held-pause-adopted'), [])
+})
