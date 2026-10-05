@@ -17,6 +17,7 @@ jobs:
   reader-dom:
     # Renders the compiled Study reader in real Chrome and fails on a DOM regression: labels, render keys, keyboard
     # focus, page overflow and reader density. The unit suites never load the reader's document, so only this job sees them.
+    # A second check does the same for a page of the Wiki reader: the right rail, the focus rings and the reading column.
     name: Reader DOM cases
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -72,10 +73,17 @@ jobs:
       - name: Run the reader DOM cases
         run: node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom
 
-      - name: Keep the DOM report, screenshots and video after a failure
+      # The same browser setup, a browser session of its own and a folder of its own: the check publishes a sample Wiki
+      # with the shipped publisher, serves it with the compiled reader and measures the served page. It records no video.
+      - name: Run the Wiki reader DOM cases
+        run: node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom
+
+      - name: Keep the DOM reports, screenshots and video after a failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: reader-dom
-          path: artifacts/reader-dom
+          path: |
+            artifacts/reader-dom
+            artifacts/wiki-reader-dom
           if-no-files-found: ignore

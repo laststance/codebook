@@ -267,6 +267,59 @@ test('the reader DOM workflow installs playwright-cli from its lockfile, no job 
   assert.deepEqual(builds, ['node scripts/build-fast.mjs'])
 })
 
+// Value: protects=the measured cases of the Wiki reader's page in CI (the unit suites read the shell's style sheet and never lay a page out); fails_when=the Reader DOM job stops running the Wiki reader's check, or runs it before or into the folder of the Study reader's check, or no longer keeps its report after a failure, or the two checks name the same browser session, so two runs on one machine close each other's browser; why_new=Cycle 0046 row 70; seam=none
+test('the Reader DOM job runs the Wiki reader DOM cases after the Study reader’s, into a folder of their own that is kept after a failure, under a browser session of their own', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/reader-dom.yml')
+  const wikiCheck = await repositoryText(
+    'extension/scripts/wiki-reader-dom-qa.mjs',
+  )
+  const studyCheck = await repositoryText(
+    'extension/scripts/study-bootstrap-qa.mjs',
+  )
+
+  // Act: the checks the job runs, in their order; the step that keeps their folders; the session each script names for the browser CLI.
+  const checks = runCommandsOf(workflow).filter((command) =>
+    command.includes('-qa.mjs'),
+  )
+  const [keepName, keepCondition, keepAction, ...keepInputs] = stepLines(
+    workflow,
+    'Keep the DOM reports, screenshots and video after a failure',
+  )
+  const sessionOf = (script) => /\bsession = `([^`]+)`/.exec(script)?.[1]
+
+  // Assert
+  assert.deepEqual(checks, [
+    'node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom',
+    'node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom',
+  ])
+  assert.deepEqual(stepLines(workflow, 'Run the Wiki reader DOM cases'), [
+    '- name: Run the Wiki reader DOM cases',
+    'run: node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom',
+  ])
+  assert.equal(
+    keepName,
+    '- name: Keep the DOM reports, screenshots and video after a failure',
+  )
+  assert.equal(keepCondition, 'if: failure()')
+  assert.match(
+    keepAction ?? '',
+    /^uses: actions\/upload-artifact@[0-9a-f]{40} # v\d+\.\d+\.\d+$/,
+  )
+  assert.deepEqual(keepInputs, [
+    'with:',
+    'name: reader-dom',
+    'path: |',
+    'artifacts/reader-dom',
+    'artifacts/wiki-reader-dom',
+    'if-no-files-found: ignore',
+  ])
+  assert.deepEqual(
+    { wiki: sessionOf(wikiCheck), study: sessionOf(studyCheck) },
+    { wiki: 'cb-wiki-reader-${mode}', study: 'cb-bootstrap-${mode}' },
+  )
+})
+
 test('the Reader DOM job keeps the video encoder between runs under a key that names the pinned playwright-cli release', async () => {
   // Arrange
   const workflow = await repositoryText('.github/workflows/reader-dom.yml')

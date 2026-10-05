@@ -61,3 +61,49 @@ test("the test execution guide gives the Reader DOM check's command and the play
     'the guide no longer says that a green run is not native acceptance',
   )
 })
+
+// Value: protects=a developer who runs the Wiki reader's DOM check locally from the guide; fails_when=the guide's command, folder or session name for that check differs from what the CI job runs and the script names, or the guide stops saying that a green run is no native acceptance; why_new=Cycle 0046 row 70; seam=none
+test("the test execution guide gives the Wiki reader DOM check's command as the CI job runs it, and the name of its browser session", async () => {
+  // Arrange: the guide, the CI job and the check itself.
+  const guide = await readFile(
+    new URL('../../../docs/qa/test-execution.md', import.meta.url),
+    'utf8',
+  )
+  const job = await readFile(
+    new URL('../../../.github/workflows/reader-dom.yml', import.meta.url),
+    'utf8',
+  )
+  const check = await readFile(
+    new URL('../wiki-reader-dom-qa.mjs', import.meta.url),
+    'utf8',
+  )
+
+  // Act: the paragraph of the section "Reader DOM check" that describes this check.
+  const paragraph =
+    guide
+      .split(/^## /m)
+      .find((part) => part.startsWith('Reader DOM check\n'))
+      ?.split('\n\n')
+      .find((part) => part.startsWith('**The Wiki reader’s page.**')) ?? ''
+  const command =
+    'node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom'
+
+  // Assert
+  assert.ok(
+    paragraph.includes(`\`${command}\``),
+    'the guide does not give the command of the Wiki reader DOM check',
+  )
+  assert.ok(
+    runCommandsOf(job).includes(command),
+    'the CI job does not run the command the guide gives',
+  )
+  assert.ok(
+    paragraph.includes('`cb-wiki-reader-<mode>`') &&
+      check.includes('const session = `cb-wiki-reader-${mode}`'),
+    'the guide and the check do not name the same browser session',
+  )
+  assert.ok(
+    paragraph.includes('no native acceptance credit'),
+    'the guide no longer says that a green run of this check is not native acceptance',
+  )
+})
