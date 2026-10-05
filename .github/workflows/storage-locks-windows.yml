@@ -2,9 +2,10 @@ name: Storage locks (Windows)
 
 # The storage lock is taken over with a hard link, a directory rename onto an existing directory, a process probe and a
 # query for the start of a process (PowerShell on Windows), which Windows answers differently from Linux; the Test
-# workflow runs on Linux only. The marker of a Wiki update is created, claimed and judged with the same calls, and it is
-# read by the reader of Wiki metadata files, which Windows gives no open flag to refuse a link with: there the reader
-# looks at the path first and reads only the file it looked at. This job runs the lock, marker and reader test files on
+# workflow runs on Linux only. The marker of a Wiki update is created, claimed and judged with the same calls. Windows
+# also gives no open flag to refuse a link with: there the opener of every file Codebook must not read through a link
+# looks at the path first and opens only the file it looked at. The reader of Wiki metadata files, the file hash and the
+# Cursor MCP catalog open through it. This job runs the lock, marker, opener, reader, hash and catalog test files on
 # Windows whenever a file those tests load, or the Node release they run on, changes. The two constants files are left
 # out of the filter although extension/src/constants.ts holds the lock's times, its path and its file modes: they change
 # with most pull requests. A change there, to the lockfile or to the build that emits the tests is seen by the weekly
@@ -19,36 +20,51 @@ on:
       - extension/src/tests/canJudgeOwnerHere.test.ts
       - extension/src/tests/claimWikiUpdateMarker.test.ts
       - extension/src/tests/currentStorageOwner.test.ts
+      - extension/src/tests/hashFileSha256.test.ts
       - extension/src/tests/isFromEarlierBoot.test.ts
       - extension/src/tests/isProcessGone.test.ts
       - extension/src/tests/isRecordedOwnerGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
       - extension/src/tests/namesMachineInClear.test.ts
+      - extension/src/tests/openWithoutFollowing.test.ts
       - extension/src/tests/processStartFormHere.test.ts
       - extension/src/tests/readBootIdentity.test.ts
       - extension/src/tests/readLiveWikiUpdateMarker.test.ts
       - extension/src/tests/readProcessStart.test.ts
       - extension/src/tests/readRecordedOwner.test.ts
       - extension/src/tests/readWikiRegularFile.test.ts
+      - extension/src/tests/refreshCursorMcpCatalogFileIdentity.test.ts
       - extension/src/tests/removeStaleStorageClaims.test.ts
       - extension/src/tests/removeStaleStorageLock.test.ts
       - extension/src/tests/utils/answerKernelBootId.ts
+      - extension/src/tests/utils/createLinkIfAllowed.ts
+      - extension/src/tests/utils/fileSystemWithLargeFileIds.ts
+      - extension/src/tests/utils/idOfNoProcess.ts
       - extension/src/tests/utils/idleChild.ts
       - extension/src/tests/utils/loadModule.ts
+      - extension/src/tests/utils/loadOpenWithoutFollowing.ts
+      - extension/src/tests/utils/realProcessStart.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
       - extension/src/tests/withStorageLock.test.ts
+      - extension/src/utils/atomicPrivateBytes.ts
+      - extension/src/utils/atomicPrivateWrite.ts
       - extension/src/utils/canJudgeOwnerHere.ts
       - extension/src/utils/claimStorageLockTakeover.ts
       - extension/src/utils/claimWikiUpdateMarker.ts
       - extension/src/utils/currentStorageOwner.ts
       - extension/src/utils/deriveMachineKeys.ts
+      - extension/src/utils/hashFileSha256.ts
       - extension/src/utils/isFromEarlierBoot.ts
       - extension/src/utils/isLeftEmpty.ts
       - extension/src/utils/isProcessGone.ts
+      - extension/src/utils/isRecordedFileId.ts
       - extension/src/utils/isRecordedOwnerGone.ts
+      - extension/src/utils/isSameFileId.ts
       - extension/src/utils/isSameStorageMachine.ts
       - extension/src/utils/isStaleStorageLock.ts
+      - extension/src/utils/modifiedAtMsOf.ts
       - extension/src/utils/namesMachineInClear.ts
+      - extension/src/utils/openWithoutFollowing.ts
       - extension/src/utils/placeStorageLock.ts
       - extension/src/utils/processStartFormHere.ts
       - extension/src/utils/readBootIdentity.ts
@@ -56,6 +72,8 @@ on:
       - extension/src/utils/readProcessStart.ts
       - extension/src/utils/readRecordedOwner.ts
       - extension/src/utils/readWikiRegularFile.ts
+      - extension/src/utils/recordedFileId.ts
+      - extension/src/utils/refreshCursorMcpCatalog.ts
       - extension/src/utils/removeStaleStorageClaims.ts
       - extension/src/utils/removeStaleStorageLock.ts
       - extension/src/utils/systemErrorCode.ts
@@ -106,4 +124,4 @@ jobs:
 
       - name: Run the storage lock tests
         working-directory: extension
-        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js
+        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js

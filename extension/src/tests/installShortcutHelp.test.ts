@@ -22,6 +22,7 @@ class ListElement {
   children: ListElement[] = []
   parent: ListElement | undefined
   className = ''
+  id = ''
   textContent = ''
   value = ''
   hidden = false
@@ -34,11 +35,33 @@ class ListElement {
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value)
   }
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
+  }
+  /** Adds elements as the last children; an element that stood elsewhere in the page is moved, as in a browser. */
   append(...elements: ListElement[]): void {
     for (const element of elements) {
+      if (element.parent)
+        element.parent.children = element.parent.children.filter(
+          (child) => child !== element,
+        )
       element.parent = this
       this.children.push(element)
     }
+  }
+  contains(other: ListElement): boolean {
+    return (
+      other === this || this.children.some((child) => child.contains(other))
+    )
+  }
+  /** Finds the first element with an id in this element's part of the page, in document order, which is the element a reference by id names. */
+  firstWithId(id: string): ListElement | undefined {
+    if (this.id === id) return this
+    for (const child of this.children) {
+      const found = child.firstWithId(id)
+      if (found) return found
+    }
+    return undefined
   }
   replaceChildren(...elements: ListElement[]): void {
     this.children = []
@@ -53,7 +76,8 @@ class ListElement {
 /**
  * Installs the Keyboard shortcuts list into a hand-written page the way the Study pane and the Wiki reader do, from the function's own text, and gives the test its hands on the search.
  * The page has no element the shortcuts name and no part the list waits for, so the list is rendered by its search alone.
- * @returns The no-match line, what the dialog shows of it, and the two ways a learner changes the search.
+ * @param contentIds - The ids that elements of the page's own content carry before the list is installed; each such element reads "Content of the page".
+ * @returns The no-match line, what the dialog shows of it, the two ways a learner changes the search, and what the dialog and a focused control are named and described by.
  * @example
  * ```ts
  * const list = installedList()
@@ -61,9 +85,15 @@ class ListElement {
  * list.read() // => { isInDialog: true, isHidden: false, text: '', margin: '0', rowCount: 1 }
  * ```
  */
-function installedList() {
+function installedList(contentIds: string[] = []) {
   const created: ListElement[] = []
   const body = new ListElement('body')
+  for (const id of contentIds) {
+    const content = new ListElement('h2')
+    content.id = id
+    content.textContent = 'Content of the page'
+    body.append(content)
+  }
   runInNewContext(
     `(${installShortcutHelp.toString()})(entries, '#no-such-part')`,
     {
@@ -86,7 +116,11 @@ function installedList() {
           created.push(element)
           return element
         },
-        querySelector: (): null => null,
+        // The list asks only whether an id is taken ("#id") and whether its part of the page is shown, which this page has none of.
+        querySelector: (selector: string): ListElement | null =>
+          (selector.startsWith('#')
+            ? body.firstWithId(selector.slice(1))
+            : undefined) ?? null,
         querySelectorAll: (): ListElement[] => [],
         addEventListener(): void {},
       },
@@ -130,6 +164,21 @@ function installedList() {
     /** Presses Clear search. */
     clear(): void {
       fire(clearButton, 'click')
+    },
+    /** Reads what names the dialog: the id its `aria-labelledby` states and the text of the first element of the page with that id, which is its accessible name. */
+    dialogName: () => {
+      const id = dialog.attributes.get('aria-labelledby') ?? ''
+      return { id, text: body.firstWithId(id)?.textContent }
+    },
+    /** Puts the keyboard focus on the dialog's Close button, which shows the tooltip, and reads what describes the button: the id its `aria-describedby` states and the text of the first element of the page with that id. */
+    describedClose: () => {
+      const closeButton = only(
+        (element) =>
+          element.attributes.get('aria-label') === 'Close keyboard shortcuts',
+      )
+      fire(closeButton, 'focus')
+      const id = closeButton.attributes.get('aria-describedby') ?? ''
+      return { id, text: body.firstWithId(id)?.textContent }
     },
   }
 }
@@ -186,5 +235,39 @@ test('the Keyboard shortcuts list keeps its no-match line in the dialog, not hid
     text: '',
     margin: '0',
     rowCount: 2,
+  })
+})
+
+// Value: protects=the Keyboard shortcuts dialog being named "Keyboard shortcuts" and its tooltip describing the control it belongs to, also on a Wiki page whose own content carries the ids the list uses; fails_when=the list names its dialog and its tooltip through the fixed ids `shortcut-title` and `shortcut-tooltip`, so on a page that holds a heading with one of them (published before the publisher kept such ids apart) a screen reader reads that heading as the dialog's name or as the control's description, because it stands first in the page; why_new=Cycle 0046 row 101 (found by the Wiki reader's fixer); seam=a hand-written page whose content carries the ids
+test('on a page whose content carries the ids shortcut-title and shortcut-tooltip the Keyboard shortcuts dialog is still named by its own heading and a focused control is still described by the tooltip, and on a page without them both keep those ids', () => {
+  // Arrange: a page whose content holds both ids, and the tooltip's id with the number 2 as well; and a page that holds none.
+  const onPageWithTheIds = installedList([
+      'shortcut-title',
+      'shortcut-tooltip',
+      'shortcut-tooltip-2',
+    ]),
+    onPageWithoutThem = installedList()
+
+  // Act
+  const named = {
+    dialog: onPageWithTheIds.dialogName(),
+    close: onPageWithTheIds.describedClose(),
+  }
+  const namedWithoutThem = {
+    dialog: onPageWithoutThem.dialogName(),
+    close: onPageWithoutThem.describedClose(),
+  }
+
+  // Assert
+  assert.deepEqual(named, {
+    dialog: { id: 'shortcut-title-2', text: 'Keyboard shortcuts' },
+    close: {
+      id: 'shortcut-tooltip-3',
+      text: 'Close keyboard shortcuts — Esc',
+    },
+  })
+  assert.deepEqual(namedWithoutThem, {
+    dialog: { id: 'shortcut-title', text: 'Keyboard shortcuts' },
+    close: { id: 'shortcut-tooltip', text: 'Close keyboard shortcuts — Esc' },
   })
 })

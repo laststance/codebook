@@ -3,7 +3,8 @@
 Status: complete — seven passes evaluated; corrected v9 image adopted by the owner on 2026-09-26.\
 Scope: version 9 final-product screens, acceptance conditions and matching design-image deliverable.\
 Source: [Cycle 0029](../cycles/0029-feature-specification.md), PRODUCT_GOAL version 9, D030–D036.\
-Specification checkpoint: `d735ef8` on `codex/cycle-0029-native-editor-spec`; [PR #48](https://github.com/laststance/codebook/pull/48).
+Specification checkpoint: `d735ef8` on `codex/cycle-0029-native-editor-spec`; [PR #48](https://github.com/laststance/codebook/pull/48).\
+Goal version: reviewed under version 9. Version 10 (2026-10-05) adds the target operating systems as a constraint and changes no screen, state or interaction of this review.
 
 This review follows the completed written consistency check and the owner's explicit instruction to continue design in the same cycle. It records existing requirements first. Proposed remedies, mockups and unapproved gaps do not become accepted product decisions merely by appearing here.
 

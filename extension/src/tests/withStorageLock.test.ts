@@ -12,15 +12,20 @@ import fsPromises, {
 } from 'node:fs/promises'
 import os, { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, type TestContext } from 'node:test'
+import { before, test, type TestContext } from 'node:test'
 
 import { currentStorageOwner } from '../utils/currentStorageOwner'
-import { readProcessStart } from '../utils/readProcessStart'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
+import { realProcessStart } from './utils/realProcessStart'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
+
+// Every write of these tests names this process's own start, which the product reads once, keeps, and keeps as failed for a minute; on Windows that read is a PowerShell that starts cold. It is made here first, with the tests' own bound, and names its query when it fails.
+before(async () => {
+  await realProcessStart(process.pid)
+})
 
 /** Creates an empty storage directory that is removed with the test, and returns its canonical path, which is the one the lock file is named by. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
@@ -647,8 +652,8 @@ test('ten uncontended writes to the storage list the storage directory for lefto
   assert.equal(listingsOfStorageDirectory, 1)
 })
 
-// Value: protects=the leftover of a killed window is still removed by a window that already swept once, when its write meets a lock in the way; fails_when=the sweep runs only at the first hold of a directory (Cycle 0045 review PL-3); why_new=the sweep was limited in Cycle 0046; seam=the process probe
-test('a write that meets a stale lock after the first write of this window still removes the lock file a killed window prepared and never placed', async (context) => {
+// Value: protects=the leftover of a killed window is still removed by a window that already swept once, when its write takes a stale lock over, and that write lists the private storage directory (every study archive, sidecar and recording) once, not twice; fails_when=the takeover's claim no longer sweeps, so a window that swept at its first hold never removes what a later kill left, or the holder sweeps again after the claim's sweep (Cycle 0045 review PL-3, Cycle 0046 row 104); why_new=the earlier test of this case stayed green without the condition it named; seam=the directory listing of node:fs/promises and the process probe
+test('a write that takes a stale lock over after the first write of this window lists the storage directory for leftovers once, through its takeover claim, which removes the lock file a killed window prepared and never placed', async (context) => {
   // Arrange: one write has swept the storage already; then exited process 4242 leaves its lock and exited process 4243 its prepared lock.
   const directory = await storageDirectory(context)
   await writeUnderLock(directory, async () => {})
@@ -661,11 +666,22 @@ test('a write that meets a stale lock after the first write of this window still
     JSON.stringify({ pid: 4243, hostname: hostname() }),
   )
   answerProcessProbes(context, [4242, 4243])
+  let listingsOfStorageDirectory = 0
+  const readdirBefore = fsPromises.readdir
+  context.mock.method(
+    fsPromises,
+    'readdir',
+    (...input: Parameters<typeof readdirBefore>) => {
+      if (input[0] === directory) listingsOfStorageDirectory += 1
+      return readdirBefore(...input)
+    },
+  )
   // Act
   const outcome = await writeUnderLock(directory, async () => {})
   // Assert
   assert.equal(outcome, 'written')
-  assert.deepEqual(await readdir(directory), [])
+  assert.equal(listingsOfStorageDirectory, 1)
+  assert.deepEqual(await readdirBefore(directory), [])
 })
 
 // Value: protects=a storage lock a killed window left is taken over in the same boot although another process has its process id; fails_when=the lock is judged by process id and boot alone, so it refuses every write until the machine restarts or the file is removed by hand (Cycle 0046 row 2, LK-F1, and row 9); why_new=withStorageLock.test.ts had no case with a process start; seam=none (the lock names this running test process with another start)
@@ -696,7 +712,7 @@ test('a live window’s lock stays in place after the clock moves forward by 90 
   // Arrange: this running process holds the lock, recorded with its start and the boot time it computed; a second window computes its boot time after the clock was set forward by 90 s.
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
-  const startOfTheHolder = await readProcessStart(process.pid)
+  const startOfTheHolder = await realProcessStart(process.pid)
   const lockOfTheHolder = JSON.stringify({
     pid: process.pid,
     hostname: 'workstation',
@@ -766,7 +782,7 @@ test('a prepared takeover claim and a prepared lock of a killed window whose pro
     ofTheRunningWindow = JSON.stringify({
       pid: process.pid,
       hostname: hostname(),
-      processStart: await readProcessStart(process.pid),
+      processStart: await realProcessStart(process.pid),
     })
   await mkdir(join(directory, 'writer.lock.takeover-killed'))
   await writeFile(

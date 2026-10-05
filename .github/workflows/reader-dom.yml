@@ -71,11 +71,16 @@ jobs:
 
       # Run from the repository root: the harness reads extension/dist and exits non-zero when any case fails.
       - name: Run the reader DOM cases
+        id: study
         run: node extension/scripts/study-bootstrap-qa.mjs verify artifacts/reader-dom
 
       # The same browser setup, a browser session of its own and a folder of its own: the check publishes a sample Wiki
       # with the shipped publisher, serves it with the compiled reader and measures the served page. It records no video.
+      # It also runs after the Study reader's cases failed, so one push shows the failures of both checks and the kept
+      # artifact holds both folders. It does not run when that step was skipped (the build or the browser tools before
+      # it failed, so this check could not run either) or when the job was cancelled.
       - name: Run the Wiki reader DOM cases
+        if: ${{ !cancelled() && (steps.study.outcome == 'success' || steps.study.outcome == 'failure') }}
         run: node extension/scripts/wiki-reader-dom-qa.mjs verify artifacts/wiki-reader-dom
 
       - name: Keep the DOM reports, screenshots and video after a failure

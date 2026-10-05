@@ -1,15 +1,32 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { test } from 'node:test'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { before, test, type TestContext } from 'node:test'
 
+import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { isRecordedOwnerGone } from '../utils/isRecordedOwnerGone'
-import { readProcessStart } from '../utils/readProcessStart'
+import { readLiveWikiUpdateMarker } from '../utils/readLiveWikiUpdateMarker'
 
 import { idleChild } from './utils/idleChild'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { realProcessStart } from './utils/realProcessStart'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
-/** A process id that names no process on any system this suite runs on: above Linux's highest id, above macOS's, and no multiple of four as every Windows id is. */
-const ID_OF_NO_PROCESS = 2 ** 22 + 1
+// The tests with real child processes need the system's answer, which on Windows is a PowerShell that starts cold: the first read is made here, with the tests' own bound, and names its query when it fails.
+before(async () => {
+  await realProcessStart(process.pid)
+})
 
 // Value: protects=a forward clock step never makes a live owner stale on a system without a kernel boot id; fails_when=the boot time still decides for a record that carries its owner's start, so a window that computes its boot 90 s later takes the lock of a live window (Cycle 0046 row 9, PL-1); why_new=the judgement by the process start is new; seam=the injected identities and start reader
 test('a live owner is never gone when the clock reads 90 s later, in a macOS-shaped and a Windows-shaped identity', async () => {
@@ -62,13 +79,14 @@ test('a real running process recorded with its start is not gone when the clock 
     pid: owner.pid!,
     hostname: 'workstation',
     boot: { startedAtMs: 1_790_000_000_000 },
-    processStart: await readProcessStart(owner.pid!),
+    processStart: await realProcessStart(owner.pid!),
   }
-  // Act
-  const isGone = await isRecordedOwnerGone(recorded, {
-    hostname: 'workstation',
-    boot: { startedAtMs: 1_790_000_090_000 },
-  })
+  // Act: the judgement reads the owner's start with the tests' bound.
+  const isGone = await isRecordedOwnerGone(
+    recorded,
+    { hostname: 'workstation', boot: { startedAtMs: 1_790_000_090_000 } },
+    realProcessStart,
+  )
   // Assert
   assert.equal(typeof recorded.processStart, 'string')
   assert.equal(isGone, false)
@@ -103,6 +121,7 @@ test('an owner whose pid is used by another process is gone, and so is one whose
       processStart: startOfKilledWindow(),
     },
     identity,
+    realProcessStart,
   )
   const isEndedProcessGone = await isRecordedOwnerGone(
     {
@@ -412,6 +431,202 @@ test('an owner that names its machine in clear and whose start has another syste
   // Assert
   assert.equal(isGone, false)
   assert.deepEqual(startsAsked, [])
+})
+
+// Value: protects=the Wiki update marker and its claim of a live window in the other system of one computer whose own process start could not be read (on Windows a PowerShell query that failed or ran longer than its bound): a Windows window and a WSL window share a host name and a project folder, never a process id; fails_when=a record without a start is probed by its process id whatever it names its machine by, so one that matches by its host-name digest counts as gone because no process has its id in this space, the live marker is removed and a second update starts (Cycle 0046 row 103, the defect of rows 58 and 65 for a record without a start); why_new=no test had a record with digests and without a start; seam=the injected identity of a Linux window and the start reader, which must not be asked
+test('an owner without a process start that names its machine by digests alone is never gone by its process id, only by another kernel boot id, and the same record with its host name in clear is gone as before', async () => {
+  // Arrange: records a window wrote whose own start could not be read, judged by a Linux window of the same computer (one host-name digest; the record of another machine has neither digest of this one). Each names a process id that no process has here, except where it says that this test process has it.
+  const startsAsked: number[] = []
+  const readStart = async (pid: number): Promise<string> => {
+    startsAsked.push(pid)
+    return 'linux@4026531836:200'
+  }
+  const byDigestsAlone = {
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+  }
+  const judged = (
+    owner: {
+      pid: number
+      hostname?: string
+      hostKey?: string
+      boot?: { id: string } | { startedAtMs: number }
+    },
+    window: {
+      hostname: string
+      boot: { id: string } | { startedAtMs: number }
+    } = WINDOW_IN_NAMESPACE_4026531836,
+  ): Promise<boolean> =>
+    isRecordedOwnerGone({ ...byDigestsAlone, ...owner }, window, readStart)
+  // Act
+  const judgements = {
+    noProcessHasItsIdHere: await judged({ pid: ID_OF_NO_PROCESS }),
+    thisProcessHasItsIdHere: await judged({ pid: process.pid }),
+    recordedUnderThisKernelBoot: await judged({
+      pid: ID_OF_NO_PROCESS,
+      boot: { id: 'boot-of-the-shared-kernel' },
+    }),
+    recordedUnderAnotherKernelBoot: await judged({
+      pid: process.pid,
+      boot: { id: 'boot-before-the-restart' },
+    }),
+    recordedWithABootTime: await judged({
+      pid: ID_OF_NO_PROCESS,
+      boot: { startedAtMs: 1_000 },
+    }),
+    recordedWithABootTimeLongBeforeThisWindows: await judged(
+      { pid: ID_OF_NO_PROCESS, boot: { startedAtMs: 1_000 } },
+      {
+        ...WINDOW_IN_NAMESPACE_4026531836,
+        boot: { startedAtMs: 1_790_000_000_000 },
+      },
+    ),
+    ofAnotherMachineUnderAnotherKernelBoot: await judged({
+      pid: ID_OF_NO_PROCESS,
+      hostKey: '5f0c1a8d2e3b4a69',
+      boot: { id: 'boot-of-the-other-machine' },
+    }),
+    withItsHostNameInClear: await judged({
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'workstation',
+    }),
+    withItsHostNameInClearWhileItsProcessRuns: await judged({
+      pid: process.pid,
+      hostname: 'workstation',
+    }),
+  }
+  // Assert
+  assert.deepEqual(judgements, {
+    noProcessHasItsIdHere: false,
+    thisProcessHasItsIdHere: false,
+    recordedUnderThisKernelBoot: false,
+    recordedUnderAnotherKernelBoot: true,
+    recordedWithABootTime: false,
+    recordedWithABootTimeLongBeforeThisWindows: false,
+    ofAnotherMachineUnderAnotherKernelBoot: false,
+    withItsHostNameInClear: true,
+    withItsHostNameInClearWhileItsProcessRuns: false,
+  })
+  assert.deepEqual(startsAsked, [])
+})
+
+/** Makes a project folder with an empty Wiki output folder, removed with the test, and names the Wiki's update marker. @example const wiki = await wikiFolder(context) */
+async function wikiFolder(
+  context: TestContext,
+): Promise<{ outputDirectory: string; markerPath: string }> {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-owner-without-start-')),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const outputDirectory = join(directory, 'wiki')
+  await mkdir(outputDirectory)
+  return { outputDirectory, markerPath: `${outputDirectory}.update-run.json` }
+}
+
+// Value: protects=the running Wiki update of a Windows window whose process start could not be read, beside a WSL window on the same project folder: only one of the two updates the Wiki; fails_when=the marker, which names its machine by digests and no start, is judged by a probe of its process id in the WSL window's space, counts as nobody's and is removed, so a second update starts beside the running one (Cycle 0046 row 103); why_new=no marker test had digests without a start; seam=the injected identity and the clock handed to the look
+test('the update marker of a window whose process start could not be read counts until its run marker expires, although no process has its process id here', async (context) => {
+  // Arrange: the marker of a Cursor run, written by a window of this computer whose own start could not be read; a Cursor run counts for 15 minutes, 60 s and the clock tolerance of 5 minutes.
+  const wiki = await wikiFolder(context)
+  await writeFile(
+    wiki.markerPath,
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      windowId: 'window-without-its-start',
+      host: 'cursor',
+      startedAtMs: 1_790_000_000_000,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: 'd195d36bd79da7df',
+    }),
+  )
+  const lookAt = async (nowMs: number): Promise<string> =>
+    (
+      await readLiveWikiUpdateMarker(wiki.outputDirectory, 'own-window', {
+        identity: WINDOW_IN_NAMESPACE_4026531836,
+        readStart: async () => undefined,
+        nowMs,
+      })
+    ).kind
+  // Act
+  const looks = {
+    aMinuteIntoTheRun: await lookAt(1_790_000_060_000),
+    atItsBound: await lookAt(1_790_001_260_000),
+    pastItsBound: await lookAt(1_790_001_260_001),
+  }
+  // Assert
+  assert.deepEqual(looks, {
+    aMinuteIntoTheRun: 'live',
+    atItsBound: 'live',
+    pastItsBound: 'unowned',
+  })
+})
+
+// Value: protects=the claim a live Windows window whose process start could not be read holds on the update marker while it removes or replaces it, beside a WSL window on the same project folder; fails_when=the claim, which names its machine by digests and no start, is judged by a probe of its process id in the WSL window's space and removed at once, so two windows change the marker at the same time (Cycle 0046 row 103); and it must still go after 60 s, or a killed window's claim would keep a stale marker for good; why_new=no claim test had digests without a start; seam=the claim file's modification time, the injected identity and the clock handed to the claim
+test('a claim on the update marker of a window whose process start could not be read keeps the marker in place for 60 s and is removed after that, although no process has its process id here', async (context) => {
+  // Arrange: a killed editor's marker (a marker of 0.2.29.0, whose process no longer exists), and a claim on it that names its machine by digests and no process start, last written at the fixed time.
+  const wiki = await wikiFolder(context)
+  const claimDirectory = `${wiki.markerPath}.takeover`
+  const heldClaim = join(claimDirectory, 'held-by-a-window-without-its-start')
+  const markerOfTheKilledEditor = JSON.stringify({
+    pid: ID_OF_NO_PROCESS,
+    windowId: 'killed-editor',
+    host: 'vscode',
+    startedAtMs: 1_790_000_000_000,
+  })
+  await writeFile(wiki.markerPath, markerOfTheKilledEditor)
+  await mkdir(claimDirectory)
+  await writeFile(
+    heldClaim,
+    JSON.stringify({
+      pid: ID_OF_NO_PROCESS,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: 'd195d36bd79da7df',
+    }),
+  )
+  const claimedAt = new Date(1_790_000_000_000)
+  await utimes(heldClaim, claimedAt, claimedAt)
+  const startAt = (nowMs: number): Promise<string> =>
+    claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: nowMs,
+      },
+      {
+        identity: WINDOW_IN_NAMESPACE_4026531836,
+        readStart: async (pid) =>
+          pid === process.pid ? 'linux@4026531836:16362446' : undefined,
+        now: () => nowMs,
+      },
+    ).then(
+      (claim) => ('release' in claim ? 'runs' : 'does not run'),
+      // A start that is not let through answers a refusal or throws the creation's error; either way it does not run.
+      () => 'does not run',
+    )
+  // Act: a start 60 s after the claim was written, and one a millisecond later.
+  const after60Seconds = {
+    start: await startAt(1_790_000_060_000),
+    claims: await readdir(claimDirectory).catch(() => 'no claim folder'),
+    marker: await readFile(wiki.markerPath, 'utf8'),
+  }
+  const aMillisecondLater = {
+    start: await startAt(1_790_000_060_001),
+    claims: await readdir(claimDirectory).catch(() => 'no claim folder'),
+    markerOfWindow: JSON.parse(await readFile(wiki.markerPath, 'utf8'))
+      .windowId,
+  }
+  // Assert
+  assert.deepEqual(after60Seconds, {
+    start: 'does not run',
+    claims: ['held-by-a-window-without-its-start'],
+    marker: markerOfTheKilledEditor,
+  })
+  assert.deepEqual(aMillisecondLater, {
+    start: 'runs',
+    claims: 'no claim folder',
+    markerOfWindow: 'window-a',
+  })
 })
 
 // Value: protects=a record names its owner's start to the reader, which lets a start kept by a sweep confirm it; fails_when=the judgement asks without the recorded start, so a sweep's kept start is never used or, worse, is trusted for a start it does not equal; why_new=the cache rule is new (ER-12); seam=the injected start reader

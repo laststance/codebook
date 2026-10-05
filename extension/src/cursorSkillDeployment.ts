@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { BigIntStats } from 'node:fs'
 import {
   link,
   lstat,
@@ -24,6 +25,9 @@ import {
 } from './constants'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
+import { isRecordedFileId } from './utils/isRecordedFileId'
+import { isSameFileId } from './utils/isSameFileId'
+import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -48,8 +52,8 @@ type SkillReceipt = {
   skillVersion: string
   extensionVersion: string
   installed: boolean
-  device: number
-  inode: number
+  device: RecordedFileId
+  inode: RecordedFileId
 } & RecordedPublisher
 
 type PendingSkill = {
@@ -59,8 +63,8 @@ type PendingSkill = {
   skillSha256: string
   skillVersion: string
   extensionVersion: string
-  device: number
-  inode: number
+  device: RecordedFileId
+  inode: RecordedFileId
   previous?: SkillReceipt
   displacedPath?: string
   retiredPath?: string
@@ -96,12 +100,10 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty. @param path - Exact file or directory path. @returns Its status, or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
-async function inspectedPath(
-  path: string,
-): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+/** Inspects a skill path before {@link deployCursorSkill} changes it, treating only absence as empty. @param path - Exact file or directory path. @returns Its status with exact numbers (an inode number can be more than a number holds), or undefined when absent. @example await inspectedPath('/missing/codebook') // => undefined */
+async function inspectedPath(path: string): Promise<BigIntStats | undefined> {
   try {
-    return await lstat(path)
+    return await lstat(path, { bigint: true })
   } catch (error) {
     if (isMissing(error)) return undefined
     throw error
@@ -164,11 +166,9 @@ function parseReceipt(value: unknown, targetPath: string): SkillReceipt {
     !('installed' in value) ||
     typeof value.installed !== 'boolean' ||
     !('device' in value) ||
-    typeof value.device !== 'number' ||
-    !Number.isSafeInteger(value.device) ||
+    !isRecordedFileId(value.device) ||
     !('inode' in value) ||
-    typeof value.inode !== 'number' ||
-    !Number.isSafeInteger(value.inode)
+    !isRecordedFileId(value.inode)
   ) {
     throw new Error(
       'Cursor skill ownership receipt is invalid; no skill file was changed.',
@@ -255,11 +255,9 @@ async function readPending(
     !('extensionVersion' in value) ||
     typeof value.extensionVersion !== 'string' ||
     !('device' in value) ||
-    typeof value.device !== 'number' ||
-    !Number.isSafeInteger(value.device) ||
+    !isRecordedFileId(value.device) ||
     !('inode' in value) ||
-    typeof value.inode !== 'number' ||
-    !Number.isSafeInteger(value.inode)
+    !isRecordedFileId(value.inode)
   ) {
     throw new Error(
       'Cursor skill pending ownership record is invalid; no skill file was changed.',
@@ -322,7 +320,7 @@ async function readPendingRemoval(
   return value as PendingRemoval
 }
 
-/** Rechecks a receipted skill during setup or recovery without trusting a volume device number that can change after restart. @param path - Exact managed skill path. @param owner - Recorded inode and bytes. @returns Whether the same regular file still has its recorded identity and content. @example await matchesOwnedFile('/home/.cursor/skills/codebook/SKILL.md', receipt) */
+/** Rechecks a receipted skill during setup or recovery without trusting a volume device number that can change after restart. @param path - Exact managed skill path. @param owner - Recorded inode number and bytes. @returns Whether the same regular file still has its recorded inode number ({@link isSameFileId}: compared exactly) and content. @example await matchesOwnedFile('/home/.cursor/skills/codebook/SKILL.md', receipt) */
 async function matchesOwnedFile(
   path: string,
   owner: Pick<SkillReceipt, 'skillSha256' | 'inode'>,
@@ -331,13 +329,13 @@ async function matchesOwnedFile(
   if (
     !status?.isFile() ||
     status.isSymbolicLink() ||
-    status.ino !== owner.inode
+    !isSameFileId(owner.inode, status.ino)
   )
     return false
   const bytes = await readFile(path)
   return (
     sha256(bytes) === owner.skillSha256 &&
-    (await lstat(path)).ino === status.ino
+    (await lstat(path, { bigint: true })).ino === status.ino
   )
 }
 
@@ -580,7 +578,7 @@ async function isRecordedPublisherGone(
 function isReceiptedSkillUnedited(
   receipt: SkillReceipt | undefined,
   current: Buffer | undefined,
-  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+  currentStatus: BigIntStats | undefined,
 ): receipt is SkillReceipt {
   if (!receipt?.installed) return false
   return holdsReceiptedBytes(receipt, current, currentStatus)
@@ -597,11 +595,11 @@ function isReceiptedSkillUnedited(
 function holdsReceiptedBytes(
   receipt: SkillReceipt,
   current: Buffer | undefined,
-  currentStatus: Awaited<ReturnType<typeof inspectedPath>>,
+  currentStatus: BigIntStats | undefined,
 ): boolean {
   if (!current || !currentStatus) return false
   return (
-    currentStatus.ino === receipt.inode &&
+    isSameFileId(receipt.inode, currentStatus.ino) &&
     sha256(current) === receipt.skillSha256
   )
 }
@@ -773,8 +771,8 @@ async function deploySkill(
         'An existing codebook skill is not owned by this installation; no file was changed.',
       )
     if (receipt && current) {
-      const status = await lstat(targetPath)
-      if (status.ino !== receipt.inode)
+      const status = await lstat(targetPath, { bigint: true })
+      if (!isSameFileId(receipt.inode, status.ino))
         throw new Error(
           'The managed Cursor skill was replaced after setup; Codebook preserved it.',
         )
@@ -823,11 +821,12 @@ async function deploySkill(
     }
     await ensureDirectory(targetDirectory)
     const retiredDirectory =
-      (await lstat(receiptDirectory)).dev === (await lstat(targetDirectory)).dev
+      (await lstat(receiptDirectory, { bigint: true })).dev ===
+      (await lstat(targetDirectory, { bigint: true })).dev
         ? receiptDirectory
         : targetDirectory
     const stagedPath = await writeStagedBytes(skillParent, packaged.bytes),
-      stagedStatus = await lstat(stagedPath)
+      stagedStatus = await lstat(stagedPath, { bigint: true })
     const next: PendingSkill = {
       schemaVersion: 1,
       targetPath,
@@ -835,8 +834,8 @@ async function deploySkill(
       skillSha256: packaged.sha256,
       skillVersion: packaged.version,
       extensionVersion: EXTENSION_VERSION,
-      device: stagedStatus.dev,
-      inode: stagedStatus.ino,
+      device: recordedFileId(stagedStatus.dev),
+      inode: recordedFileId(stagedStatus.ino),
       ...packaged.recorded,
       ...(current && receipt
         ? {
@@ -1062,8 +1061,8 @@ export async function removeManagedCursorSkill(
       throw new Error(
         'No installed Codebook-owned Cursor skill was found; no file was changed.',
       )
-    const status = await lstat(targetPath)
-    if (status.ino !== receipt.inode)
+    const status = await lstat(targetPath, { bigint: true })
+    if (!isSameFileId(receipt.inode, status.ino))
       throw new Error(
         'The Cursor skill was replaced after setup; Codebook preserved it.',
       )
@@ -1072,7 +1071,8 @@ export async function removeManagedCursorSkill(
         'The Cursor skill was edited after setup; Codebook preserved it.',
       )
     const retiredDirectory =
-      (await lstat(receiptDirectory)).dev === (await lstat(directory)).dev
+      (await lstat(receiptDirectory, { bigint: true })).dev ===
+      (await lstat(directory, { bigint: true })).dev
         ? receiptDirectory
         : directory
     const displacedPath = join(

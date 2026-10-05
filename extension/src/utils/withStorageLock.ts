@@ -16,7 +16,7 @@ import { removeStaleStorageLock } from './removeStaleStorageLock'
 import { systemErrorCode } from './systemErrorCode'
 
 const pendingWriters = new Map<string, Promise<void>>()
-/** The canonical storage directories whose leftovers this process has swept once ({@link withStorageLock}); a later uncontended hold of one of them does not list the directory again. */
+/** The canonical storage directories whose leftovers this process has swept at a hold of its own ({@link withStorageLock}); a later hold of one of them does not list the directory again. */
 const sweptDirectories = new Set<string>()
 
 /**
@@ -41,7 +41,7 @@ async function releaseStorageLock(
 
 /**
  * Queues this process's library/recorder writes and excludes other windows with the file `writer.lock` in the storage directory; called by every writer of private storage ({@link LearningLibrary}, {@link RecordingStore}, {@link RepositoryBookStore}, the Cursor skill and catalog).
- * The lock names its owner from the moment it exists ({@link placeStorageLock}). A lock that is present stays explicit, except one whose writer is gone from this machine, which is taken over by one window at a time ({@link removeStaleStorageLock}). The holder removes what killed windows left beside the lock ({@link removeStaleStorageClaims}), at this process's first hold of the directory and whenever its acquisition met a lock in the way, so that an uncontended write does not list the whole storage directory. The release removes the lock only while it still names this process; whatever else is in its place by then belongs to another window and stays.
+ * The lock names its owner from the moment it exists ({@link placeStorageLock}). A lock that is present stays explicit, except one whose writer is gone from this machine, which is taken over by one window at a time ({@link removeStaleStorageLock}). What killed windows left beside the lock is removed by {@link removeStaleStorageClaims} on two paths: the holder sweeps at this process's first hold of the directory, and every takeover sweeps through its claim before it removes the stale lock ({@link claimStorageLockTakeover}). A later hold of this process sweeps nothing itself, so that an ordinary write does not list the whole storage directory, and a hold that took a stale lock over lists it once, for its claim. The release removes the lock only while it still names this process; whatever else is in its place by then belongs to another window and stays.
  * @param directory - The private storage directory; it is created when absent.
  * @param operation - The write to run while the lock is held.
  * @param identity - The machine and the boot this process records in the lock and judges a present lock by; {@link currentStorageOwner} unless a test names its own.
@@ -70,10 +70,8 @@ export async function withStorageLock<Value>(
         ...(identity ?? (await currentStorageOwner())),
       }
       const acquire = (): Promise<void> => placeStorageLock(path, holder)
-      let didMeetLockInTheWay = false
       await acquire()
         .catch(async (error) => {
-          if (error.code === 'EEXIST') didMeetLockInTheWay = true
           // A lock left by a killed editor on this machine is taken over once; a live or foreign one, one another window is taking over right now and one whose takeover fails stay explicit.
           if (
             error.code === 'EEXIST' &&
@@ -91,8 +89,8 @@ export async function withStorageLock<Value>(
           throw error
         })
       try {
-        // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept when a lock was in the way and at this process's first hold of the directory, never at later uncontended holds.
-        if (didMeetLockInTheWay || !sweptDirectories.has(canonical)) {
+        // The lock is held: what a window that was killed while it prepared a lock or a takeover left beside it is nobody's and goes, swept at this process's first hold of the directory. A takeover has swept through its claim already.
+        if (!sweptDirectories.has(canonical)) {
           sweptDirectories.add(canonical)
           await removeStaleStorageClaims(path, holder).catch(() => undefined)
         }
