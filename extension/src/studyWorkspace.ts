@@ -2634,7 +2634,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Measures whether the secondary side bar was open before a Read, right after the Read's maximize command hid it; called by {@link maximizeForRead} once for each reading that hid both bars.
+   * Measures whether the secondary side bar was open before a Read, right after the Read's maximize command hid it; called by {@link beginReadingMaximized} once for each reading that hid both bars.
    * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar.
    * @returns Once {@link sideBarsBeforeRead} says whether the secondary bar was open; left without that answer when the area gave no width, and {@link sideBarShowCommands} measures it when the reading ends.
    * @example
@@ -2666,29 +2666,44 @@ export class StudyWorkspace {
    * ```
    */
   private async maximizeForRead(assertReadFocus: () => void): Promise<void> {
-    const startsReading = !this.maximizedByRead
+    // Which side bars are open is measured once per reading; from then on the reading is ended by Restore or Close, which show the hidden ones again.
+    if (this.maximizedByRead) {
+      await this.maximizeActiveGroupForRead(assertReadFocus)
+      return
+    }
+    await this.beginReadingMaximized(assertReadFocus)
+  }
+
+  /**
+   * Begins a reading: measures the side bars, maximizes the active group and measures the secondary bar; called by {@link maximizeForRead} for a Read made while no reading is pending.
+   * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read; asked after each step that can let it happen.
+   * @returns Once the editor answered the maximize command and the secondary bar was measured.
+   * @throws What `assertReadFocus` throws, and a rejection of the editor's maximize command; the reading is then not begun, and the side bar its measurement hid is shown again first.
+   * @example
+   * ```ts
+   * await this.beginReadingMaximized(assertReadFocus) // maximizedByRead => true, sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874, auxiliaryVisible: false }
+   * ```
+   */
+  private async beginReadingMaximized(
+    assertReadFocus: () => void,
+  ): Promise<void> {
     try {
-      // Which side bars are open is measured once per reading; from then on the reading is ended by Restore or Close, which show the hidden ones again.
-      if (startsReading) {
-        this.maximizedByRead = true
-        await this.rememberSideBarsBeforeRead()
-        assertReadFocus()
-      }
+      this.maximizedByRead = true
+      await this.rememberSideBarsBeforeRead()
+      assertReadFocus()
       await this.maximizeActiveGroupForRead(assertReadFocus)
       // The secondary bar is measured at the Read itself, before the learner can resize the window.
-      if (startsReading) await this.rememberAuxiliaryBarAtRead()
+      await this.rememberAuxiliaryBarAtRead()
     } catch (error) {
       // A Read refused before its maximization begins no reading: the side bar hidden for the measurement is shown again, and the next Read measures anew.
-      if (startsReading) {
-        this.maximizedByRead = false
-        await this.showSideBarsHiddenByRead()
-      }
+      this.maximizedByRead = false
+      await this.showSideBarsHiddenByRead()
       throw error
     }
   }
 
   /**
-   * Runs the editor commands that maximize the active group for a Read; called by {@link maximizeForRead} once the side bars were measured or found unmeasurable.
+   * Runs the editor commands that maximize the active group for a Read; called by {@link beginReadingMaximized} once the side bars were measured or found unmeasurable, and by {@link maximizeForRead} for a Read during a reading.
    * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read.
    * @returns Once the editor answered: both side bars hidden for a reading whose primary side bar was measured ({@link sideBarsBeforeRead} with its width), or the side bars left as they are after Expand and the maximize toggle.
    * @throws What `assertReadFocus` throws, and a rejection of an editor command.
@@ -2717,7 +2732,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}, and by {@link maximizeForRead} for a Read that was refused after its measurement.
+   * Shows the side bars again that a Read's maximize command hid, when Codebook ends that maximization; called after `workbench.action.minimizeOtherEditors` by the live branch of {@link admitPresentation}, {@link restoreStudyArrangement}, {@link enlargePresentationPanel} and {@link close}, and by {@link beginReadingMaximized} for a Read that was refused after its measurement.
    * Only the bars {@link sideBarShowCommands} names are shown: those that were open before the Read, and the primary one when the learner opened it during the reading. A reading without a measurement hid no bar and shows none. The editor's commands that show a bar leave an open bar as it is and give the bar the keyboard, which the active editor group gets back.
    * @returns `true` when a bar was shown and the active editor group focused again, `false` when no Read's measurement was pending or no bar is to be shown.
    * @example
@@ -2772,24 +2787,39 @@ export class StudyWorkspace {
   private async sideBarShowCommands(
     before: NonNullable<StudyWorkspace['sideBarsBeforeRead']>,
   ): Promise<string[]> {
-    const primaryCommands = before.primaryVisible
-      ? ['workbench.action.focusSideBar']
-      : []
     // A reading whose measurement failed after hiding the primary bar left the secondary bar as it was.
-    if (before.widthWithoutPrimaryPx === undefined) return primaryCommands
+    if (before.widthWithoutPrimaryPx === undefined)
+      return this.commandsShowingSideBars({
+        auxiliary: false,
+        primary: before.primaryVisible,
+      })
     // Measured at the Read, the secondary bar's state does not depend on the window's width now.
     if (before.auxiliaryVisible !== undefined)
-      return [
-        ...(before.auxiliaryVisible
-          ? ['workbench.action.focusAuxiliaryBar']
-          : []),
-        ...primaryCommands,
-      ]
+      return this.commandsShowingSideBars({
+        auxiliary: before.auxiliaryVisible,
+        primary: before.primaryVisible,
+      })
     const widthPx = await this.readEditorAreaWidthPx()
     // A wider area says that the secondary bar was open and is still hidden; anything else needs a second look.
     const hidden = this.hasSideBarGain(widthPx, before.widthWithoutPrimaryPx)
       ? { auxiliary: true, primary: before.primaryVisible }
       : await this.sideBarsHiddenAtSecondLook(before, widthPx)
+    return this.commandsShowingSideBars(hidden)
+  }
+
+  /**
+   * Names the editor commands that show the given side bars, in the order {@link showSideBarsHiddenByRead} runs them: the secondary bar first, then the primary one; called by {@link sideBarShowCommands} once it knows which bars a Read hid.
+   * @param hidden - Which bars are to be shown again.
+   * @returns One command for each bar to show; an empty list when neither is.
+   * @example
+   * ```ts
+   * this.commandsShowingSideBars({ auxiliary: true, primary: false }) // => ['workbench.action.focusAuxiliaryBar']
+   * ```
+   */
+  private commandsShowingSideBars(hidden: {
+    auxiliary: boolean
+    primary: boolean
+  }): string[] {
     return [
       ...(hidden.auxiliary ? ['workbench.action.focusAuxiliaryBar'] : []),
       ...(hidden.primary ? ['workbench.action.focusSideBar'] : []),
@@ -12270,6 +12300,11 @@ export class StudyWorkspace {
     return status === 'confirming' || status === 'moving'
   }
 
+  /** Says whether a delete request must return without effect: another one is being checked ({@link studyRemovalTaken}), waits for its confirmation or moves files; asked by {@link removeSavedStudy} before its first `await`. @example if (this.studyRemovalTakenOrInProgress()) return */
+  private studyRemovalTakenOrInProgress(): boolean {
+    return this.studyRemovalTaken || this.studyRemovalInProgress()
+  }
+
   /** Lets {@link checkpoint} skip a study before any capture: one on its way to the Trash, or one whose material is already saved unless the checkpoint is forced. @example if (this.skipsCheckpoint(id, signature, force)) return */
   private skipsCheckpoint(
     studyId: string,
@@ -12613,7 +12648,7 @@ export class StudyWorkspace {
     removalRequest?: number,
   ): Promise<void> {
     // One removal at a time: a second request while this one is checked, while the dialog is open or while files are moving opens no second dialog.
-    if (this.studyRemovalTaken || this.studyRemovalInProgress()) return
+    if (this.studyRemovalTakenOrInProgress()) return
     // Taken before the first await: the checks below yield before the dialog marks the removal `confirming`.
     this.studyRemovalTaken = true
     this.studyRemovalRequest = removalRequest
