@@ -151,3 +151,38 @@ test('Saved studies offers Repair saved study as the filled button and folds the
     true,
   )
 })
+
+// Value: protects=a status region of the Study pane existing before its first text, so a screen reader hears a run's first state, a recording's status and a layout notice as a change; fails_when=the live strip or the replay transport is hidden as a whole again, the strip's status starts with a text, or the presentation status goes back into the "Study view and pane controls" disclosure, which the Recording tab closes; why_new=Cycle 0046 row 74 (the regions entered the page together with their first text); seam=none
+for (const kind of ['context', 'moments'] as const)
+  test(`the ${kind} pane holds the live strip and the replay transport without hiding them, their status regions empty, and the presentation status after the pane controls’ disclosure, not inside it`, () => {
+    // Act
+    const html = studyHtml(kind)
+
+    // Assert
+    assert.equal(
+      html.includes(
+        '<div class="live-strip"><div id="runtime" role="status" aria-live="polite"></div><div class="row">',
+      ),
+      true,
+    )
+    assert.equal(html.includes('<section id="recording-transport">'), true)
+    assert.equal(
+      html.includes(
+        '</div></details></header></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p>',
+      ),
+      true,
+    )
+  })
+
+// Value: protects=one place for the rules of the pane controls' header, so a change to them cannot be made in one copy and missed in the other; fails_when=the stylesheet carries the header's rule line twice again, as it did with two nearly equal lines; why_new=Cycle 0046 row 74 (the doubled stylesheet line); seam=none
+test('the Study pane’s stylesheet states the rules of the pane controls’ header once', () => {
+  // Arrange
+  const headerRule =
+    '.presentation-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px 12px;padding-bottom:12px;border-bottom:1px solid var(--vscode-panel-border,#444)}'
+
+  // Act
+  const occurrences = studyHtml('context').split(headerRule).length - 1
+
+  // Assert
+  assert.equal(occurrences, 1)
+})
