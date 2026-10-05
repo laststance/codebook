@@ -1,4 +1,7 @@
+import { chatCommandReturnsInTime } from './chatCommandReturnsInTime'
+import type { WikiChatSession } from './handWikiRequestToChat'
 import { sleepUntilAborted } from './sleepUntilAborted'
+import { waitWithin, type BoundedWait } from './waitWithin'
 
 /** VS Code's command "Remove All Queued": removes every request that waits in the queue of the chat the learner focused last, and touches no request in progress. */
 const REMOVE_QUEUED_CHAT_REQUESTS_COMMAND =
@@ -14,13 +17,6 @@ type WithdrawalStep = 'ended' | 'pending' | 'not-run'
 
 /** The hand-over command as the withdrawal watches it: whether it has returned, and a promise that settles when it does. */
 type HandOverWatch = { hasEnded: boolean; ended: Promise<void> }
-
-/** The bound of each wait of the withdrawal: the settle time, the abort that ends it early and the delay function. */
-type WithdrawalWait = {
-  settleMs: number
-  signal: AbortSignal
-  sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
-}
 
 /**
  * Notes when the hand-over command returns, whatever it returns or throws: it returns exactly when its request ended; called once by {@link withdrawWikiChatRequest}.
@@ -41,61 +37,7 @@ function watchHandOver(handOver: Promise<unknown>): HandOverWatch {
 }
 
 /**
- * Waits for a promise for at most the settle time, and no longer than the abort; every wait of the withdrawal goes through it.
- * @param pending - What is waited for; it must not reject.
- * @param wait - The settle time, the abort and the delay function.
- * @returns What `pending` resolved with, or `undefined` when the settle time passed or the signal aborted first.
- * @example
- * await waitWithin(watch.ended, { settleMs: 2_000, signal, sleep }) // at most 2 s
- */
-async function waitWithin<Settled>(
-  pending: Promise<Settled>,
-  wait: WithdrawalWait,
-): Promise<Settled | undefined> {
-  const waited = new AbortController()
-  try {
-    return await Promise.race([
-      pending,
-      wait
-        .sleep(wait.settleMs, AbortSignal.any([wait.signal, waited.signal]))
-        .then(() => undefined),
-    ])
-  } finally {
-    // The delay of a wait that ended otherwise is released.
-    waited.abort()
-  }
-}
-
-/**
- * Runs one of the chat's commands and says whether it returned in time; called by {@link runWithdrawalStep}.
- * @param command - The chat command to run without arguments.
- * @param runChatCommand - Runs an editor command.
- * @param wait - The bound of the command's return; an aborted withdrawal runs no command.
- * @returns `true` when the command returned within the settle time; `false` when it threw, did not return in time, or the signal had aborted before it or aborted meanwhile.
- * @example
- * await returnsInTime('workbench.action.chat.cancel', run, wait) // => false for an editor without the command
- */
-async function returnsInTime(
-  command: string,
-  runChatCommand: (command: string) => PromiseLike<unknown>,
-  wait: WithdrawalWait,
-): Promise<boolean> {
-  // A withdrawal that was aborted (the window closes) runs no further command.
-  if (wait.signal.aborted) return false
-  const didReturn = await waitWithin(
-    Promise.resolve()
-      .then(() => runChatCommand(command))
-      .then(
-        () => true,
-        () => false,
-      ),
-    wait,
-  )
-  return didReturn === true
-}
-
-/**
- * Runs one of the chat's commands and waits for what it did to the request Codebook handed over; called by {@link withdrawWikiChatRequest} for the queue's command and then for the Cancel.
+ * Runs one of the chat's commands and waits for what it did to the request Codebook handed over; called by {@link withdrawWikiChatRequest} for the Cancel and, in a shared session, for the queue's command before it.
  * @param command - The chat command to run without arguments.
  * @param runChatCommand - Runs an editor command; its rejection is taken as a command that did not run.
  * @param handOver - The watch of the hand-over command.
@@ -111,13 +53,46 @@ async function runWithdrawalStep(
   command: string,
   runChatCommand: (command: string) => PromiseLike<unknown>,
   handOver: HandOverWatch,
-  wait: WithdrawalWait,
+  wait: BoundedWait,
 ): Promise<WithdrawalStep> {
-  const didCommandReturn = await returnsInTime(command, runChatCommand, wait)
+  const didCommandReturn = await chatCommandReturnsInTime(
+    command,
+    runChatCommand,
+    wait,
+  )
   // The request the command acted on ends its hand-over command right after; a command that did not run is not waited for.
   if (didCommandReturn) await waitWithin(handOver.ended, wait)
   if (handOver.hasEnded) return 'ended'
   return didCommandReturn ? 'pending' : 'not-run'
+}
+
+/**
+ * Takes Codebook's request out of the queue of a session it shares with the learner, before the Cancel; called by {@link withdrawWikiChatRequest}.
+ *
+ * Why: in a shared session the request may wait in the queue behind a request of the learner, and the Cancel would then stop the learner's. No command tells an extension which of the two it is, and the command that removes one queued request needs its id, which no command returns. A queued request the queue's command removes ends the hand-over command without a reply (`chatServiceImpl.ts`, `removePendingRequest`), so only a hand-over command that is still pending afterwards is the request in progress. In a session of Codebook's own nothing of Codebook's can be queued, and the queue, which can then hold only requests the learner typed there, is left alone.
+ *
+ * @param session - Where the request was sent.
+ * @param runChatCommand - Runs an editor command.
+ * @param handOver - The watch of the hand-over command.
+ * @param wait - The bound of the command and of the hand-over command's return after it.
+ * @returns For a session of Codebook's own `pending` at once, with no command run; for a shared session what the queue's command did ({@link runWithdrawalStep}).
+ * @example
+ * await clearSharedQueue('own', run, watch, wait) // => 'pending', nothing ran
+ */
+async function clearSharedQueue(
+  session: WikiChatSession,
+  runChatCommand: (command: string) => PromiseLike<unknown>,
+  handOver: HandOverWatch,
+  wait: BoundedWait,
+): Promise<WithdrawalStep> {
+  return session === 'own'
+    ? 'pending'
+    : runWithdrawalStep(
+        REMOVE_QUEUED_CHAT_REQUESTS_COMMAND,
+        runChatCommand,
+        handOver,
+        wait,
+      )
 }
 
 /**
@@ -138,46 +113,47 @@ function withdrawalAfter(step: WithdrawalStep): WikiChatWithdrawal {
  * Why: the chat keeps a request it cannot answer (Copilot Chat disabled for the launch shows "Getting chat ready" for good); a chat that becomes ready later would run it with no watch, and the editor asks about a session in progress when it quits.
  * Trigger: the extension calls it when the bound of the chat's first answer passed, before it publishes the result. A hand-over command that has already returned (a reply that reports an error, or no request was made) left nothing in the chat, and no command runs.
  *
- * How, and why in this order: no command tells an extension whether its request is the chat's request in progress or waits in the queue behind one of the learner's, and the command that removes one queued request needs the request's id, which no command returns. So the queue's command runs first: a queued request it removes ends the hand-over command without a reply (`chatServiceImpl.ts`, `removePendingRequest`), and the Cancel is then not run, because the request in progress is not Codebook's. Only when the hand-over command is still pending after the settle time is Codebook's request the one in progress, and the Cancel stops it: a cancelled response counts as complete (`chatModel.ts`, `isComplete`), so the hand-over command returns then too.
+ * How: in a session of Codebook's own ({@link handWikiRequestToChat}) the request is the session's request in progress, and the chat's Cancel stops it; nothing else runs. In a shared session the queue's command runs first ({@link clearSharedQueue}), and the Cancel only when the hand-over command is still pending after it. A cancelled response counts as complete (`chatModel.ts`, `isComplete`), so the hand-over command returns, and that return is the only proof that Codebook's own request ended.
  *
- * Limits (VS Code source, `microsoft/vscode` at tags 1.120.0 and 1.140.0): both commands act on the chat widget the learner focused last and on the session it shows then (`chatExecuteActions.ts`, `CancelAction.run`: `widgetService.lastFocusedWidget`, `chatService.cancelCurrentRequestForSession(widget.viewModel.sessionResource)`; `chatQueueActions.ts`, `ChatRemoveAllPendingRequestsAction.run`). The hand-over focuses the chat it wrote into, so that is Codebook's chat unless the learner moved within the bound:
- * - A learner who opened another chat session or focused another chat (a chat editor, the quick chat, an inline chat) meanwhile: the queue's command removes the requests queued there and the Cancel stops the request in progress there; Codebook's request stays where it is, the hand-over command stays pending and the result is `left`.
- * - Requests the learner queued in the same chat, behind Codebook's request or beside it, are removed with it: the queue's command cannot name one request.
+ * Limits (VS Code source, `microsoft/vscode` at tags 1.120.0 and 1.140.0): both commands take no session from an extension. They act on the chat widget focused last and on the session it shows then (`chatExecuteActions.ts`, `CancelAction.run`: `widgetService.lastFocusedWidget`, `chatService.cancelCurrentRequestForSession(widget.viewModel.sessionResource)`; `chatQueueActions.ts`, `ChatRemoveAllPendingRequestsAction.run`). The hand-over leaves Codebook's session in the chat focused last, so that is where they act unless the learner moved within the bound:
+ * - A learner who showed another session in that chat, or focused another chat (a chat editor, the quick chat, an inline chat) meanwhile: the Cancel stops the request in progress there (and in a shared session the queue's command removes the requests queued there); Codebook's request stays where it is, the hand-over command stays pending and the result is `left`.
+ * - In a shared session, requests the learner queued in the same chat are removed with Codebook's: the queue's command cannot name one request.
  *
  * @param options.handOver - The promise of `workbench.action.chat.open` with `blockOnResponse` that handed the request over; it settles when the request ended.
+ * @param options.session - Where the request was sent: a session of Codebook's own, or the one the learner had open.
  * @param options.runChatCommand - Runs an editor command without arguments.
  * @param options.signal - Aborts the withdrawal (the window closes): the wait under way ends and no further command runs.
  * @param options.settleMs - How long each command may take to return, and the hand-over command to return after it.
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
  * @returns
  * - `withdrawn`: the hand-over command returned, before any command or after one of them
- * - `left`: a command threw or did not return in time, the signal aborted, or the hand-over command stayed pending after both commands
+ * - `left`: a command threw or did not return in time, the signal aborted, or the hand-over command stayed pending after the Cancel
  *
  * @example
  * ```ts
- * await withdrawWikiChatRequest({ handOver, runChatCommand: (command) => vscode.commands.executeCommand(command), signal, settleMs: 2_000 })
+ * await withdrawWikiChatRequest({ handOver, session: 'own', runChatCommand: (command) => vscode.commands.executeCommand(command), signal, settleMs: 2_000 })
  * // => 'withdrawn' once the chat's Cancel stopped the request that showed "Getting chat ready"
  * ```
  */
 export async function withdrawWikiChatRequest(options: {
   handOver: Promise<unknown>
+  session: WikiChatSession
   runChatCommand: (command: string) => PromiseLike<unknown>
   signal: AbortSignal
   settleMs: number
   sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>
 }): Promise<WikiChatWithdrawal> {
   const handOver = watchHandOver(options.handOver)
-  const wait: WithdrawalWait = {
-    settleMs: options.settleMs,
+  const wait: BoundedWait = {
+    timeoutMs: options.settleMs,
     signal: options.signal,
     sleep: options.sleep ?? sleepUntilAborted,
   }
   // A hand-over command that returned before this call is seen one turn after the watch was set.
   await Promise.resolve()
   if (handOver.hasEnded) return 'withdrawn'
-  // The queue first: only a request that is not queued can be the one the Cancel stops.
-  const queueStep = await runWithdrawalStep(
-    REMOVE_QUEUED_CHAT_REQUESTS_COMMAND,
+  const queueStep = await clearSharedQueue(
+    options.session,
     options.runChatCommand,
     handOver,
     wait,

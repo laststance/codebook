@@ -210,28 +210,43 @@ test('the packaged README says that a VS Code update waits 30 seconds for the ch
   assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MILLISECONDS_PER_SECOND, 30)
 })
 
-// Value: protects=a learner whose VS Code chat did not answer an update reading what Codebook did to the chat (its request is taken back, queued requests of the learner's leave the queue with it) and the sentence for a request it could not take back; fails_when=the README still describes an update that leaves its request in the chat, or names another sentence than the product prints; why_new=Cycle 0046 row 82; seam=none
-test('the packaged README says that an unanswered VS Code update takes its request back from the chat, what that removes, and the sentence for a request it could not take back', async () => {
+// Value: protects=a learner who presses Update LLM Wiki in VS Code reading where the request goes (a new chat, not the chat they use), where their own chat went, what Codebook does to the chat at the 30 seconds, and what an editor without New Chat does instead; fails_when=the README describes a request typed into the learner's chat, or a withdrawal that removes queued requests in every editor, or names another sentence than the product prints; why_new=Cycle 0046 rows 82 and 129; seam=none
+test('the packaged README says that a VS Code update sends its request into a new chat, where the learner’s chat went, what the Cancel at the 30 seconds acts on, and what an editor without New Chat does', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
-    "When a VS Code chat gives no first answer within those 30 seconds, Codebook takes its request back before it shows the sentence, so the chat keeps nothing of an update that was not started: it removes the request from the chat's queue, or stops it with the chat's own Cancel when it is the request in progress.",
-    "Requests of your own that wait in that chat's queue are removed with it, and a request of yours that is in progress there is left alone.",
-    'Both steps act on the chat you focused last: if you moved to another chat within those 30 seconds, they act on the requests there.',
-    'If Codebook did not see its request leave the chat, the sentence reads `The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
+    "In VS Code the update's request does not go into the chat you are using: Codebook reveals the chat, runs the editor's **New Chat** and sends the request into that new chat, so a request of yours that is in progress, waits for a confirmation or is queued is neither stopped nor held back, and the update does not wait behind it.",
+    "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). New Chat closes the diff editors that show that chat's edits; the edits stay.",
+    "When the new chat gives no first answer within those 30 seconds, Codebook stops its request with the chat's own Cancel before it shows the sentence, so the chat keeps nothing of an update that was not started, and it removes nothing from a queue.",
+    'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
+    'If Codebook did not see its request end, the sentence reads `The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
+    'Every supported VS Code (1.120 and later) has New Chat. An editor without that command gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, and the editor cancels a request that waits for a confirmation. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
   ])
+  const retired = [
+    'Codebook takes its request back before it shows the sentence',
+    "Requests of your own that wait in that chat's queue are removed with it, and a request of yours that is in progress there is left alone.",
+  ].filter((sentence) => readme.includes(sentence))
 
-  // Assert: the README holds each sentence, and the product prints the two sentences it quotes.
-  assert.deepEqual(delivered, [true, true, true, true])
+  // Assert: the README holds each sentence, and the product prints the sentences it quotes.
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  assert.deepEqual(retired, [])
   assert.equal(
-    describeUnansweredWikiChat('withdrawn', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    describeUnansweredWikiChat('withdrawn', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
     'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
   )
   assert.equal(
-    describeUnansweredWikiChat('left', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    describeUnansweredWikiChat('left', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
     'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+  )
+  assert.equal(
+    describeUnansweredWikiChat(
+      'withdrawn',
+      'shared',
+      WIKI_CHAT_OPEN_TIMEOUT_MS,
+    ),
+    'The editor chat did not answer within 30 seconds, so the update was not started. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
   )
 })
 

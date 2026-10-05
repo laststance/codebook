@@ -45,6 +45,7 @@ test('a hand-over command that has already returned leaves nothing to take back,
     runChatCommand: async (command) => {
       ranCommands.push(command)
     },
+    session: 'shared',
     signal: new AbortController().signal,
     settleMs: 2_000,
     sleep,
@@ -67,6 +68,7 @@ test('a hand-over command that threw before the withdrawal leaves nothing to tak
     runChatCommand: async (command) => {
       ranCommands.push(command)
     },
+    session: 'shared',
     signal: new AbortController().signal,
     settleMs: 2_000,
     sleep,
@@ -77,8 +79,41 @@ test('a hand-over command that threw before the withdrawal leaves nothing to tak
   assert.deepEqual(ranCommands, [])
 })
 
+// Value: protects=what the learner typed into the chat while an update waited for its first answer; fails_when=in a session of Codebook's own the withdrawal runs the chat's "Remove All Queued", which removes the learner's queued requests, or waits two seconds before it stops its own request; why_new=Cycle 0046 row 129; seam=the withdrawal's sleep, on a manual clock
+test('in a session of its own Codebook stops its request with the chat’s Cancel at once, and the queue’s command never runs', async () => {
+  // Arrange: the request is the session's request in progress; the Cancel ends the hand-over command with an empty reply.
+  const ranCommands: string[] = []
+  const { clock, sleep } = manualSleep()
+  let endRequest: (reply: unknown) => void = () => {}
+  const handOver = new Promise((resolveReply) => {
+    endRequest = resolveReply
+  })
+
+  // Act: what ran before the clock moved is noted; then the settle time a queue command would be given passes.
+  const withdrawing = withdrawWikiChatRequest({
+    handOver,
+    session: 'own',
+    runChatCommand: async (command) => {
+      ranCommands.push(command)
+      if (command === 'workbench.action.chat.cancel') endRequest({})
+    },
+    signal: new AbortController().signal,
+    settleMs: 2_000,
+    sleep,
+  })
+  await untilItWaits()
+  const ranAtOnce = [...ranCommands]
+  clock.advance(2_000)
+  const withdrawal = await withdrawing
+
+  // Assert
+  assert.deepEqual(ranAtOnce, ['workbench.action.chat.cancel'])
+  assert.deepEqual(ranCommands, ['workbench.action.chat.cancel'])
+  assert.equal(withdrawal, 'withdrawn')
+})
+
 // Value: protects=the order of the withdrawal, which keeps the chat's Cancel away from a request of the learner; fails_when=the Cancel runs first, or before the queue's command had its settle time to end a queued request; why_new=Cycle 0046 row 82; seam=the withdrawal's sleep, on a manual clock
-test('the chat’s Cancel runs only after the queue’s command left the request pending for the whole settle time, and a request it ends is withdrawn', async () => {
+test('in a shared session the chat’s Cancel runs only after the queue’s command left the request pending for the whole settle time, and a request it ends is withdrawn', async () => {
   // Arrange: the request is the one in progress; the Cancel ends the hand-over command with an empty reply.
   const ranCommands: string[] = []
   const { clock, sleep } = manualSleep()
@@ -94,6 +129,7 @@ test('the chat’s Cancel runs only after the queue’s command left the request
       ranCommands.push(command)
       if (command === 'workbench.action.chat.cancel') endRequest({})
     },
+    session: 'shared',
     signal: new AbortController().signal,
     settleMs: 2_000,
     sleep,
@@ -117,7 +153,7 @@ test('the chat’s Cancel runs only after the queue’s command left the request
 })
 
 // Value: protects=the end of an update whose editor does not answer the queue's command; fails_when=the withdrawal waits for that command for good, so the update never ends, or goes on to the Cancel without knowing whose request it would stop; why_new=Cycle 0046 row 82; seam=the withdrawal's sleep, on a manual clock
-test('a queue command that does not return within the settle time ends the withdrawal as left, and no Cancel runs', async () => {
+test('in a shared session a queue command that does not return within the settle time ends the withdrawal as left, and no Cancel runs', async () => {
   // Arrange: no command of the chat ever returns.
   const ranCommands: string[] = []
   const { clock, sleep } = manualSleep()
@@ -129,6 +165,7 @@ test('a queue command that does not return within the settle time ends the withd
       ranCommands.push(command)
       return new Promise(() => {})
     },
+    session: 'shared',
     signal: new AbortController().signal,
     settleMs: 2_000,
     sleep,
@@ -148,7 +185,7 @@ test('a queue command that does not return within the settle time ends the withd
 })
 
 // Value: protects=a request of the learner when the window closes during the withdrawal; fails_when=the abort cuts the settle time short and the withdrawal takes the request for the one in progress, so the Cancel runs although the queue's command may have removed Codebook's request; why_new=Cycle 0046 row 82; seam=the withdrawal's sleep, on a manual clock
-test('a window that closes while Codebook waits for the queue’s command to end its request runs no Cancel', async () => {
+test('a window that closes while Codebook waits for the queue’s command to end its request in a shared session runs no Cancel', async () => {
   // Arrange
   const ranCommands: string[] = []
   const { sleep } = manualSleep()
@@ -160,6 +197,7 @@ test('a window that closes while Codebook waits for the queue’s command to end
     runChatCommand: async (command) => {
       ranCommands.push(command)
     },
+    session: 'shared',
     signal: closing.signal,
     settleMs: 2_000,
     sleep,
@@ -191,6 +229,7 @@ test('a hand-over command that throws once the chat’s Cancel stopped its reque
       if (command === 'workbench.action.chat.cancel')
         failHandOver(new Error('Canceled'))
     },
+    session: 'shared',
     signal: new AbortController().signal,
     settleMs: 2_000,
     sleep,

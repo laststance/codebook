@@ -19,6 +19,7 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_CHAT_SESSION_START_TIMEOUT_MS,
   WIKI_CHAT_WITHDRAW_SETTLE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
@@ -72,6 +73,7 @@ import { describeWikiChatOpenFailure } from './utils/describeWikiChatOpenFailure
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
+import { handWikiRequestToChat } from './utils/handWikiRequestToChat'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import {
   isAcknowledgedWikiLeftover,
@@ -1250,15 +1252,16 @@ export function activate(
           )
         })
         try {
+          // The request gets a chat session of its own, so it is not queued behind a request of the learner and the editor cancels none for it. With `blockOnResponse` the command that sends it settles when the chat's response completes or waits for a confirmation.
+          const { session, handOver } = await handWikiRequestToChat({
+            query,
+            // A command without an argument is run without one: the editor reads an argument that is `undefined` as a given one.
+            runCommand: (command, ...argument) =>
+              vscode.commands.executeCommand(command, ...argument),
+            signal: run.controller.signal,
+            sessionStartTimeoutMs: WIKI_CHAT_SESSION_START_TIMEOUT_MS,
+          })
           // The bound starts when the request is handed over and ends at the chat's first answer, not when the command returns: a chat that cannot answer still takes the request.
-          // With `blockOnResponse` the command settles when the chat's response completes or waits for a confirmation; a command that throws at once is a failed one too.
-          const handOver = Promise.resolve().then(() =>
-            vscode.commands.executeCommand('workbench.action.chat.open', {
-              query,
-              isPartialQuery: false,
-              blockOnResponse: true,
-            }),
-          )
           const answer = await waitForWikiChatAnswer({
             reply: handOver,
             toolCall,
@@ -1277,6 +1280,7 @@ export function activate(
             // The request the chat still holds is taken back before the result is published, so "not started" stays true; a reply that reports an error left nothing in the chat.
             const withdrawal = await withdrawWikiChatRequest({
               handOver,
+              session,
               runChatCommand: (command) =>
                 vscode.commands.executeCommand(command),
               signal: run.controller.signal,
@@ -1285,6 +1289,7 @@ export function activate(
             await finishWikiUpdate(run, {
               failure: describeUnansweredWikiChat(
                 withdrawal,
+                session,
                 WIKI_CHAT_OPEN_TIMEOUT_MS,
               ),
               isFailureCodebookSentence: true,

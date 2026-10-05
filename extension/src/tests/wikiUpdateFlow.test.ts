@@ -1395,16 +1395,11 @@ test('a chat that takes the request and never answers ends the update after 30 s
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
 
-    // Act: the bound passes, then the two seconds after which Codebook takes its request for the one in progress.
+    // Act
     clock.advance(29_999)
     await new Promise((resolveWait) => setImmediate(resolveWait))
     const stateBeforeTheBound = wiki.status().state
     clock.advance(1)
-    await waitForCommand(
-      wiki.executedCommands,
-      'workbench.action.chat.removeAllPendingRequests',
-    )
-    clock.advance(2_000)
     await press
 
     // Assert
@@ -1428,9 +1423,37 @@ test('a chat that takes the request and never answers ends the update after 30 s
   }
 })
 
-// Value: protects=the chat after an update that ended as "not started": it keeps no request of that update; fails_when=the bound passes and the request Codebook handed over stays in the chat, loading, so a chat that becomes ready later runs it with no watch and the editor asks about a session in progress when it quits; why_new=Cycle 0046 row 82 (native check of row 3: after two presses one request was loading and one queued); seam=the editor's commands, of which the chat's Cancel ends the request, and the sleep of the withdrawal on a manual clock
-test('at the 30 second bound Codebook takes its unanswered request back with the chat’s Cancel, once and before the page or a notice shows the result', async () => {
-  // Arrange: the request is the chat's request in progress, so the queue's command removes nothing and the Cancel ends it.
+// Value: protects=the learner's own chat when Update LLM Wiki is pressed: the update's request is not typed into it; fails_when=the request is sent into the session the learner has open, where the editor queues it behind a request in progress (so a busy chat ends the update as "did not answer") and cancels a request that waits for a confirmation; why_new=Cycle 0046 row 129; seam=the editor's commands, which the window records in order
+test('a VS Code update sends its request into a chat session of its own: the chat is revealed, the editor’s New Chat has returned, and only then the request is sent', async () => {
+  // Arrange: the editor's New Chat takes a moment; the window notes what had been sent when it returned.
+  const requestsSentWhenNewChatReturned: number[] = []
+  const wiki = await openWikiWindow({
+    editorCommand: async (name) => {
+      if (name !== 'workbench.action.chat.newChat') return
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+      requestsSentWhenNewChatReturned.push(wiki.chatRequests.length)
+    },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert: nothing else is run against the chat, in particular no Cancel and no queue command.
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
+    assert.deepEqual(requestsSentWhenNewChatReturned, [0])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the chat after an update that ended as "not started": it keeps no request of that update, and the learner's requests are untouched; fails_when=the bound passes and the request Codebook handed over stays loading (a chat that becomes ready later runs it with no watch, and the editor asks about a session in progress when it quits), or Codebook runs the chat's "Remove All Queued", which removes what the learner queued; why_new=Cycle 0046 rows 82 and 129; seam=the editor's commands, of which the chat's Cancel ends the request
+test('at the 30 second bound Codebook stops its unanswered request with the chat’s Cancel alone, once and before the page or a notice shows the result', async () => {
+  // Arrange: the request is the request in progress of its own session; the Cancel ends it.
   const { clock, sleep } = manualAnswerClock()
   const request = heldChatRequest()
   const shownAtCancel: Array<{ state: string; errorNotices: number }> = []
@@ -1450,24 +1473,24 @@ test('at the 30 second bound Codebook takes its unanswered request back with the
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
 
-    // Act: the bound passes, then the two seconds the queue's command gets to end the request.
+    // Act: the bound passes; the Cancel runs at once, before the two seconds a queue command would be given.
     clock.advance(30_000)
-    await waitForCommand(
-      wiki.executedCommands,
-      'workbench.action.chat.removeAllPendingRequests',
-    )
-    const commandsBeforeTheSettleTime = [...wiki.executedCommands]
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    const commandsAtTheBound = [...wiki.executedCommands]
     clock.advance(2_000)
     await press
 
     // Assert
-    assert.deepEqual(commandsBeforeTheSettleTime, [
+    assert.deepEqual(commandsAtTheBound, [
       'workbench.action.chat.open',
-      'workbench.action.chat.removeAllPendingRequests',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+      'workbench.action.chat.cancel',
     ])
     assert.deepEqual(wiki.executedCommands, [
       'workbench.action.chat.open',
-      'workbench.action.chat.removeAllPendingRequests',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
       'workbench.action.chat.cancel',
     ])
     assert.deepEqual(shownAtCancel, [{ state: 'running', errorNotices: 0 }])
@@ -1477,47 +1500,6 @@ test('at the 30 second bound Codebook takes its unanswered request back with the
       'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
     )
     assert.equal(wiki.errors.length, 1)
-  } finally {
-    await wiki.close()
-  }
-})
-
-// Value: protects=a request of the learner that is in progress in the chat when Update LLM Wiki is pressed (an agent that waits for a long command, a long answer); fails_when=Codebook's request, which the chat queued behind it, is "withdrawn" with the chat's Cancel, which stops the learner's request and leaves Codebook's in the queue; why_new=Cycle 0046 row 82: the chat's Cancel acts on the request in progress, whoever sent it; seam=the editor's commands, of which "Remove All Queued" ends the queued request without a reply
-test('a request the chat queued behind a request of the learner is taken out of the queue at the bound, and the chat’s Cancel, which would stop the learner’s request, is not run', async () => {
-  // Arrange: the chat queued Codebook's request; removing it from the queue ends the chat command without a reply.
-  const { clock, sleep } = manualAnswerClock()
-  const request = heldChatRequest()
-  const wiki = await openWikiWindow({
-    chatReply: request.chatReply,
-    chatAnswerClock: { sleep },
-    editorCommand: (name) => {
-      if (name === 'workbench.action.chat.removeAllPendingRequests')
-        request.end(undefined)
-    },
-  })
-  try {
-    const press = wiki.clickUpdate()
-    await waitForChatRequest(wiki.chatRequests)
-
-    // Act: the bound passes, and after it the settle time a Cancel would be given.
-    clock.advance(30_000)
-    await waitForCommand(
-      wiki.executedCommands,
-      'workbench.action.chat.removeAllPendingRequests',
-    )
-    clock.advance(2_000)
-    await press
-
-    // Assert
-    assert.deepEqual(wiki.executedCommands, [
-      'workbench.action.chat.open',
-      'workbench.action.chat.removeAllPendingRequests',
-    ])
-    const status = wiki.status()
-    assert.equal(
-      status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
-    )
   } finally {
     await wiki.close()
   }
@@ -1541,11 +1523,6 @@ test('a chat whose Cancel fails ends the update with the sentence that the reque
 
     // Act
     clock.advance(30_000)
-    await waitForCommand(
-      wiki.executedCommands,
-      'workbench.action.chat.removeAllPendingRequests',
-    )
-    clock.advance(2_000)
     await press
 
     // Assert
@@ -1567,9 +1544,9 @@ test('a chat whose Cancel fails ends the update with the sentence that the reque
   }
 })
 
-// Value: protects=the truth of "the update was not started" when the chat's Cancel ran and stopped something else (the learner opened another chat within the 30 seconds, so the Cancel acted there); fails_when=Codebook takes a Cancel that returned for a withdrawal, although the chat command of its own request never returned; why_new=Cycle 0046 row 82: the chat's Cancel acts on the chat the learner focused last; seam=the editor's commands, none of which ends the request
+// Value: protects=the truth of "the update was not started" when the chat's Cancel ran and stopped something else (the learner showed another session in the chat within the 30 seconds, so the Cancel acted there); fails_when=Codebook takes a Cancel that returned for a withdrawal, although the chat command of its own request never returned; why_new=Cycle 0046 row 82: the chat's Cancel acts on the chat the learner focused last; seam=the editor's commands, none of which ends the request
 test('a request that is still pending after the chat’s Cancel returned is reported as possibly still in the chat, not as an update that was not started', async () => {
-  // Arrange: both of the chat's commands return, and neither ends the request Codebook handed over.
+  // Arrange: the chat's Cancel returns and does not end the request Codebook handed over.
   const { clock, sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
     chatReply: () => new Promise(() => {}),
@@ -1579,20 +1556,15 @@ test('a request that is still pending after the chat’s Cancel returned is repo
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
 
-    // Act: the bound, the settle time after the queue's command and the one after the Cancel pass.
+    // Act: the bound passes, then the two seconds the Cancel's request gets to end.
     clock.advance(30_000)
-    await waitForCommand(
-      wiki.executedCommands,
-      'workbench.action.chat.removeAllPendingRequests',
-    )
-    clock.advance(2_000)
     await waitForCommand(wiki.executedCommands, 'workbench.action.chat.cancel')
-    const stateBeforeTheLastSettleTime = wiki.status().state
+    const stateBeforeTheSettleTime = wiki.status().state
     clock.advance(2_000)
     await press
 
     // Assert
-    assert.equal(stateBeforeTheLastSettleTime, 'running')
+    assert.equal(stateBeforeTheSettleTime, 'running')
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
@@ -1603,14 +1575,113 @@ test('a request that is still pending after the chat’s Cancel returned is repo
   }
 })
 
-// Value: protects=a request of the learner in an editor whose queue command fails; fails_when=Codebook runs the chat's Cancel although it could not learn whether its own request is the one in progress, so the Cancel may stop the learner's; why_new=Cycle 0046 row 82; seam=the editor's commands, of which "Remove All Queued" throws
-test('when the chat’s queue command fails Codebook runs no Cancel, and says that its request may still be in the chat', async () => {
+// Value: protects=the update in an editor that has no New Chat command: the request still goes to the chat, the learner's request in progress there is not stopped, and the sentence does not blame Copilot Chat for a chat that may only be busy; fails_when=the update fails outright without the command, or the shared chat is treated as Codebook's own (the Cancel alone, which stops the learner's request and leaves Codebook's in the queue), or the notice says only "Check that Copilot Chat is enabled"; why_new=Cycle 0046 row 129 (the fallback), with row 82's order; seam=the editor's commands, of which New Chat throws and "Remove All Queued" ends the queued request
+test('in an editor without the New Chat command the request goes into the open chat; queued there behind a request of the learner it is taken out of the queue at the bound, the chat’s Cancel is not run, and the sentence says the chat may be busy', async () => {
+  // Arrange: no New Chat command; the chat queued Codebook's request, and removing it from the queue ends the chat command without a reply.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.newChat')
+        throw new Error("command 'workbench.action.chat.newChat' not found")
+      if (name === 'workbench.action.chat.removeAllPendingRequests')
+        request.end(undefined)
+    },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: the bound passes, and after it the settle time a Cancel would be given.
+    clock.advance(30_000)
+    await waitForCommand(
+      wiki.executedCommands,
+      'workbench.action.chat.removeAllPendingRequests',
+    )
+    clock.advance(2_000)
+    await press
+
+    // Assert
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+      'workbench.action.chat.removeAllPendingRequests',
+    ])
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The editor chat did not answer within 30 seconds, so the update was not started. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the chat of an editor without the New Chat command after an update that ended as "not started"; fails_when=in the shared chat the request in progress is not stopped once the queue's command found nothing of Codebook's, so it stays loading; why_new=Cycle 0046 row 82, kept as the fallback of row 129; seam=the editor's commands, of which New Chat throws and the chat's Cancel ends the request
+test('in an editor without the New Chat command an unanswered request in progress is stopped with the chat’s Cancel after the queue’s command left it pending for two seconds', async () => {
+  // Arrange: no New Chat command; the request is the open chat's request in progress.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.newChat')
+        throw new Error("command 'workbench.action.chat.newChat' not found")
+      if (name === 'workbench.action.chat.cancel') request.end({})
+    },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act
+    clock.advance(30_000)
+    await waitForCommand(
+      wiki.executedCommands,
+      'workbench.action.chat.removeAllPendingRequests',
+    )
+    const commandsBeforeTheSettleTime = [...wiki.executedCommands]
+    clock.advance(2_000)
+    await press
+
+    // Assert
+    assert.deepEqual(commandsBeforeTheSettleTime, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+      'workbench.action.chat.removeAllPendingRequests',
+    ])
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+      'workbench.action.chat.removeAllPendingRequests',
+      'workbench.action.chat.cancel',
+    ])
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The editor chat did not answer within 30 seconds, so the update was not started. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=a request of the learner in a shared chat whose queue command fails; fails_when=Codebook runs the chat's Cancel although it could not learn whether its own request is the one in progress, so the Cancel may stop the learner's; why_new=Cycle 0046 row 82, kept as the fallback of row 129; seam=the editor's commands, of which New Chat and "Remove All Queued" throw
+test('in an editor without the New Chat command a failing queue command is followed by no Cancel, and the sentence says that the request may still be in the chat and that the chat may be busy', async () => {
   // Arrange
   const { clock, sleep } = manualAnswerClock()
   const wiki = await openWikiWindow({
     chatReply: () => new Promise(() => {}),
     chatAnswerClock: { sleep },
     editorCommand: (name) => {
+      if (name === 'workbench.action.chat.newChat')
+        throw new Error("command 'workbench.action.chat.newChat' not found")
       if (name === 'workbench.action.chat.removeAllPendingRequests')
         throw new Error(
           "command 'workbench.action.chat.removeAllPendingRequests' not found",
@@ -1633,12 +1704,14 @@ test('when the chat’s queue command fails Codebook runs no Cancel, and says th
     // Assert
     assert.deepEqual(wiki.executedCommands, [
       'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
       'workbench.action.chat.removeAllPendingRequests',
     ])
     const status = wiki.status()
     assert.equal(
       status.state === 'failed' ? status.reason : '',
-      'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+      'The editor chat did not answer within 30 seconds, and Codebook could not withdraw its update request, so the request may still be in the chat. Stop or remove it in the Chat view. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
     )
   } finally {
     await wiki.close()
@@ -1646,7 +1719,7 @@ test('when the chat’s queue command fails Codebook runs no Cancel, and says th
 })
 
 // Value: protects=the chat that works on an update: Codebook never stops a request the chat answered; fails_when=the withdrawal also runs for a request with a first answer (at the 30 seconds), or the Cancel of the watch, which "stops watching, not the chat", stops the chat's request; why_new=Cycle 0046 row 82 added the withdrawal beside the watch; seam=the sleep of the wait for the chat's answer, on a manual clock
-test('a request the chat works on is left to the chat when the 30 seconds pass and when the learner cancels the watch: the editor ran no command but the request', async () => {
+test('a request the chat works on is left to the chat when the 30 seconds pass and when the learner cancels the watch: the editor ran no command after the request', async () => {
   // Arrange: the chat command stays pending, as for a chat that works without asking for a confirmation.
   const { clock, sleep } = manualAnswerClock()
   const progress: CancellableProgress[] = []
@@ -1674,16 +1747,24 @@ test('a request the chat works on is left to the chat when the 30 seconds pass a
     const ended = await waitForEnd(wiki.status)
 
     // Assert
-    assert.deepEqual(commandsAfterTheBound, ['workbench.action.chat.open'])
+    assert.deepEqual(commandsAfterTheBound, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
     assert.equal(ended.state, 'cancelled')
-    assert.deepEqual(wiki.executedCommands, ['workbench.action.chat.open'])
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
   } finally {
     await wiki.close()
   }
 })
 
-// Value: protects=the chat after a reply that reports an error: its response has completed and nothing of the update is left in it; fails_when=the error reply, which shares the sentence of the bound, is followed by the chat's queue command or its Cancel, which then act on a request of the learner; why_new=Cycle 0046 row 82; seam=none
-test('a reply that reports an error ends the update without the chat’s queue command and without its Cancel', async () => {
+// Value: protects=the chat after a reply that reports an error: its response has completed and nothing of the update is left in it; fails_when=the error reply, which shares the sentence of the bound, is followed by the chat's Cancel or its queue command, which then act on a request of the learner; why_new=Cycle 0046 row 82; seam=none
+test('a reply that reports an error ends the update without the chat’s Cancel and without its queue command', async () => {
   // Arrange: the chat answers the request with an error and nothing else.
   const wiki = await openWikiWindow({
     chatReply: async () => ({
@@ -1696,7 +1777,11 @@ test('a reply that reports an error ends the update without the chat’s queue c
 
     // Assert
     assert.equal(wiki.status().state, 'failed')
-    assert.deepEqual(wiki.executedCommands, ['workbench.action.chat.open'])
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
   } finally {
     await wiki.close()
   }
