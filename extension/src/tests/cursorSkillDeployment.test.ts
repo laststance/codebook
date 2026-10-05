@@ -26,6 +26,7 @@ import {
 } from '../cursorSkillDeployment'
 import { withStorageLock } from '../utils/withStorageLock'
 
+import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
 import { loadModule } from './utils/loadModule'
 
 const INITIAL_SKILL =
@@ -1151,5 +1152,169 @@ test('a replaced or edited Cursor skill is refused at reconnect as missing or ch
       'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
       'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
     ],
+  )
+})
+
+// Value: protects=Cursor chat setup on an NTFS volume, where a file id passes 2^53 once its record was reused 32 times; fails_when=the skill's receipt records or validates the inode as a JavaScript number, so the next setup or reconnect ends with "Cursor skill ownership receipt is invalid; no skill file was changed." (or the receipt holds a rounded number that names no file); why_new=Cycle 0046 row 79: a file id above 2^53 was observed on the development host; seam=node:fs/promises of the loaded deployment, whose files have ids above 2^53
+test('the receipt of a Cursor skill whose file id is above 2^53, as on an NTFS volume, holds the id in exact decimal digits, and the next setup and reconnect find the skill current', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  const largeIds = fileSystemWithLargeFileIds()
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': largeIds,
+  })
+
+  // Act
+  const setup = await window.deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const receipt: unknown = JSON.parse(
+    await readFile(
+      join(paths.storageRoot, 'cursor-skill', 'receipt.json'),
+      'utf8',
+    ),
+  )
+  const idOfTheSkill = (
+    await largeIds.lstat(paths.targetPath, { bigint: true })
+  ).ino
+  const secondSetup = await window.deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const reconnect = await window.verifyManagedCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert: the id is one a JavaScript number rounds to 210824757556437120.
+  assert.deepEqual(
+    {
+      setup: setup.status,
+      recordedInode:
+        typeof receipt === 'object' && receipt !== null && 'inode' in receipt
+          ? receipt.inode
+          : undefined,
+      idOfTheSkillAsANumber: Number(idOfTheSkill),
+      secondSetup: secondSetup.status,
+      reconnect: reconnect.status,
+    },
+    {
+      setup: 'installed',
+      recordedInode: idOfTheSkill.toString(),
+      idOfTheSkillAsANumber: 210_824_757_556_437_120,
+      secondSetup: 'current',
+      reconnect: 'current',
+    },
+  )
+})
+
+// Value: protects=a skill file the learner put in place of Codebook's own on an NTFS volume; fails_when=the receipted inode is compared as a JavaScript number, so a file with the same bytes whose id differs only below the rounding counts as the installed skill and the next extension update writes over it; why_new=Cycle 0046 row 79; seam=node:fs/promises of the loaded deployment, whose files have ids above 2^53
+test('a Cursor skill replaced by a file with the same bytes, whose file id differs only where a number rounds, is not counted as the installed skill: an update refuses to write over it', async (context) => {
+  // Arrange: the installed skill is moved away (it stays, so its id is not given to another file) and a copy takes its path; then the extension brings a new skill.
+  const paths = await fixture(context)
+  const largeIds = fileSystemWithLargeFileIds()
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': largeIds,
+  })
+  await window.deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const movedSkillPath = join(paths.homeRoot, 'moved-SKILL.md')
+  await rename(paths.targetPath, movedSkillPath)
+  await writeFile(paths.targetPath, INITIAL_SKILL)
+  const idOfTheInstalledSkill = (
+    await largeIds.lstat(movedSkillPath, { bigint: true })
+  ).ino
+  const idOfTheCopy = (await largeIds.lstat(paths.targetPath, { bigint: true }))
+    .ino
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+
+  // Act
+  const [update, reconnect] = await Promise.allSettled([
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+    window.verifyManagedCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  ])
+
+  // Assert: two ids, one number; both entries refuse, and the copy keeps its bytes.
+  assert.deepEqual(
+    {
+      idsDiffer: idOfTheCopy !== idOfTheInstalledSkill,
+      idsAsNumbers: [Number(idOfTheInstalledSkill), Number(idOfTheCopy)],
+      update:
+        update.status === 'rejected' && update.reason instanceof Error
+          ? update.reason.message
+          : update.status,
+      reconnect:
+        reconnect.status === 'rejected' && reconnect.reason instanceof Error
+          ? reconnect.reason.message
+          : reconnect.status,
+      copy: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      idsDiffer: true,
+      idsAsNumbers: [210_824_757_556_437_120, 210_824_757_556_437_120],
+      update:
+        'The managed Cursor skill was replaced after setup; Codebook preserved it.',
+      reconnect:
+        'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
+      copy: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=a Cursor window of 0.2.29.0 that shares Codebook's storage and the skill folder with a window of this version (after an extension update, until it is reloaded, and after a rollback); fails_when=this version writes the inode of an ordinary file as text, which 0.2.29.0 rejects with "Cursor skill ownership receipt is invalid; no skill file was changed.", so that window can neither reconnect nor set up; why_new=Cycle 0046 row 79: the record keeps a number wherever a number is exact; seam=none
+test('the receipt of a Cursor skill whose file id a number holds exactly records device and inode as numbers, which a window of 0.2.29.0 on the same storage still reads, and this version reads them back', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+
+  // Act
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const receipt: unknown = JSON.parse(
+    await readFile(
+      join(paths.storageRoot, 'cursor-skill', 'receipt.json'),
+      'utf8',
+    ),
+  )
+  const reconnect = await verifyManagedCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+
+  // Assert
+  const skill = await lstat(paths.targetPath)
+  assert.deepEqual(
+    {
+      recorded:
+        typeof receipt === 'object' &&
+        receipt !== null &&
+        'device' in receipt &&
+        'inode' in receipt
+          ? { device: receipt.device, inode: receipt.inode }
+          : 'a receipt without device and inode',
+      reconnect: reconnect.status,
+    },
+    {
+      recorded: { device: skill.dev, inode: skill.ino },
+      reconnect: 'current',
+    },
   )
 })

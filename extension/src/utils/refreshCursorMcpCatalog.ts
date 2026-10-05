@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as fileFlags } from 'node:fs'
-import { link, lstat, open, rename, unlink } from 'node:fs/promises'
+import { constants as fileFlags, type BigIntStats } from 'node:fs'
+import {
+  link,
+  lstat,
+  open,
+  rename,
+  unlink,
+  type FileHandle,
+} from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -14,6 +21,11 @@ import {
 } from '../constants'
 
 import { atomicPrivateWrite } from './atomicPrivateWrite'
+import { isRecordedFileId } from './isRecordedFileId'
+import { isSameFileId } from './isSameFileId'
+import { openWithoutFollowing } from './openWithoutFollowing'
+import { recordedFileId, type RecordedFileId } from './recordedFileId'
+import { systemErrorCode } from './systemErrorCode'
 import { withStorageLock } from './withStorageLock'
 
 const EMPTY_MCP_CONFIG = '{"mcpServers":{}}\n'
@@ -25,8 +37,8 @@ type CatalogReceipt = {
   schemaVersion: 1
   targetPath: string
   sha256: string
-  device: number
-  inode: number
+  device: RecordedFileId
+  inode: RecordedFileId
   installed: boolean
   retiredPath?: string
   refreshId?: string
@@ -57,11 +69,11 @@ async function regularDirectory(path: string): Promise<void> {
     )
 }
 
-/** Reads a bounded private journal without following a replaced record path. @example await privateJson('/private/receipt.json') */
+/** Reads a bounded private journal without following a replaced record path ({@link openWithoutFollowing}: a link is refused on every system, also where the open has no flag for it). @example await privateJson('/private/receipt.json') */
 async function privateJson(path: string): Promise<unknown | undefined> {
   let handle
   try {
-    handle = await open(path, fileFlags.O_RDONLY | fileFlags.O_NOFOLLOW)
+    handle = await openWithoutFollowing(path)
   } catch (error) {
     if (isMissing(error)) return undefined
     throw error
@@ -99,13 +111,9 @@ function parseReceipt(value: unknown, targetPath: string): CatalogReceipt {
     !('sha256' in value) ||
     value.sha256 !== EMPTY_MCP_CONFIG_SHA256 ||
     !('device' in value) ||
-    typeof value.device !== 'number' ||
-    !Number.isSafeInteger(value.device) ||
-    value.device < 0 ||
+    !isRecordedFileId(value.device) ||
     !('inode' in value) ||
-    typeof value.inode !== 'number' ||
-    !Number.isSafeInteger(value.inode) ||
-    value.inode < 0 ||
+    !isRecordedFileId(value.inode) ||
     !('installed' in value) ||
     typeof value.installed !== 'boolean' ||
     (retiredPath !== undefined && typeof retiredPath !== 'string') ||
@@ -127,32 +135,66 @@ function parseReceipt(value: unknown, targetPath: string): CatalogReceipt {
   }
 }
 
-/** Matches inode and bytes through one no-follow handle before recovery or removal, tolerating volume device renumbering. @example await ownedFile('/home/user/.cursor/mcp.json', receipt) */
+/** The error codes of a path that holds no file a receipt can own: nothing (`ENOENT`), a link (`ELOOP`), or a pipe, a device or a folder that {@link openWithoutFollowing} refuses before the open where the system has no flag for a link (`ENOTREG`). */
+const NOT_AN_OWNED_FILE_CODES: ReadonlySet<string> = new Set([
+  'ENOENT',
+  'ELOOP',
+  'ENOTREG',
+])
+
+/**
+ * Says whether an open file still holds the bytes a receipt recorded and was not replaced while they were read; called by {@link isOwnedOpenFile} once the file is known to be the receipt's.
+ * @param handle - The open regular file.
+ * @param before - Its status before the read, with exact numbers.
+ * @param owner - The receipt, for its recorded digest.
+ * @returns `true` when device and inode number are the same before and after the read and the bytes have the recorded SHA-256; otherwise `false`.
+ * @example await holdsOwnedBytes(handle, await handle.stat({ bigint: true }), receipt) // => true for Codebook's unchanged empty config
+ */
+async function holdsOwnedBytes(
+  handle: FileHandle,
+  before: BigIntStats,
+  owner: CatalogReceipt,
+): Promise<boolean> {
+  const bytes = await handle.readFile()
+  const after = await handle.stat({ bigint: true })
+  return (
+    after.dev === before.dev &&
+    after.ino === before.ino &&
+    createHash('sha256').update(bytes).digest('hex') === owner.sha256
+  )
+}
+
+/**
+ * Says whether an open file is the regular file a receipt names, with its bytes; called by {@link ownedFile} for the file it opened without following a link.
+ * The inode number is read and compared exactly ({@link isSameFileId}): a file id on NTFS can be more than a number holds, and a number would round two such ids to one value. The device number is not compared: a volume can get another one after a restart.
+ * @param handle - The open file.
+ * @param owner - The receipt, for its recorded inode number and digest.
+ * @returns `true` for a regular file with the recorded inode number and bytes; `false` for a pipe, a device or a folder, for another file, and for other bytes.
+ * @example await isOwnedOpenFile(handle, receipt) // => false for a copy with the same bytes
+ */
+async function isOwnedOpenFile(
+  handle: FileHandle,
+  owner: CatalogReceipt,
+): Promise<boolean> {
+  const before = await handle.stat({ bigint: true })
+  if (!before.isFile() || !isSameFileId(owner.inode, before.ino)) return false
+  return holdsOwnedBytes(handle, before, owner)
+}
+
+/** Matches the inode number and the bytes through one no-follow handle ({@link openWithoutFollowing}, {@link isOwnedOpenFile}) before recovery or removal, tolerating volume device renumbering. @returns `true` for the file the receipt names; `false` for a path that holds nothing, a link or no regular file, and for another or a changed file. @example await ownedFile('/home/user/.cursor/mcp.json', receipt) */
 async function ownedFile(
   path: string,
   owner: CatalogReceipt,
 ): Promise<boolean> {
   let handle
   try {
-    handle = await open(path, fileFlags.O_RDONLY | fileFlags.O_NOFOLLOW)
+    handle = await openWithoutFollowing(path)
   } catch (error) {
-    if (
-      isMissing(error) ||
-      (error instanceof Error && 'code' in error && error.code === 'ELOOP')
-    )
-      return false
+    if (NOT_AN_OWNED_FILE_CODES.has(systemErrorCode(error))) return false
     throw error
   }
   try {
-    const before = await handle.stat()
-    if (!before.isFile() || before.ino !== owner.inode) return false
-    const bytes = await handle.readFile()
-    const after = await handle.stat()
-    return (
-      after.dev === before.dev &&
-      after.ino === before.ino &&
-      createHash('sha256').update(bytes).digest('hex') === owner.sha256
-    )
+    return await isOwnedOpenFile(handle, owner)
   } finally {
     await handle.close()
   }
@@ -313,10 +355,7 @@ export async function refreshCursorMcpCatalog(
       if (previous !== undefined) parseReceipt(previous, targetPath)
       let handle
       try {
-        handle = await open(
-          targetPath,
-          fileFlags.O_RDONLY | fileFlags.O_NOFOLLOW,
-        )
+        handle = await openWithoutFollowing(targetPath)
       } catch (error) {
         if (!isMissing(error))
           throw new Error(
@@ -339,7 +378,7 @@ export async function refreshCursorMcpCatalog(
         try {
           await stagedHandle.writeFile(EMPTY_MCP_CONFIG)
           await stagedHandle.sync()
-          staged = await stagedHandle.stat()
+          staged = await stagedHandle.stat({ bigint: true })
         } finally {
           await stagedHandle.close()
         }
@@ -347,8 +386,8 @@ export async function refreshCursorMcpCatalog(
           schemaVersion: 1,
           targetPath,
           sha256: EMPTY_MCP_CONFIG_SHA256,
-          device: staged.dev,
-          inode: staged.ino,
+          device: recordedFileId(staged.dev),
+          inode: recordedFileId(staged.ino),
           installed: true,
         }
         const pending: PendingCreation = { schemaVersion: 1, owner, stagedPath }
@@ -372,10 +411,7 @@ export async function refreshCursorMcpCatalog(
             targetPath,
             cursorDirectory,
           )
-          handle = await open(
-            targetPath,
-            fileFlags.O_RDONLY | fileFlags.O_NOFOLLOW,
-          )
+          handle = await openWithoutFollowing(targetPath)
         }
         if (!handle) {
           if (!(await ownedFile(targetPath, owner)))
@@ -389,10 +425,7 @@ export async function refreshCursorMcpCatalog(
           )
           await unlink(stagedPath)
           await unlink(pendingCreationPath)
-          handle = await open(
-            targetPath,
-            fileFlags.O_RDONLY | fileFlags.O_NOFOLLOW,
-          )
+          handle = await openWithoutFollowing(targetPath)
         }
       }
       try {
@@ -489,8 +522,8 @@ export async function removeOwnedCursorMcpCatalog(
         return 'preserved'
       // Retain the actual file privately; a concurrent edit or replacement must never be unlinked after a stale check.
       if (
-        (await lstat(cursorDirectory)).dev !==
-        (await lstat(storageDirectory)).dev
+        (await lstat(cursorDirectory, { bigint: true })).dev !==
+        (await lstat(storageDirectory, { bigint: true })).dev
       )
         return 'preserved'
       const retiredPath = join(
