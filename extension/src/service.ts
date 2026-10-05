@@ -106,6 +106,7 @@ import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { namesLineNumber } from './utils/namesLineNumber'
+import { numberSourceLines } from './utils/numberSourceLines'
 import { prepareNodeTestStudy } from './utils/prepareNodeTestStudy'
 import { prepareRepositoryStudy } from './utils/prepareRepositoryStudy'
 import { readerNotFollowingRunRefusal } from './utils/readerNotFollowingRunRefusal'
@@ -507,14 +508,27 @@ export class StudyService {
     return { instanceId: this.instanceId, ...result }
   }
 
-  /** Reads one exact tracked source without navigating or running the application. @example await service.source({instanceId,path:'src/main.ts'}) */
+  /**
+   * Reads one exact tracked source without navigating or running the application; the answer of `codebook_source`, which an agent reads before it cites lines or declares a stop.
+   * @param input - The instance and the tracked path, with the hash the agent expects when it rereads a cited file.
+   * @returns The exact text with its hash and line count, and `numberedText`: the same lines, each after its one-based number and a tab ({@link numberSourceLines}), so the agent takes a line from the answer instead of counting.
+   * @throws When the instance is stale, the path is not an eligible tracked file or its hash differs from `expectedHash`.
+   * @example
+   * ```ts
+   * (await service.source({ instanceId, path: 'src/main.ts' })).numberedText // => '1\tconst a = 1\n2\t'
+   * ```
+   */
   async source(input: SourceReadInput) {
     const result = await this.repositoryStore(input.instanceId).sources.read(
       input.path,
       input.expectedHash,
     )
     this.repositoryStore(input.instanceId)
-    return { instanceId: this.instanceId, ...result }
+    return {
+      instanceId: this.instanceId,
+      ...result,
+      numberedText: numberSourceLines(result.text),
+    }
   }
 
   /** Publishes/retrieves an immutable intent receipt; connection lifetime never becomes persisted book identity. @example await service.publishBook(input) */

@@ -145,6 +145,8 @@ export async function configuredRuntimeHarness(
     beforeFailure: BeforeFailure = { conditionIndex: 0, reason: 'not-visible' },
     afterFailure: BeforeFailure | undefined,
     afterReadCount = 0,
+    // The elements the page shows after the input, each with its text; when set, the after conditions are evaluated on them by the real page expression.
+    afterPageElements: { selector: string; textContent: string }[] | undefined,
     inputResolve = (): void => {},
     inputReject = (_error: Error): void => {},
     onClose = (): void => {},
@@ -414,6 +416,25 @@ export async function configuredRuntimeHarness(
         afterReadCount++
         if (afterFailure)
           return { result: { value: { ready: false, failure: afterFailure } } }
+        if (afterPageElements) {
+          const shown = afterPageElements
+          return {
+            result: {
+              value: JSON.parse(
+                JSON.stringify(
+                  runInNewContext(afterExpression, {
+                    document: {
+                      querySelectorAll: (selector: string) =>
+                        shown.filter(
+                          (element) => element.selector === selector,
+                        ),
+                    },
+                  }),
+                ),
+              ),
+            },
+          }
+        }
       }
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
@@ -918,6 +939,10 @@ export async function configuredRuntimeHarness(
     /** Makes the wait for before conditions that do not hold end with a timeout of the wait's error type worded as this sentence, instead of the wait's own wording. @example harness.wordBeforeTimeoutAs('The page was not ready in time') */
     wordBeforeTimeoutAs(sentence: string): void {
       beforeTimeoutSentence = sentence
+    },
+    /** Makes the page show these elements after the input, so the run's own after-condition expression reads them: each element answers the selector it is listed under, with its text. @example harness.showAfterPage([{ selector: 'label', textContent: 'Dark' }]) */
+    showAfterPage(elements: { selector: string; textContent: string }[]): void {
+      afterPageElements = elements
     },
     /** Makes the after conditions answer this failure on every read after the input, as an owned page whose result never appears does. */
     failAfterWith(failure: BeforeFailure): void {

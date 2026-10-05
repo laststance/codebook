@@ -44,6 +44,7 @@ import {
 import type { BundleSource } from './repositoryBundle'
 import {
   configuredDomFailureSchema,
+  configuredTextReadingsSchema,
   type ConfiguredDomFailure,
 } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
@@ -105,6 +106,7 @@ import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
+import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
 import {
   withUnannouncedPauses,
@@ -207,6 +209,7 @@ const domResultSchema = z.object({
   x: z.number().finite().optional(),
   y: z.number().finite().optional(),
   failure: configuredDomFailureSchema.optional(),
+  textReadings: configuredTextReadingsSchema.optional(),
 })
 // Diagnostic parsing admits pending fields without granting them binding authority or retaining arbitrary adapter data.
 const bindingReceiptSchema = z.object({
@@ -279,6 +282,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private unjournaledAdapterEvents = 0
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
+  /** The phases whose text conditions were journaled as held on one of several elements; each phase is journaled once ({@link journalTextReadings}). */
+  private readonly journaledTextReadingPhases = new Set<'before' | 'after'>()
   private progressTimer?: ReturnType<typeof setTimeout>
   /** True while {@link progressTimer} is the pause hold, the only deadline {@link renewPauseHold} may restart. */
   private holdingPause = false
@@ -446,8 +451,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         citation = this.definition.descriptor.anchors[stop.anchorIndex]!
       // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
       const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
+        taken = this.takeDeclaredPosition(stop, index),
         // The debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it, and its rule is measured from there.
-        armed = resolveArmedPlace(stop.source, scan)
+        armed = resolveArmedPlace(taken, scan)
       const bindingRule = createBindingLineRule(
         stop.source.line,
         citation,
@@ -575,6 +581,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.progressTimer)
     this.status = 'ready'
     await this.persist()
+  }
+
+  /**
+   * Takes a declared stop at the position Codebook uses for it and journals the difference, for the preparation of each stop in {@link prepareOwned}: a column declared on a blank line means that line, so the stop is taken at the line's start ({@link takenStopPosition}) and its breakpoint is requested from there.
+   * @param stop - The declared stop, as {@link configuredStops} gives it.
+   * @param stopIndex - Its zero-based place among the declared stops, which names its configuration field.
+   * @returns
+   * - A stop declared past column 1 of a blank line: its line at column 1, after the journal entry `breakpoint.column-on-blank-line` with the field, the declared and the taken position
+   * - Any other stop: its declared position, and nothing is journaled
+   * @example
+   * ```ts
+   * this.takeDeclaredPosition(stop, 1) // => { line: 38, column: 1, … } for additionalStops[0] declared at 38:9 on a blank line 38
+   * ```
+   */
+  private takeDeclaredPosition(
+    stop: ReturnType<typeof configuredStops>[number],
+    stopIndex: number,
+  ): ReturnType<typeof configuredStops>[number]['source'] {
+    const taken = takenStopPosition(
+      stop.source,
+      this.definition.descriptor.sources,
+    )
+    // Only a column the run set aside is journaled, so the journal says what Codebook did with the declaration.
+    if (taken.column !== stop.source.column)
+      this.evidence.record('breakpoint.column-on-blank-line', {
+        participant: stop.participant,
+        field: `${configuredStopFields(this.definition.configuration.version, stopIndex).source}.column`,
+        declared: { line: stop.source.line, column: stop.source.column },
+        taken: { line: taken.line, column: taken.column },
+      })
+    return taken
   }
 
   /**
@@ -4002,6 +4039,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Polls the declared DOM conditions without repeating application input; setup ({@link prepareOwned}) and after verification ({@link observeAfter}) call it.
+   * Once they hold, a text condition that held on one of several elements is journaled ({@link journalTextReadings}).
    * @param phase - Whether the conditions guard the input or prove the result.
    * @throws The text of {@link conditionTimeoutText} when the wait timed out ({@link WaitTimeoutError}, however the wait worded it) and the page named a condition; the invalid-selector text at once; any other failure of the wait unchanged.
    * @example
@@ -4032,6 +4070,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw error
       throw new Error(this.conditionTimeoutText(phase, lastResult.failure))
     }
+    this.journalTextReadings(phase, lastResult?.textReadings)
+  }
+  /**
+   * Journals which reading made a text condition hold when its selector matched several elements, so the run says what Codebook did with such a condition; called by {@link waitForDom} once the conditions of a phase held.
+   * @param phase - Whether the conditions guard the input or prove the result.
+   * @param textReadings - The page's counts for each text condition that held on one of several elements; absent when every condition matched one element.
+   * @returns Nothing; the entry `condition.text-held-on-one-of-several` is recorded with the phase and the counts, once per phase of a run.
+   * @example
+   * ```ts
+   * this.journalTextReadings('after', [{ conditionIndex: 0, matchedElements: 3, readingElements: 1 }])
+   * ```
+   */
+  private journalTextReadings(
+    phase: 'before' | 'after',
+    textReadings: z.infer<typeof configuredTextReadingsSchema> | undefined,
+  ): void {
+    // The after conditions are read several times before a result is certified; the first read that held is the one journaled.
+    if (!textReadings?.length || this.journaledTextReadingPhases.has(phase))
+      return
+    this.journaledTextReadingPhases.add(phase)
+    this.evidence.record('condition.text-held-on-one-of-several', {
+      phase,
+      readings: textReadings.map((reading) => ({
+        condition: reading.conditionIndex + 1,
+        matchedElements: reading.matchedElements,
+        readingElements: reading.readingElements,
+      })),
+    })
   }
   /** Revalidates all cited disk identities and open buffers at effect/pause/continue boundaries without owning raw tabs. @example await this.verifySources() */
   private async verifySources(): Promise<void> {

@@ -13,11 +13,6 @@ import type {
 } from '../repositoryConfigSchemas'
 
 type ConditionPhase = 'before' | 'after'
-/** The relation a text mismatch may report to the declared literal, never page text. */
-type TextDifference = Extract<
-  ConfiguredDomFailure,
-  { reason: 'text-mismatch' }
->['textDifference']
 
 /**
  * Tells the editor agent how to correct a declared DOM condition that timed out, called by {@link ConfiguredBrowserRun} when it composes the timeout text of before and after conditions.
@@ -26,6 +21,7 @@ type TextDifference = Extract<
  * @param condition - The declared condition that failed; `undefined` when the click target itself failed.
  * @param failure - The failure the page reported for that condition.
  * @returns
+ * - `text-mismatch` of a selector that matched several elements: the text rule, then how many matched, that none reads the expected text, the rule that one of them must, and what to correct
  * - `text-mismatch`: the text rule, followed for `surrounding-text` by the fix that fits the phase
  * - `attribute-mismatch` on a declared attribute condition: the before-input sentence for a before `value`, the entire-value sentence otherwise
  * - `click-target-missing`: that the action selector matched nothing, how many controls the page holds when the page reported it, and what to read
@@ -41,7 +37,7 @@ export function configuredConditionHint(
   failure: ConfiguredDomFailure,
 ): string {
   if (failure.reason === 'text-mismatch')
-    return textConditionHint(phase, failure.textDifference)
+    return textConditionHint(phase, failure)
   if (failure.reason === 'attribute-mismatch')
     return attributeConditionHint(phase, condition)
   if (failure.reason === 'click-target-missing')
@@ -60,13 +56,41 @@ const VALUE_ATTRIBUTE_HINT_BY_PHASE: Record<ConditionPhase, string> = {
   after: ATTRIBUTE_ENTIRE_VALUE_HINT,
 }
 
-/** Adds the phase's fix only when the element holds the expected text beside other text. */
+/**
+ * Words the hint of a text mismatch for {@link configuredConditionHint}: the rule, then what the page reported about the relation.
+ * @param phase - Whether the condition guards the input or proves the result.
+ * @param failure - The text mismatch the page reported.
+ * @returns
+ * - Several matched elements: the rule and the sentence of {@link severalElementsTextHint}
+ * - One element that holds the expected text beside other text: the rule and the phase's fix
+ * - Otherwise: the rule alone
+ * @example
+ * textConditionHint('after', { reason: 'text-mismatch', matchedElements: 3 }) // => ' A text condition compares … Here the selector matched 3 elements …'
+ */
 function textConditionHint(
   phase: ConditionPhase,
-  textDifference: TextDifference,
+  failure: Extract<ConfiguredDomFailure, { reason: 'text-mismatch' }>,
 ): string {
-  if (textDifference !== 'surrounding-text') return TEXT_CONDITION_RULE_HINT
+  if (failure.matchedElements !== undefined)
+    return (
+      TEXT_CONDITION_RULE_HINT +
+      severalElementsTextHint(failure.matchedElements)
+    )
+  if (failure.textDifference !== 'surrounding-text')
+    return TEXT_CONDITION_RULE_HINT
   return TEXT_CONDITION_RULE_HINT + TEXT_BESIDE_OTHER_TEXT_HINT_BY_PHASE[phase]
+}
+
+/**
+ * Says that a text condition's selector matched several elements and none of them reads the expected text, with the count, for {@link configuredConditionHint}; the agent cannot see the page, so the sentence gives the rule and the fix instead of any page text.
+ * @param matchedElements - How many elements the selector matched (two or more).
+ * @returns One sentence that begins with a space, as every hint does.
+ * @example
+ * severalElementsTextHint(3)
+ * // => ' Here the selector matched 3 elements and none of them reads the expected text; a text condition holds when one of them does, so correct the expected text or choose a selector that matches the element that shows it.'
+ */
+function severalElementsTextHint(matchedElements: number): string {
+  return ` Here the selector matched ${matchedElements} elements and none of them reads the expected text; a text condition holds when one of them does, so correct the expected text or choose a selector that matches the element that shows it.`
 }
 
 /** Picks the attribute sentence; a mismatch reported for a condition that is not an attribute condition gets none. */

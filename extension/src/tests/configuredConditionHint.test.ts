@@ -183,3 +183,23 @@ test('a click target that matched nothing tells the agent so, with the page’s 
     " The action selector matched no element on the page. Read the component's source for the control's tag, id, name or attributes and declare a browser-native CSS selector that matches exactly one element; check entryPath when the page holds no such control.",
   )
 })
+
+// Value: protects=an agent whose text condition matched several elements learning how many matched, that none reads its text and the rule; fails_when=the count or the rule is missing, or the beside-other-text fix of one element is given instead; why_new=Cycle 0045 N14c-14 (DX-1 c); seam=none
+test('a timed-out text condition whose selector matched several elements, none of which reads the expected text, says how many matched and that one of them must read it', () => {
+  // Arrange
+  const condition: RepositoryCondition = {
+    kind: 'text',
+    selector: 'p',
+    equals: 'Invalid credentials',
+  }
+  // Act
+  const hint = configuredConditionHint('after', condition, {
+    reason: 'text-mismatch',
+    matchedElements: 3,
+  })
+  // Assert
+  assert.equal(
+    hint,
+    " A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the selector matched 3 elements and none of them reads the expected text; a text condition holds when one of them does, so correct the expected text or choose a selector that matches the element that shows it.",
+  )
+})

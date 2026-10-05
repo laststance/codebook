@@ -5,8 +5,17 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { citationContext } from './citationContext'
 import { configuredStops } from './configuredStops'
+import { takenStopPosition } from './takenStopPosition'
 
-/** Pins all copied citations and selected coordinates for preparation and retained evidence readers. @example assertConfiguredDescriptor(configuration, descriptor) // rejects an out-of-citation position */
+/**
+ * Pins all copied citations and selected coordinates of a repository-browser start for preparation ({@link prepareRepositoryStudy}), the run ({@link ConfiguredBrowserRun}) and retained evidence readers.
+ * A stop declared on a blank line is checked at the position it is taken at ({@link takenStopPosition}): any column there means the line, so only a column past the end of a line with characters is refused.
+ * @param configuration - The start's configuration.
+ * @param descriptor - The selected node's citations and retained sources.
+ * @throws When the learning item, a citation, a source or a stop's position does not match; the message names the rule, and the caller words the agent's sentence.
+ * @example
+ * assertConfiguredDescriptor(configuration, descriptor) // rejects an out-of-citation position
+ */
 export function assertConfiguredDescriptor(
   configuration: RetainedRepositoryConfiguration,
   descriptor: ConfiguredDescriptor,
@@ -16,7 +25,13 @@ export function assertConfiguredDescriptor(
     `repository/${configuration.book.bookId}/${configuration.book.nodeId}`
   )
     throw new Error('Configured learning item changed.')
-  assertCitedSourceStops(descriptor, configuredStops(configuration))
+  assertCitedSourceStops(
+    descriptor,
+    configuredStops(configuration).map((stop) => ({
+      ...stop,
+      source: takenStopPosition(stop.source, descriptor.sources),
+    })),
+  )
 }
 
 /** Validates immutable article source bytes and every stop against its selected citation across runtime adapters. Called by {@link assertConfiguredDescriptor} and Node preparation. @example assertCitedSourceStops(descriptor, [{source,anchorIndex:0}]) */

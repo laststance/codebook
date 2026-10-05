@@ -262,7 +262,8 @@ test('a later stop whose anchor index selects a citation without its line is nam
 })
 
 // Cycle 0045 (NF-28, DX-9, ER-10): red while a column past its line's end answered "configuration.source and configuration.book.anchorIndex must identify a valid position in the same captured citation."
-test('a stop declared past the end of its line is refused with the field, the line’s length and the highest accepted column; on a blank line that column is 1', async (context) => {
+// Cycle 0045 (N14c-13): the blank-line half of this test moved to the next one, because a column on a blank line is now admitted; the refusal of a line with characters stays word for word.
+test('a stop declared past the end of a line with characters is refused with the field, the line’s length and the highest accepted column', async (context) => {
   // Arrange: src/theme.ts holds a statement on line 1 (25 characters), a blank line 2 and a statement on line 3, all cited.
   const { books, configuration, control } = await preparationHarness(context, {
     source: 'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
@@ -270,18 +271,10 @@ test('a stop declared past the end of its line is refused with the field, the li
   })
   // Act
   const pastLineEnd = await prepareRepositoryStudy(
-      { ...configuration, source: { ...configuration.source, column: 100 } },
-      books,
-      control,
-    ).catch((error: unknown) => error),
-    onBlankLine = await prepareRepositoryStudy(
-      {
-        ...configuration,
-        source: { ...configuration.source, line: 2, column: 5 },
-      },
-      books,
-      control,
-    ).catch((error: unknown) => error)
+    { ...configuration, source: { ...configuration.source, column: 100 } },
+    books,
+    control,
+  ).catch((error: unknown) => error)
   // Assert: the agent reads the message; the cause keeps the rule that refused.
   assert.ok(pastLineEnd instanceof StudyError)
   assert.deepEqual(
@@ -292,15 +285,30 @@ test('a stop declared past the end of its line is refused with the field, the li
       'Error: Configured position differs from its selected citation.',
     ],
   )
-  assert.ok(onBlankLine instanceof StudyError)
+})
+
+// Value: protects=the first admitted run of an agent that declared a stop with a column on a blank line, meaning that line; fails_when=preparation refuses the column of a line without characters; why_new=Cycle 0045 N14c-13 (DX-1 a): the VS Code agent declared auth.ts 38:9 on a blank line and its start ended "configuration.additionalStops[0].source.column 9 lies past the end of its line: auth.ts:38 has a length of 0 (a blank line), so the highest column accepted is 1. Declare column 1."; seam=none
+test('a stop declared with a column on a blank line is admitted by preparation with its declaration unchanged', async (context) => {
+  // Arrange: line 2 of src/theme.ts is blank, and the citation covers lines 1 to 3.
+  const { books, configuration, control } = await preparationHarness(context, {
+    source: 'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
+    citationEndLine: 3,
+  })
+  const declared = {
+    ...configuration,
+    source: { ...configuration.source, line: 2, column: 9 },
+  }
+  // Act
+  const definition = await prepareRepositoryStudy(declared, books, control)
+  // Assert: the frozen configuration is the one the agent sent; the run takes the column at the line's start.
   assert.deepEqual(
-    [onBlankLine.code, onBlankLine.message, onBlankLine.causeDetail],
-    [
-      'INVALID_CONFIGURATION',
-      'configuration.source.column 5 lies past the end of its line: src/theme.ts:2 has a length of 0 (a blank line), so the highest column accepted is 1. Declare column 1.',
-      'Error: Configured position differs from its selected citation.',
-    ],
+    {
+      line: definition.configuration.source.line,
+      column: definition.configuration.source.column,
+    },
+    { line: 2, column: 9 },
   )
+  assert.equal(definition.descriptor.itemId, 'repository/interface/theme')
 })
 
 test('a secondary citation edit rejects preparation even when the selected breakpoint file has not changed', async (context) => {

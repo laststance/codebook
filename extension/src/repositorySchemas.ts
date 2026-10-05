@@ -23,6 +23,7 @@ import {
   repositoryPathSchema,
 } from './sourceSchemas'
 import { itemSchema } from './studySchemas'
+import { describeMisplacedDocumentMembers } from './utils/describeMisplacedDocumentMembers'
 export { bookIdSchema } from './identitySchemas'
 export {
   bookAnchorSchema,
@@ -109,13 +110,25 @@ export const bookDocumentSchema = z
 /** The members of a published document, said where an agent reads last before it publishes: the description of `document` in the input schema of `codebook_publish_book`. */
 const BOOK_DOCUMENT_DESCRIPTION =
   'A document has the members title, summary, nodes (at least one) and edges, the relationships between its nodes; a document without relationships may leave edges out or give an empty list.'
-export const publishBookSchema = z.strictObject({
-  instanceId: z.uuid(),
-  bookId: bookIdSchema,
-  key: z.string().min(1).max(KEY_LENGTH_LIMIT),
-  expectedRevision: z.number().int().nonnegative(),
-  document: bookDocumentSchema.describe(BOOK_DOCUMENT_DESCRIPTION),
-})
+export const publishBookSchema = z.strictObject(
+  {
+    instanceId: z.uuid(),
+    bookId: bookIdSchema,
+    key: z.string().min(1).max(KEY_LENGTH_LIMIT),
+    expectedRevision: z.number().int().nonnegative(),
+    document: bookDocumentSchema.describe(BOOK_DOCUMENT_DESCRIPTION),
+  },
+  {
+    // A member of the document given beside it is refused with where it belongs; every other unknown key keeps the usual text.
+    error: (issue) =>
+      issue.code === 'unrecognized_keys'
+        ? describeMisplacedDocumentMembers(
+            issue.keys,
+            Object.keys(bookDocumentSchema.shape),
+          )
+        : undefined,
+  },
+)
 export const bookPublishIntentSchema = publishBookSchema.omit({
   instanceId: true,
 })

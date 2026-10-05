@@ -447,6 +447,75 @@ test('an after text condition that never holds ends the run with the after timeo
   assert.equal(run.view().operation?.afterVerified, false)
 })
 
+// Value: protects=the first admitted run of an agent whose after condition's selector matches several elements, one of which reads the expected text; fails_when=the run waits for a unique element and fails at the deadline, or does not journal which reading held; why_new=Cycle 0045 N14c-14 (DX-1 a): the VS Code agent's first admitted run reached its five stops and failed "Timed out waiting for configured after conditions: condition 1 (text) selector-not-unique." although one paragraph read the expected text; seam=the runtime harness's page, on which the run's own after-condition expression reads three labels
+test('an after condition whose selector matches several elements holds when one of them reads the expected text', async (context) => {
+  // Arrange: the declared after condition is text "Dark" on the selector label; after the click the page shows three labels, and only the second reads it.
+  const { run, advance, afterReads, showAfterPage } =
+    await configuredRuntimeHarness(context)
+  showAfterPage([
+    { selector: 'label', textContent: 'Light' },
+    { selector: 'label', textContent: ' Dark\n' },
+    { selector: 'label', textContent: 'System' },
+  ])
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured pause',
+  )
+  // Act: continue, and let the run's 20 s deadline pass once the conditions were read, as it would for a condition that never holds.
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(
+    () => run.view().operation?.afterVerified || afterReads() > 3,
+    'after conditions held or read repeatedly',
+  )
+  advance(20_000)
+  await run.stop()
+  // Assert
+  assert.deepEqual([...run.view().failures], [])
+  assert.equal(run.view().operation?.afterVerified, true)
+  assert.equal(
+    JSON.stringify(
+      run
+        .view()
+        .events.find(
+          (event) => event.type === 'condition.text-held-on-one-of-several',
+        )?.detail,
+    ),
+    '{"phase":"after","readings":[{"condition":1,"matchedElements":3,"readingElements":1}]}',
+  )
+})
+
+// Value: protects=an agent whose after condition's several elements all read other text reading the count and the rule in the run's failure; fails_when=the timeout says selector-not-unique or gives no count; why_new=Cycle 0045 N14c-14 (DX-1 c); seam=the runtime harness's page, on which the run's own after-condition expression reads two labels
+test('an after condition whose selector matches several elements, none of which reads the expected text, ends the run saying how many matched and the rule', async (context) => {
+  // Arrange: after the click the page shows two labels, and neither reads "Dark".
+  const { run, advance, afterReads, showAfterPage } =
+    await configuredRuntimeHarness(context)
+  showAfterPage([
+    { selector: 'label', textContent: 'Light' },
+    { selector: 'label', textContent: 'System' },
+  ])
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => afterReads() > 0, 'after condition read')
+  // Act
+  advance(20_000)
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    [...run.view().failures],
+    [
+      "Timed out waiting for configured after conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the selector matched 2 elements and none of them reads the expected text; a text condition holds when one of them does, so correct the expected text or choose a selector that matches the element that shows it.",
+    ],
+  )
+  assert.equal(run.view().operation?.afterVerified, false)
+})
+
 test('a text relation the run does not know fails the read at once instead of timing out', async (context) => {
   // Arrange
   const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(
@@ -2756,6 +2825,67 @@ test('the inspection and the journal of a stop declared on an unmapped line name
     JSON.stringify(bound?.detail),
     '{"verified":true,"line":2,"column":1,"requested":{"line":1,"column":1},"declared":{"line":1,"column":1},"armed":{"line":2,"column":1}}',
   )
+})
+
+// Value: protects=the first admitted run of an agent that declared a stop with a column on a blank line, meaning that line; fails_when=the run refuses that column, requests the breakpoint elsewhere than at the first mapped position after the line, or journals nothing about the column it set aside; why_new=Cycle 0045 N14c-13 (DX-1 a): the VS Code agent declared auth.ts 38:9 on a blank line and its start ended "configuration.additionalStops[0].source.column 9 lies past the end of its line: auth.ts:38 has a length of 0 (a blank line), so the highest column accepted is 1. Declare column 1."; seam=the runtime harness's adapter, which verifies a breakpoint on line 3 only
+test('a stop declared with a column on a blank line is admitted and requested at the first mapped position after it', async (context) => {
+  // Arrange: line 2 is blank and declared at column 9; line 3 is the next mapped line, and the citation covers lines 1 to 3.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;;AAEA',
+      fixture: {
+        source:
+          'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
+        citationEndLine: 3,
+        declaredLine: 2,
+        declaredColumn: 9,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([3])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the first mapped position after the blank line')
+  await run.stop()
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+  const inspection = await readResource(
+    service,
+    service.state(record).observations[0]!.inspectionUri,
+  )
+  const journal = (type: string) =>
+    JSON.stringify(
+      run.view().events.find((event) => event.type === type)?.detail,
+    )
+  // Assert: requested and captured at 3:1, and the journal and the inspection say what was declared and what Codebook did.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 2, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 3)
+  assert.equal(snapshot.source.column, 1)
+  assert.equal(
+    journal('breakpoint.column-on-blank-line'),
+    '{"participant":"browser","field":"configuration.source.column","declared":{"line":2,"column":9},"taken":{"line":2,"column":1}}',
+  )
+  assert.equal(
+    journal('breakpoint.armed-after-declared-line'),
+    '{"participant":"browser","declared":{"line":2,"column":9},"armed":{"line":3,"column":1}}',
+  )
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.equal(JSON.stringify(facts.declaredSource), '{"line":2,"column":9}')
+  assert.equal(JSON.stringify(facts.armed), '{"line":3,"column":1}')
 })
 
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).

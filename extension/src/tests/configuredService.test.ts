@@ -894,6 +894,25 @@ test('configured help states the binding rule from the line the stop is requeste
   assert.doesNotMatch(sourceBinding, /the column is a request/)
 })
 
+// Value: protects=an agent reading, where declaring a stop's line and column is explained, that a column on a blank line is taken at the line's start and where the run says so; fails_when=the help no longer says it, or names another journal entry than the run writes; why_new=Cycle 0045 N14c-13 (DX-1 a); seam=none
+test('configured help says that any column declared on a blank line is taken as the line’s start and names the journal entry that records it', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { sourceBinding } = z
+    .object({ sourceBinding: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    sourceBinding.includes(
+      "a line that is blank or only a comment carries none. A blank line has no column to choose: any column declared on it is taken as the line's start, and the run's journal records breakpoint.column-on-blank-line with the field, the declared and the taken position. The binding rule is counted",
+    ),
+    true,
+  )
+})
+
 // Cycle 0045 (SM-17): red while the README kept the rule counted from the declared line and said nothing about the second request.
 test('the extension README states the binding rule from the requested line, as the help does', async () => {
   // Arrange
@@ -1178,6 +1197,25 @@ test('configured help tells an agent that a continuation that sends no resume, b
   assert.doesNotMatch(
     contract.additionalStops,
     /that codebook_continue fails with 'Next declared stop was not armed/,
+  )
+})
+
+// Value: protects=an agent reading, before it declares conditions, that a text condition may match several elements and the other conditions may not; fails_when=the help no longer states the rule for a text condition or the uniqueness of the others; why_new=Cycle 0045 N14c-14; seam=none
+test('configured help says that a text condition whose selector matches several elements holds when one of them reads the expected text', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { initialState } = z
+    .object({ initialState: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    initialState.includes(
+      'A text condition whose selector matches several elements holds when one of them reads the expected text, and when none does its timeout says how many elements matched; a visible or attribute condition and the click target need a selector that matches exactly one element.',
+    ),
+    true,
   )
 })
 

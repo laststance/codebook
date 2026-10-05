@@ -8,7 +8,18 @@ export function configuredDomExpression(
   return `(${inspectDom.toString()})(${JSON.stringify(conditions)},${JSON.stringify(selector) ?? 'undefined'})`
 }
 
-/** Evaluates unique-node conditions (textContent trimmed with whitespace runs collapsed, attributes exactly) and an optional hittable click center inside the owned page; it is serialized with `toString()`, so everything it calls is declared inside it. @example inspectDom([{kind:'visible',selector:'button'}], 'button').ready */
+/**
+ * Evaluates the declared DOM conditions and an optional hittable click center inside the owned page, for every read of before and after conditions by {@link ConfiguredBrowserRun}; it is serialized with `toString()`, so everything it calls is declared inside it.
+ * Text is compared on textContent trimmed with whitespace runs collapsed, attributes exactly. A `text` condition holds when one of the elements its selector matches reads the expected text; a `visible` or `attribute` condition and the click target need exactly one element.
+ * @param conditions - The declared conditions of one phase.
+ * @param selector - The click target's selector, before input only.
+ * @returns Counts and reasons only, never page text or attribute values:
+ * - Every condition holds: `ready: true`, the click center when a selector was given, and `textReadings` when a text condition's selector matched several elements (how many matched and how many read the text)
+ * - Otherwise: `ready: false` and the first failure; a text condition whose several matched elements all read other text fails as `text-mismatch` with `matchedElements`
+ * @example
+ * inspectDom([{ kind: 'visible', selector: 'button' }], 'button').ready // => true
+ * inspectDom([{ kind: 'text', selector: 'p', equals: 'Invalid credentials' }]) // => { ready: true, textReadings: [{ conditionIndex: 0, matchedElements: 3, readingElements: 1 }] } for three paragraphs, one of which reads it
+ */
 function inspectDom(
   conditions: RepositoryConfiguration['action']['before'],
   selector?: string,
@@ -51,6 +62,12 @@ function inspectDom(
       ? { reason: 'text-mismatch', textDifference: 'surrounding-text' }
       : { reason: 'text-mismatch' }
   }
+  // Text conditions that held on one of several matched elements, as counts only.
+  const textReadings: {
+    conditionIndex: number
+    matchedElements: number
+    readingElements: number
+  }[] = []
   for (const [conditionIndex, condition] of conditions.entries()) {
     const elements = select(condition.selector),
       element = elements?.[0]
@@ -65,6 +82,29 @@ function inspectDom(
         ready: false,
         failure: { conditionIndex, reason: 'selector-missing' },
       }
+    // A text condition whose selector matches several elements holds when one of them reads the expected text.
+    if (condition.kind === 'text' && elements.length > 1) {
+      const expectedText = collapseWhitespace(condition.equals)
+      const readingElements = Array.from(elements).filter(
+        (candidate) =>
+          collapseWhitespace(candidate.textContent) === expectedText,
+      ).length
+      if (readingElements === 0)
+        return {
+          ready: false,
+          failure: {
+            conditionIndex,
+            reason: 'text-mismatch',
+            matchedElements: elements.length,
+          },
+        }
+      textReadings.push({
+        conditionIndex,
+        matchedElements: elements.length,
+        readingElements,
+      })
+      continue
+    }
     if (elements.length !== 1 || !element)
       return {
         ready: false,
@@ -90,7 +130,9 @@ function inspectDom(
         failure: { conditionIndex, reason: 'attribute-mismatch' },
       }
   }
-  if (selector === undefined) return { ready: true }
+  // The readings are named only when a text condition held on one of several elements.
+  const held = textReadings.length ? { textReadings } : {}
+  if (selector === undefined) return { ready: true, ...held }
   const elements = select(selector),
     element = elements?.[0]
   if (!elements)
@@ -124,6 +166,6 @@ function inspectDom(
     y = rect.y + rect.height / 2,
     hit = document.elementFromPoint(x, y)
   return hit && (hit === element || element.contains(hit))
-    ? { ready: true, x, y }
+    ? { ready: true, x, y, ...held }
     : { ready: false, failure: { reason: 'click-target-obscured' } }
 }

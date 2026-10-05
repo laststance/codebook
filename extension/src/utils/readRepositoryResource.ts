@@ -2,6 +2,8 @@ import { StudyError } from '../errors'
 import type { ResourceContent } from '../resources'
 import type { StudyService } from '../service'
 
+import { numberSourceLines } from './numberSourceLines'
+
 /** Resolves canonical instance-owned book history and copied source without substituting current or latest content. @example await readRepositoryResource(service, bookUri) */
 export async function readRepositoryResource(
   service: StudyService,
@@ -68,7 +70,13 @@ export async function readRepositoryResource(
         'INVALID_REFERENCE',
         'No cited source with this index in the selected revision.',
       )
-    return { uri, mimeType: 'text/plain', text: source.text }
+    // The exact bytes stay the content; the numbered copy lets an agent that declares a stop on this revision take its line from Codebook.
+    return {
+      uri,
+      mimeType: 'text/plain',
+      text: source.text,
+      numberedText: numberSourceLines(source.text),
+    }
   }
   return json({
     ...book,
