@@ -232,8 +232,10 @@ function studyClient(
   let dismissedRemoval: string | undefined
   // This pane's own delete request by its number, which the host echoes in every state of that removal, so only the pane the learner used moves focus when the request is answered.
   let removalRequest: { request: number; started: boolean } | undefined
-  // In a window without a Trash: the entry whose files this pane last asked the host to list, and the Study message it asked under.
-  let filesRequest: { studyId: string; revision: number } | undefined
+  // In a window without a Trash: this pane's last request for the files of the entry its "Remove by hand" disclosure is offered for. The host echoes `request` in the removal state that answers it, and it answers under the revision the request was sent with (its revision changes only with a render, a navigation or a close), so the number says that an answer is this request's, not the revision. `refusal` is the sentence of an answer that listed no files; it is kept here because the next pane's request replaces the host's removal state.
+  let filesRequest:
+    | { studyId: string; request: number; revision: number; refusal?: string }
+    | undefined
   // In a window without a Trash: the entry the "Remove by hand" disclosure is offered for; another entry, or none, closes it.
   let filesDisclosureStudyId: string | undefined
   let scrubbing = false
@@ -539,13 +541,22 @@ function studyClient(
   element('study-files').addEventListener('toggle', () => {
     if (!element('study-files').hasAttribute('open')) {
       showCopyOutcome('', false)
+      // Opening the disclosure again asks the host again: an earlier refusal does not stand in for the answer.
+      forgetFilesRefusal()
       return
     }
     const studyId = filesDisclosureStudyId
     if (!current || !studyId) return
-    // The learner asked for the files by opening the disclosure: an earlier refusal for this entry does not stand in for the answer.
-    askForStudyFiles(current, studyId, Boolean(current.studyFiles?.[studyId]))
+    followStudyFiles(current, studyId)
     showStudyFilesAnswer(current, studyId)
+  })
+  // Retry storage / refresh beside a refusal asks for the files again with the Study message that follows the press.
+  element('study-files').addEventListener('click', (event) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-action="retry"]')
+    )
+      forgetFilesRefusal()
   })
   element('node-history-previous').addEventListener('click', () => {
     if (current?.nodeHistory && (current.nodeHistoryPage ?? 0) > 0)
@@ -1185,57 +1196,128 @@ function studyClient(
       element('studies').focus({ preventScroll: true })
   }
   /**
-   * Gives the sentence the host refused a request for one entry's files with: its removal state names that entry and lists no file. Read by {@link hostAnsweredFilesOf} and {@link studyFilesView}.
+   * Gives this pane's files request when it is for one entry; read by the functions that follow a request ({@link settleFilesRequest}, {@link filesRefusalFor}, {@link isFilesRequestOpen}).
+   * @param studyId - The entry the disclosure is offered for.
+   * @returns The request, or `undefined` when the pane has none or its request is for another entry.
+   * @example filesRequestFor(entry.id)?.request // => the number the host echoes in its answer
+   */
+  const filesRequestFor = (studyId: string): typeof filesRequest =>
+    filesRequest?.studyId === studyId ? filesRequest : undefined
+  /**
+   * Says whether a removal state of the host answers one request of this pane: it echoes the request's number for the request's entry. Read by {@link takeFilesRefusalIn}.
+   * @param answer - The removal state of the current Study message.
+   * @param request - This pane's request.
+   * @example answersFilesRequest(message.studyRemoval, request) // => false for the answer to another pane's request
+   */
+  const answersFilesRequest = (
+    answer: StudyRemovalView,
+    request: NonNullable<typeof filesRequest>,
+  ): boolean =>
+    answer.request === request.request && answer.studyId === request.studyId
+  /**
+   * Keeps the sentence of the host's refusal with the request it answers; called by {@link settleFilesRequest} for a request no files arrived for.
+   * A removal state that echoes the request's number without the entry's files is the host's refusal. It is kept here because the state itself is replaced by the answer to the next pane's request; a state that answers another request changes nothing.
+   * @param message - The current Study message.
+   * @param request - This pane's request.
+   * @example takeFilesRefusalIn(message, request)
+   */
+  const takeFilesRefusalIn = (
+    message: StudyViewMessage,
+    request: NonNullable<typeof filesRequest>,
+  ): void => {
+    const answer = message.studyRemoval
+    if (answer && answersFilesRequest(answer, request))
+      filesRequest = { ...request, refusal: answer.text ?? '' }
+  }
+  /**
+   * Takes the host's answer to this pane's request for one entry's files in; called by {@link followStudyFiles} before it decides whether to ask.
+   * The files are read by study, so their arrival ends the request whichever pane asked; else the host's refusal of this request is kept ({@link takeFilesRefusalIn}).
    * @param message - The current Study message.
    * @param studyId - The entry the disclosure is offered for.
-   * @returns
-   * - The host's removal state names the entry and lists no file: its sentence
-   * - Otherwise: `undefined`
-   * @example filesRefusalOf(message, entry.id) // => "Stop the run before removing its study's files by hand."
+   * @example settleFilesRequest(message, entry.id)
    */
-  const filesRefusalOf = (
+  const settleFilesRequest = (
     message: StudyViewMessage,
     studyId: string,
-  ): string | undefined => {
-    const removal = message.studyRemoval
-    return removal?.studyId === studyId && !removal.files
-      ? removal.text
-      : undefined
+  ): void => {
+    const request = filesRequestFor(studyId)
+    if (!request) return
+    if (message.studyFiles?.[studyId]) {
+      filesRequest = undefined
+      return
+    }
+    takeFilesRefusalIn(message, request)
   }
-  /** Says whether the host answered a request for one entry's files already: it listed them, for this pane or for another one, or its removal state shows its refusal for that entry. Asked by {@link showStudyFiles} before a render asks for the files of an open disclosure. @example hostAnsweredFilesOf(message, entry.id) // => true once message.studyFiles holds entry.id */
-  const hostAnsweredFilesOf = (
+  /**
+   * Gives the sentence the host refused this pane's request for one entry's files with; read by {@link studyFilesView} and {@link awaitsOrHasFilesAnswer}.
+   * @param studyId - The entry the disclosure is offered for.
+   * @returns The kept sentence, or `undefined` while the pane has no refusal for that entry.
+   * @example filesRefusalFor(entry.id) // => "Stop the run before removing its study's files by hand."
+   */
+  const filesRefusalFor = (studyId: string): string | undefined =>
+    filesRequestFor(studyId)?.refusal
+  /**
+   * Says whether this pane's request for one entry's files is still open: it was sent under the current Study message's revision and has no answer. Read by {@link awaitsOrHasFilesAnswer}.
+   * A request sent under an earlier revision is void: the host refuses a message of a revision it has left and answers nothing, so the pane asks again.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @example isFilesRequestOpen(message, entry.id) // => true right after the learner opened the disclosure
+   */
+  const isFilesRequestOpen = (
+    message: StudyViewMessage,
+    studyId: string,
+  ): boolean => {
+    const request = filesRequestFor(studyId)
+    return (
+      request !== undefined &&
+      request.refusal === undefined &&
+      request.revision === message.revision
+    )
+  }
+  /**
+   * Says whether nothing is to be asked for one entry's files: the host listed them, refused this pane's request, or still owes its answer. Read by {@link followStudyFiles}.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @example awaitsOrHasFilesAnswer(message, entry.id) // => false after Retry storage / refresh made the host forget its list
+   */
+  const awaitsOrHasFilesAnswer = (
     message: StudyViewMessage,
     studyId: string,
   ): boolean =>
     Boolean(message.studyFiles?.[studyId]) ||
-    filesRefusalOf(message, studyId) !== undefined
-  /** Says whether this pane asked the host for one entry's files under the current Study message; such a request is unanswered, and nothing is asked twice under one message. Read by {@link askForStudyFiles} and {@link shownFilesRefusal}. @example isAskedUnderThisMessage(message, entry.id) // => true right after the learner opened the disclosure */
-  const isAskedUnderThisMessage = (
-    message: StudyViewMessage,
-    studyId: string,
-  ): boolean =>
-    filesRequest?.studyId === studyId &&
-    filesRequest.revision === message.revision
+    filesRefusalFor(studyId) !== undefined ||
+    isFilesRequestOpen(message, studyId)
   /**
-   * In a window without a Trash, asks the host for the files of the chosen entry, which the host names only in its answer to a delete request. Called when the learner opens the "Remove by hand" disclosure, and by {@link showStudyFiles} for a disclosure that is open on a later Study message; never for a study that was only chosen.
-   * Nothing is asked twice under one Study message: a second press on the summary, or a render that is no new Study message, sends nothing.
+   * Follows the files of the entry an open "Remove by hand" disclosure is offered for: takes the host's answer in, and asks the host, which names a study's files only in its answer to a delete request, when the pane has neither an answer nor an open request. Called by {@link showStudyFiles} on every Study message while the disclosure is open, and when the learner opens it; never for a study that was only chosen.
+   * So nothing is asked twice while an answer is owed, a refusal stands until the learner opens the disclosure again or presses Retry storage / refresh in it, and a list the host forgot (Retry storage / refresh) is asked for again, also when the host's revision did not change.
    * @param message - The current Study message.
    * @param studyId - The entry the disclosure is offered for.
-   * @param isAnswered - Whether the caller already has the host's answer; nothing is asked then.
-   * @example askForStudyFiles(message, entry.id, hostAnsweredFilesOf(message, entry.id))
+   * @example followStudyFiles(message, entry.id)
    */
-  const askForStudyFiles = (
+  const followStudyFiles = (
     message: StudyViewMessage,
     studyId: string,
-    isAnswered: boolean,
   ): void => {
-    if (isAnswered || isAskedUnderThisMessage(message, studyId)) return
-    filesRequest = { studyId, revision: message.revision }
+    settleFilesRequest(message, studyId)
+    if (awaitsOrHasFilesAnswer(message, studyId)) return
+    filesRequest = {
+      studyId,
+      request: ++removalRequestCount,
+      revision: message.revision,
+    }
     send({
       type: 'delete-study',
       studyId,
-      removalRequest: ++removalRequestCount,
+      removalRequest: filesRequest.request,
     })
+  }
+  /**
+   * Forgets a refusal the host answered this pane's files request with, so the next look at the entry's files asks the host again; called when the disclosure closes and at a press on Retry storage / refresh inside it.
+   * A request that is still open is kept: its answer is owed, and nothing is asked twice for it.
+   * @example forgetFilesRefusal()
+   */
+  const forgetFilesRefusal = (): void => {
+    if (filesRequest?.refusal !== undefined) filesRequest = undefined
   }
   /** What the "Remove by hand" disclosure holds: the sentence above the list, whether that sentence is the host's refusal, the paths to list, and whether Retry storage / refresh is offered (not while the host is still asked). */
   type StudyFilesView = {
@@ -1245,41 +1327,20 @@ function studyClient(
     offersRetry: boolean
   }
   /**
-   * Gives the refusal the "Remove by hand" disclosure shows for one entry; read by {@link studyFilesView}.
-   * A refusal the host showed for the entry counts only while the disclosure is open and until this pane asks again: a closed disclosure is prepared with the listing sentence, so opening it never shows an answer the learner did not ask for, and a request sent under the current Study message is unanswered.
-   * @param message - The current Study message.
-   * @param studyId - The entry the disclosure is offered for.
-   * @param isOpen - Whether the learner has the disclosure open.
-   * @returns
-   * - The disclosure is open, this pane has not asked under this message and the host refused: the host's sentence
-   * - Otherwise: `undefined`
-   * @example shownFilesRefusal(message, entry.id, false) // => undefined
-   */
-  const shownFilesRefusal = (
-    message: StudyViewMessage,
-    studyId: string,
-    isOpen: boolean,
-  ): string | undefined =>
-    isOpen && !isAskedUnderThisMessage(message, studyId)
-      ? filesRefusalOf(message, studyId)
-      : undefined
-  /**
    * Says what the "Remove by hand" disclosure holds for one entry, from what the host answered so far; read by {@link showStudyFilesAnswer}.
    * The files are read by study, not from the removal state, which answers one pane's request at a time.
    * @param message - The current Study message.
    * @param studyId - The entry the disclosure is offered for.
-   * @param isOpen - Whether the learner has the disclosure open.
    * @returns
    * - The host listed files: the sentence that says to remove them, the paths, Retry
    * - The host listed no file: the sentence that none is left, no path, Retry
-   * - The host's refusal is shown ({@link shownFilesRefusal}): its sentence as a refusal, no path, Retry
+   * - The host refused this pane's request ({@link filesRefusalFor}): its sentence as a refusal, no path, Retry
    * - Otherwise: the listing sentence, no path, no Retry
-   * @example studyFilesView(message, entry.id, true) // => { note: "Listing this study's files…", isRefusal: false, files: [], offersRetry: false }
+   * @example studyFilesView(message, entry.id) // => { note: "Listing this study's files…", isRefusal: false, files: [], offersRetry: false }
    */
   const studyFilesView = (
     message: StudyViewMessage,
     studyId: string,
-    isOpen: boolean,
   ): StudyFilesView => {
     const files = message.studyFiles?.[studyId]
     if (files)
@@ -1291,7 +1352,7 @@ function studyClient(
         files,
         offersRetry: true,
       }
-    const refusal = shownFilesRefusal(message, studyId, isOpen)
+    const refusal = filesRefusalFor(studyId)
     return {
       note: refusal ?? options.studyFiles.listing,
       isRefusal: refusal !== undefined,
@@ -1309,11 +1370,7 @@ function studyClient(
     message: StudyViewMessage,
     studyId: string,
   ): void => {
-    const view = studyFilesView(
-      message,
-      studyId,
-      element('study-files').hasAttribute('open'),
-    )
+    const view = studyFilesView(message, studyId)
     text('study-files-note', view.note)
     element('study-files-note').classList.toggle('error', view.isRefusal)
     replace('study-files-list', view.files, () =>
@@ -1402,6 +1459,8 @@ function studyClient(
     if (offeredFor !== filesDisclosureStudyId) {
       disclosure.removeAttribute('open')
       showCopyOutcome('', false)
+      // A request for the entry before is nobody's any more; its answer, if it still comes, names another entry.
+      filesRequest = undefined
     }
     filesDisclosureStudyId = offeredFor
     disclosure.hidden = !offeredFor
@@ -1423,13 +1482,9 @@ function studyClient(
     const offeredFor = filesOfferedFor(message, chosen, reason)
     offerStudyFilesFor(offeredFor)
     if (!offeredFor) return
-    // An open disclosure follows the host on every Study message: it asks again while the host has not answered for this entry. A closed one asks for nothing.
+    // An open disclosure follows the host on every Study message. A closed one asks for nothing.
     if (element('study-files').hasAttribute('open'))
-      askForStudyFiles(
-        message,
-        offeredFor,
-        hostAnsweredFilesOf(message, offeredFor),
-      )
+      followStudyFiles(message, offeredFor)
     const focusedBefore = focusedInStudyFiles()
     showStudyFilesAnswer(message, offeredFor)
     // While the host is asked again (Retry storage / refresh made it forget its list) the disclosure shows no button: a focus that stood on one goes to the summary, not to the document body.

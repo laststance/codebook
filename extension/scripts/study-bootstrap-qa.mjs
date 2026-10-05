@@ -3791,18 +3791,25 @@ async function check(page, options, collected) {
       metadata: 'unavailable',
     })
   let savedRevision = 100
-  /** Publishes one Study message for the Saved studies cases; `chosen` is the study the reader shows. */
-  const library = (studies, chosen, extra = {}) =>
-    publish({
-      ...options.message,
-      revision: ++savedRevision,
-      studies,
-      model: {
-        ...options.message.model,
-        selection: { ...options.message.model.selection, studyId: chosen },
-      },
-      ...extra,
-    })
+  /** Builds one Study message for the Saved studies cases under the counter's revision; `chosen` is the study the reader shows. */
+  const libraryMessage = (studies, chosen, extra) => ({
+    ...options.message,
+    revision: savedRevision,
+    studies,
+    model: {
+      ...options.message.model,
+      selection: { ...options.message.model.selection, studyId: chosen },
+    },
+    ...extra,
+  })
+  /** Publishes one Study message for the Saved studies cases under a new revision, as the host does when it renders: it shows another study, or the Study workspace is open while Retry storage / refresh ends. */
+  const library = (studies, chosen, extra = {}) => {
+    savedRevision += 1
+    return publish(libraryMessage(studies, chosen, extra))
+  }
+  /** Publishes one Study message under the revision of the message before it, as the host does when it answers a pane's request (a removal's state, a study's files, a refusal) or reports its own progress: its revision changes only with a render, a navigation or a close, so an answer carries the revision the request was sent with. */
+  const libraryAnswer = (studies, chosen, extra = {}) =>
+    publish(libraryMessage(studies, chosen, extra))
   const removalControl = () =>
     page.evaluate(() => {
       const visible = (id) =>
@@ -4756,12 +4763,12 @@ async function check(page, options, collected) {
     text: listedSentence,
     files: studyFiles,
   })
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
     studyFiles: { [shownStudy.id]: studyFiles },
   })
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
     studyFiles: { [shownStudy.id]: studyFiles },
@@ -4783,7 +4790,7 @@ async function check(page, options, collected) {
       [otherStudy.id]: [otherStudyFile],
     },
   }
-  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, bothListed)
   const besideAnotherPanesAnswer = await removalControl()
   const removeByHandSummary = await page
     .locator('#study-files > summary')
@@ -4973,9 +4980,9 @@ async function check(page, options, collected) {
     emptiedStudy = savedStudy('window_run-empty10'),
     threeStudies = [shownStudy, thirdStudy, emptiedStudy]
   await library(threeStudies, emptiedStudy.id, withoutTrash)
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   // Act: the host answers with a list that holds no file.
-  await library(threeStudies, emptiedStudy.id, {
+  await libraryAnswer(threeStudies, emptiedStudy.id, {
     ...withoutTrash,
     studyRemoval: await answering({
       status: 'refused',
@@ -5000,16 +5007,19 @@ async function check(page, options, collected) {
       text: refusalSentence,
     }),
   }
-  await library(threeStudies, thirdStudy.id, refusedFiles)
+  await libraryAnswer(threeStudies, thirdStudy.id, refusedFiles)
   const filesRefused = await removalControl()
   // A later Study message that still carries the refusal asks nothing again.
-  await library(threeStudies, thirdStudy.id, { ...refusedFiles, busy: true })
+  await libraryAnswer(threeStudies, thirdStudy.id, {
+    ...refusedFiles,
+    busy: true,
+  })
   const afterRefusalStayed = await removalControl()
   // The learner closes the disclosure and opens it again: that asks the host once more, and this time it lists the files.
   await toggleByKeyboard('study-files')
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   const askedAgain = await removalControl()
-  await library(threeStudies, thirdStudy.id, {
+  await libraryAnswer(threeStudies, thirdStudy.id, {
     ...withoutTrash,
     studyRemoval: await answering({
       status: 'refused',
@@ -5107,19 +5117,27 @@ async function check(page, options, collected) {
       tag: document.activeElement.tagName,
       within: document.activeElement.parentElement?.id,
     }))
-  await library(threeStudies, thirdStudy.id, {
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  await libraryAnswer(threeStudies, thirdStudy.id, {
     ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: threeListedFiles,
+    }),
     studyFiles: { [thirdStudy.id]: threeListedFiles },
   })
-  await toggleByKeyboard('study-files')
   const threeListed = await removalControl()
   await page.locator('#study-files [data-action="retry"]').focus()
   // Act: the learner, who removed two of the files by hand, presses Retry storage / refresh; the host forgets its lists and names no files for the study, and then answers the pane's new request.
   await page.keyboard.press('Enter')
-  await library(threeStudies, thirdStudy.id, withoutTrash)
+  // The Study workspace is closed (Saved studies stand in the bottom panel), so Retry ends without a render and its message carries the revision before it.
+  await libraryAnswer(threeStudies, thirdStudy.id, withoutTrash)
   const askedAfterRetry = await removalControl(),
     focusWhileListing = await focusInRemoveByHand()
-  await library(threeStudies, thirdStudy.id, {
+  await libraryAnswer(threeStudies, thirdStudy.id, {
     ...withoutTrash,
     studyRemoval: await answering({
       status: 'refused',
@@ -5142,7 +5160,7 @@ async function check(page, options, collected) {
       focusAfterAnswer,
     },
     passed:
-      // The host already held the list when the disclosure was opened: nothing was asked.
+      // The pane asked for the list under the revision every later message of this case carries.
       threeListed.removeByHand.open &&
       JSON.stringify(threeListed.removeByHand.files) ===
         JSON.stringify(threeListedFiles) &&
@@ -5166,6 +5184,142 @@ async function check(page, options, collected) {
       oneLeft.deletes.length === askedAfterRetry.deletes.length &&
       JSON.stringify(focusAfterAnswer) ===
         JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }),
+  })
+
+  // Arrange: Remove by hand opened for the other study, whose files the host has not listed; every message until the host renders again carries the revision the pane asked under (row 168).
+  const othersFiles = { [shownStudy.id]: studyFiles },
+    studiesWithOther = [shownStudy, otherStudy, thirdStudy]
+  /** The state of the host's removal that answers another pane's request for the shown study's files. */
+  const anotherPanesAnswer = (request) => ({
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: listedSentence,
+    files: studyFiles,
+    request,
+  })
+  await library(studiesWithOther, otherStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const askedFirst = await removalControl()
+  // Act: a run of this study turns out not to have stopped, so the disclosure leaves beside that reason, and the host's refusal of the request arrives while the disclosure is not offered; then the run has stopped and another pane's answer stands in the message.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    unstoppedStudyId: otherStudy.id,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: "Stop the run before removing its study's files by hand.",
+    }),
+  })
+  const besideReason = await removalControl()
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(1),
+    studyFiles: othersFiles,
+  })
+  // The learner opens the disclosure that is offered again: the request before is nobody's any more, so the pane asks anew.
+  await openRemoveByHandAndAwaitRequest()
+  const answerOwed = await removalControl()
+  // The host answers another pane's request first.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(1),
+    studyFiles: othersFiles,
+  })
+  const besideForeignAnswer = await removalControl()
+  // The host refuses this pane's request.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: refusalSentence,
+    }),
+    studyFiles: othersFiles,
+  })
+  const ownRefusal = await removalControl()
+  // The answer to another pane's next request takes the refusal's place in the host's message.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const refusalAfterForeignAnswer = await removalControl()
+  // The learner presses Retry storage / refresh beside the refusal, and the host reports that it is working.
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    saving: true,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const askedAtRetry = await removalControl()
+  // The host renders again before it answers: it refuses a request of a revision it has left, and answers nothing.
+  await library(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const askedUnderNewRevision = await removalControl()
+  // The host lists the study's file for that request.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { ...othersFiles, [otherStudy.id]: [otherStudyFile] },
+  })
+  const listedAtLast = await removalControl()
+  // Assert
+  const requests = (control) => control.deletes.length
+  cases.push({
+    name: 'Remove by hand knows the host’s answer to its request by the request’s number, under a revision the host does not change: another pane’s answer is not taken for it and nothing is asked twice while it is owed; a refusal stays when another pane’s answer takes its place in the message; Retry storage / refresh beside a refusal asks again; a disclosure that left beside a reason asks anew when it is opened again; and a request the host left behind with a new revision is sent again',
+    actual: {
+      askedFirst,
+      besideReason,
+      answerOwed,
+      besideForeignAnswer,
+      ownRefusal,
+      refusalAfterForeignAnswer,
+      askedAtRetry,
+      askedUnderNewRevision,
+      listedAtLast,
+    },
+    passed:
+      // A disclosure that left beside a reason and is offered again asks anew when it is opened, under the same revision.
+      besideReason.removeByHand === null &&
+      requests(besideReason) === requests(askedFirst) &&
+      requests(answerOwed) === requests(askedFirst) + 1 &&
+      answerOwed.removeByHand.note === "Listing this study's files…" &&
+      // Another pane's answer under the same revision: still listing, nothing asked again.
+      besideForeignAnswer.removeByHand.note === "Listing this study's files…" &&
+      !besideForeignAnswer.removeByHand.retryVisible &&
+      requests(besideForeignAnswer) === requests(answerOwed) &&
+      // The answer with this pane's number under the same revision is shown.
+      ownRefusal.removeByHand.note === refusalSentence &&
+      ownRefusal.removeByHand.noteIsError &&
+      ownRefusal.removeByHand.retryVisible &&
+      requests(ownRefusal) === requests(answerOwed) &&
+      // It stays, and the pane does not ask again, when the host's message no longer carries it.
+      refusalAfterForeignAnswer.removeByHand.note === refusalSentence &&
+      refusalAfterForeignAnswer.removeByHand.retryVisible &&
+      requests(refusalAfterForeignAnswer) === requests(answerOwed) &&
+      // Retry storage / refresh beside it: one new request with the next message, and the disclosure lists again.
+      requests(askedAtRetry) === requests(answerOwed) + 1 &&
+      askedAtRetry.deletes.at(-1)[0] === otherStudy.id &&
+      askedAtRetry.removeByHand.note === "Listing this study's files…" &&
+      !askedAtRetry.removeByHand.noteIsError &&
+      // A new revision without an answer: the request is sent again, once.
+      requests(askedUnderNewRevision) === requests(answerOwed) + 2 &&
+      askedUnderNewRevision.removeByHand.note ===
+        "Listing this study's files…" &&
+      listedAtLast.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAtLast.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      requests(listedAtLast) === requests(askedUnderNewRevision),
   })
 
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).

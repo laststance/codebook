@@ -498,6 +498,8 @@ export class StudyWorkspace {
   private studyRemovalRequest?: number
   /** Whether {@link removeSavedStudy} has taken a delete request and not ended it yet; set before its first `await`, so a second request delivered in the same turn is refused before {@link askStudyRemoval} marks the removal `confirming`. */
   private studyRemovalTaken = false
+  /** Settles, without a rejection, when the first check of the delete request that is taken has ended (see {@link studyRemovalTaken}); a request for a study's files in a window without a Trash waits for it instead of being dropped. `undefined` while no request is being checked. */
+  private studyRemovalCheck?: Promise<void>
   /** Studies this window moved to the system Trash; a position save still queued for one of them writes nothing. */
   private readonly removedStudyIds = new Set<string>()
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
@@ -12906,14 +12908,42 @@ export class StudyWorkspace {
   }
 
   /**
-   * Removes one saved study on the learner's request from the Saved studies section: confirms in a native dialog, holds off this window's writers of that study, moves its files to the system Trash through {@link LearningLibrary.removeStudy} and reports the outcome in the message's `studyRemoval` field.
-   * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines. Called by {@link receive} for the pane's `delete-study` message; one removal runs at a time, from its first check ({@link studyRemovalTaken}) to its move, and a request that arrives meanwhile returns without effect.
+   * Says whether a request for a study's files must wait: the window has no Trash and another request is being checked. Asked by {@link removeSavedStudy} until it is the request's turn.
+   * @example while (this.isFilesRequestInFront()) await this.studyRemovalCheck
+   */
+  private isFilesRequestInFront(): boolean {
+    return (
+      this.studyRemovalCheck !== undefined &&
+      this.studyRemovalAvailability() === 'no-trash'
+    )
+  }
+
+  /**
+   * Handles the pane's `delete-study` message; called by {@link receive}. With a Trash it starts the removal ({@link takeStudyRemoval}), which takes one request at a time and leaves a second one without effect.
+   * A window without a Trash moves nothing: a request there asks for a study's files, which every asking pane waits for. Several panes can ask at once (each open "Remove by hand" asks again after Retry storage / refresh), so such a request waits until the one in front is answered and is then answered itself, with the number it gave.
    * @param studyId - The entry the learner chose.
-   * @param removalRequest - The number the asking pane gave this request; every state of this removal echoes it.
-   * @returns Once the removal ended: refused, cancelled, moved or left in place, as its `studyRemoval` field says; at once for a request made while another removal runs.
+   * @param removalRequest - The number the asking pane gave this request; the answer echoes it.
+   * @returns Once the request is answered or the removal ended.
    * @example await this.removeSavedStudy(message.studyId, message.removalRequest)
    */
   private async removeSavedStudy(
+    studyId: string,
+    removalRequest?: number,
+  ): Promise<void> {
+    // No await while nothing is in front: two requests of one moment must not both pass this line before the first is taken. A waiting request that another one overtook waits for that one.
+    while (this.isFilesRequestInFront()) await this.studyRemovalCheck
+    await this.takeStudyRemoval(studyId, removalRequest)
+  }
+
+  /**
+   * Removes one saved study on the learner's request from the Saved studies section: confirms in a native dialog, holds off this window's writers of that study, moves its files to the system Trash through {@link LearningLibrary.removeStudy} and reports the outcome in the message's `studyRemoval` field.
+   * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines. Called by {@link removeSavedStudy}; one removal runs at a time, from its first check ({@link studyRemovalTaken}) to its move, and a request that arrives meanwhile returns without effect.
+   * @param studyId - The entry the learner chose.
+   * @param removalRequest - The number the asking pane gave this request; every state of this removal echoes it.
+   * @returns Once the removal ended: refused, cancelled, moved or left in place, as its `studyRemoval` field says; at once for a request made while another removal runs.
+   * @example await this.takeStudyRemoval(message.studyId, message.removalRequest)
+   */
+  private async takeStudyRemoval(
     studyId: string,
     removalRequest?: number,
   ): Promise<void> {
@@ -12922,12 +12952,19 @@ export class StudyWorkspace {
     // Taken before the first await: the checks below yield before the dialog marks the removal `confirming`.
     this.studyRemovalTaken = true
     this.studyRemovalRequest = removalRequest
+    const check = this.studyRemovalConfirmed(studyId)
+    // What a files request of another pane waits for; a check that throws ends the wait as well.
+    this.studyRemovalCheck = check.then(
+      () => undefined,
+      () => undefined,
+    )
     let confirmed: boolean
     try {
-      confirmed = await this.studyRemovalConfirmed(studyId)
+      confirmed = await check
     } finally {
       // A confirmed removal is `confirming` now and stays in progress through its move; any other one has ended.
       this.studyRemovalTaken = false
+      this.studyRemovalCheck = undefined
     }
     if (!confirmed) return
     // A checkpoint of this study waits until its files are settled instead of skipping the study.

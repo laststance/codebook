@@ -4499,6 +4499,148 @@ test('in a window without a Trash, after two of a study’s three listed files w
   }
 })
 
+/**
+ * Writes one saved study an older Codebook left into the reader's library: an archive in a historical format, which the library lists without reading it and Retry writes nothing for.
+ * @param directory - The reader's library directory.
+ * @returns The study's id and its archive's path.
+ * @example const older = await writeHistoricalStudy(directory) // listed after the next Retry storage / refresh
+ */
+async function writeHistoricalStudy(
+  directory: string,
+): Promise<{ id: string; archive: string }> {
+  const id = `${randomUUID()}_${randomUUID()}`,
+    archive = join(directory, `${id}.study.v2.json`)
+  await writeFile(archive, '{}')
+  return { id, archive }
+}
+
+// Value: protects=two panes of a window without a Trash that ask for the files of their studies at the same moment (each open "Remove by hand" asks again after Retry storage / refresh) both getting their answer; fails_when=the reader drops the request that arrives while the other is being answered, so the pane that sent it waits for an answer that never comes and stays at "Listing this study's files…" with no button; why_new=Cycle 0046 row 168 (delegated review, finding 4c); seam=two delete requests received in one tick, as the Study pane and the bottom-panel view send them
+test('in a window without a Trash two panes that ask for the files of two studies at the same moment are both answered, each with the number it gave its request', async () => {
+  // Arrange: a WSL remote window with two saved studies an older Codebook left, and the Study workspace open.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const directory = harness.reader.inspect().libraryDirectory!
+    const first = await writeHistoricalStudy(directory),
+      second = await writeHistoricalStudy(directory)
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const revision = harness.reader.inspect().view!.revision,
+      publishedBefore = harness.postedMessages().length
+    /** Sends one pane's request for a study's files under the shown revision. */
+    const ask = (
+      pane: 'context' | 'moments',
+      studyId: string,
+      removalRequest: number,
+    ): Promise<void> =>
+      readerSeams(harness).receive(
+        { type: 'delete-study', revision, studyId, removalRequest },
+        pane,
+      )
+    // Act: both panes ask before either request is answered.
+    await Promise.all([
+      ask('context', first.id, 1),
+      ask('moments', second.id, 2),
+    ])
+    // Assert: every answer the Study pane received, in order, and the lists the reader keeps for both.
+    const answers = harness
+      .postedMessages()
+      .slice(publishedBefore)
+      .flatMap((message) =>
+        message.studyRemoval
+          ? [
+              {
+                request: message.studyRemoval.request,
+                files: message.studyRemoval.files,
+                revision: message.revision,
+              },
+            ]
+          : [],
+      )
+    assert.deepEqual(structuredClone(answers), [
+      { request: 1, files: [first.archive], revision },
+      { request: 2, files: [second.archive], revision },
+    ])
+    assert.deepEqual(
+      structuredClone(harness.reader.inspect().view!.studyFiles),
+      { [first.id]: [first.archive], [second.id]: [second.archive] },
+    )
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=what the Study pane's DOM check takes for granted about the reader in a window without a Trash: an answer to a request for a study's files, a refusal as well, and the message that ends Retry storage / refresh while the Study workspace is closed all carry the revision the pane asked under; fails_when=the reader gives such a message a new revision, so the DOM cases of "Remove by hand", which publish them under the asking revision, no longer show what a learner gets (they passed on a fixture that gave every message a new revision, while the pane stayed at "Listing this study's files…" in the product); why_new=Cycle 0046 row 168 (delegated review, findings 4 and 5); seam=the bottom-panel view's requests with the Study workspace closed
+test('in a window without a Trash the reader answers a request for a study’s files, a refusal as well, and ends Retry storage / refresh with the Study workspace closed, all under the revision the request was sent with', async () => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left and a saved Node test history; the Study workspace is not open.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    const nodeHistory = await saveOneStopNodeHistory(
+      harness.service.nodeHistoryStore!,
+    )
+    await harness.reader.action('retry')
+    const view = () => harness.reader.inspect().view!
+    const revisionAsked = view().revision
+    /** Sends the bottom panel's request for a study's files and reads what the reader answers. */
+    const answerTo = async (studyId: string, removalRequest: number) => {
+      await readerSeams(harness).receive(
+        {
+          type: 'delete-study',
+          revision: revisionAsked,
+          studyId,
+          removalRequest,
+        },
+        'moments',
+      )
+      return structuredClone({
+        revision: view().revision,
+        answer: view().studyRemoval,
+      })
+    }
+    // Act: a request the reader refuses, one it lists files for, and Retry storage / refresh.
+    const refused = await answerTo(nodeHistory.studyId, 1)
+    const listed = await answerTo(study.id, 2)
+    await harness.reader.action('retry')
+    const afterRetry = structuredClone({
+      revision: view().revision,
+      answer: view().studyRemoval,
+      studyFiles: view().studyFiles,
+    })
+    // Assert
+    assert.deepEqual(refused, {
+      revision: revisionAsked,
+      answer: {
+        status: 'refused',
+        studyId: nodeHistory.studyId,
+        text: 'Codebook cannot list the files of a Node test history for removal by hand yet.',
+        request: 1,
+      },
+    })
+    assert.deepEqual(listed, {
+      revision: revisionAsked,
+      answer: {
+        status: 'refused',
+        studyId: study.id,
+        text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+        files: [study.archive],
+        request: 2,
+      },
+    })
+    assert.deepEqual(afterRetry, {
+      revision: revisionAsked,
+      answer: undefined,
+      studyFiles: {},
+    })
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner can copy the files of a study a window without a Trash listed, to remove them in a terminal; fails_when=the copy request copies nothing, or text the pane sent instead of the reader's own list (RT-7, DR-14); why_new=the reader had no list to copy; seam=the editor's clipboard, recorded by the harness
 test('in a window without a Trash, copying the listed files of a study puts the reader’s own list on the clipboard, one path a line', async () => {
   // Arrange: a WSL remote window with one saved study whose files a delete request has listed.
