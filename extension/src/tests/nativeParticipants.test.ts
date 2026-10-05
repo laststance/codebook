@@ -1862,6 +1862,59 @@ test('a pause the debugger makes for itself in the browser while a server stop i
   )
 })
 
+for (const declared of [
+  { stops: ['server', 'browser'], text: 'a server and a browser stop' },
+  { stops: ['server'], text: 'only a server stop' },
+] as const)
+  // Cycle 0046 (row 7, F21-F1): red while the page's pause at a server stop's breakpoint in its stub of a "use server" module ended the run before the input with "Unexpected or additional browser stop invalidated the declared operation" (VS Code, a server stop on the head of an exported action, twice).
+  test(`a page paused at a server stop’s breakpoint in its stub of the server module is resumed before the input, and a run that declares ${declared.text} captures every stop`, async (context) => {
+    // Arrange: the server stop is armed, and the editor sent its breakpoint to the browser session too.
+    const harness = await nativeParticipantsHarness(context, declared.stops)
+    await harness.run.prepare()
+    const serverBreakpoint = harness.breakpoints[0]!
+    // Act: the page evaluates its stub of the server module and the debugger pauses it there, naming the server breakpoint.
+    harness.pauseBrowserAtServerBreakpoint(serverBreakpoint)
+    await waitUntil(() => {
+      const view = harness.run.view()
+      if (view.failures.length) throw new Error(view.failures.join('; '))
+      return harness.commands.some(
+        (command) =>
+          command.participant === 'browser' && command.method === 'continue',
+      )
+    }, 'the page resumed before the input')
+    harness.run.action('once', 'repository-click')
+    const server = await pauseReady(harness, 'server')
+    await harness.run.continue('server', server.pause)
+    if (declared.stops.length === 2) {
+      const browser = await pauseReady(harness, 'browser')
+      await harness.run.continue('browser', browser.pause)
+    }
+    await waitUntil(
+      () => harness.run.view().status === 'completed',
+      'completed after every declared stop',
+    )
+    await harness.run.stop()
+    // Assert
+    const resumed = harness.run
+      .view()
+      .events.filter(
+        (event) => event.type === 'dap.server-breakpoint-browser-stop-resumed',
+      )
+      .map((event) => JSON.parse(JSON.stringify(event.detail)))
+    assert.equal(harness.run.view().failures.join('; '), '')
+    assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+    assert.deepEqual(resumed, [
+      {
+        participant: 'browser',
+        threadId: 1,
+        hitBreakpointIds: [12],
+        declared: 'src/mode.ts:1',
+        inputDispatched: false,
+      },
+    ])
+    assert.equal(harness.run.view().snapshots.length, declared.stops.length)
+  })
+
 for (const moment of [
   'after the continuation',
   'before the continue response',
@@ -3144,6 +3197,90 @@ test('a server stop the debugger binds and pauses across a line that has a mappe
   assert.equal(
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a mapped position. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+// Cycle 0046 (row 8, F21-F2): red while the rule counted every mapped line between: a server stop declared above `export async function authenticate(` was bound at its first statement and refused at the pause, after the input, with "line 27 between the declared line 26 and line 32 has a mapped position" (VS Code).
+test('a server stop on a function head whose lines have mapped positions but no break locations is captured where the debugger paused, and the journal names the break locations that decided it', async (context) => {
+  // Arrange: lines 1 to 3 are the function's head, its parameter and `) {`, line 4 its first statement; every line is mapped, and the debugger lists a break location on line 4 only. The breakpoint requested at 1:1 binds at 4:1 and the runtime pauses there.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: 'AAAA;AACA;AACA;AACA;AACA' },
+    fixture: {
+      server: {
+        source:
+          'export async function authenticate(\n  mode,\n) {\n  return mode\n}\n',
+        citationEndLine: 5,
+      },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 3, columnNumber: 0 },
+  ])
+  await harness.run.prepare()
+  harness.pauseAt('server', 3, 0)
+  harness.bindAt('server', 4, 1)
+  harness.movePausedFrame(4)
+  harness.expireSourceBoundWait()
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  await waitUntil(
+    () => harness.run.view().status === 'completed',
+    'completed after the stop bound past the function head',
+  )
+  await harness.run.stop()
+  const decided = harness.run
+    .view()
+    .events.find(
+      (event) => event.type === 'breakpoint.rule-from-break-locations',
+    )?.detail
+  // Assert
+  assert.equal(server.source.line, 4)
+  assert.equal(server.source.column, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(decided)), {
+    participant: 'server',
+    declared: { line: 1, column: 1 },
+    boundLine: 4,
+    breakLocationLines: [4],
+  })
+  assert.equal(harness.run.view().finalOutcome, 'demonstrated')
+})
+
+// Cycle 0046 (row 8): the rule built from the break locations still refuses a binding past a line the debugger can pause on, and names that line.
+test('a server stop bound past a line of its function where the debugger can pause fails naming that line’s break location', async (context) => {
+  // Arrange: as above, but the debugger lists a break location on line 2 as well.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: 'AAAA;AACA;AACA;AACA;AACA' },
+    fixture: {
+      server: {
+        source:
+          'export async function authenticate(\n  mode,\n) {\n  return mode\n}\n',
+        citationEndLine: 5,
+      },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 1, columnNumber: 2 },
+    { lineNumber: 3, columnNumber: 0 },
+  ])
+  await harness.run.prepare()
+  harness.pauseAt('server', 3, 0)
+  harness.bindAt('server', 4, 1)
+  harness.movePausedFrame(4)
+  harness.expireSourceBoundWait()
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'pause past a line with a break location rejected',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 4:1, refused: line 2 between the declared line 1 and line 4 has a break location. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:1, 5:1. ${MAPPING_HINTS}`,
   )
   assert.equal(harness.run.view().snapshots.length, 0)
 })

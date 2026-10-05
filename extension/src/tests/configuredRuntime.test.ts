@@ -3383,6 +3383,44 @@ test('a stop declared on the first line of a block comment in a partly scanned m
   assert.equal(snapshot.source.column, 1)
 })
 
+// Cycle 0046 (row 29, PL-21): red while the break locations of a partly scanned module were searched from the declared line, so a stop on the first line of a declaration over several lines was requested inside its initializer, where the required binding has no value yet.
+test('a stop on the first line of a declaration over several lines in a partly scanned module is requested on the first line after the whole statement that can pause, not inside its initializer', async (context) => {
+  // Arrange: lines 1 to 3 declare nextTheme through a call over several lines and line 4 reads it; the citation covers lines 1 to 4. The scan stops at its segment limit before any mapping, and the debugger lists break locations inside the initializer (line 2) and on line 4.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    listPossibleBreakLines,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: `${'A,'.repeat(200_000)}A;AACA;AACA;AACA`,
+    fixture: {
+      source: 'const nextTheme = pick(\n  "dark",\n)\nsetTheme(nextTheme)\n',
+      citationEndLine: 4,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([2, 4])
+  listPossibleBreakLines([1, 3])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured after the declaring statement')
+  await run.stop()
+  // Assert: requested at editor position 3:0 (source 4:1), after the statement that ends on line 3.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 3, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 4)
+  assert.equal(snapshot.source.column, 1)
+})
+
 test('a stop declared on an opening tag in a partly scanned module is requested on the first later line that can pause, not on the line that holds only the tag’s closing bracket', async (context) => {
   // Arrange: line 1 opens a tag, line 2 holds only its `>`, line 3 is the first line the debugger can pause on. The scan stops at its segment limit before the mapping of line 3.
   const {
@@ -3672,7 +3710,7 @@ test('a browser stop the debugger moved across a mapped line although its own li
   assert.equal(run.view().finalOutcome, 'demonstrated')
 })
 
-// Value: protects=a binding across a mapped line staying refused when a second request cannot help; fails_when=the binding the stop's rule refuses is accepted because the refusal moved behind the question whether the requested line can pause, and that line cannot; why_new=Cycle 0045 local review (runtime-1 #3: the refusal is now made after that question); seam=the harness's adapter, which lists break locations on lines 2 and 3 only
+// Value: protects=a binding across a mapped line staying refused when a second request cannot help; fails_when=the binding the stop's rule refuses is accepted because the refusal moved behind the question whether the requested line can pause, and that line cannot; why_new=Cycle 0045 local review (runtime-1 #3: the refusal is now made after that question); Cycle 0046 (row 8): the debugger lists a break location on line 2, so the refusal names it as one; seam=the harness's adapter, which lists break locations on lines 2 and 3 only
 test('a browser stop the debugger moved across a mapped line is refused naming that line when its own line cannot pause', async (context) => {
   // Arrange: lines 1, 2 and 3 are mapped and the stop is declared at 1:7; the debugger verifies it at 3:1 and lists no break location on line 1.
   const { run, bindFirstStopAt, listPossibleBreakLines, mouse } =
@@ -3702,7 +3740,7 @@ test('a browser stop the debugger moved across a mapped line is refused naming t
   // Assert
   assert.equal(
     refusal,
-    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a mapped position. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
+    `Error: Declared stop src/theme.ts:1 bound at 3:1, refused: line 2 between the declared line 1 and line 3 has a break location. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1. ${MAPPED_POSITION_HINTS}`,
   )
   assert.equal(rearmedCount, 0)
   assert.equal(mouse.length, 0)

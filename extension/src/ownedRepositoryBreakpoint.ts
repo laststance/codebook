@@ -481,6 +481,18 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Reads the id a session's adapter gave the owned breakpoint, also where its owner refuses the place, so a `stopped` event that names that id is told to belong to this breakpoint; {@link ConfiguredBrowserRun} asks it for the browser session, to which the editor sends a server stop's breakpoint too.
+   * Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The adapter's id of the owned breakpoint, or `undefined` while that session's latest registration is unanswered or was refused.
+   * @example
+   * owned.acknowledgedId(browserSession) // => 12
+   */
+  acknowledgedId(session: vscode.DebugSession): number | undefined {
+    return this.registrations.get(session.id)?.receipt?.breakpointId
+  }
+
+  /**
    * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
    * @param session - The debug session whose adapter acknowledges the breakpoint.
    * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.

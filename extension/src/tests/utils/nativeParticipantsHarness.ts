@@ -220,6 +220,8 @@ export async function nativeParticipantsHarness(
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
+  // The page is paused at a server stop's breakpoint in its stub of the server module; the next browser continue resumes only that pause.
+  let browserAtServerBreakpoint = false
   // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
   let earlierPauseReadFailure:
     { participant: Participant; message: string } | undefined
@@ -314,6 +316,24 @@ export async function nativeParticipantsHarness(
             },
           ],
         }
+      // The run resumes the page's pause at a server stop's breakpoint: the adapter resumes it and no declared stop follows.
+      if (command === 'continue' && browserAtServerBreakpoint) {
+        browserAtServerBreakpoint = false
+        run.onRequest(sessions[name], {
+          type: 'request',
+          seq: ++sequence,
+          command,
+          arguments: args,
+        })
+        run.onEvent(sessions[name], {
+          type: 'event',
+          seq: ++sequence,
+          event: 'continued',
+          body: { threadId: 1 },
+        })
+        listeners[name].get('Debugger.resumed')?.({})
+        return {}
+      }
       if (command === 'continue') {
         // No round trip on the browser channel came first, so the earlier pause is read only now, after the continuation exists.
         if (earlyBrowserPause === 'pending') {
@@ -986,6 +1006,37 @@ export async function nativeParticipantsHarness(
       listeners[name].get('Debugger.paused')?.(
         debuggerPausedEvent({ callFrameId: 'adapter-frame', ...place }),
       )
+    },
+    /**
+     * Pauses the page at a server stop's breakpoint in its stub of the server module, as js-debug does when the editor sent that breakpoint to the browser session too and the stub's map holds its line: the runtime pause at the stub's first line, then the `stopped` whose breakpoint ids name the server breakpoint's id in the browser session. The run's next browser `continue` resumes only this pause.
+     * @example harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+     */
+    pauseBrowserAtServerBreakpoint(serverBreakpoint: { id: string }): void {
+      browserAtServerBreakpoint = true
+      listeners.browser.get('Debugger.scriptParsed')?.({
+        scriptId: 'server-module-stub',
+        url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
+        executionContextId: 1,
+      })
+      listeners.browser.get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: 'server-module-stub',
+          scriptId: 'server-module-stub',
+          lineNumber: 0,
+          columnNumber: 0,
+          hitBreakpoints: ['2:0:0:mode'],
+        }),
+      )
+      run.onEvent(sessions.browser, {
+        type: 'event',
+        seq: ++sequence,
+        event: 'stopped',
+        body: {
+          reason: 'breakpoint',
+          threadId: 1,
+          hitBreakpointIds: [adapterId(serverBreakpoint)],
+        },
+      })
     },
     /** Ends the wait for an accepted stop's own pause after one look, as its 3 s bound would. */
     expireSourceBoundWait(): void {
