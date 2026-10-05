@@ -261,7 +261,7 @@ function lineVerdict(
 }
 
 /**
- * Says whether the scan stands in code, outside every block comment, string and template literal (a template substitution is code); called by {@link sourceLineCode} for each piece of a line and for its rest.
+ * Says whether the scan stands in code, outside every block comment, string and template literal (a template substitution is code); called by {@link blankedPiece} for each piece of a line and by {@link sourceLineCode} for its rest.
  * @example
  * standsInCode({ frames: ['`'], inBlockComment: false }) // => false
  * standsInCode({ frames: ['`', '${'], inBlockComment: false }) // => true
@@ -271,7 +271,7 @@ function standsInCode(scan: StatementScan): boolean {
 }
 
 /**
- * Says whether a code token the scan stands before stays in a line's code; called by {@link sourceLineCode} before the token is applied.
+ * Says whether a code token the scan stands before stays in a line's code; called by {@link blankedPiece} before the token is applied.
  * @param token - A code token ({@link CODE_TOKEN}).
  * @param scan - The scan before the token, which tells whether a `}` closes a template substitution.
  * @returns `true` for a bracket or a `;`; `false` for a comment opener, a quote, a backtick and the `}` that closes a template substitution (the delimiters of comments, strings and template literals).
@@ -282,6 +282,29 @@ function standsInCode(scan: StatementScan): boolean {
 function isKeptCodeToken(token: string, scan: StatementScan): boolean {
   if (token === '}' && scan.frames.at(-1) === '${') return false
   return /^[([{)\]};]$/.test(token)
+}
+
+/**
+ * Blanks what is no code in one scanned piece of a line, the text up to and including a token; called by {@link sourceLineCode} for each piece before the token at its end is applied.
+ * @param piece - The text from the end of the token before to the end of this token.
+ * @param token - The token the piece ends with.
+ * @param scan - The scan before the token, which tells whether the piece stands in code.
+ * @returns The piece with the same length: in code the text before the token stays and the token stays only when it is a bracket or a `;` ({@link isKeptCodeToken}); inside a comment, a string or a template literal everything is a space.
+ * @example
+ * blankedPiece('count += 1; //', '//', { frames: [], inBlockComment: false }) // => 'count += 1;   '
+ * blankedPiece("let a'", "'", { frames: [], quote: "'", inBlockComment: false }) // => '      '
+ */
+function blankedPiece(
+  piece: string,
+  token: string,
+  scan: StatementScan,
+): string {
+  // Inside a comment, a string or a template literal everything is blanked.
+  if (!standsInCode(scan)) return ' '.repeat(piece.length)
+  return (
+    piece.slice(0, piece.length - token.length) +
+    (isKeptCodeToken(token, scan) ? token : ' '.repeat(token.length))
+  )
 }
 
 /**
@@ -302,15 +325,7 @@ export function sourceLineCode(lineText: string): string {
     token;
     token = nextToken(lineText, position, scan)
   ) {
-    const piece = lineText.slice(position, token.end),
-      tokenStart = piece.length - token.text.length
-    // In code the text before the token stays and the token stays only when it is a bracket or a `;`; inside a comment, a string or a template literal everything is blanked.
-    code += standsInCode(scan)
-      ? piece.slice(0, tokenStart) +
-        (isKeptCodeToken(token.text, scan)
-          ? token.text
-          : ' '.repeat(token.text.length))
-      : ' '.repeat(piece.length)
+    code += blankedPiece(lineText.slice(position, token.end), token.text, scan)
     position = token.end
     // A line comment blanks the rest of the line.
     if (applyToken(scan, token.text) === 'line-comment')

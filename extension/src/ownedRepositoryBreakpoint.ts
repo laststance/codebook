@@ -738,6 +738,22 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Gives {@link retakeRefusedPlace} the place news was refused at when the owner's rule accepts it now.
+   * @param refusedAt - Where the adapter's news put the acknowledged breakpoint when the owner refused it; `undefined` when no news was refused.
+   * @returns The place, or `undefined` when nothing was refused or the owner's rule still refuses the place.
+   * @example
+   * this.refusedPlaceNowAccepted({ line: 32, column: 11 }) // => { line: 32, column: 11 } once the rebuilt rule accepts line 32
+   */
+  private refusedPlaceNowAccepted(
+    refusedAt: VerifiedPlace | undefined,
+  ): VerifiedPlace | undefined {
+    return refusedAt &&
+      this.acknowledgesPosition({ verified: true, ...refusedAt })
+      ? refusedAt
+      : undefined
+  }
+
+  /**
    * Judges the place the adapter's latest news put the acknowledged breakpoint at once more, after its owner's rule changed; {@link ConfiguredBrowserRun} calls it when the debugger's own break locations accept a place the source map alone refused ({@link ConfiguredBrowserRun.registeredStop}).
    * Only news can be judged again: a registration reply that was refused keeps its failure, because the reply's breakpoint was never taken as the owned one, and its owner requests the breakpoint again instead.
    * @param session - The debug session whose adapter sent the news.
@@ -747,14 +763,11 @@ export class OwnedRepositoryBreakpoint {
    */
   retakeRefusedPlace(session: vscode.DebugSession): boolean {
     const acknowledged = this.acknowledgedRegistration(session),
-      refusedAt = acknowledged?.registration.refusedAt
+      refusedAt = this.refusedPlaceNowAccepted(
+        acknowledged?.registration.refusedAt,
+      )
     // Nothing was refused by news, or the owner's rule still refuses the place.
-    if (
-      !acknowledged ||
-      !refusedAt ||
-      !this.acknowledgesPosition({ verified: true, ...refusedAt })
-    )
-      return false
+    if (!acknowledged || !refusedAt) return false
     const { verifiedAt, ...moved } = this.verifiedPlaces({
       verified: true,
       ...refusedAt,

@@ -62,20 +62,37 @@ export function createBindingLineRule(
     return undefined
   }
   /**
+   * Refuses a line when a line that could run lies between it and the requested line; the first check of {@link unprovenGapRefusal}.
+   * @param line - The line the debugger chose, more than one after the requested line.
+   * @returns The mapped line (or, given break locations, the line with a break location) between the two; `undefined` when the first such line after the requested one is not before `line`, or there is none.
+   * @example
+   * lineBetweenRefusal(30) // => 'line 25 between the declared line 22 and line 30 has a mapped position'
+   */
+  const lineBetweenRefusal = (line: number): string | undefined =>
+    firstLineBetween !== undefined && firstLineBetween < line
+      ? `line ${firstLineBetween} between ${requestedAt} and line ${line} ${lineBetweenReason}`
+      : undefined
+  /**
+   * Refuses a line when the scan could not prove that nothing lies between it and the requested line; the second check of {@link unprovenGapRefusal}, asked when no known line lies between.
+   * @param line - The line the debugger chose, more than one after the requested line.
+   * @returns That the scan stopped at its size limit, with the line to declare instead; `undefined` for a complete scan, and given break locations.
+   * @example
+   * incompleteScanRefusal(30) // => 'the sealed map was too large to scan completely, so lines 23 to 29 between the declared line 22 and line 30 may hold code; declare the stop on line 30, where the debugger bound it'
+   */
+  const incompleteScanRefusal = (line: number): string | undefined =>
+    // A scan that stopped at its size limit proves nothing about the lines it did not reach; the debugger's own list of break locations covers them.
+    !scan.complete && !breakLocationLines
+      ? `the sealed map was too large to scan completely, so lines ${requestedLine + 1} to ${line - 1} between ${requestedAt} and line ${line} may hold code; declare the stop on line ${line}, where the debugger bound it`
+      : undefined
+  /**
    * Refuses a line when code may lie between it and the requested line; called by {@link gapRefusal} for a line more than one after the requested line.
    * @param line - The line the debugger chose.
-   * @returns The mapped line (or, given break locations, the line with a break location) between the two, or that the scan stopped at its size limit before it could prove there is none; `undefined` when there is none.
+   * @returns The mapped line (or, given break locations, the line with a break location) between the two ({@link lineBetweenRefusal}), or that the scan stopped at its size limit before it could prove there is none ({@link incompleteScanRefusal}); `undefined` when there is none.
    * @example
    * unprovenGapRefusal(30) // => 'line 25 between the declared line 22 and line 30 has a mapped position'
    */
-  const unprovenGapRefusal = (line: number): string | undefined => {
-    if (firstLineBetween !== undefined && firstLineBetween < line)
-      return `line ${firstLineBetween} between ${requestedAt} and line ${line} ${lineBetweenReason}`
-    // A scan that stopped at its size limit proves nothing about the lines it did not reach; the debugger's own list of break locations covers them.
-    if (!scan.complete && !breakLocationLines)
-      return `the sealed map was too large to scan completely, so lines ${requestedLine + 1} to ${line - 1} between ${requestedAt} and line ${line} may hold code; declare the stop on line ${line}, where the debugger bound it`
-    return undefined
-  }
+  const unprovenGapRefusal = (line: number): string | undefined =>
+    lineBetweenRefusal(line) ?? incompleteScanRefusal(line)
   /**
    * Measures a line within the stop from the requested line; called by {@link refusal} once the line lies between the declared line and the citation's end.
    * @param line - The line the debugger chose.
