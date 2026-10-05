@@ -638,6 +638,110 @@ test('a Node test whose history cannot be started leaves no folder behind, and t
   )
 })
 
+// Value: protects=a Node test starts in a store whose history directory holds folders that are nobody's listed history; fails_when=every folder named like a study id is counted against the saved study limit although the list shows a history only by its header, so a folder without a header (one a learner made, or one a failed start of an earlier build left) fills the limit while the list is empty, for good (Cycle 0046 row 183); why_new=row 57 put entries with other names into the directory, no test a folder with the name of a history and no readable header; seam=the history directory, into which the test puts the folders
+test('a folder without a header and one whose header cannot be read take no place of the saved study limit, and a store whose list holds the limit still refuses a new test', async (context) => {
+  // Arrange: a limit of one history; the history directory holds a folder named like a study id without a header, and one whose header is no JSON. The list shows neither.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-unlisted-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
+  const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
+  const withoutHeader = nodeTestHistoryHeader(workspaceKey).studyId,
+    withBrokenHeader = nodeTestHistoryHeader(workspaceKey).studyId
+  await mkdir(join(historyDirectory, withoutHeader), { recursive: true })
+  await mkdir(join(historyDirectory, withBrokenHeader))
+  await writeFile(join(historyDirectory, withBrokenHeader, 'header.json'), '{')
+  const first = nodeTestHistoryHeader(workspaceKey),
+    second = nodeTestHistoryHeader(workspaceKey)
+  const outcomeOf = (starting: Promise<unknown>): Promise<string> =>
+    starting.then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+  // Act: the first test starts beside the two folders; the second meets a store whose list holds its one history.
+  const listedBefore = (await store.list()).map((entry) => entry.studyId)
+  const firstStart = await outcomeOf(
+    store
+      .start(first)
+      .then((writer) =>
+        writer.finish('partial', 'The learner stopped this run.'),
+      ),
+  )
+  const secondStart = await outcomeOf(store.start(second))
+  // Assert
+  assert.deepEqual(listedBefore, [])
+  assert.equal(firstStart, 'admitted')
+  assert.equal(
+    secondStart,
+    'Error: Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+  )
+  assert.deepEqual(
+    (await store.list()).map((entry) => entry.studyId),
+    [first.studyId],
+  )
+  assert.deepEqual(
+    (await readdir(historyDirectory)).sort(),
+    [first.studyId, withBrokenHeader, withoutHeader].sort(),
+  )
+})
+
+// Value: protects=the saved study limit while a Node test of this window is being started; fails_when=a history counts only by its header (Cycle 0046 row 183), so a second test asked for while the first has made its folder and not yet written its header takes the same last place; why_new=before row 183 a history counted by its folder's name, from the moment the folder was made; seam=the creation of the first history's header file, which the test holds, so the second start is decided while the first is under way
+test('a Node test asked for while another one is being started under a limit of one is refused, and the one being started is admitted', async (context) => {
+  // Arrange: a limit of one. The creation of the first history's header file waits until the test lets it go on; its folder is made by then.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-two-starts-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
+  const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
+  const first = nodeTestHistoryHeader(workspaceKey),
+    second = nodeTestHistoryHeader(workspaceKey)
+  let letHeaderBeCreated!: () => void
+  const headerMayBeCreated = new Promise<void>((resolve) => {
+    letHeaderBeCreated = resolve
+  })
+  let reportFolderMade!: () => void
+  const folderMade = new Promise<void>((resolve) => {
+    reportFolderMade = resolve
+  })
+  const openBefore = fsPromises.open
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...input: Parameters<typeof openBefore>) => {
+      if (input[0] === join(historyDirectory, first.studyId, 'header.json')) {
+        reportFolderMade()
+        await headerMayBeCreated
+      }
+      return openBefore(...input)
+    },
+  )
+  const outcomeOf = (starting: Promise<unknown>): Promise<string> =>
+    starting.then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+  // Act: the second test is asked for and decided while the first history has a folder and no header.
+  const firstStart = outcomeOf(store.start(first))
+  await folderMade
+  const foldersWhileStarting = await readdir(historyDirectory)
+  const listedWhileStarting = (await store.list()).map((entry) => entry.studyId)
+  const secondStart = await outcomeOf(store.start(second))
+  letHeaderBeCreated()
+  // Assert
+  assert.deepEqual(foldersWhileStarting, [first.studyId])
+  assert.deepEqual(listedWhileStarting, [])
+  assert.equal(
+    secondStart,
+    'Error: Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+  )
+  assert.equal(await firstStart, 'admitted')
+  assert.deepEqual(await readdir(historyDirectory), [first.studyId])
+})
+
 test('a refused history entry still lets the run seal its verified prefix as partial history', async () => {
   // Arrange
   const directory = await mkdtemp(
