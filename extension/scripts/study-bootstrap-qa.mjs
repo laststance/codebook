@@ -4876,6 +4876,60 @@ async function check(page, options, collected) {
       otherChosen.deletes.length === askedForFiles.deletes.length,
   })
 
+  // Arrange: Remove by hand is offered closed for the other study, whose file the host already lists; its note is a status region (row 175).
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  /** Reads the note of Remove by hand as the page holds it: its text, whether it is rendered, and how many paths the list holds. */
+  const filesNote = () =>
+    page.evaluate(() => {
+      const note = document.getElementById('study-files-note')
+      return {
+        text: note.textContent,
+        isRendered: note.checkVisibility(),
+        paths: document.querySelectorAll('#study-files-list li').length,
+      }
+    })
+  const noteWhileClosed = await filesNote()
+  // The note is read once more at the toggle event that reports the opened disclosure, ahead of the pane's own handler: a capturing listener of the document runs before the listeners of the disclosure.
+  await page.evaluate(() => {
+    window.noteAtOpening = undefined
+    document.addEventListener(
+      'toggle',
+      (event) => {
+        if (
+          event.target.id !== 'study-files' ||
+          !event.target.open ||
+          window.noteAtOpening
+        )
+          return
+        const note = document.getElementById('study-files-note')
+        window.noteAtOpening = {
+          text: note.textContent,
+          isRendered: note.checkVisibility(),
+        }
+      },
+      { capture: true },
+    )
+  })
+  // Act: the learner opens the disclosure by keyboard and closes it again.
+  await toggleByKeyboard('study-files')
+  const noteAtOpening = await page.evaluate(() => window.noteAtOpening)
+  const noteWhileOpen = await filesNote()
+  await toggleByKeyboard('study-files')
+  const noteAfterClosing = await filesNote()
+  // Assert
+  cases.push({
+    name: 'the note of Remove by hand is empty while the disclosure is closed, also when the host already lists the study’s files, is rendered and still empty when the disclosure has opened, and gets its sentence then, as a change of a status region that exists; closing empties it again',
+    actual: { noteWhileClosed, noteAtOpening, noteWhileOpen, noteAfterClosing },
+    passed:
+      JSON.stringify(noteWhileClosed) ===
+        JSON.stringify({ text: '', isRendered: false, paths: 0 }) &&
+      JSON.stringify(noteAtOpening) ===
+        JSON.stringify({ text: '', isRendered: true }) &&
+      JSON.stringify(noteWhileOpen) ===
+        JSON.stringify({ text: listedSentence, isRendered: true, paths: 1 }) &&
+      JSON.stringify(noteAfterClosing) === JSON.stringify(noteWhileClosed),
+  })
+
   // Arrange: the same window with the shown study's four files listed and Remove by hand open (row 27, DR-6).
   const copyButton = page.getByRole('button', {
     name: 'Copy paths',

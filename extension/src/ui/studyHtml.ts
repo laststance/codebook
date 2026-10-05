@@ -541,6 +541,7 @@ function studyClient(
   element('study-files').addEventListener('toggle', () => {
     if (!element('study-files').hasAttribute('open')) {
       showCopyOutcome('', false)
+      emptyStudyFiles()
       // Opening the disclosure again asks the host again: an earlier refusal does not stand in for the answer.
       forgetFilesRefusal()
       return
@@ -1361,16 +1362,11 @@ function studyClient(
     }
   }
   /**
-   * Fills the "Remove by hand" disclosure for one entry: the sentence of its state, the listed paths, Copy paths beside paths only and Retry storage / refresh once the host answered. Called by {@link showStudyFiles} on every render while the disclosure is offered, and when the learner opens it.
-   * @param message - The current Study message.
-   * @param studyId - The entry the disclosure is offered for.
-   * @example showStudyFilesAnswer(message, entry.id)
+   * Writes what the "Remove by hand" disclosure holds: the sentence of its state, the listed paths, Copy paths beside paths only and Retry storage / refresh once the host answered. Called by {@link showStudyFilesAnswer} for an open disclosure and by {@link emptyStudyFiles} for a closed one.
+   * @param view - What the disclosure holds.
+   * @example fillStudyFiles(studyFilesView(message, entry.id))
    */
-  const showStudyFilesAnswer = (
-    message: StudyViewMessage,
-    studyId: string,
-  ): void => {
-    const view = studyFilesView(message, studyId)
+  const fillStudyFiles = (view: StudyFilesView): void => {
     text('study-files-note', view.note)
     element('study-files-note').classList.toggle('error', view.isRefusal)
     replace('study-files-list', view.files, () =>
@@ -1385,6 +1381,28 @@ function studyClient(
     const actions = element('copy-study-files').parentElement
     if (actions) actions.hidden = !view.offersRetry
   }
+  /**
+   * Fills the open "Remove by hand" disclosure for one entry from what the host answered so far; called by {@link showStudyFiles} on every Study message while the disclosure is open, and when the learner opens it.
+   * @param message - The current Study message.
+   * @param studyId - The entry the disclosure is offered for.
+   * @example showStudyFilesAnswer(message, entry.id)
+   */
+  const showStudyFilesAnswer = (
+    message: StudyViewMessage,
+    studyId: string,
+  ): void => fillStudyFiles(studyFilesView(message, studyId))
+  /**
+   * Empties the "Remove by hand" disclosure while it is closed; called when the learner closes it, and by {@link showStudyFiles} on every Study message while it is closed (also the one under which it was handed to another entry).
+   * A closed disclosure renders nothing of what it holds, and its note is a status region: a sentence written while it is closed would enter the page together with the region when the learner opens it. The note therefore gets its sentence only after the disclosure opened, as a change of a region that exists, and no path of an earlier look is shown for a moment.
+   * @example emptyStudyFiles()
+   */
+  const emptyStudyFiles = (): void =>
+    fillStudyFiles({
+      note: '',
+      isRefusal: false,
+      files: [],
+      offersRetry: false,
+    })
   /**
    * Writes the line under Copy paths and marks it as an error or not; called with an empty text at a press on Copy paths, when the disclosure closes and when another entry is chosen, and by {@link showStudyFilesCopied} with the host's answer.
    * The line is a status region that stays rendered while empty, so every text is a change of a region that exists.
@@ -1482,9 +1500,13 @@ function studyClient(
     const offeredFor = filesOfferedFor(message, chosen, reason)
     offerStudyFilesFor(offeredFor)
     if (!offeredFor) return
-    // An open disclosure follows the host on every Study message. A closed one asks for nothing.
-    if (element('study-files').hasAttribute('open'))
-      followStudyFiles(message, offeredFor)
+    // A closed disclosure asks for nothing and holds nothing; it is filled once the learner has opened it.
+    if (!element('study-files').hasAttribute('open')) {
+      emptyStudyFiles()
+      return
+    }
+    // An open disclosure follows the host on every Study message.
+    followStudyFiles(message, offeredFor)
     const focusedBefore = focusedInStudyFiles()
     showStudyFilesAnswer(message, offeredFor)
     // While the host is asked again (Retry storage / refresh made it forget its list) the disclosure shows no button: a focus that stood on one goes to the summary, not to the document body.
