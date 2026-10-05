@@ -151,3 +151,177 @@ Tests made obsolete by this plan (proposal only): `evidenceInUseElsewhere.test.t
 - `isProcessGone`, `isFromEarlierBoot`, `readBootIdentity`: kept; the last two now serve records without a start.
 - `systemTrashName(platform = process.platform)`: the pattern for the injected platform; `profileProcesses.ts:9`: the promisified `execFile`.
 - The tests of `withStorageLock.test.ts` (21), `claimWikiUpdateMarker.test.ts` (8) and `evidenceInUseElsewhere.test.ts` (7): they keep protecting today's behavior for records without a start.
+
+## `/plan-design-review` of rows 26, 27 and 28 (2026-10-05)
+
+The plan it reviewed was the "Closes with" cells of the three rows (the Learning summary's transport and its button, the saved-study notes in a window without a Trash, the Wiki reader's right rail), against the approved PNG, DESIGN.md and the state and interaction review of Cycle 0029. A subagent ran the skill as a reviewer and changed nothing in the repository; the owner cannot answer, so its eleven decisions took the recommended option. It found 16 issues (6 high, 9 medium, 1 low) and scored the plan 3 of 10 as written and 8 of 10 with the amendments: every row stays, and each needs a change in how it is fixed. Its pixel figures are estimates from the stylesheet and from the repository's own test comments (no browser was run), so the DOM cases the amendments name are what proves them; the plan's premise that the DOM check already measures 960 x 600 was wrong (its cases run at 720 x 720, 960 x 720, 600 x 720, 300 x 720 and 600 x 800). Outside voices: the first Codex pass timed out at 300 s, the second completed and passed the result check, and an independent subagent completed; the three agree on every high finding and differ on two mechanisms (a pinned control row instead of DR-1's reveal, and who owns the remedy announcement), which the report records. The full report is kept in the project's private gstack state (`c46-work/eng-review/`).
+
+### Amendments (DR-1 to DR-11)
+
+Each amendment names its row and gives the new wording of the row's "Closes with" and "Test or observation" cells for the part it changes. Together, DR-1 to DR-3 replace row 26's cells, DR-4 to DR-7 replace row 27's, DR-8 to DR-11 replace row 28's. "DOM case" means a case of `extension/scripts/study-bootstrap-qa.mjs` (the Reader DOM job). Every code change that changes behavior records its disabled-fix control, as the cycle table requires.
+
+#### DR-1 (row 26: the transport's height)
+
+**Closes with:** In the Learning summary (the pane of kind `context`) the fixed transport keeps `max-height:60vh` and `overflow:auto` while its recovery details are closed, and is bounded at `max-height:40vh` while `#playback-options` is open: `body[data-replay=true] #recording-transport:has(#playback-options[open]){max-height:40vh}`. The whole transport stays the scroller. When the learner opens "Playback details" or "Recording error details", the pane scrolls that disclosure into the transport's visible box at once (`scrollIntoView({ block: 'nearest' })`, no smooth scrolling, so reduced motion needs no branch); the keyboard focus stays on the summary that was pressed. The bottom panel's transport (`body.moments-only`) keeps `max-height:none`. The growth to 60vh is therefore reverted for the state the defect names (recovery details open) and kept for the closed footer, which Cycle 0045 (T-3) raised it for.
+
+**Test or observation:**
+- DOM case, new, at 960 x 600: a failed recording with a diagnostic of 12 lines, "Playback details" and then "Recording error details" opened: the transport is at most 240 px high, at least 360 px (60%) of the pane lie above it, `scrollHeight > clientHeight`, and the "Recording error details" summary with the first line of the diagnostic lies inside the transport's box. Control: without the `:has` rule the transport measures 360 px and the case fails.
+- DOM case, new, at 300 x 720 and at 600 x 720: the moment whose values are not loaded (hint and Show Variables shown), "Playback details" opened: the transport is at most 288 px high, and Play, the playhead, the "Playback details" summary and "Reload saved recording" lie inside its box. After the details are closed again the transport does not scroll inside itself.
+- DOM case, existing, unchanged and green: "the transport's buttons do not move when the values hint appears" (`:1789`, details closed, no inner scroll at 600 and at 300 px wide).
+- Native look in both hosts: the summary in a short side bar with a failed moment and its details open; both themes.
+- If the implementing package measures the closed footer at 300 x 720 with the 44 px button at 288 px or less, a flat `max-height:40vh` passes the same cases and may be used instead; the cases above decide.
+
+#### DR-2 (row 26: Show Variables)
+
+**Closes with:** `ui/constants.ts:160` ends in `#playback-show-variables{margin:6px 0}`: the declarations `min-height:32px;padding:4px 8px;font-size:12px` are removed, so the button takes the pane's rules: computed `min-height` 44 px, `font-size` 16 px, `padding` 6px 10px, rendered 44 px high, in the summary's transport (above the controls) and in the bottom panel's (below them). It stays the secondary button (`--vscode-button-secondaryBackground`); Play stays the transport's only filled control and keeps the 32 px rule of `.playback-row button`. States, all by existing rules: hover `filter:brightness(1.12)`; focus-visible `outline:2px solid var(--vscode-focusBorder)` with `outline-offset:2px`; no active rule and no transition; when the values load the button leaves and the focus goes to Play (unchanged); colours follow the host theme in light, dark and high contrast. Accessible name: "Show Variables".
+
+**Test or observation:** the DOM case at `:1749` is renamed "Show Variables in the replay footer keeps the pane's 44 px height and 16 px text, and Play keeps the transport's 32 px rule" and asserts `showVariablesHeight === 44`, `showVariablesMinHeight === '44px'`, `showVariablesFontSize === '16px'`, `playMinHeight === '32px'`, `playHeight === 34`, `hintFontSize === '12px'`, and that `#node-history-show-variables` is 44 px high too. Control: with the old declarations the case reads 32 and '12px' and fails. The case at 1200 x 180 (`:2002`, the bottom panel) stays green: Play remains inside the viewport. Native look in both hosts.
+
+#### DR-3 (row 26: the remedy for a covered recorded application)
+
+**Closes with:** The transport's status row gains, right after `#recording-status`, the element `<span id="application-covered-remedy" class="visually-hidden" role="status" aria-live="polite"></span>`. It is rendered whenever the transport is (never `hidden`, never `display:none` of its own). Exactly while `#recording-status` carries the covered label (the recording is covered, the observation is not loading, the moment is neither failed nor pending) its text is "Bring the Recorded application tab to the front to show this moment again." (a new entry `applicationCovered.announcement` of `STUDY_UI_OPTIONS`); otherwise it is empty. It is written with `text()`, so it changes only at the transition. The visible line is unchanged: `#loading` shows "Recorded application is covered by another tab. Bring the Recorded application tab to the front to show this moment again." in the summary and gets no role. A screen reader therefore hears the status with the label and then the clause, each once, from the one pane whose transport is shown; "Loading the selected observation…" is not announced; nothing is said twice.
+
+**Test or observation:**
+- DOM case, extended (`:1557`, "while another tab covers the recorded application the Learning summary says so and names the remedy, not that the observation is loading"): `#application-covered-remedy` has `role` "status"; before the covered message its text is "" and neither it nor an ancestor has a computed `display` of `none`; while covered its text is "Bring the Recorded application tab to the front to show this moment again."; `#loading` has no `role` attribute and shows the whole sentence; after the tab returns to the front the clause is "" again.
+- DOM case, new, on the page of kind `moments`: while covered the bottom panel's transport carries the same clause.
+- DOM case, new: a covered recording that is failed shows "Recorded context unavailable. Reload after resolving the reported problem." and an empty clause.
+- `studyHtml.test.ts`: the page's options carry the clause, and the clause is the remedy sentence without its first sentence.
+- Control: with the assignment removed the clause stays "" and the first case fails.
+- Native look in both hosts (both themes): the visible sentence in the summary and the label in the transport's status.
+
+#### DR-4 (row 27: the notes of an entry that cannot be opened)
+
+**Closes with:** `showStudyNote` writes the two notes from `message.removalWithoutTrash`:
+- `#study-unopenable`, with a Trash (unchanged): "This saved study cannot be opened. It can still be deleted." Without a Trash: "This saved study cannot be opened. This window has no Trash, so it can only be removed by hand."
+- `#study-repairable`, with a Trash (unchanged): "This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study." Without a Trash: "This saved study's catalog checkpoint is missing or out of date. Repair it, or remove its files by hand."
+- `#study-newer` keeps the catalog's own sentence.
+The notes stay `class="muted"` paragraphs under the list; the list and the buttons are described by the shown note as today (`aria-describedby`).
+
+**Test or observation:** DOM cases: an entry that cannot be opened and one that can be repaired, each in a window with and without a Trash: the four exact texts above, and the list's and Repair's description naming the shown note. Control: with the Trash-less branch removed the Trash-less cases read the deleting sentences and fail.
+
+#### DR-5 (row 27: "Remove by hand")
+
+**Closes with:** `#study-files` becomes a disclosure: `<details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details>`.
+- It is shown (closed) in a window without a Trash when a study is chosen and no reason forbids its removal. It closes again whenever another study is chosen.
+- The pane asks the host for the files when the learner opens it (the `toggle` to open), not at the selection. The existing rule of one request per Study message stays.
+- Inside, `#study-files-note` reads, by state: while the request is open "Listing this study's files…" (no list, no buttons); once listed "This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh." above the paths, with "Copy paths" and "Retry storage / refresh"; when the host listed no file "No file of this study is left. Press Retry storage / refresh to update the list." with "Retry storage / refresh" only; when the host refused without files, its sentence, with the class `error`, and "Retry storage / refresh" only.
+- `STUDY_REMOVAL_WITHOUT_TRASH_MESSAGE` (`src/constants.ts:167`) takes the listed-state sentence above ("these files" replaces "this study's files by hand (listed below)"), and `#delete-study-status` shows nothing for an answer that carries files, so no sentence appears above the summary the learner pressed and nothing is announced at a selection.
+- With no study chosen, `studyFilesNothingChosen` (`ui/constants.ts:116`) reads "This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files."
+- The summary is 44 px high with the pane's focus outline (existing `summary` rules); its accessible name is "Remove by hand"; Enter and Space toggle it; the focus stays on it when the files arrive.
+- `extension/README.md:338` states the new sentences, "Remove by hand" and "**Copy paths**" in the same commit.
+
+**Test or observation:**
+- DOM case, rewritten (`:3171`), named "in a window without a Trash, Saved studies lists the chosen study's files after Remove by hand is opened, offers Copy paths and shows no delete button": (1) with no study chosen the reason is the new sentence; (2) choosing a study sends no `delete-study` message, shows the closed disclosure with the summary "Remove by hand", lists nothing and leaves `#delete-study-status` empty; (3) opening it sends exactly one numbered `delete-study` request and shows "Listing this study's files…"; (4) the host's answer shows the listed-state sentence, the paths in order, "Copy paths" and "Retry storage / refresh"; a later Study message asks nothing again; (5) choosing another study closes the disclosure and sends nothing.
+- DOM cases, new: the empty list's sentence with Retry only; a refusal without files shown as the error sentence.
+- `studyWorkspaceRemoval.test.ts`: the Trash-less answer carries the reworded sentence and the files.
+- Controls: with the request moved back to the selection, step (2) counts one more `delete-study` and fails; with `#delete-study-status` showing the answer, step (4) fails on the empty status.
+- Native look in both hosts in a WSL window: the closed and the open disclosure, both themes.
+
+#### DR-6 (row 27: "Copy paths" and its confirmation)
+
+**Closes with:** The button's text and accessible name are "Copy paths". The host answers a `copy-study-files` message to the asking pane only, after `vscode.env.clipboard.writeText` settled: the number of paths it copied, or a failure when the write rejected or it kept no list for that study. At the press the pane empties `#copy-study-files-status`; at the answer for the study it shows, the line reads "Copied 1 path." for one path and "Copied N paths." for more (N is the host's number), or, on a failure, "Could not copy the paths. Select them in the list above and copy them by hand." with the class `error`. The line is emptied when the disclosure closes and when another study is chosen. The keyboard focus stays on "Copy paths". The line keeps its place in the accessibility tree while empty (`#copy-study-files-status:empty{margin:0}`, never `display:none`), so each confirmation, also of a second press, is a change of an existing status region.
+
+**Test or observation:**
+- `studyWorkspaceRemoval.test.ts`: a copy of a listed study writes the paths, one a line, and then answers the asking pane with their number; a clipboard that rejects answers the failure; a study with no kept list answers the failure and writes nothing. Control: with the answer removed the first test fails.
+- DOM cases: "Copied 4 paths." after the answer for four paths; "Copied 1 path." for one; a second press empties the line and fills it again (two changes of its text); the failure sentence with the class `error`; the line is empty after another study is chosen; the line has `role` "status" and a computed `display` other than `none` while empty; the focus is on `#copy-study-files` after the answer.
+
+#### DR-7 (row 27: Repair is the primary action)
+
+**Closes with:** `#repair-study` gets `class="primary"` (the filled button: `--vscode-button-background` and `--vscode-button-foreground`). "Delete saved study…" stays the secondary button and stays second in the row. In a window without a Trash the row holds Repair alone. Hover, focus and high-contrast borders are the pane's existing button rules. What follows a press is unchanged: on success the note and the button leave and the focus returns to the Saved studies list; on failure `#errors` names the reason and the button stays.
+
+**Test or observation:** DOM case, extended (`:2901`, "a saved study whose checkpoint can be repaired offers Repair saved study under its note…"): `#repair-study` has the class `primary`, its computed background equals that of `#playback-toggle` and differs from that of `#delete-study`, in a window with a Trash and in one without. Control: without the class the backgrounds are equal and the case fails.
+
+#### DR-8 (row 28: what the rail entry says)
+
+**Closes with:** The entry stays one link with the approved label and gains the target under it. The publisher prints `<p class="open-in-editor"><a href="…"><span class="open-label">Open in VS Code</span> <span class="open-target">src/<wbr>utils/<wbr>a.ts:12</span></a></p>`: the target is the first cited source's path, a `<wbr>` after each slash, a colon and its line (the first line of a cited range), HTML-escaped. There is no `aria-label` and no `title`: the accessible name is the content, "Open in VS Code src/utils/a.ts:12", so the visible label is the start of the name. Styles in `reader-shell.html`: `.open-label{display:block;white-space:nowrap}` and `.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted);overflow-wrap:anywhere}`; in the row layout (701 to 1000 px) also `.right-rail .open-target{width:0;min-width:100%}`, so the path adds no width and the control keeps the width of its label. A long path is shown whole and wraps at its slashes. `rebindDeepWikiEditorLinks` rewrites the editor's name inside `.open-label` ("Open in Cursor" for Cursor) and, for a page published by 0.2.29.0 (`<a …>Open in VS Code</a>` without spans), rewrites the name and adds the same two spans from the address's own `path` and `line`, so every served Wiki names the target without being published again. A page opened from disk keeps what was published.
+
+**Test or observation:**
+- `wikiReaderShell.test.ts`, rewritten (`:166`, "the reader's rail offers to open the page's source in the editor that serves it"): the published page and the page VS Code serves contain `<span class="open-label">Open in VS Code</span> <span class="open-target">source.ts:1</span>`; the page Cursor serves contains `<span class="open-label">Open in Cursor</span> <span class="open-target">source.ts:1</span>` with the `cursor://` address.
+- `wikiReaderShell.test.ts`, new: a page in the 0.2.29.0 shape is served by both editors with the label of that editor and the target read from its address. Control: without the upgrade the target is missing.
+- `publishWiki.test.mjs`, extended: a first source `src/utils/a&b.ts` at line 12 is printed as `src/<wbr>utils/<wbr>a&amp;b.ts:12`.
+- `wikiReaderShell.test.ts` (`:223`): the shell carries the two new rules.
+- DOM case, rewritten (`:3297`), at 720 x 720, with the fixture's entry set to the path `extension/src/runtimeSupport/utils/removeAbandonedProfiles.ts:95`: the label (`.open-label`) is on one line, the target is on two lines or more and no wider than the label's line, and the outline is no narrower than the control.
+- DOM case, new, at 1200 x 720 (the column of the approved image): the link's text names the file and the line, and the block is no wider than the rail.
+
+#### DR-9 (row 28: the rail entry's states)
+
+**Closes with:** `.open-in-editor a` has these states, in both themes through the shell's variables, with no transition (so reduced motion needs no rule):
+- rest: `border:1px solid var(--border)`, no fill (the page's `--bg`), label in `var(--link)`, target in `var(--muted)`;
+- hover: `background:var(--panel-2);border-color:var(--link)`;
+- active: the hover values and `filter:brightness(.9)`, the press feedback of the rail's buttons;
+- focus-visible: `outline:2px solid var(--link);outline-offset:-2px`, inside the block, because the rail is a scroller and cuts a ring outside it.
+The four rules stand in `reader-shell.html` and in the stylesheet `installWikiUpdateStatus` injects, so a served page of an older site has them too. Contrast, from the tokens: label 6.64:1 at rest and 6.13:1 on hover (light), 10.2:1 and 8.02:1 (dark); target 5.95:1 and 5.49:1 (light), 9.44:1 and 7.42:1 (dark).
+
+**Test or observation:**
+- `wikiReaderShell.test.ts`, extended (`:66`, "the published page changes the update button and the reload button under the pointer and while pressed…"): the shell holds the hover, active and focus-visible rules of `.open-in-editor a` and no `transition` for it.
+- `wikiReaderShell.test.ts`, extended (`:139`, the contrast test): label and target on `--bg` and on `--panel-2` keep 4.5:1 in both themes, with the eight ratios above.
+- `wikiUpdatePage.test.ts`: the injected styles hold the same four rules.
+- DOM case, new: with the entry focused by the keyboard its computed `outline-offset` is "-2px" and `outline-width` "2px"; a screenshot of the focused entry in each theme.
+- Native look in both hosts.
+
+#### DR-10 (row 28: the rail's height at 701 to 1000 px)
+
+**Closes with:** In the row layout the cap moves from the rail to the parts that can grow without limit, and the update panel is never cut:
+- `.right-rail` has `max-height:none` and no scrollbar of its own (`overflow:visible`);
+- the outline (`.right-rail nav`) has `flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere`: at most 160 px high, scrolling inside itself, an entry that cannot break wraps;
+- an open update detail (`[data-codebook-update-detail][open]`) has `max-height:6rem;overflow:auto` (96 px);
+- the update panel (`[data-codebook-update-group]`) has `flex:0 1 24rem` in place of `18rem`, so the 336-character sentence takes about six lines instead of eight or nine (estimate: a panel of about 216 px at 960 px wide).
+The rules stand in `reader-shell.html:15` and in the injected stylesheet (`installWikiUpdateStatus.ts:99`). The outcome at 960 x 600 is the row's own: the rail is at most 45vh (270 px) high and shows the whole refusal sentence without a scrollbar. If the measured panel is higher than 270 px there, the panel's basis is raised until it fits; the sentence is never scrolled, clipped or set smaller. The column layout (1001 px and wider) and the single column (700 px and narrower) are unchanged.
+
+**Test or observation:**
+- `wikiReaderShell.test.ts`, rewritten (`:242` and `:267`): the rules between `@media(max-width:1000px)` and `@media(max-width:700px)` hold the four rules above; `max-height:min(24rem,50vh)` and `max-height:10rem` on `.right-rail` are gone; the single column keeps `max-height:none`.
+- DOM case, existing, kept (`:3329`, 960 x 720): "the update panel shows the whole sentence of a refused update, with no scroll in the right rail".
+- DOM case, new, at 960 x 600, with the same 336-character sentence, an outline of 40 entries and an open update detail of 12 paths: the rail is at most 270 px high; `rail.scrollHeight <= rail.clientHeight`; the panel's bottom is inside the rail; the panel has no scrollbar; the outline is at most 160 px high and `scrollHeight > clientHeight`; the detail is at most 96 px high; the reading column keeps at least 200 px of height. The case records the panel's measured height. Control (expected from the estimate, to be recorded when run): with `18rem` and a rail cap of 45vh the panel's bottom lies below the rail's and the case fails.
+- DOM case at 720 x 720 (DR-8's): the outline is at least 160 px wide.
+- Native look in both hosts at a window about 960 px wide with a refused update.
+
+#### DR-11 (row 28: the missing-page line)
+
+**Closes with:** For an address that names a missing page the page script:
+- inserts `<p data-codebook-missing-page role="status"></p>` empty as the first element of the reading column, with `[data-codebook-missing-page]:empty{margin:0;padding:0;border:0}` in the injected styles, so the empty line stays in the accessibility tree and shows no box;
+- sets its text 150 ms after the window's `load` event (at once plus 150 ms when the page has already loaded), by `window.setTimeout`, never `requestAnimationFrame`; the delay is a named setting (`missingPageTextDelayMs: 150`) from a constant `WIKI_MISSING_PAGE_TEXT_DELAY_MS`. The text is unchanged: "The page <path> is not in this Wiki. The last update may have removed it. This is the overview.", or "The page you asked for is not in this Wiki. …" when the value is no page path;
+- puts the same notice in front of the document title at once: "Page not in this Wiki · " and the page's own title, for example "Page not in this Wiki · Overview · sample DeepWiki". The title is what every screen reader reads when a page loads and what the tab shows; no delay can be proven to make a status announcement arrive, so the title carries the notice with certainty and the status line carries it where the reader honors it.
+The keyboard focus is not moved. The line does not animate. Its colours are the shell's variables in both themes (`:120`). A reload shows neither line nor prefix, because the address no longer names the page (`:149`).
+
+**Test or observation:**
+- `wikiUpdatePage.test.ts`, rewritten (`:1929`, "the overview opened in place of a missing page says which page is missing"): right after the script ran, the line is the first element of the reading column, has `role` "status" and an empty text, and the document title starts with "Page not in this Wiki · "; after `load` and 149 ms on the fake clock the text is still empty; at 150 ms it is the sentence; the injected styles hold the `:empty` rule; the address no longer names the missing page.
+- `wikiUpdatePage.test.ts` (`:1965`): a value that is no page path gets the sentence without the path, by the same timing.
+- New: a page that had already loaded when the script ran gets the text 150 ms later.
+- Control: with the text set at the insertion the 149 ms assertion fails.
+- Native look in both hosts: the line above the title and the tab's title, in the light and the dark theme. No screen reader is available in this environment; the row is closed by the structure the tests pin and by the title, and the record says so.
+
+### Defects the review found that no row named (rows 59 to 64 of the cycle: ND-1 to ND-6 in this order)
+
+Each with file and line, a failing scenario and a proposed fix. Under the cycle rule each is fixed in this cycle or closed by recorded evidence that it is no defect.
+
+**ND-1 (medium). In a window without a Trash the reasons under the list still speak of deleting.**
+- Where: `extension/src/ui/studyHtml.ts:1017` (`return chosenStudyRefusal(message, chosen)`) and `:1033` (`text('delete-study-reason', reason)`), which run whether or not the window has a Trash; the sentences are `extension/src/constants.ts:156` to `:163`.
+- Scenario: in a WSL window open a saved study's Recording tab. The pane shows "Choose Overview or Live to leave Recording before deleting this study." although the window has no delete button. A live run shows "Stop the run before deleting its study."; a study of a newer format shows "…Update the extension, then delete it there.", which stays false in this window after the update.
+- Proposed fix: choose these sentences by `removalWithoutTrash` as `nothingChosen` already is (`:1014`). Trash-less texts: Node history "Codebook cannot list the files of a Node test history for removal by hand yet."; run not stopped "Stop the run before removing its study's files by hand."; recording open "Choose Overview or Live to leave Recording before removing this study's files by hand."; newer format "This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand." Test: a DOM case per sentence in a Trash-less window, and the disclosure of DR-5 hidden while a reason is shown.
+
+**ND-2 (medium). The remedy for a covered recorded application is never visible in the bottom panel.**
+- Where: `extension/src/ui/studyHtml.ts:180` (`<div ${markupOnlyIn(kind, 'moments', 'hidden')}>`) wraps `#loading` (`:183`), so the pane of kind `moments` cannot show the line that `:1667` writes. `extension/src/constants.ts:835` says of the label: "The Study pane says the same with the remedy."
+- Scenario: collapse the Learning summary (5A) or close its side bar, keep the bottom panel, bring another tab in front of the recorded application. The panel's status reads "… · Recorded application is covered by another tab" and nothing on screen says what brings the moment back.
+- Proposed fix: with DR-3 in place, the clause element of the transport is visible in the bottom panel pane instead of visually hidden (a 12 px muted line under the status row: "Bring the Recorded application tab to the front to show this moment again."). Test: a DOM case on the `moments` page.
+
+**ND-3 (low, to confirm with a focus screenshot in the DOM check). The focus ring of full-width links is cut at the sides of the reader's scrolling columns.**
+- Where: `extension/skills/codebook/reader-shell.html:9` (`a:focus-visible…{outline:2px solid var(--link);outline-offset:3px}`) and `:11` (`.chapters,.right-rail{min-height:0;overflow:auto;font-size:.875rem}`); the outline links are `display:block` (`:12`, `.outline a{display:block;padding:.3rem 0;text-decoration:none}`), the chapter links too.
+- Scenario: at 1200 px press Tab until an outline link of the right rail has the focus. The ring lies 3 px outside a box that fills the scroller's width, so its left and right edges are clipped; a chapter link loses its left edge. Top and bottom stay, so the focus is still visible; it looks broken, not missing.
+- Proposed fix: `.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}` (DR-9 does the same for the rail entry). Test: a shell test on the rule and a screenshot of a focused outline link.
+
+**ND-4 (low; older than Cycle 0045: 0.2.12.0, `ad476d3`). "Playback details" is a target of about 18 px.**
+- Where: `extension/src/ui/constants.ts:162`: `.playback-status-row summary{min-height:0;padding:0}` at a 12 px text, against the pane's 44 px baseline (`:147`) and the transport's own 32 px buttons (`:160`). Found by the Codex outside voice.
+- Scenario: at 960 x 600 the learner whose replay failed aims at "Playback details", the entry to Reload and the error details, which is the smallest target of the pane.
+- Proposed fix: `.playback-status-row>details>summary{min-height:32px;padding:0;display:flex;align-items:center}`, the transport's density, and the nested "Recording error details" the same. The footer grows by about 14 px, which the cases of DR-1 then include. Test: a DOM case on the summary's height (at least 32 px).
+
+**ND-5 (low to medium; not verified with a screen reader; older than Cycle 0045). Status regions of the Study pane leave the accessibility tree while empty.**
+- Where: `extension/src/ui/constants.ts:162` (`#playback-pending:empty,#playback-reason:empty,#playback-hint:empty,#node-history-hint:empty{display:none}`; `#playback-hint` and `#node-history-hint` are `role="status"`, `ui/studyHtml.ts:172` and `:190`), `:164` (`#delete-study-reason:empty,#delete-study-status:empty{display:none}`; the status is `role="status"`), `:148` (`.error:empty{display:none}`; `#errors` is `role="status"`), `:145` (`.presentation-status:empty{display:none}`).
+- Scenario: the values hint appears for a moment whose native values are not loaded. Its element becomes rendered and receives its text in the same instant, which is the mechanism PL-20 calls "probably not announced" for the missing-page line. The Wiki's status line was already built the other way (`src/utils/installWikiUpdateStatus.ts:102`).
+- Proposed fix: for the elements with `role=status`, replace `display:none` by a collapse that keeps them rendered (`margin:0;padding:0;border:0` while `:empty`). Test: a DOM case that each such element has a computed `display` other than `none` while empty and still takes no height.
+
+**ND-6 (low). The missing-page line shows a path of any length.**
+- Where: `extension/src/utils/installWikiUpdateStatus.ts:129` to `:135` checks the form of `missing` and not its length; `:141` prints it.
+- Scenario: a link `…/index.html?missing=` followed by a 1,500-character path ending in `.html` fills the reading column above the article with that path (`overflow-wrap:anywhere`, `:120`).
+- Proposed fix: `missingPage.length <= 200` joins the conditions of `isPagePath`; a longer value gets the sentence without the path ("The page you asked for is not in this Wiki. …"). Test: one more value in the existing test "a missing parameter that is not a page path is shown as a missing page without its text" (`src/tests/wikiUpdatePage.test.ts:1965`).
+
+Observation, not a defect: `extension/src/utils/rebindDeepWikiEditorLinks.ts:1` carries a second, older doc comment above the current one. It is cleaned when DR-8 edits the function.
