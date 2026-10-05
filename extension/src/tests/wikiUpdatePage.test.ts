@@ -1960,7 +1960,7 @@ test('the entry that opens the page’s source answers the pointer, a press and 
 })
 
 // Value: protects=the Wiki reader between 701 and 1000 px on a served page of any age, where the right rail is a row below the article; fails_when=the injected rules cap the rail again or stop capping the outline and an open detail, so the update panel's sentence is cut behind a scrollbar or a long outline takes the article's room, or the detail's cap no longer follows a short window (14vh), so the rail passes 45vh at 960 x 600, or the output block shrinks until Change location breaks, or the ring of the detail's summary is cut by the detail, or the rules reach the single column below 701 px; why_new=Cycle 0046 row 28 (design review DR-10, second measurement), package SPB (the summary's ring); seam=none
-test('where the rail is a row a served page caps the outline and an open update detail and never the rail or the update panel, keeps the output block’s longest line whole and the ring of the detail’s summary inside the detail, and leaves the single column alone', async () => {
+test('where the rail is a row a served page caps the outline and an open update detail and never the rail or the update panel, keeps the output block’s longest line whole and the ring of the detail’s summary inside the detail, shows eight lines of the entry’s target at most, and leaves the single column alone', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
@@ -1972,7 +1972,7 @@ test('where the rail is a row a served page caps the outline and an open update 
   // Assert
   assert.ok(
     styles.includes(
-      '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}.right-rail .output{min-width:max-content}}',
+      '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:8;overflow:hidden}.right-rail .open-in-editor:hover .open-target,.right-rail .open-in-editor:focus-within .open-target{-webkit-line-clamp:none}.right-rail .output{min-width:max-content}}',
     ),
   )
   // The injected sheet comes after the site's own, so a rule of it for 1000 px and narrower would also win in the single column.

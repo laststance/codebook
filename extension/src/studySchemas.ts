@@ -43,8 +43,18 @@ export interface StudyCatalogEntry {
   id: string
   savedAt: string
   profile?: 'repository-browser' | 'node-test'
-  /** `newer` marks a study a newer Codebook saved in a format this one cannot read: it is listed and counted, never opened, repaired or deleted here, and its `reason` is the sentence that says so. */
-  format: 'legacy-v1' | 'v2' | 'v3' | 'v4' | 'node-test-history' | 'newer'
+  /**
+   * `newer` marks a study a newer Codebook saved in a format this one cannot read: it is listed and counted, never opened, repaired or deleted here, and its `reason` is the sentence that says so.
+   * `archive-missing` marks what is left of a study whose archive is gone (a catalog sidecar, a recording), as after its files were removed by hand in part: it is listed so that the rest can be removed, never opened or repaired, and it has no `reason`.
+   */
+  format:
+    | 'legacy-v1'
+    | 'v2'
+    | 'v3'
+    | 'v4'
+    | 'node-test-history'
+    | 'newer'
+    | 'archive-missing'
   outcome: string
   metadata: 'legacy-unverified' | 'validated' | 'unavailable'
   reason?: string

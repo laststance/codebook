@@ -581,6 +581,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
     '.node-version',
+    'extension/src/runtimeSupport/utils/listProcesses.ts',
     'extension/src/runtimeSupport/utils/sha256.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
     'extension/src/tests/claimWikiUpdateMarker.test.ts',
@@ -590,6 +591,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/isProcessGone.test.ts',
     'extension/src/tests/isRecordedOwnerGone.test.ts',
     'extension/src/tests/isSameStorageMachine.test.ts',
+    'extension/src/tests/listProcesses.test.ts',
     'extension/src/tests/namesMachineInClear.test.ts',
     'extension/src/tests/openWithoutFollowing.test.ts',
     'extension/src/tests/processStartFormHere.test.ts',
@@ -609,6 +611,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/utils/loadModule.ts',
     'extension/src/tests/utils/loadOpenWithoutFollowing.ts',
     'extension/src/tests/utils/realProcessStart.ts',
+    'extension/src/tests/utils/standInForPs.ts',
     'extension/src/tests/utils/startOfKilledWindow.ts',
     'extension/src/tests/withStorageLock.test.ts',
     'extension/src/utils/atomicPrivateBytes.ts',
@@ -669,7 +672,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js',
+    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js dist/tests/openWithoutFollowing.test.js dist/tests/hashFileSha256.test.js dist/tests/refreshCursorMcpCatalogFileIdentity.test.js dist/tests/listProcesses.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',

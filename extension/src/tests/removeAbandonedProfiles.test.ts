@@ -15,10 +15,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import { listProcesses } from '../runtimeSupport/utils/listProcesses'
+import {
+  listProcesses,
+  type ListedProcess,
+} from '../runtimeSupport/utils/listProcesses'
 import { removeAbandonedProfiles } from '../runtimeSupport/utils/removeAbandonedProfiles'
 import { readProcessStart } from '../utils/readProcessStart'
 
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { standInForPs } from './utils/standInForPs'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /**
@@ -58,9 +63,25 @@ function exists(path: string): Promise<boolean> {
   )
 }
 
-/** The id of a process that has ended, as the editor process of a killed window has: an id no process can have (above Linux's highest, 2 ** 22), because the id of a child that has just exited can be given to a new process before the sweep judges the marker. @example endedProcessId() // => 4194305 */
-function endedProcessId(): number {
-  return 2 ** 22 + 1
+/**
+ * Builds a process lister of the test's own for the tests that count the listings of a sweep, so that their count does not depend on this machine's own process list.
+ * @returns `list`, which answers one process that uses no profile folder, and `listings`, how often it was asked.
+ * @example
+ * const processes = countingLister()
+ * await removeAbandonedProfiles(root, identity, processes.list) // processes.listings() => 1
+ */
+function countingLister(): {
+  list: () => Promise<ListedProcess[]>
+  listings: () => number
+} {
+  let listings = 0
+  return {
+    list: async () => {
+      listings += 1
+      return [{ pid: 1, command: '/sbin/init' }]
+    },
+    listings: () => listings,
+  }
 }
 
 test('a profile folder whose marker names a process that is gone is left while a process still runs with it as its profile', async (context) => {
@@ -68,7 +89,7 @@ test('a profile folder whose marker names a process that is gone is left while a
   const root = await profileRoot(context)
   const folder = join(root, 'codebook-browser-in-use')
   await profileFolder(folder, {
-    pid: endedProcessId(),
+    pid: ID_OF_NO_PROCESS,
     hostname: 'workstation',
   })
   const browser = spawn(
@@ -97,7 +118,7 @@ test('a profile folder whose marker names another machine is left, although no p
   const root = await profileRoot(context)
   const folder = join(root, 'codebook-browser-of-another-machine')
   await profileFolder(folder, {
-    pid: endedProcessId(),
+    pid: ID_OF_NO_PROCESS,
     hostname: 'another-machine',
   })
   // Act
@@ -115,7 +136,7 @@ test('a link named like a profile folder is left, and the marked folder it point
     elsewhere = await profileRoot(context)
   const target = join(elsewhere, 'kept')
   await profileFolder(target, {
-    pid: endedProcessId(),
+    pid: ID_OF_NO_PROCESS,
     hostname: 'workstation',
   })
   const link = join(root, 'codebook-browser-link')
@@ -166,7 +187,7 @@ test('a marked profile folder of an earlier kernel boot is removed although a pr
 test('one sweep looks at no more than 64 profile folders, and the rest wait for a later run', async (context) => {
   // Arrange: 65 folders whose editor is gone.
   const root = await profileRoot(context)
-  const owner = { pid: endedProcessId(), hostname: 'workstation' }
+  const owner = { pid: ID_OF_NO_PROCESS, hostname: 'workstation' }
   for (let index = 0; index < 65; index += 1)
     await profileFolder(join(root, `codebook-browser-${index}`), owner)
   // Act
@@ -187,7 +208,7 @@ test('a marked profile folder of a killed editor is removed although 64 folders 
   const listedLast = join(root, (await readdir(root)).at(-1)!)
   await writeFile(
     join(listedLast, 'codebook-owner.json'),
-    JSON.stringify({ pid: endedProcessId(), hostname: 'workstation' }),
+    JSON.stringify({ pid: ID_OF_NO_PROCESS, hostname: 'workstation' }),
   )
   // Act
   const removed = await removeAbandonedProfiles(root, {
@@ -210,26 +231,23 @@ test('a profile root that does not exist is answered with nothing removed', asyn
   assert.deepEqual(removed, [])
 })
 
-// Value: protects=the sweep after crashes costs one process listing, however many folders killed editors left (Cycle 0045 review PL-6); fails_when=each folder whose owner is gone runs its own `ps -axww`; why_new=no test counted the listings; seam=the process lister the sweep is given, which counts and lists the real processes
+// Value: protects=the sweep after crashes costs one process listing, however many folders killed editors left (Cycle 0045 review PL-6); fails_when=each folder whose owner is gone runs its own `ps -axww`; why_new=no test counted the listings; seam=the process lister the sweep is given, a lister of the test's own that counts (Cycle 0046 row 99: the count no longer depends on this machine's `ps`)
 test('three profile folders of killed editors are removed with one listing of the processes', async (context) => {
   // Arrange: three marked folders whose editor, an impossible process id, is gone.
   const root = await profileRoot(context)
-  const owner = { pid: 2 ** 22 + 1, hostname: 'workstation' }
+  const owner = { pid: ID_OF_NO_PROCESS, hostname: 'workstation' }
   for (const name of [
     'codebook-browser-a',
     'codebook-browser-b',
     'codebook-browser-c',
   ])
     await profileFolder(join(root, name), owner)
-  let processListings = 0
+  const processes = countingLister()
   // Act
   const removed = await removeAbandonedProfiles(
     root,
     { hostname: 'workstation' },
-    () => {
-      processListings += 1
-      return listProcesses()
-    },
+    processes.list,
   )
   // Assert
   assert.deepEqual([...removed].sort(), [
@@ -237,7 +255,7 @@ test('three profile folders of killed editors are removed with one listing of th
     join(root, 'codebook-browser-b'),
     join(root, 'codebook-browser-c'),
   ])
-  assert.equal(processListings, 1)
+  assert.equal(processes.listings(), 1)
   assert.deepEqual(await readdir(root), [])
 })
 
@@ -249,21 +267,43 @@ test('a sweep that finds only a folder of a running editor does not list the pro
     pid: process.pid,
     hostname: 'workstation',
   })
-  let processListings = 0
+  const processes = countingLister()
   // Act
   const removed = await removeAbandonedProfiles(
     root,
     { hostname: 'workstation' },
-    () => {
-      processListings += 1
-      return listProcesses()
-    },
+    processes.list,
   )
   // Assert
   assert.deepEqual(removed, [])
-  assert.equal(processListings, 0)
+  assert.equal(processes.listings(), 0)
   assert.deepEqual(await readdir(root), ['codebook-browser-running'])
 })
+
+// Value: protects=a process listing that hangs or fails ends the sweep of abandoned profile folders, which the browser's close awaits, with nothing removed; fails_when=the listing has no time bound, so the sweep never ends, or a folder is removed although the processes could not be listed (Cycle 0046 row 87); why_new=every sweep test listed the processes at once; seam=`ps` itself, which is a program of the test that stays silent, and the listing's time bound, shortened to 300 ms
+test(
+  'a sweep whose process listing never answers ends at the listing’s time bound and removes no profile folder',
+  { skip: process.platform === 'win32' && 'the stand-in for ps needs /bin/sh' },
+  async (context) => {
+    // Arrange: one marked folder whose editor is gone, and a `ps` that prints nothing for 20 s, far beyond the bound, and then ends by itself, so that a sweep without a bound fails this test instead of holding the suite.
+    const root = await profileRoot(context)
+    const folder = join(root, 'codebook-browser-killed')
+    await profileFolder(folder, {
+      pid: ID_OF_NO_PROCESS,
+      hostname: 'workstation',
+    })
+    await standInForPs(context, 'setTimeout(() => {}, 20_000)')
+    // Act
+    const removed = await removeAbandonedProfiles(
+      root,
+      { hostname: 'workstation' },
+      () => listProcesses({ timeoutMs: 300 }),
+    )
+    // Assert
+    assert.deepEqual(removed, [])
+    assert.equal(await exists(folder), true)
+  },
+)
 
 // Value: protects=the profile folders a killed editor left are removed in the same boot although another process has its process id, and the folder of a running editor is never removed; fails_when=a marker is judged by process id and kernel boot alone, so such a folder stays until the next restart (Cycle 0046 rows 2 and 9), or the judgement is not awaited, so every folder counts as abandoned; why_new=every marker test named a process id that no longer exists, a running one without a start, or another kernel boot; seam=none (the markers name this running test process, with another start and with its real one)
 test('a marked profile folder of a killed editor whose process id is in use again is removed, and the folder of a running editor with that id stays', async (context) => {
@@ -310,7 +350,7 @@ test('three profile folders of one running editor are judged with one read of it
   const removed = await removeAbandonedProfiles(
     root,
     { hostname: 'workstation', processStart: 'linux@4026531836:16362446' },
-    listProcesses,
+    countingLister().list,
     (pid, inputs) =>
       readProcessStart(pid, {
         ...inputs,

@@ -949,6 +949,10 @@ export const MANAGED_PROFILE_SWEEP_LIMIT = 64
 export const MANAGED_PROFILE_REMOVAL_RETRIES = 3
 /** The pause before the first retry of that removal; each further retry waits this much longer. */
 export const MANAGED_PROFILE_REMOVAL_RETRY_DELAY_MS = 100
+/** How long the one listing of this machine's processes ({@link listProcesses}: `ps`, PowerShell on Windows) may run before it is ended and counts as failed. It lies above a cold start of PowerShell and below the 20 s a managed run waits for its browser's processes, so a listing that hangs ends inside that wait and inside the run's close. */
+export const PROCESS_LISTING_TIMEOUT_MS = 10_000
+/** The most bytes that listing may print before it is ended and counts as failed. Node.js gives a child 1 MiB unless told otherwise, which some hundred long command lines pass; 64 MiB hold thirty thousand processes with command lines of two thousand bytes each. */
+export const PROCESS_LISTING_MAX_BYTES = 64 * 1024 * 1024
 /** `vscode.env.remoteName` of a WSL window: the only remote whose extension host owns the workspace files and processes like a local one. */
 export const WSL_REMOTE_NAME = 'wsl'
 /** How long a replay opened while another window has the desktop focus waits for the Codebook work window to gain focus before answering with the remedy. */
