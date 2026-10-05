@@ -764,12 +764,13 @@ test(
 
 // Value: protects=the file that takes the config's path while Codebook refreshes the config, in a Windows editor; fails_when=the file opened for the times is not compared with the file that was read, so another file's time is set although Codebook never looked at it; why_new=Cycle 0046 row 144: where times need write access the config is opened a second time, and the two must be one file; seam=the opener of the loaded catalog, whose files refuse to set their times unless they were opened with write access, and before whose open with write access another file takes the config's path
 test('a file that takes the Cursor MCP config’s path between its read and the setting of its time is not touched: the refresh says that the config changed', async (context) => {
-  // Arrange: a learner's config, and another file, last written on 2020-01-01, that is moved over it right before the config is opened for its times.
+  // Arrange: a learner's config, and another file, last written on 2020-01-01, that takes its path right before the config is opened for its times.
   const folders = await catalogFolders(context)
   await writeFile(folders.configPath, '{"mcpServers":{"existing":{}}}\n')
   const otherPath = join(folders.cursorDirectory, 'another.json')
   await writeFile(otherPath, '{"mcpServers":{"another":{}}}\n')
   await utimes(otherPath, UNTOUCHED_AT_MS / 1_000, UNTOUCHED_AT_MS / 1_000)
+  const movedConfigPath = join(folders.cursorDirectory, 'moved-mcp.json')
   const openerAsOnWindows = await loadOpenWithoutFollowing(AS_ON_WINDOWS)
   const catalog = await loadModule<typeof CatalogModule>(
     resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
@@ -780,7 +781,11 @@ test('a file that takes the Cursor MCP config’s path between its read and the 
           flagsOfTheSystem?: NoFollowOpenConstants,
           access?: NoFollowOpenAccess,
         ): Promise<fileSystem.FileHandle> => {
-          if (access === 'read-write') await rename(otherPath, path)
+          // The config is open for reading at this moment: it is moved away first, because Windows may refuse a move onto a file that is open.
+          if (access === 'read-write') {
+            await rename(path, movedConfigPath)
+            await rename(otherPath, path)
+          }
           return openerAsOnWindows.openWithoutFollowing(
             path,
             flagsOfTheSystem,
