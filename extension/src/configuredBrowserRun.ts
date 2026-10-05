@@ -211,6 +211,8 @@ type DebugParticipant = {
     heldAtMs: number
     /** Whether its observation was journaled; past the journal's cap of such pauses only their count is kept. */
     journaled: boolean
+    /** Set when the run itself resumes this pause (a page pause at a server stop's breakpoint, {@link ConfiguredBrowserRun.resumeServerBreakpointInBrowser}): its resume is then nobody else's, however long the adapter takes to answer. */
+    resumedByRun?: true
   }
   /** The runtime is paused for its own instrumentation (a source map being read); it is no stop and no adapter breakpoint, but completion waits for its resume. */
   instrumentationPaused?: boolean
@@ -319,6 +321,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent
     journaled: boolean
   }
+  /** Set from the moment the run sends its own resume of a page pause at a server stop's breakpoint until the page's runtime reports a resume: a page pause read meanwhile is that pause, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}). */
+  private isPageResumeUnderWay = false
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
   /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
@@ -2631,6 +2635,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         journaled,
       }
       this.transientBrowserPause = transient
+      this.ownPagePauseUnderResume()
       if (journaled)
         this.evidence.record('cdp.browser-pause-awaiting-adapter', {
           scriptId: event.callFrames[0]?.location.scriptId,
@@ -2638,6 +2643,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return
     }
     this.admitPause(name, event, journaled)
+    this.ownPagePauseUnderResume()
+  }
+
+  /**
+   * Takes the page pause the run itself is resuming out of the bounds of a pause nobody owns; called by {@link resumeServerBreakpointInBrowser} when it sends that resume and by {@link onCdpPaused} for a page pause read while the resume is under way.
+   * In a run without browser stops such a pause runs against the short bound of an unowned page pause, and in a run with browser stops a held pause that is resumed late is taken for a competing resume. Neither holds for a pause the run resumes itself: it is bounded by the request the run sent (the adapter's answer within the active bound) and, after that, by the action's own deadline.
+   * @example
+   * ```ts
+   * this.ownPagePauseUnderResume() // clears the 250 ms timer of the page pause the run is resuming
+   * ```
+   */
+  private ownPagePauseUnderResume(): void {
+    if (!this.isPageResumeUnderWay) return
+    const transient = this.transientBrowserPause,
+      held = this.participants.browser.unannouncedPause
+    if (transient) clearTimeout(transient.timer)
+    if (held) held.resumedByRun = true
   }
 
   /** Tells whether a pause is at a declared stop's bound place: on its line by {@link isPauseAtStop}, asked with {@link pauseTarget} so a server stop the adapter already verified is compared with that line, and, once the run knows the binding, at its column by {@link isPauseAtBoundColumn}. @example this.isPauseOfStop(event, this.expectedStop('server')) // false for the adapter's entry breakpoint */
@@ -2754,6 +2776,23 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
+   * Tells {@link retireUnannouncedPause} whether a held pause was resumed by someone other than the debug adapter or the run: it lasted longer than the adapter holds a pause of its own, and the run did not resume it itself.
+   * @param held - The held pause that the runtime just resumed.
+   * @param limitMs - The longest a pause of the adapter's own lasts ({@link adapterPauseLimitMs}).
+   * @returns `true` for a pause that outlasted the bound and that the run did not resume; `false` otherwise.
+   * @example
+   * ```ts
+   * this.isResumedBySomeoneElse(held, 3_000) // false for a page pause at a server stop's breakpoint that the run resumed after 4 s
+   * ```
+   */
+  private isResumedBySomeoneElse(
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+    limitMs: number,
+  ): boolean {
+    return !held.resumedByRun && performance.now() - held.heldAtMs > limitMs
+  }
+
+  /**
    * Retires a pause that no debugger stop announced when the runtime resumes it, called by {@link onCdpResumed}.
    * The adapter made the pause for itself (a module entry breakpoint, its WebAssembly hook) and resumed it. No stop, receipt or generation of the run changes; the journal keeps where the pause was and how long it lasted (past its cap of such pauses, only their count). Nothing on either channel says who sent a resume, so a pause on the expected stop's line is never retired here, and a pause that outlasted the adapter's bound ({@link adapterPauseLimitMs}) ends the run as a manual or competing resume.
    * @param name - The participant whose runtime resumed.
@@ -2773,8 +2812,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     if (!held) return false
     const limitMs = this.adapterPauseLimitMs(name)
     participant.unannouncedPause = undefined
-    // Nothing says who sent a resume, but the adapter resumes its own pauses within milliseconds: a pause that lasted longer was resumed by someone else.
-    if (performance.now() - held.heldAtMs > limitMs) {
+    // Nothing says who sent a resume, but the adapter resumes its own pauses within milliseconds: a pause that lasted longer was resumed by someone else, unless the run resumed it itself.
+    if (this.isResumedBySomeoneElse(held, limitMs)) {
       const place = this.placeOf(name, held.event)
       this.evidence.record('cdp.unannounced-pause-resumed-late', {
         participant: name,
@@ -3676,6 +3715,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): Promise<void> {
     this.participants.browser.expectedResumeRequests++
+    // From here on the page's pause is the run's own to resume, also when its runtime event is read only later.
+    this.isPageResumeUnderWay = true
+    this.ownPagePauseUnderResume()
     const detail = {
       participant: 'browser',
       threadId: body.threadId,
@@ -3802,6 +3844,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /** Matches each CDP resume to its own captured generation; a queued next stop cannot resume unobserved. A resume of a pause no debugger stop announced is not a continuation: {@link retireUnannouncedPause} retires it (and the transient browser pause of a run without browser stops is retired here), journaling its place and duration. The resume of a pause nothing holds (an instrumentation pause, a pause from before the action) is journaled when that pause was, otherwise counted. @example this.onCdpResumed('server') */
   private onCdpResumed(name: Participant): void {
     if (this.cleaning) return
+    // The page runs again: a resume of the run's own is no longer under way.
+    if (name === 'browser') this.isPageResumeUnderWay = false
     const participant = this.participants[name],
       pausedForMs = elapsedMsSince(
         participant.pauseObservedAtMs,

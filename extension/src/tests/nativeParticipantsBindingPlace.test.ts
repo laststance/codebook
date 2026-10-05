@@ -692,3 +692,113 @@ test('a page pause at a server stop’s breakpoint whose resume the adapter refu
     [],
   )
 })
+
+// Cycle 0046 (row 157): red while a page pause that comes after the action was accepted, in a run without browser stops, kept its 250 ms timer although the run itself was resuming it: a resume slower than that ended the run with "Unowned browser stop remained paused".
+test('a page pause at a server stop’s breakpoint after the action was accepted is not ended by the 250 ms bound of an unowned page pause while the run’s own resume is under way, in a run that declares only a server stop', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the browser adapter answers the run's resume only when the test lets it. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const resume = harness.holdStubResume()
+  // Act: the page pauses in its stub of the server module, the run sends its resume, and 300 ms pass before the adapter answers it.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  harness.advance(300)
+  const failuresWhilePaused = harness.run.view().failures.join('; ')
+  resume.release()
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresWhilePaused, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.equal(
+    journaled(harness, 'cdp.browser-adapter-pause-retired').length,
+    1,
+  )
+})
+
+// Cycle 0046 (row 157, the same pause in a run that declares a browser stop too): red while the held page pause was judged by how long the debugger holds a pause of its own, although the run itself resumed it: a resume slower than that bound ended the run with "Manual or competing resume invalidated live pause: ...".
+test('a page pause at a server stop’s breakpoint after the action was accepted is not taken for a competing resume when the run’s own resume is slow, in a run that declares a browser stop too', async (context) => {
+  // Arrange: as above, with a browser stop declared after the server stop, so the page pause is held instead of timed.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const resume = harness.holdStubResume()
+  // Act: the page pauses in its stub, the run sends its resume, and 4 s pass before the adapter answers it.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  harness.advance(4_000)
+  resume.release()
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length ||
+      harness.run.view().failures.length,
+    'the adapter answered the resume',
+  )
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.deepEqual(journaled(harness, 'cdp.unannounced-pause-resumed-late'), [])
+})
+
+// Cycle 0046 (row 157, the order the native journal shows: the adapter's `stopped` is read before the runtime's pause): red while a page pause read after the run had already sent its resume still started the 250 ms timer of an unowned page pause.
+test('a page pause at a server stop’s breakpoint that is read only after the run sent its resume is not bounded as a pause nobody owns', async (context) => {
+  // Arrange: the action is accepted; the adapter's `stopped` names the server breakpoint, the run sends its resume, and the adapter answers it only when the test lets it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const resume = harness.holdStubResume()
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  // Act: the runtime's pause is read now, and 300 ms pass before the adapter answers the resume.
+  stub.paused()
+  harness.advance(300)
+  const failuresWhilePaused = harness.run.view().failures.join('; ')
+  resume.release()
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresWhilePaused, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+})

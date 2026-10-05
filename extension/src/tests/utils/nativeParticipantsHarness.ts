@@ -1125,6 +1125,43 @@ export async function nativeParticipantsHarness(
         },
       })
     },
+    /**
+     * Announces the page's pause at a server stop's breakpoint in the order the two channels were read natively: the adapter's `stopped`, which names the server breakpoint, first, and the runtime's pause only when the test calls `paused`.
+     * @example const stub = harness.announceBrowserStopAtServerBreakpoint(harness.breakpoints[0]!); stub.paused()
+     */
+    announceBrowserStopAtServerBreakpoint(serverBreakpoint: { id: string }): {
+      paused(): void
+    } {
+      browserAtServerBreakpoint = true
+      listeners.browser.get('Debugger.scriptParsed')?.({
+        scriptId: 'server-module-stub',
+        url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
+        executionContextId: 1,
+      })
+      run.onEvent(sessions.browser, {
+        type: 'event',
+        seq: ++sequence,
+        event: 'stopped',
+        body: {
+          reason: 'breakpoint',
+          threadId: 1,
+          hitBreakpointIds: [adapterId(serverBreakpoint)],
+        },
+      })
+      return {
+        paused: (): void => {
+          listeners.browser.get('Debugger.paused')?.(
+            debuggerPausedEvent({
+              callFrameId: 'server-module-stub',
+              scriptId: 'server-module-stub',
+              lineNumber: 0,
+              columnNumber: 0,
+              hitBreakpoints: ['2:0:0:mode'],
+            }),
+          )
+        },
+      }
+    },
     /** Makes the browser's adapter refuse the run's resume of the next page pause at a server stop's breakpoint, as an adapter whose thread is no longer paused does. @example harness.refuseStubResume() */
     refuseStubResume(): void {
       stubResume = 'refused'
