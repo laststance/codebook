@@ -36,10 +36,14 @@ import { readWikiRegularFile } from './readWikiRegularFile'
 import { systemErrorCode } from './systemErrorCode'
 import { withoutBootTime } from './withoutBootTime'
 
-/** What holds the Wiki against a start: another window's running update, or a marker another window is writing at this moment. */
-type WikiUpdateHolder = WikiUpdateMarker | WikiUpdateMarkerBeingWritten
+/** A marker that is in the way at the moment another window removes or replaces it under its claim: it is no run that holds the Wiki, and this window may not remove it either. @example const inChange: WikiUpdateMarkerInChange = { isMarkerInChange: true } */
+export type WikiUpdateMarkerInChange = { isMarkerInChange: true }
 
-/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound), or what holds the Wiki instead: the marker of the other window's run, or the time since which another window is writing its marker. */
+/** What holds the Wiki against a start: another window's running update, a marker another window is writing at this moment, or a marker another window is removing or replacing at this moment. */
+type WikiUpdateHolder =
+  WikiUpdateMarker | WikiUpdateMarkerBeingWritten | WikiUpdateMarkerInChange
+
+/** The claimed marker of this window's run (`release` removes it when the run ends; `reserve` turns it into the reservation of a stopped watch, which other windows read until the watch bound), or what holds the Wiki instead: the marker of the other window's run, the time since which another window is writing its marker, or the note that another window is changing the marker. */
 export type WikiUpdateMarkerClaim =
   | {
       release: () => Promise<void>
@@ -147,27 +151,26 @@ function isMarkerOfNobodysRun(look: WikiUpdateMarkerLook): boolean {
 
 /**
  * Decides what the marker in the way means for this claim; called by {@link claimWikiUpdateMarker} with what {@link readLiveWikiUpdateMarker} has just found, before it removes a marker that is nobody's.
+ * Why the last answer: a marker that nobody's run owns and that is still in the way after this start's one removal was not removed because another window holds the claim on it: it is removing a stale marker for its own start, or removing or replacing its own marker at the end of its run. That is an ordinary moment between two windows, so the start is refused in a sentence and not ended with the file system's error of the creation.
  * @param look - What the look at the marker in the way found.
  * @param isLastAttempt - Whether the creation was already tried again after a removal; a marker still in the way then is not removed a second time.
- * @param error - What the exclusive creation threw.
  * @returns
  * - Another window's run is live, or another window is writing its marker: the claim that names it, and the marker file stays
  * - Anything else, with one attempt left: `undefined`, so the caller removes a marker that is nobody's and creates its own once more
- * @throws The given error itself when the marker is in the way again on the last attempt.
+ * - Anything else on the last attempt: the claim that says another window is changing the marker
  * @example
- * claimOfHolder({ kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }, false, error)
+ * claimOfHolder({ kind: 'live', heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }, false)
  * // => { heldBy: { pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1790000000000 } }
- * claimOfHolder({ kind: 'unowned' }, false, error) // => undefined
+ * claimOfHolder({ kind: 'unowned' }, false) // => undefined
+ * claimOfHolder({ kind: 'unowned' }, true)  // => { heldBy: { isMarkerInChange: true } }
  */
 function claimOfHolder(
   look: WikiUpdateMarkerLook,
   isLastAttempt: boolean,
-  error: unknown,
 ): Extract<WikiUpdateMarkerClaim, { heldBy: WikiUpdateHolder }> | undefined {
   const heldBy = holderIn(look)
   if (heldBy) return { heldBy }
-  if (isLastAttempt) throw error
-  return undefined
+  return isLastAttempt ? { heldBy: { isMarkerInChange: true } } : undefined
 }
 
 /**
@@ -455,7 +458,8 @@ async function replaceMarker(markerPath: string, text: string): Promise<void> {
  * @returns
  * - The marker was created: `release`, which removes it, and `reserve`, which replaces it by a stopped watch's reservation; both leave a marker another window has written since, and a reservation that cannot be written leaves the run's marker, which `release` still removes
  * - Another window's live run holds the Wiki, or another window is writing its marker at this moment: `heldBy` with that marker, or with the time since which it is being written
- * @throws The file system's error when the marker cannot be created for another reason (for example a read-only folder), and the exclusive creation's `EEXIST` when a marker is still in the way at the second attempt, also because another window was removing or releasing it at that moment.
+ * - A marker that is nobody's run is still in the way at the second attempt, because another window holds the claim on it (it is removing a stale marker or releasing its own at that moment, or a killed window of another machine left its claim less than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} ago): `heldBy` with `isMarkerInChange`, and the marker file stays
+ * @throws The file system's error when the marker cannot be created for another reason than a marker in the way (for example a read-only folder).
  *
  * @example
  * ```ts
@@ -508,7 +512,7 @@ export async function claimWikiUpdateMarker(
         atThisMoment(judgement),
       )
       // What holds the Wiki ends the claim; a marker that is nobody's run is removed for the one retry.
-      const holder = claimOfHolder(look, isLastAttempt, error)
+      const holder = claimOfHolder(look, isLastAttempt)
       if (holder) return holder
       await removeUnownedMarker(
         outputDirectory,

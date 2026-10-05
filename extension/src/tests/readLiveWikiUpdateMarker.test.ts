@@ -16,13 +16,12 @@ import {
   type WikiUpdateMarkerLook,
 } from '../utils/readLiveWikiUpdateMarker'
 
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+
 const MINUTE_MS = 60_000
 
 /** The present of every test with a fixed clock (epoch milliseconds). */
 const NOW_MS = 1_790_000_000_000
-
-/** A process id that names no process on the machine the tests run on. */
-const PID_OF_NO_PROCESS = 2 ** 22 + 1
 
 /** This window as the tests with a fixed identity name it: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor whose machine id has the digest f9c8c7ddcf3d5f56, under the kernel boot "boot-1". */
 const THIS_WINDOW = {
@@ -327,7 +326,7 @@ test('a marker of another machine is live until its run marker expires, although
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'vscode',
       startedAtMs: NOW_MS,
@@ -365,7 +364,7 @@ test('a marker of this machine is nobody’s when no process has its id or the p
         processStart: 'linux:500',
       }),
     )
-  const ofNoProcess = await markerOf(PID_OF_NO_PROCESS)
+  const ofNoProcess = await markerOf(ID_OF_NO_PROCESS)
   const ofThisProcessId = await markerOf(process.pid)
   const ofProcessOne = await markerOf(1)
   const aMinuteLater = NOW_MS + 60_000
@@ -407,7 +406,7 @@ test('a marker without the machine’s digests, as 0.2.29.0 writes it, is judged
       }),
     )
   const ofRunningProcess = await markerOf(process.pid)
-  const ofNoProcess = await markerOf(PID_OF_NO_PROCESS)
+  const ofNoProcess = await markerOf(ID_OF_NO_PROCESS)
 
   // Act
   const looks = {
@@ -436,7 +435,7 @@ test('a marker of the other editor on this computer, with another machine id dig
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'cursor',
       startedAtMs: NOW_MS,
@@ -460,7 +459,7 @@ test('a marker of a window in the other system of this computer, whose process s
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'cursor',
       startedAtMs: NOW_MS,
@@ -549,7 +548,7 @@ test('a marker whose boot is written in another form than a kernel boot id is st
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'vscode',
       startedAtMs: NOW_MS,

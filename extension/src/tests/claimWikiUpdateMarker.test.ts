@@ -36,11 +36,9 @@ import {
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
 import { idleChild } from './utils/idleChild'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
-
-/** A process id that names no process on the machine the tests run on. */
-const PID_OF_NO_PROCESS = 2 ** 22 + 1
 
 /** Answers the start of this test process as the fixed window {@link AS_THIS_WINDOW} records it; the start of any other process cannot be read. */
 const readStartOfThisWindow: ProcessStartReader = async (pid) =>
@@ -228,7 +226,7 @@ test('of two windows that start on a killed editor’s marker at the same moment
   await writeFile(
     wiki.markerPath,
     JSON.stringify({
-      pid: 2 ** 22 + 1,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs,
@@ -306,6 +304,8 @@ function outcomeOf(
   return claiming.then(
     (claim) => {
       if ('release' in claim) return 'holds the claim'
+      if ('isMarkerInChange' in claim.heldBy)
+        return 'refused while another window changes the marker'
       return 'windowId' in claim.heldBy
         ? `held by ${claim.heldBy.windowId}`
         : 'refused while another window writes its marker'
@@ -319,7 +319,7 @@ async function leaveKilledEditorsMarker(markerPath: string): Promise<void> {
   await writeFile(
     markerPath,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
@@ -384,12 +384,12 @@ test('of three windows that start on a killed editor’s marker at the same mome
     const secondWindow = await secondStart
     const thirdWindow = await thirdStart
 
-    // Assert: the second window finds the first one removing the marker and is refused as for a marker that stays in the way; the third writes onto the emptied path and is the one that runs.
+    // Assert: the second window finds the first one removing the marker and is refused as beside a window that changes the marker (the editor says "Another editor window is starting or ending an update of this Wiki. Wait a moment and try again."); the third writes onto the emptied path and is the one that runs.
     assert.deepEqual(
       { firstWindow, secondWindow, thirdWindow },
       {
         firstWindow: 'held by window-c',
-        secondWindow: 'refused with EEXIST',
+        secondWindow: 'refused while another window changes the marker',
         thirdWindow: 'holds the claim',
       },
     )
@@ -446,8 +446,8 @@ test('a window that starts at the moment a stopped watch’s reservation is remo
     await claim.release()
     const otherWindow = await otherStart
 
-    // Assert
-    assert.equal(otherWindow, 'refused with EEXIST')
+    // Assert: the other window is refused in a sentence of the editor ("Another editor window is starting or ending an update of this Wiki. Wait a moment and try again."), not with the file error of its creation.
+    assert.equal(otherWindow, 'refused while another window changes the marker')
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -552,7 +552,7 @@ test('a claim on the marker whose window was killed a moment ago does not keep a
   await writeFile(
     join(claimDirectory, 'left-by-a-killed-window'),
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       ...(await currentStorageOwner()),
     }),
   )
@@ -993,7 +993,7 @@ test('a claim on the marker without a process start, as 0.2.29.0 writes it, keep
     assert.deepEqual(
       { startAfter60Seconds, startAMillisecondLater },
       {
-        startAfter60Seconds: 'refused with EEXIST',
+        startAfter60Seconds: 'refused while another window changes the marker',
         startAMillisecondLater: 'holds the claim',
       },
     )
@@ -1034,7 +1034,7 @@ test('a claim on the marker that a running window of this machine has held for t
     )
 
     // Assert
-    assert.equal(start, 'refused with EEXIST')
+    assert.equal(start, 'refused while another window changes the marker')
     assert.deepEqual(await readdir(claimDirectory), [
       'held-by-a-suspended-window',
     ])
@@ -1469,7 +1469,7 @@ test('the prepared marker file a killed window left beside the marker is removed
   await writeFile(
     `${wiki.markerPath}.pending-left-by-a-killed-window`,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
@@ -1577,7 +1577,7 @@ test('the reservation a window wrote beside the marker and could not move over i
   })
   try {
     const killed = await claimAsKilledWindow(wiki.outputDirectory, {
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
@@ -2013,7 +2013,8 @@ test(
           besideTheWikiAfterTheLaterRun: await readdir(wiki.directory),
         },
         {
-          startWhileTheLinksAreYoung: 'refused with EEXIST',
+          startWhileTheLinksAreYoung:
+            'refused while another window changes the marker',
           besideTheWikiAfterTheLaterRun: ['wiki'],
         },
       )
