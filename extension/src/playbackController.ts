@@ -2,7 +2,7 @@ import { PLAYBACK_TICK_INTERVAL_MS } from './constants'
 import type { PlaybackCommand } from './playbackSchemas'
 import type { RecordingContext, RecordingIndex } from './recordingSchemas'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
-import { leavesStopOnSameFrame } from './utils/leavesStopOnSameFrame'
+import { leavesStopForNoStop } from './utils/leavesStopForNoStop'
 import { projectHistoricalTimeline } from './utils/projectHistoricalTimeline'
 import { projectRecording } from './utils/projectRecording'
 import { snapSeekToRecordedStop } from './utils/snapSeekToRecordedStop'
@@ -30,7 +30,7 @@ export interface PlaybackDependencies {
   load(studyId: string, signal: AbortSignal): Promise<PlaybackData>
   frame(studyId: string, hash: string, signal: AbortSignal): Promise<Buffer>
   present(bundle: PlaybackBundle, signal: AbortSignal): Promise<void>
-  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, or when Play leaves a stop's pause on an unchanged frame: the frame stays until the next moment paints, instead of a blank pane. */
+  /** Retires the displayed moment's native state. `keepPixels` is true only when the same recording is reloaded, when Play leaves a stop for no stop with a recorded frame on both sides (the end of the stop's pause), or when Pause finds no frame in flight: the frame on screen stays until the next moment paints, instead of a blank pane. */
   invalidate(keepPixels?: boolean): void
   changed(): void
   save(bundle: PlaybackBundle): Promise<void>
@@ -135,16 +135,22 @@ export class PlaybackController {
       this.stopTimer()
       // Pending B may already be decoded: retire its ACK and restore fully presented A under fresh ownership.
       const committed = this.presented
-      this.invalidate()
+      // With no frame in flight the pane shows exactly A, so A's pixels stay while it is restored.
+      const showsCommittedOnly = !this.running && !this.request
+      this.invalidate(showsCommittedOnly)
       this.request = undefined
       this.requestedMs = committed?.projection.positionMs
       if (committed)
-        this.queue({
-          studyId: input.studyId,
-          positionMs: committed.projection.positionMs,
-          restore: committed,
-          save: true,
-        })
+        this.queue(
+          {
+            studyId: input.studyId,
+            positionMs: committed.projection.positionMs,
+            restore: committed,
+            save: true,
+          },
+          true,
+          showsCommittedOnly,
+        )
       else {
         this.readiness = 'idle'
         this.dependencies.changed()
@@ -471,9 +477,9 @@ export class PlaybackController {
               this.presented.projection.observation?.id
           if (stopChanged && !this.cleared) {
             this.cleared = true
-            // The end of a stop's pause on an unchanged frame keeps that image; every other stop change clears it until the next moment paints.
+            // The end of a stop's pause keeps the image while the stop's values retire, and the next frame replaces it once painted; every other stop change clears it until the next moment paints.
             this.dependencies.invalidate(
-              leavesStopOnSameFrame(this.presented?.projection, projection),
+              leavesStopForNoStop(this.presented?.projection, projection),
             )
             this.dependencies.changed()
           }
