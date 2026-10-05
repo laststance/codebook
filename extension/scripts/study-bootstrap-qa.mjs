@@ -142,7 +142,7 @@ async function check(page, options, collected) {
     text: '',
     isRendered: true,
   })
-  /** Says whether the pane is laid out and painted the same with one of its parts in place as with that part taken out by the `hidden` attribute: `moved` names the page (its scroll size) and every rendered element outside the part whose box differs, and `samePixels` compares a screenshot of the whole page. Nothing moves and the pixels are equal only for a part that shows nothing and takes no room. Two frames pass before each reading, so the pane's resize observers have answered. */
+  /** Says whether the pane is laid out and painted the same with one of its parts in place as with that part taken out by the `hidden` attribute: `moved` names the page (its scroll size) and every rendered element outside the part whose box differs, and `samePixels` compares a screenshot of the whole page. Nothing moves and the pixels are equal only for a part that shows nothing and takes no room. Two frames pass before each reading, so the pane's resize observers have answered, and each screenshot is repeated until the picture stands still. */
   const looksAsWithout = async (selector) => {
     const reading = async () => {
       await page.evaluate(
@@ -170,16 +170,30 @@ async function check(page, options, collected) {
             }),
         ]
       }, selector)
-      return { boxes, pixels: await page.screenshot({ fullPage: true }) }
+      // What the browser still settles after a change (a hover that sets in, a scrollbar that fades) is not the part's doing: the picture is taken until two in a row are equal.
+      let pixels = await page.screenshot({ fullPage: true })
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const again = await page.screenshot({ fullPage: true })
+        if (again.equals(pixels)) break
+        pixels = again
+      }
+      return { boxes, pixels }
     }
     const setHidden = (isHidden) =>
       page.locator(selector).evaluate((part, isHidden) => {
         part.hidden = isHidden
       }, isHidden)
+    // A text field that has the focus blinks its caret, which two screenshots catch differently; the page's content security policy keeps the browser tool from hiding it, so the check hides it on the focused element for the two readings.
+    const setCaretColor = (color) =>
+      page.evaluate((color) => {
+        document.activeElement.style.caretColor = color
+      }, color)
+    await setCaretColor('transparent')
     const inPlace = await reading()
     await setHidden(true)
     const takenOut = await reading()
     await setHidden(false)
+    await setCaretColor('')
     return {
       moved: inPlace.boxes.flatMap(([name, box], index) =>
         box === takenOut.boxes[index]?.[1]
@@ -810,6 +824,105 @@ async function check(page, options, collected) {
         passed: await help.evaluate(
           (element) => document.activeElement === element,
         ),
+      })
+
+      // Arrange: the Keyboard shortcuts dialog is open and nothing was searched; its no-match line is a status region (row 81).
+      const noMatchSelector = '.shortcut-dialog [role=status]'
+      /** Reads the no-match line of the open dialog: its text, whether it is rendered, whether it or an ancestor up to the dialog has the `hidden` attribute or `display:none`, its height, how many shortcuts are listed and whether Clear search is shown. */
+      const noMatchLine = () =>
+        page.evaluate((selector) => {
+          const line = document.querySelector(selector),
+            dialog = line.closest('dialog'),
+            upToDialog = []
+          for (let node = line; node !== dialog; node = node.parentElement)
+            upToDialog.push(node)
+          return {
+            role: line.getAttribute('role'),
+            text: line.textContent,
+            isRendered: line.checkVisibility(),
+            isTakenOut: [...upToDialog, dialog].some(
+              (node) =>
+                node.hidden || getComputedStyle(node).display === 'none',
+            ),
+            height: Math.round(line.getBoundingClientRect().height),
+            hasRows: dialog.querySelectorAll('.shortcut-row').length > 0,
+            clearShown: [...dialog.querySelectorAll('button')]
+              .find((button) => button.textContent === 'Clear search')
+              .checkVisibility(),
+          }
+        }, noMatchSelector)
+      await help.click()
+      const lineBeforeSearch = {
+        line: await noMatchLine(),
+        looks: await looksAsWithout(noMatchSelector),
+      }
+      // Act: a search with matches, read also in a page whose stylesheet gives the line a paragraph's margins (as the Wiki reader's page does); a search without a match; a matching search again; and Clear search after one without.
+      await shortcutSearch.fill('seek')
+      await page.evaluate((selector) => {
+        const paragraphMargins = new CSSStyleSheet()
+        paragraphMargins.replaceSync(
+          `${selector.replace('[role=status]', 'p[role=status]')}{margin:16px 0}`,
+        )
+        document.adoptedStyleSheets = [paragraphMargins]
+      }, noMatchSelector)
+      const lineWithMatch = {
+        line: await noMatchLine(),
+        looks: await looksAsWithout(noMatchSelector),
+      }
+      await page.evaluate(() => {
+        document.adoptedStyleSheets = []
+      })
+      await shortcutSearch.fill('no-such-shortcut')
+      const lineWithoutMatch = await noMatchLine()
+      await shortcutSearch.fill('seek')
+      const lineWithMatchAgain = await noMatchLine()
+      await shortcutSearch.fill('no-such-shortcut')
+      await page
+        .getByRole('button', { name: 'Clear search', exact: true })
+        .click()
+      const lineAfterClear = await noMatchLine()
+      await shortcutSearch.press('Escape')
+      // Assert
+      const emptyLine = {
+        role: 'status',
+        text: '',
+        isRendered: true,
+        isTakenOut: false,
+        height: 0,
+        hasRows: true,
+      }
+      cases.push({
+        name: 'the no-match line of the Keyboard shortcuts list is in the open dialog, rendered and empty, while a search has matches, and the dialog looks as it does without the line, also where a stylesheet gives the line a paragraph’s margins; a search without a match gives it No shortcuts match., and a matching search or Clear search empties it again',
+        actual: {
+          lineBeforeSearch,
+          lineWithMatch,
+          lineWithoutMatch,
+          lineWithMatchAgain,
+          lineAfterClear,
+        },
+        passed:
+          JSON.stringify(lineBeforeSearch) ===
+            JSON.stringify({
+              line: { ...emptyLine, clearShown: false },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(lineWithMatch) ===
+            JSON.stringify({
+              line: { ...emptyLine, clearShown: true },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(lineWithoutMatch) ===
+            JSON.stringify({
+              ...emptyLine,
+              text: 'No shortcuts match.',
+              height: 24,
+              hasRows: false,
+              clearShown: true,
+            }) &&
+          JSON.stringify(lineWithMatchAgain) ===
+            JSON.stringify({ ...emptyLine, clearShown: true }) &&
+          JSON.stringify(lineAfterClear) ===
+            JSON.stringify({ ...emptyLine, clearShown: false }),
       })
       await page.waitForFunction(
         () =>

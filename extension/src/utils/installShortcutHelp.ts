@@ -5,7 +5,13 @@ export interface ShortcutHelpEntry {
   selector?: string
 }
 
-/** Installs scoped discovery when {@link studyHtml} starts its webview; browser readers can reuse the same DOM-only procedure. @example installShortcutHelp(entries, '#study-content') */
+/**
+ * Installs scoped discovery when {@link studyHtml} starts its webview; browser readers can reuse the same DOM-only procedure.
+ * The line that says a search matched nothing is a status region that stays in the dialog, rendered and empty, while the search has matches: its sentence is then a change of a region that exists, which a screen reader announces. It is never taken out with `hidden`.
+ * @param entries - The shortcuts of the page; one with a selector is listed only while a control it names is shown and enabled.
+ * @param rootSelector - The part of the page that must be shown for the list to open.
+ * @example installShortcutHelp(entries, '#study-content')
+ */
 export function installShortcutHelp(
   entries: ShortcutHelpEntry[],
   rootSelector: string,
@@ -26,9 +32,8 @@ export function installShortcutHelp(
   search.setAttribute('aria-label', 'Search shortcuts')
   const list = document.createElement('div')
   list.className = 'shortcut-list'
+  // Created empty and never hidden: the sentence arrives with the first search that matches nothing.
   const empty = document.createElement('p')
-  empty.textContent = 'No shortcuts match.'
-  empty.hidden = true
   empty.setAttribute('role', 'status')
   const clear = document.createElement('button')
   clear.type = 'button'
@@ -49,6 +54,19 @@ export function installShortcutHelp(
             !control.matches(':disabled'),
         ),
     )
+  /**
+   * Writes the no-match line for the list as it was just rendered; called by `render` after every search and every change of the shown shortcuts.
+   * The line stays rendered either way: its sentence is the change a screen reader announces.
+   * @param isListEmpty - Whether the search matched no shortcut.
+   * @example showNoMatch(true) // the line reads "No shortcuts match."
+   */
+  const showNoMatch = (isListEmpty: boolean): void => {
+    const sentence = isListEmpty ? 'No shortcuts match.' : ''
+    // Written only when it changes, so the sentence is announced once for a run of searches without a match.
+    if (empty.textContent !== sentence) empty.textContent = sentence
+    // An empty paragraph keeps its margins and would open a gap under the list: the line has none while it is empty, whatever the page's stylesheet gives a paragraph.
+    empty.style.margin = sentence ? '' : '0'
+  }
   const render = (): void => {
     const query = search.value.trim().toLocaleLowerCase(),
       bindings = available()
@@ -85,7 +103,7 @@ export function installShortcutHelp(
       row.append(label, keys)
       group?.append(row)
     }
-    empty.hidden = list.childElementCount !== 0
+    showNoMatch(list.childElementCount === 0)
     clear.hidden = !query
   }
   const open = (): void => {
