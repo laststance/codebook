@@ -1599,8 +1599,8 @@ test('Play that reaches the end of a stop’s recorded pause on the same frame k
   await player.controller.dispose()
 })
 
-// Value: protects=the previous image never shown beside a moment whose recorded frame differs when a stop's pause ends; fails_when=the kept image extends to a pause end whose next moment has another frame; why_new=Cycle 0045 NF-13c keeps the image only when the frame hash is unchanged; seam=none
-test('Play that reaches the end of a stop’s recorded pause on a new frame clears the image until that frame is presented', async () => {
+// Value: protects=the recorded image staying on screen when a stop's recorded pause ends and the application has already sent a newer frame, until that frame paints; fails_when=the pause end clears the Application pane because the next moment's frame hash differs (native check F18 on candidate 20: 0.6 s dark at 153.19 and 183.46 s, where the next frame arrived 49 and 14 ms after the pause ended); why_new=Cycle 0045 NF-13d; seam=none
+test('Play that reaches the end of a stop’s recorded pause on a newer frame keeps the image until that frame is presented', async () => {
   // Arrange: the stop committed at 100 ms carries recorded debugger state and its pause ended at 200 ms, when the next frame arrived.
   const presentedPositions: number[] = []
   const invalidationsKeepingPixels: Array<boolean | undefined> = []
@@ -1652,6 +1652,92 @@ test('Play that reaches the end of a stop’s recorded pause on a new frame clea
   assert.equal(player.controller.state().frame?.hash, sha256('frame-200'))
   assert.deepEqual(presentedPositions, [0, 100, 200])
   assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsAtPlay), [
+    true,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=the recorded image staying on screen when the learner pauses Play between two frames; fails_when=Pause clears the Application pane although no newer frame is in flight, so it blinks dark while the same moment is restored (native check F18 on candidate 20: 3 dark frames at each Pause); why_new=Cycle 0045 NF-13d; seam=none
+test('Pause between two Play steps keeps the image on screen while the paused moment is restored', async () => {
+  // Arrange: Play has presented the frame of 100 ms at 120 ms and nothing is in flight.
+  const presentedPositions: number[] = []
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  const player = playbackHarness({
+    present: async (bundle) => {
+      presentedPositions.push(bundle.projection.positionMs)
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(100)
+  await player.controller.settle()
+  player.play()
+  player.clock(20)
+  player.controller.tick()
+  await player.controller.settle()
+  const invalidationsBeforePause = invalidationsKeepingPixels.length
+
+  // Act
+  player.pause()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().mode, 'paused')
+  assert.equal(player.controller.state().presentedMs, 120)
+  assert.deepEqual(presentedPositions, [0, 100, 120])
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsBeforePause), [
+    true,
+    true,
+  ])
+  await player.controller.dispose()
+})
+
+// Value: protects=a frame that was sent but not confirmed never staying on screen after Pause; fails_when=Pause keeps the pixels while a newer frame is still being presented, so the pane may show that frame although the paused moment is the earlier one; why_new=Cycle 0045 NF-13d keeps the pixels at Pause only with no frame in flight; seam=the fake presentation of the newer frame is held
+test('Pause while Play is still presenting a newer frame clears the image until the paused moment is restored', async () => {
+  // Arrange: Play stands at 120 ms on the frame of 100 ms; the frame of 200 ms is being presented and not yet confirmed.
+  const invalidationsKeepingPixels: Array<boolean | undefined> = []
+  let releaseNewerFrame: () => void = () => undefined,
+    enteredNewerFrame: () => void = () => undefined
+  const newerFrameHeld = new Promise<void>((resolve) => {
+      releaseNewerFrame = resolve
+    }),
+    newerFrameEntered = new Promise<void>((resolve) => {
+      enteredNewerFrame = resolve
+    })
+  const player = playbackHarness({
+    present: async (bundle) => {
+      if (bundle.projection.positionMs === 220) {
+        enteredNewerFrame()
+        await newerFrameHeld
+      }
+    },
+    invalidate: (keepPixels) => {
+      invalidationsKeepingPixels.push(keepPixels)
+    },
+  })
+  player.open()
+  await player.controller.settle()
+  player.seek(120)
+  await player.controller.settle()
+  player.play()
+  player.clock(100)
+  player.controller.tick()
+  await newerFrameEntered
+  const invalidationsBeforePause = invalidationsKeepingPixels.length
+
+  // Act
+  player.pause()
+  releaseNewerFrame()
+  await player.controller.settle()
+
+  // Assert
+  assert.equal(player.controller.state().mode, 'paused')
+  assert.equal(player.controller.state().presentedMs, 120)
+  assert.deepEqual(invalidationsKeepingPixels.slice(invalidationsBeforePause), [
+    false,
     false,
   ])
   await player.controller.dispose()
