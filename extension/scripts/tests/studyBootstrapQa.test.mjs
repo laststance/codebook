@@ -289,3 +289,56 @@ test('the pane DOM check lays out the Wiki reader’s shell at a width where its
     'the shell is no longer laid out at 720 px',
   )
 })
+
+// Value: protects=the Reader DOM job when a disclosure does not toggle at its key press: that case fails after five seconds and names the disclosure; fails_when=the flow waits for the toggle event without a bound of its own (a promise of the page awaited through `page.evaluate`, which no limit of the browser tool ends), so one disclosure that stays as it is holds the whole flow until the five-minute limit of its browser call; why_new=Cycle 0046 row 88 (the local CodeRabbit review); seam=the helper's own text from the script, run against a page that records its calls and lets the bounded wait run out
+test('the pane DOM check waits five seconds at most for a disclosure to toggle after its key press, and a disclosure that does not toggle fails with a sentence that names it', async () => {
+  // Arrange: the helper as the script states it, and a page whose bounded wait runs out the way the browser tool's does.
+  const script = await readFile(scriptUrl, 'utf8')
+  const helperStart = script.indexOf('const toggleByKeyboard = async ('),
+    helperEnd = script.indexOf('\n  }\n', helperStart)
+  const helperText = script.slice(helperStart, helperEnd + '\n  }'.length)
+  const calls = []
+  const page = {
+    evaluate: async (callback) => {
+      calls.push(
+        `evaluate ${callback.toString().includes('addEventListener') ? 'listens for toggle' : 'other'}`,
+      )
+    },
+    locator: (selector) => ({
+      focus: async () => {
+        calls.push(`focus ${selector}`)
+      },
+    }),
+    keyboard: {
+      press: async (key) => {
+        calls.push(`press ${key}`)
+      },
+    },
+    waitForFunction: async (_callback, _argument, waitOptions) => {
+      calls.push(`wait ${JSON.stringify(waitOptions)}`)
+      throw new Error('page.waitForFunction: Timeout 5000ms exceeded.')
+    },
+  }
+
+  // Act
+  const toggleByKeyboard = runInNewContext(`${helperText}; toggleByKeyboard`, {
+    page,
+    Error,
+  })
+  const outcome = await toggleByKeyboard('study-files').then(
+    () => 'resolved',
+    (error) => error.message,
+  )
+
+  // Assert
+  assert.deepEqual(calls, [
+    'evaluate listens for toggle',
+    'focus #study-files > summary',
+    'press Enter',
+    'wait {"timeout":5000}',
+  ])
+  assert.equal(
+    outcome,
+    'The disclosure #study-files did not toggle within 5000 ms of Enter on its summary (page.waitForFunction: Timeout 5000ms exceeded.)',
+  )
+})

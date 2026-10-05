@@ -122,18 +122,33 @@ async function check(page, options, collected) {
         )
         .join(','),
     )
-  /** Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure. */
+  /**
+   * Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure.
+   * The wait is bounded: a disclosure that does not toggle rejects after five seconds with a sentence that names it, which ends the flow as one failed case, instead of holding the flow until the limit of its one browser call.
+   */
   const toggleByKeyboard = async (disclosureId, key = 'Enter') => {
+    const toggleWaitMs = 5_000
     await page.evaluate((id) => {
-      window.disclosureToggled = new Promise((resolve) =>
-        document
-          .getElementById(id)
-          .addEventListener('toggle', () => resolve(), { once: true }),
+      window.disclosureToggled = false
+      document.getElementById(id).addEventListener(
+        'toggle',
+        () => {
+          window.disclosureToggled = true
+        },
+        { once: true },
       )
     }, disclosureId)
     await page.locator(`#${disclosureId} > summary`).focus()
     await page.keyboard.press(key)
-    await page.evaluate(() => window.disclosureToggled)
+    await page
+      .waitForFunction(() => window.disclosureToggled, undefined, {
+        timeout: toggleWaitMs,
+      })
+      .catch((error) => {
+        throw new Error(
+          `The disclosure #${disclosureId} did not toggle within ${toggleWaitMs} ms of ${key} on its summary (${error.message})`,
+        )
+      })
   }
   /** Names the element that holds the keyboard focus: `body`, else its id, its action, or its tag with its text. */
   const focusName = () =>
