@@ -840,3 +840,73 @@ test('a book’s cited source read through codebook_read_resource answers its nu
     await harness.close()
   }
 })
+
+// Value: protects=an agent that put a member of its document beside document learning where it belongs; fails_when=the refusal only says the key is unrecognized, or names no document.<member>; why_new=Cycle 0045 N14c-F1 (DX-1 c): the VS Code agent's first publish gave edges beside document and was answered "Unrecognized key: \"edges\""; seam=none
+test('a publish that gives a member of the document beside document is refused with a sentence that says it belongs inside document', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const refused = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'price',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Price',
+          summary: 'Where the price comes from.',
+          nodes: [citedNode('entry')],
+        },
+        edges: [],
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(
+      toolText(refused),
+      'MCP error -32602: Input validation error: Invalid arguments for tool codebook_publish_book: edges is a member of the published document, not of the call: give it inside document, as document.edges.',
+    )
+    await assert.rejects(
+      readFile(join(harness.library.directory, 'price.book.v2.json')),
+      /ENOENT/,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the publish input staying strict for a key that belongs nowhere; fails_when=an unknown key that is no document member is accepted or loses the usual refusal; why_new=Cycle 0045 N14c-F1 (the guard of the new sentence); seam=none
+test('a publish with an unknown key that is no member of the document is still refused as an unrecognized key', async () => {
+  // Arrange
+  const harness = await repositoryProtocolHarness()
+  try {
+    // Act
+    const refused = await harness.client.callTool({
+      name: 'codebook_publish_book',
+      arguments: {
+        instanceId: harness.service.instanceId,
+        bookId: 'price',
+        key: 'first',
+        expectedRevision: 0,
+        document: {
+          title: 'Price',
+          summary: 'Where the price comes from.',
+          nodes: [citedNode('entry')],
+        },
+        draft: true,
+      },
+    })
+
+    // Assert
+    assert.equal(refused.isError, true)
+    assert.equal(
+      toolText(refused),
+      'MCP error -32602: Input validation error: Invalid arguments for tool codebook_publish_book: Unrecognized key: "draft"',
+    )
+  } finally {
+    await harness.close()
+  }
+})
