@@ -327,6 +327,8 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
+    'extension/src/tests/claimWikiUpdateMarker.test.ts',
+    'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
   ])
   const actionReferences = workflow
     .split('\n')
@@ -334,29 +336,33 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .filter((line) => line.startsWith('uses: '))
   const settings = workflow.split('\n').map((line) => line.trim())
 
-  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the twelve test files
+  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the fourteen test files
   // load; only the two constants files, which most pull requests change, are left out.
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
     '.node-version',
     'extension/src/runtimeSupport/utils/sha256.ts',
     'extension/src/tests/canJudgeOwnerHere.test.ts',
+    'extension/src/tests/claimWikiUpdateMarker.test.ts',
     'extension/src/tests/currentStorageOwner.test.ts',
     'extension/src/tests/isFromEarlierBoot.test.ts',
     'extension/src/tests/isProcessGone.test.ts',
     'extension/src/tests/isRecordedOwnerGone.test.ts',
     'extension/src/tests/isSameStorageMachine.test.ts',
     'extension/src/tests/readBootIdentity.test.ts',
+    'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
     'extension/src/tests/readProcessStart.test.ts',
     'extension/src/tests/readRecordedOwner.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/utils/answerKernelBootId.ts',
     'extension/src/tests/utils/idleChild.ts',
+    'extension/src/tests/utils/loadModule.ts',
     'extension/src/tests/utils/startOfKilledWindow.ts',
     'extension/src/tests/withStorageLock.test.ts',
     'extension/src/utils/canJudgeOwnerHere.ts',
     'extension/src/utils/claimStorageLockTakeover.ts',
+    'extension/src/utils/claimWikiUpdateMarker.ts',
     'extension/src/utils/currentStorageOwner.ts',
     'extension/src/utils/deriveMachineKeys.ts',
     'extension/src/utils/isFromEarlierBoot.ts',
@@ -367,8 +373,10 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/isStaleStorageLock.ts',
     'extension/src/utils/placeStorageLock.ts',
     'extension/src/utils/readBootIdentity.ts',
+    'extension/src/utils/readLiveWikiUpdateMarker.ts',
     'extension/src/utils/readProcessStart.ts',
     'extension/src/utils/readRecordedOwner.ts',
+    'extension/src/utils/readWikiRegularFile.ts',
     'extension/src/utils/removeStaleStorageClaims.ts',
     'extension/src/utils/removeStaleStorageLock.ts',
     'extension/src/utils/systemErrorCode.ts',
@@ -394,7 +402,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js',
+    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
