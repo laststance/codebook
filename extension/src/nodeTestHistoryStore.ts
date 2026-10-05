@@ -1,4 +1,12 @@
-import { chmod, mkdir, open, readdir, readFile, lstat } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  lstat,
+  rm,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -75,7 +83,7 @@ export class NodeTestHistoryStore {
    * Reserves a private history before the owned test process can start; called by {@link StudyService} when it admits a Node test run.
    * @param input - The history's header without its version; its study id names the history's folder.
    * @returns The writer of the reserved history.
-   * @throws When the header belongs to another workspace or exceeds its storage limit, and when the saved studies and the histories together reach the saved study limit. Only entries named like a study id count as histories: a stray entry of the history directory, which no list shows, takes no place of the limit.
+   * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, and when the history's first files cannot be written. Only entries named like a study id count as histories: a stray entry of the history directory, which no list shows, takes no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
    * @example const writer = await store.start(header)
    */
   async start(
@@ -97,11 +105,39 @@ export class NodeTestHistoryStore {
       throw new Error(
         'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
       )
-    const runDirectory = this.path(header.studyId)
-    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE })
+    // The header's size is checked before the history's folder is made, so a header above its limit leaves nothing behind.
     const headerBytes = Buffer.from(JSON.stringify(header))
     if (headerBytes.byteLength > HEADER_LIMIT_BYTES)
       throw new Error('Node history article context exceeds its storage limit.')
+    const runDirectory = this.path(header.studyId)
+    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE })
+    try {
+      await this.createHistoryFiles(runDirectory, headerBytes)
+    } catch (error) {
+      // A folder without a header is shown by no list and would take a place of the saved study limit for good: a start that fails after it made the folder removes it again.
+      await rm(runDirectory, { recursive: true, force: true }).catch(
+        () => undefined,
+      )
+      throw error
+    }
+    this.active.add(header.studyId)
+    return new NodeTestHistoryWriter(runDirectory, header, () =>
+      this.active.delete(header.studyId),
+    )
+  }
+
+  /**
+   * Writes the two files a history starts with into its new folder, the header and the empty journal, each created anew and flushed; called by {@link start}, which removes the folder again when this fails.
+   * @param runDirectory - The history's folder, which {@link start} has just made.
+   * @param headerBytes - The header as it is stored, already within its size limit.
+   * @throws What creating, writing or flushing either file throws, for example on a full disk.
+   * @example
+   * await this.createHistoryFiles('/…/node-tests.v1/<study id>', Buffer.from(JSON.stringify(header)))
+   */
+  private async createHistoryFiles(
+    runDirectory: string,
+    headerBytes: Buffer,
+  ): Promise<void> {
     const headerHandle = await open(
       join(runDirectory, HEADER_FILE),
       'wx',
@@ -123,10 +159,6 @@ export class NodeTestHistoryStore {
     } finally {
       await journalHandle.close()
     }
-    this.active.add(header.studyId)
-    return new NodeTestHistoryWriter(runDirectory, header, () =>
-      this.active.delete(header.studyId),
-    )
   }
 
   /** Lists histories for the current workspace without exposing the private storage directory. @example await store.list() */
