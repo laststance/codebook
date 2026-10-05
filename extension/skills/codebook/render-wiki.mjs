@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { escapeHtml, renderWikiDiagrams } from './render-wiki-diagrams.mjs';
+import { contentIdsOf, escapeHtml, renderWikiDiagrams, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -10,40 +10,6 @@ const MAX_SOURCE_QUOTE_LINES = 40;
 const READER_ELEMENT_IDS = ['codebook-open-target', 'codebook-update-status', 'shortcut-title', 'shortcut-tooltip'];
 /** The attributes of authored HTML whose value is an id or a list of ids of the same page: the element's own `id` and the attributes that refer to elements by id; {@link withRenamedContentIds} renames an id in each of them. */
 const ID_ATTRIBUTES = new Set(['id', 'anchor', 'aria-activedescendant', 'aria-controls', 'aria-describedby', 'aria-details', 'aria-errormessage', 'aria-flowto', 'aria-labelledby', 'aria-owns', 'commandfor', 'for', 'form', 'headers', 'itemref', 'list', 'popovertarget']);
-/** A comment or a start tag of authored HTML, the two things {@link withAttributeValues} tells apart from text. A comment is passed over whole, also one that never ends, so an element inside it is no element of the page; in a start tag a quoted attribute value may hold a `>`. Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
-const COMMENT_OR_START_TAG = /<!--[\s\S]*?(?:-->|$)|<[A-Za-z][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/g;
-/** One attribute of a start tag, read in the order a browser reads them: what stands before its name (spaces, a slash, or nothing after a closing quote), its name, and, when it has a value, its equals sign and the value in double quotes, in single quotes or bare. */
-const ATTRIBUTE = /([\s/]*)([^\s"'<>/=]+)(?:(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-/** A character reference in an attribute value: decimal, hexadecimal, or one of the five named ones an author writes into an address or an id. */
-const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g;
-const NAMED_CHARACTERS = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-/** The character a numeric reference names; the replacement character for a number that names none. Called by {@link attributeText}. @example referencedCharacter('45', 10) // => '-' */
-const referencedCharacter = (digits, radix) => { const codePoint = Number.parseInt(digits, radix); return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '�'; };
-/** Reads an attribute value as a browser does: every character reference becomes its character, so an id or an address written with an entity compares as the text it means. Called by {@link withAttributeValues}. @example attributeText('a&amp;b.html#qa&#45;form') // => 'a&b.html#qa-form' */
-const attributeText = value => value.replace(CHARACTER_REFERENCE, (_reference, decimal, hexadecimal, name) => NAMED_CHARACTERS[name] ?? referencedCharacter(decimal ?? hexadecimal, decimal === undefined ? 16 : 10));
-/** An attribute's value as written, in whichever of the three forms {@link ATTRIBUTE} matched it. Called by {@link withAttributeValues}. @example writtenValue(undefined, 'a', undefined) // => 'a' */
-const writtenValue = (double, single, bare) => double ?? single ?? bare;
-/** The quote an attribute's value stands in, by which of the two quoted forms {@link ATTRIBUTE} matched; none for a bare value. Called by {@link withAttributeValues}. @example quoteOf(undefined, 'a') // => "'" */
-const quoteOf = (double, single) => double !== undefined ? '"' : single !== undefined ? "'" : '';
-/** Rewrites attribute values in the start tags of authored HTML and leaves its text and its comments alone, so an id a code example only mentions or a commented-out element carries is not touched; called by {@link contentIdsOf} and {@link withRenamedContentIds}. `rewrite` gets the attribute's name in lower case and its value as text (its character references read) and returns the text to print; a changed value is printed escaped, in the quotes the author used. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
-const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_START_TAG, markup => {
-  if (markup.startsWith('<!--')) return markup;
-  // The tag's name ends at the first space, slash or closing bracket; what follows are its attributes.
-  const nameEnd = markup.search(/[\s/>]/);
-  return markup.slice(0, nameEnd) + markup.slice(nameEnd).replace(ATTRIBUTE, (attribute, lead, name, equals, double, single, bare) => {
-    // An attribute without a value refers to nothing.
-    if (equals === undefined) return attribute;
-    const text = attributeText(writtenValue(double, single, bare)), rewritten = rewrite(name.toLowerCase(), text);
-    // An unchanged attribute keeps its exact text.
-    return rewritten === text ? attribute : `${lead}${name}${equals}${quoteOf(double, single)}${escapeHtml(rewritten)}${quoteOf(double, single)}`;
-  });
-});
-/** Lists the ids the elements of authored HTML carry, as a browser reads them: from start tags alone, with character references read. Called by {@link validatePages} for a page's outline and by {@link contentIdRenames}. @example contentIdsOf('<h2 id="flow">Flow</h2><p id=note>…</p><!-- <p id="old"> --><code>&lt;p id="shown"&gt;</code>') // => Set { 'flow', 'note' } */
-const contentIdsOf = html => {
-  const ids = new Set();
-  withAttributeValues(html, (name, value) => { if (name === 'id') ids.add(value); return value; });
-  return ids;
-};
 /** Chooses another id for every id of a page's content that the reader uses itself: `page-` and the id, with a number where the page carries that one too. Called by {@link renderWikiPages} once per page, so the published page holds each id of the reader once and the agent's page data stay as authored. @example contentIdRenames('<h2 id="qa-form">The form</h2>', new Set(['qa-form'])) // => Map { 'qa-form' => 'page-qa-form' } */
 const contentIdRenames = (contentHtml, readerIds) => {
   const contentIds = contentIdsOf(contentHtml), taken = new Set([...contentIds, ...readerIds]), renames = new Map();
