@@ -17,7 +17,7 @@ const STAT_OF_THIS_PROCESS =
 
 // Value: protects=what every storage lock, takeover claim, connection descriptor and profile marker carries: the machine by the editor's id and by two digests, the boot, and the start of the process, by which another window tells this process from a later one with its id; fails_when=a field is missing (Cycle 0044 row AD-6 for the machine id, Cycle 0046 rows 2 and 9 for the start, ER-3 for the digests) or a digest is taken from the wrong name; why_new=the old test deep-equalled the shape without start and digests; seam=the host name, the kernel boot id file and the injected start reader
 test('a local window records the editor’s machine id, the host name, both digests of the machine, the boot and the start of this process', async (context) => {
-  // Arrange: a local window of the editor that calls this machine "machine-a", on the host "workstation", under the kernel boot "boot-of-this-test"; this process began at clock tick 16362446.
+  // Arrange: a local window of the editor that calls this machine "machine-a", on the host "workstation", under the kernel boot "boot-of-this-test"; this process began at clock tick 16362446 in the pid namespace 4026531836.
   context.after(() => useEditorMachineId(undefined, undefined))
   context.mock.method(os, 'hostname', () => 'workstation')
   answerKernelBootId(context, 'boot-of-this-test')
@@ -26,6 +26,7 @@ test('a local window records the editor’s machine id, the host name, both dige
   const owner = await currentStorageOwner({
     ownStart: {},
     platform: 'linux',
+    readLink: () => 'pid:[4026531836]',
     readFile: async () => STAT_OF_THIS_PROCESS,
   })
   // Assert: the digests are the first 16 hex characters of the SHA-256 of "machine-a" and of "workstation".
@@ -35,7 +36,7 @@ test('a local window records the editor’s machine id, the host name, both dige
     machineKey: 'f9c8c7ddcf3d5f56',
     hostKey: 'd195d36bd79da7df',
     boot: { id: 'boot-of-this-test' },
-    processStart: 'linux:16362446',
+    processStart: 'linux@4026531836:16362446',
   })
 })
 
@@ -46,6 +47,7 @@ test('the start of this process is read once, however often and however close to
   const startInputs: ProcessStartInputs = {
     ownStart: {},
     platform: 'linux',
+    readLink: () => 'pid:[4026531836]',
     readFile: async () => {
       reads += 1
       return STAT_OF_THIS_PROCESS
@@ -60,7 +62,11 @@ test('the start of this process is read once, however often and however close to
   // Assert
   assert.deepEqual(
     [first.processStart, second.processStart, third.processStart],
-    ['linux:16362446', 'linux:16362446', 'linux:16362446'],
+    [
+      'linux@4026531836:16362446',
+      'linux@4026531836:16362446',
+      'linux@4026531836:16362446',
+    ],
   )
   assert.equal(reads, 1)
 })
@@ -73,6 +79,7 @@ test('a failed read of this process’s start is made again after 60 s, and a st
   const startInputs: ProcessStartInputs = {
     ownStart: {},
     platform: 'linux',
+    readLink: () => 'pid:[4026531836]',
     now: () => clockMs,
     readFile: async () => {
       reads += 1
@@ -95,8 +102,11 @@ test('a failed read of this process’s start is made again after 60 s, and a st
   // Assert
   assert.deepEqual(atTheFailure, { start: undefined, reads: 1 })
   assert.deepEqual(justBefore60s, { start: undefined, reads: 1 })
-  assert.deepEqual(after60s, { start: 'linux:16362446', reads: 2 })
-  assert.deepEqual(anHourLater, { start: 'linux:16362446', reads: 2 })
+  assert.deepEqual(after60s, { start: 'linux@4026531836:16362446', reads: 2 })
+  assert.deepEqual(anHourLater, {
+    start: 'linux@4026531836:16362446',
+    reads: 2,
+  })
 })
 
 // Value: protects=the lock of a live window on a system without a kernel boot id whose start query fails; fails_when=such a window records the boot time it computes, so a clock set forward by 90 s makes its own record one of an earlier boot and another window takes its lock (Cycle 0046 row 9); why_new=a record without a start is judged by its boot (ER-1, ER-13); seam=the kernel boot id file, the clock, the uptime and the injected start reader
@@ -136,6 +146,7 @@ test('a kernel boot id is recorded also while the start of this process cannot b
   const owner = await currentStorageOwner({
     ownStart: {},
     platform: 'linux',
+    readLink: () => 'pid:[4026531836]',
     readFile: async () => {
       throw new Error('EACCES: permission denied')
     },
@@ -186,6 +197,7 @@ test('on a system without a kernel boot id the boot time is computed again at ev
   const startInputs: ProcessStartInputs = {
     ownStart: {},
     platform: 'linux',
+    readLink: () => 'pid:[4026531836]',
     readFile: async () => STAT_OF_THIS_PROCESS,
   }
   // Act: the window names its boot, the clock is set forward by 90 s, and the window names its boot again.

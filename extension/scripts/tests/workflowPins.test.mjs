@@ -329,6 +329,8 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/canJudgeOwnerHere.test.ts',
     'extension/src/tests/claimWikiUpdateMarker.test.ts',
     'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
+    'extension/src/tests/processStartFormHere.test.ts',
+    'extension/src/tests/namesMachineInClear.test.ts',
   ])
   const actionReferences = workflow
     .split('\n')
@@ -336,7 +338,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .filter((line) => line.startsWith('uses: '))
   const settings = workflow.split('\n').map((line) => line.trim())
 
-  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the fourteen test files
+  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the sixteen test files
   // load; only the two constants files, which most pull requests change, are left out.
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
@@ -349,6 +351,8 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/isProcessGone.test.ts',
     'extension/src/tests/isRecordedOwnerGone.test.ts',
     'extension/src/tests/isSameStorageMachine.test.ts',
+    'extension/src/tests/namesMachineInClear.test.ts',
+    'extension/src/tests/processStartFormHere.test.ts',
     'extension/src/tests/readBootIdentity.test.ts',
     'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
     'extension/src/tests/readProcessStart.test.ts',
@@ -371,7 +375,9 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/isRecordedOwnerGone.ts',
     'extension/src/utils/isSameStorageMachine.ts',
     'extension/src/utils/isStaleStorageLock.ts',
+    'extension/src/utils/namesMachineInClear.ts',
     'extension/src/utils/placeStorageLock.ts',
+    'extension/src/utils/processStartFormHere.ts',
     'extension/src/utils/readBootIdentity.ts',
     'extension/src/utils/readLiveWikiUpdateMarker.ts',
     'extension/src/utils/readProcessStart.ts',
@@ -402,7 +408,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js',
+    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
