@@ -1538,7 +1538,7 @@ function assignedIdsOf(source) {
   ].map(([, assigned, set, written]) => (assigned ?? set ?? written).trim())
 }
 
-// Value: protects=the list of ids the publisher keeps a page's content apart from; fails_when=the shell's template or one of the reader's sources gives an element an id the publisher does not know, in any form (a property, `setAttribute` or markup in a string), or assigns an id from something other than a literal or one of the two helpers that take a free id, so a page whose content carries that id is published with it twice; why_new=Cycle 0046 rows 84 and 133 (the first form of the test read one pattern per script); seam=none
+// Value: protects=the list of ids the publisher keeps a page's content apart from; fails_when=the shell's template or one of the reader's sources gives an element an id the publisher does not know, in any form (a property, `setAttribute` or markup in a string), or assigns an id from something other than a literal or one of the three helpers that take a free id, so a page whose content carries that id is published with it twice; why_new=Cycle 0046 rows 84 and 133 (the first form of the test read one pattern per script); seam=none
 test('the publisher keeps a page’s content apart from every id the shell’s template and the reader’s page scripts give an element', async () => {
   // Arrange: the shell, the publisher, and the sources of the reader that run in a served page or add to it.
   const textOf = (path) =>
@@ -1549,15 +1549,14 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
   const statusScript = await textOf('src/utils/installWikiUpdateStatus.ts')
   const entryScript = await textOf('src/utils/rebindDeepWikiEditorLinks.ts')
 
-  // Act: the ids of the template (the publisher reads them from it), every id the reader's sources assign, what the two helpers that take a free id start from, and the ids the publisher names.
+  // Act: the ids of the template (the publisher reads them from it), every id the reader's sources assign, what the three helpers that take a free id start from, and the ids the publisher names.
   const idsOfTheTemplate = [...shell.matchAll(/\sid="([^"]+)"/g)].map(
     ([, id]) => id,
   )
+  const helpScript = await textOf('src/utils/installShortcutHelp.ts')
   const idsTheSourcesAssign = {
     statusScript: assignedIdsOf(statusScript),
-    keyboardHelp: assignedIdsOf(
-      await textOf('src/utils/installShortcutHelp.ts'),
-    ),
+    keyboardHelp: assignedIdsOf(helpScript),
     questionForm: assignedIdsOf(await textOf('src/deepWikiReader.ts')),
     entryScript: assignedIdsOf(entryScript),
   }
@@ -1566,6 +1565,10 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
       /const freeStatusRegionId = [\s\S]*?let id = '([^']+)'/.exec(
         statusScript,
       )?.[1],
+    // The keyboard help's helper numbers the id its element was given, which is one of the two literals below.
+    keepIdFree: /const keepIdFree = [\s\S]*?const wanted = ([\w.]+)/.exec(
+      helpScript,
+    )?.[1],
     freeOpenTargetIdIn: [
       /const targetId = (\w+)\(/.exec(entryScript)?.[1],
       /function freeOpenTargetIdIn\([\s\S]*?let id = (\w+)/.exec(
@@ -1589,12 +1592,17 @@ test('the publisher keeps a page’s content apart from every id the shell’s t
   ])
   assert.deepEqual(idsTheSourcesAssign, {
     statusScript: ['freeStatusRegionId()'],
-    keyboardHelp: ["'shortcut-title'", "'shortcut-tooltip'"],
+    keyboardHelp: [
+      "wanted + '-' + count",
+      "'shortcut-title'",
+      "'shortcut-tooltip'",
+    ],
     questionForm: [],
     entryScript: ['${targetId}'],
   })
   assert.deepEqual(idsTheHelpersStartFrom, {
     freeStatusRegionId: 'codebook-update-status',
+    keepIdFree: 'element.id',
     freeOpenTargetIdIn: [
       'freeOpenTargetIdIn',
       'WIKI_OPEN_TARGET_ELEMENT_ID',

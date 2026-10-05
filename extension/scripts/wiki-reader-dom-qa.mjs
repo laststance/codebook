@@ -1623,9 +1623,9 @@ async function check(page, options, collected) {
   const usePagePublishedWithReaderIdsTwice = async () => {
     // Arrange: the same page as a publisher before this build printed it: each of the reader's ids also on a heading, and the rail's entry as its link alone. Act: the same use.
     const used = await useReaderOn(options.readerIdsPagePublishedBefore)
-    // Assert: the reader finds its own elements all the same. The keyboard help's title is recorded and not asserted: its dialog is named by id and stands after the article.
+    // Assert: the reader finds its own elements all the same. The keyboard help's heading takes a free id too, so its dialog is named by its own title and not by the heading of the article that carries `shortcut-title`.
     record(
-      'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, and the status region and the rail entry’s target get ids of their own',
+      'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, the status region and the rail entry’s target get ids of their own, and the keyboard help is named by its own title',
       used,
       {
         ...readerChecks(used),
@@ -1634,6 +1634,8 @@ async function check(page, options, collected) {
           used.statusRegionId === 'codebook-update-status-2',
         doesEntryTargetTakeAFreeId:
           used.entryTargetId === 'codebook-open-target-2',
+        isKeyboardHelpNamedByItsOwnTitle:
+          used.helpTitle === 'Keyboard shortcuts',
         doesQuestionStayOnThePage:
           used.address === 'reader-ids-published-before.html',
       },
