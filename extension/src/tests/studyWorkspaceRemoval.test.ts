@@ -875,6 +875,49 @@ test('a second delete request while the confirmation is waiting opens no second 
   }
 })
 
+// Value: protects=two delete requests that reach the reader in the same turn (two panes, or a double click whose messages the host delivers together) opening one dialog for the first study, whose state carries the first request's number; fails_when=the second request passes the one-removal check while the first still checks for a Trash, so two dialogs open and the second request's number replaces the first one's in the shared removal state; why_new=Cycle 0046 row 31 (PL-23 of Cycle 0045: the first `await` came before the removal state was reserved); seam=the editor's dialog, stubbed at the vscode boundary
+test('two delete requests started in the same turn open one dialog for the first study and the second is refused while the first holds the removal', async () => {
+  // Arrange
+  const harness = await workspaceHarness()
+  try {
+    const first = await saveEarlierStudy(harness, '2026-09-20T00:00:01.000Z'),
+      second = await saveEarlierStudy(harness, '2026-09-20T00:00:02.000Z')
+    const cancels: (() => void)[] = []
+    harness.answerWarningDialogs(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          cancels.push((): void => resolve(undefined))
+        }),
+    )
+
+    // Act: both requests start before either of them awaits anything.
+    const firstRemoval = requestRemoval(harness, first.id, 1)
+    const secondRemoval = requestRemoval(harness, second.id, 2)
+    await waitUntil(
+      () => harness.warningDialogs.length >= 1,
+      'the confirmation dialog',
+      1_000,
+    )
+    // A request that is not taken returns within the turn; one that was taken would open its own dialog.
+    await new Promise((resolve) => setImmediate(resolve))
+    const dialogsWhileWaiting = harness.warningDialogs.length
+    const whileWaiting = harness.reader.inspect().view!.studyRemoval
+    for (const cancel of cancels) cancel()
+    await Promise.all([firstRemoval, secondRemoval])
+
+    // Assert
+    assert.equal(dialogsWhileWaiting, 1)
+    assert.deepEqual(structuredClone(whileWaiting), {
+      status: 'confirming',
+      studyId: first.id,
+      request: 1,
+    })
+    assert.deepEqual(harness.trashMoves, [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=a study whose files are being moved can be neither opened nor played, and the pane says that the move is in progress; fails_when=a reader or an agent opens a half-moved study; why_new=no removal existed; seam=the editor's dialog and Trash, stubbed at the vscode boundary
 test('while a saved study is being moved to the Trash it cannot be opened or played and the pane says it is moving, and the removal then completes', async () => {
   // Arrange: the Trash holds the first move of a confirmed removal.
