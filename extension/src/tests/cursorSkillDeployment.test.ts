@@ -987,7 +987,10 @@ test('a window that reconnects while another window updates the shared skill wai
       directory,
       'laststance.codebook-0.2.28',
     )
-  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  // The previous installation's window ran 0.2.27, whatever version this build reports: a receipt of a newer version is never downgraded.
+  await (
+    await skillWindow('0.2.27')
+  ).deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
   const lockPath = join(paths.storageRoot, 'cursor-skill', 'writer.lock')
   await writeFile(
     lockPath,
@@ -1060,7 +1063,10 @@ test('another window’s update between a reconnect’s read of the receipt and 
       directory,
       'laststance.codebook-0.2.28',
     )
-  await deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
+  // The previous installation's window ran 0.2.27, whatever version this build reports: a receipt of a newer version is never downgraded.
+  await (
+    await skillWindow('0.2.27')
+  ).deployCursorSkill(previousExtension, paths.storageRoot, paths.homeRoot)
   const receiptPath = join(paths.storageRoot, 'cursor-skill', 'receipt.json')
   let hasOtherWindowUpdated = false
   let otherWindowResult: string | undefined
