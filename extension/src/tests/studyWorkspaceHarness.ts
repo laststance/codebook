@@ -1669,6 +1669,7 @@ export async function workspaceHarness(
       private readonly lease: {
         panel: ReturnType<typeof panel>
         released(): void
+        tookKeyboardAtPause?(): void
       },
       _observer?: unknown,
       readonly mode = 'live',
@@ -1749,6 +1750,12 @@ export async function workspaceHarness(
       this.historical = true
       this.historicalHtml = html
       this.panel.webview.html = html
+    }
+    /** Reveals the leased pane with the keyboard and tells the lease's owner, as the real viewport does when its reveal covers the file the debugger focused at a pause. @example viewport.takeKeyboardAtPause() */
+    takeKeyboardAtPause(): void {
+      assert.equal(this.closed, false)
+      this.panel.reveal(undefined, false)
+      this.lease.tookKeyboardAtPause?.()
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
     close(): void {
@@ -3454,6 +3461,19 @@ export async function workspaceHarness(
       for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
+     * Lets the live run's Application pane take the keyboard from the file the debugger focused at a pause, as its viewport does at the end of a capture when the debugger opened that file in the pane's group: the pane is revealed with the keyboard and the viewport tells the reader through its lease. The reader answers without being awaited, as in the product: a test waits for what it expects.
+     * @example
+     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     * harness.applicationPaneTakesKeyboardAtPause()
+     */
+    applicationPaneTakesKeyboardAtPause(): void {
+      const viewport = viewportInstances.findLast(
+        (candidate) => candidate.mode === 'live',
+      )
+      assert.ok(viewport)
+      viewport.takeKeyboardAtPause()
+    },
+    /**
      * Makes the fake editor let the keyboard fall to the page body when it removes an editor group whose last tab closed while a text editor of another group has the keyboard, as Cursor 3.23.12 was seen to after "Codebook: Close Study Workspace" with the learner's own file active (Cycle 0046 row 66: the captured source's group closed, the grid was rebuilt and `document.activeElement` was the page body 20 ms later). Groups are removed only with `closeDisposedPanelTabsLater`.
      * @example
      * harness.closeDisposedPanelTabsLater()
@@ -4451,9 +4471,6 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
-    /** Runs the reader's step for an Application pane that took the keyboard from the file the debugger focused at a pause, as the pane's viewport does through its lease after such a reveal. @example await readerSeams(harness).paneTookKeyboardAtPause() */
-    paneTookKeyboardAtPause: (): Promise<void> =>
-      reader['settleKeyboardAtPause'](true),
     /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
     publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */
