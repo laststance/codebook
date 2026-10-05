@@ -413,6 +413,9 @@ export const REPOSITORY_MAX_TRACKED_FILES = 5_000
 export const REPOSITORY_SOURCE_PAGE_SIZE = 100
 export const REPOSITORY_PATH_LIMIT_CHARS = 512
 export const REPOSITORY_SOURCE_LIMIT_BYTES = 262_144
+/** Said where an agent reads source text before it cites lines or declares a stop (the description of `codebook_source`, the source-only help and the repository-browser help), so it takes each line from Codebook's numbered copy instead of counting lines. */
+export const NUMBERED_SOURCE_LINES_HELP =
+  'numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines.'
 export const REPOSITORY_SOURCE_EXTENSIONS = [
   '.ts',
   '.tsx',
