@@ -86,22 +86,33 @@ function stepLines(workflow, name) {
 
 /**
  * Lists the path filters of a workflow's triggers, one list per `paths` key, so a pin can compare what starts a job with what the job runs.
+ * A list written once under a YAML anchor (`paths: &name`) and reused by its alias (`paths: *name`) is returned for both keys.
  * @param workflow - The workflow's text.
- * @returns The entries of every `paths` list in file order; empty when no trigger is filtered.
+ * @returns The entries of every `paths` list in file order; empty when no trigger is filtered. An alias of an anchor the text does not define gives an empty list.
  * @example
  * pathFiltersOf('on:\n  push:\n    paths:\n      - a.ts\n      - b.ts\n') // => [['a.ts', 'b.ts']]
+ * pathFiltersOf('on:\n  push:\n    paths: &both\n      - a.ts\n  pull_request:\n    paths: *both\n') // => [['a.ts'], ['a.ts']]
  */
 function pathFiltersOf(workflow) {
   const lines = workflow.split('\n'),
-    filters = []
+    filters = [],
+    anchored = new Map()
   for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].trim() !== 'paths:') continue
+    const key = /^paths:(?: ([&*])(\S+))?$/.exec(lines[index].trim())
+    if (!key) continue
+    const [, mark, name] = key
+    // An alias repeats the list its anchor named earlier in the file.
+    if (mark === '*') {
+      filters.push([...(anchored.get(name) ?? [])])
+      continue
+    }
     const entries = []
     // The list ends at the first line that is not one of its entries.
     while (lines[index + 1]?.trim().startsWith('- ')) {
       index += 1
       entries.push(lines[index].trim().slice('- '.length))
     }
+    if (mark === '&') anchored.set(name, entries)
     filters.push(entries)
   }
   return filters
@@ -374,6 +385,9 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .map((line) => line.trim().replace(/^- /, ''))
     .filter((line) => line.startsWith('uses: '))
   const settings = workflow.split('\n').map((line) => line.trim())
+  const filterKeys = workflow
+    .split('\n')
+    .filter((line) => line.trim().startsWith('paths:'))
 
   // Assert: both triggers have one filter, the workflow itself, the Node release and every source the seventeen test files
   // load; only the two constants files, which most pull requests change, are left out.
@@ -428,6 +442,11 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/withoutBootTime.ts',
   ])
   assert.deepEqual(pullRequestFilter, pushFilter)
+  // The list is written once: the pull request's filter is a YAML alias of the push filter, so one cannot change without the other.
+  assert.deepEqual(filterKeys, [
+    '    paths: &lock-test-paths',
+    '    paths: *lock-test-paths',
+  ])
   assert.deepEqual(otherFilters, [])
   assert.deepEqual(
     [
