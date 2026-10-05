@@ -1451,7 +1451,7 @@ test('an unbound stop in a 120-line citation lists the first 20 mapped lines, th
     {
       mappings: `AAAA${';AACA'.repeat(119)}`,
       fixture: {
-        source: 'const nextTheme = "dark";\n'.repeat(120),
+        source: 'var nextTheme = "dark";\n'.repeat(120),
         citationEndLine: 120,
         declaredLine: 60,
       },
@@ -2101,8 +2101,8 @@ const TWO_LINE_CITATION = {
   fixture: { citationEndLine: 2 },
 }
 
-/** A three-line source cited whole, for a binding two lines below the declared one. */
-const THREE_LINE_SOURCE = 'const nextTheme = "dark";\n\n'
+/** A three-line source cited whole, for a binding two lines below the declared one; `var` keeps the stop, which requires value:nextTheme, on its declared line. */
+const THREE_LINE_SOURCE = 'var nextTheme = "dark";\n\n'
 
 // Value: protects=a live run going on when the debugger moves a browser stop from a line it cannot pause on to the next line (`return (` onto the `<form>` line); fails_when=arming refuses a verified binding on the next line of the stop's citation, or the stop is committed at the declared line instead of the bound one; why_new=every binding on another line was refused (Cycle 0043, criterion 1); seam=none
 test('a browser stop the debugger binds on the next line of its citation is armed, pauses there and commits at the bound line', async (context) => {
@@ -2991,7 +2991,7 @@ test('a stop that requires a value its own line declares, with no later line of 
   const { run, breakpoints, requireUnavailableValue } =
     await configuredRuntimeHarness(context, undefined, [], {
       mappings: 'AAAA',
-      fixture: { citationEndLine: 2 },
+      fixture: { source: 'const nextTheme = "dark";\n', citationEndLine: 2 },
     })
   requireUnavailableValue()
   await run.prepare()
@@ -3143,7 +3143,7 @@ test('a browser stop the debugger binds two lines below, across a comment the ge
     {
       mappings: 'AAAA;AACA;AACA',
       fixture: {
-        source: 'const nextTheme = "dark";\n// Keep the saved theme.\n',
+        source: 'var nextTheme = "dark";\n// Keep the saved theme.\n',
         citationEndLine: 3,
       },
     },
@@ -3338,7 +3338,7 @@ test('a stop whose declared line a partial scan found, or the debugger can pause
     notFound = await configuredRuntimeHarness(context, undefined, [], {
       mappings: `${'A,'.repeat(200_000)}A;AAAA;AACA`,
       fixture: {
-        source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
+        source: 'var nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
         citationEndLine: 2,
       },
     })
@@ -3395,7 +3395,7 @@ test('a browser stop bound on the next line is armed and captured there when the
   } = await configuredRuntimeHarness(context, undefined, [], {
     mappings: 'AAAA;AACA;AADA',
     fixture: {
-      source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
+      source: 'var nextTheme = "dark";\nsetTheme(nextTheme);\nrender();\n',
       citationEndLine: 2,
     },
   })

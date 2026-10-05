@@ -2239,8 +2239,8 @@ const movedToNextLine = (name: 'server' | 'browser') => ({
   fixture: { [name]: { citationEndLine: 2 } },
 })
 
-/** A three-line server module cited whole, for a binding two lines below the declared one. */
-const THREE_LINE_SERVER_SOURCE = 'export const mode = "display";\n\n'
+/** A three-line server module cited whole, for a binding two lines below the declared one; `var` keeps the stop, which requires value:mode, on its declared line. */
+const THREE_LINE_SERVER_SOURCE = 'export var mode = "display";\n\n'
 
 // Value: protects=a live run going on when the debugger moves a browser stop that is armed inside a continuation to the next line; fails_when=that continuation answers "Continue was not confirmed." and the run ends with "Next declared stop was not armed and no resume was sent"; why_new=every binding on another line was refused at arming (Cycle 0043, criterion 2); seam=none
 test('a later browser stop the debugger binds on the next line of its citation is armed inside the continuation, resumed and captured at the bound line', async (context) => {
