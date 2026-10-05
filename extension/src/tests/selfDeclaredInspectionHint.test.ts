@@ -124,3 +124,25 @@ test('a required value declared on a later line of the citation than the paused 
     declaredAfterCitation: '',
   })
 })
+
+// Value: protects=an agent whose stop paused inside the statement its declared line begins (a callback of `useMemo`) learning which line the stop must follow; fails_when=the hint reads only from the paused line on and says nothing, or names a declaration whose statement had already ended; why_new=Cycle 0045 review of N14d-15 (HIGH); seam=none
+test('a required value declared by a statement the stop paused inside is named with the statement’s last line, and a statement that had ended gives no hint', () => {
+  // Arrange: line 1 begins the declaration of total, which ends on line 3; line 4 reads it.
+  const source = [
+    'const total = useMemo(() => {',
+    '  return items.reduce(sum, 0)',
+    '}, [items])',
+    'render(total)',
+  ].join('\n')
+  // Act
+  const hints = {
+    pausedInside: selfDeclaredInspectionHint(source, 2, 'total', 4, 1),
+    pausedAfter: selfDeclaredInspectionHint(source, 4, 'total', 4, 1),
+  }
+  // Assert
+  assert.deepEqual(hints, {
+    pausedInside:
+      ' Line 1 declares total in a statement that ends on line 3, and the debugger paused on line 2 inside it, so total has no value yet there; a stop that requires total must be on a line after line 3, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 1.',
+    pausedAfter: '',
+  })
+})

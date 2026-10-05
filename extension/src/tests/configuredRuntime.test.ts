@@ -2988,6 +2988,95 @@ test('a stop moved off the line that declares its required binding is journaled 
   )
 })
 
+// Value: protects=the first admitted run of an agent that declared a stop on the first line of a declaration over several lines (`const total = useMemo(() => {` … `}, [items])`); fails_when=the stop is requested on the next mapped line, inside the callback, which runs before the binding has a value (or only when a handler is called); why_new=Cycle 0045 review of N14d-15 (HIGH); seam=the runtime harness's adapter, which verifies a breakpoint on every line and pauses where it was requested
+test('a stop on the first line of a declaration over several lines is requested on the first mapped line after the whole statement, and the journal names that line', async (context) => {
+  // Arrange: lines 1 to 3 declare nextTheme through a callback; line 4 reads it; every line is mapped and the citation covers lines 1 to 4.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;AACA;AACA;AACA',
+      fixture: {
+        source:
+          'const nextTheme = useMemo(() => {\n  return "dark"\n}, [])\nsetTheme(nextTheme)\n',
+        citationEndLine: 4,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([1, 2, 3, 4])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured on the line after the declaring statement')
+  await run.stop()
+  const journal = (type: string) =>
+    JSON.stringify(
+      run.view().events.find((event) => event.type === type)?.detail,
+    )
+  // Assert: requested at editor position 3:0 (source 4:1), not inside the callback on line 2.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 3, character: 0 },
+  )
+  assert.equal(
+    journal('breakpoint.armed-after-self-declaring-line'),
+    '{"participant":"browser","declared":{"line":1,"column":1},"armed":{"line":4,"column":1},"bindings":["nextTheme"]}',
+  )
+  assert.equal(snapshot.source.line, 4)
+  assert.equal(snapshot.values['value:nextTheme'], 'dark')
+})
+
+// Value: protects=a stop whose declaring statement goes on past its citation keeping today's behavior instead of a guessed place; fails_when=the stop is requested on a line inside the unfinished statement; why_new=Cycle 0045 review of N14d-15 (HIGH); seam=the runtime harness's adapter, which verifies a breakpoint on every line and pauses where it was requested, and answers the required value as unavailable
+test('a stop on a declaration whose statement does not end within its citation stays on its line and fails naming that line as the one to follow', async (context) => {
+  // Arrange: lines 1 to 3 declare nextTheme through a callback, but the citation ends on line 2, inside the statement.
+  const {
+    run,
+    breakpoints,
+    verifyBreakpointsOnlyOnLines,
+    requireUnavailableValue,
+  } = await configuredRuntimeHarness(context, undefined, [], {
+    mappings: 'AAAA;AACA;AACA',
+    fixture: {
+      source: 'const nextTheme = useMemo(() => {\n  return "dark"\n}, [])\n',
+      citationEndLine: 2,
+    },
+  })
+  verifyBreakpointsOnlyOnLines([1, 2, 3])
+  requireUnavailableValue()
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  // Act
+  run.action('one', 'repository-click')
+  await waitUntil(
+    () => run.view().status === 'failed',
+    'required value missing',
+  )
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 0, character: 0 },
+  )
+  assert.equal(
+    run
+      .view()
+      .events.some(
+        (event) => event.type === 'breakpoint.armed-after-self-declaring-line',
+      ),
+    false,
+  )
+  assert.equal(
+    run.view().failures[0],
+    'Error: Required inspection value:nextTheme is unavailable; captured facts remain readable. Line 1 declares nextTheme, so it has no value yet when the debugger pauses before that line runs; a stop that requires nextTheme must be on a line after line 1, so declare it on a later line within a citation that covers that line, or require a value that already exists before line 1.',
+  )
+})
+
 // Value: protects=an agent whose stop declares its required binding on the last line of the citation that can pause learning that the stop must follow that line; fails_when=the run moves the stop past its citation, or the failure advises a later line without naming the declaring line it must follow; why_new=Cycle 0045 N14d-15 (DX-1 c): the advice "declare the stop on a later line" led the Cursor agent to an earlier line that declared its binding again; seam=the runtime harness's adapter, which answers the required value as unavailable
 test('a stop that requires a value its own line declares, with no later line of its citation that can pause, stays on its line and fails naming that line as the one to follow', async (context) => {
   // Arrange: line 1 declares nextTheme; line 2 of the citation is blank and has no mapped position.
