@@ -120,6 +120,9 @@ import { waitForNextRunState } from './utils/waitForNextRunState'
 const SAVE_LEARNING_SUMMARY_ADVICE =
   "No learning summary is saved for this run yet, so its saved study would have no summary and no sequence. Save one now: call codebook_explain on a committed snapshot of this run with a new key and a complete learningSummary whose final step is observed and cites this resource's terminalReference. The last step of the sequence in codebook://help/studies describes it."
 
+/** What the run resource tells an agent in place of {@link SAVE_LEARNING_SUMMARY_ADVICE} once the run's explanation keys are spent, because {@link StudyService.explain} refuses every new key then; the refusal of a new key begins with the same budget statement. */
+const EXPLANATION_BUDGET_SPENT_ADVICE = `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; the saved study will have no learning summary.`
+
 /** What the run resource tells an agent beside a browser profile folder that the run's cleanup could not remove: the run is released, and nobody is asked to delete anything. */
 const BROWSER_PROFILE_LEFT_ADVICE =
   'The run is released and its outcome is unchanged; only the folder of its own browser profile could not be removed. Do nothing: Codebook removes the folder at the start of a later run, after this editor window was closed or reloaded.'
@@ -512,7 +515,7 @@ export class StudyService {
   /**
    * Reads one exact tracked source without navigating or running the application; the answer of `codebook_source`, which an agent reads before it cites lines or declares a stop.
    * @param input - The instance and the tracked path, with the hash the agent expects when it rereads a cited file.
-   * @returns The exact text with its hash and line count, and `numberedText`: the same lines, each after its one-based number and a tab ({@link numberSourceLines}), so the agent takes a line from the answer instead of counting.
+   * @returns The source's path, full-byte hash and line count, and `numberedText`: its lines, each after its one-based number and a tab ({@link numberSourceLines}), so the agent takes a line from the answer instead of counting. The numbered copy is the answer's only copy of the lines: the tool answers this object in `content` and in `structuredContent`, because some editor chats give their model only one of the two, and an unnumbered copy beside it would double the answer.
    * @throws When the instance is stale, the path is not an eligible tracked file or its hash differs from `expectedHash`.
    * @example
    * ```ts
@@ -525,10 +528,12 @@ export class StudyService {
       input.expectedHash,
     )
     this.repositoryStore(input.instanceId)
+    // The lines are answered once, numbered: the plain text beside them would repeat every line.
+    const { text, ...identity } = result
     return {
       instanceId: this.instanceId,
-      ...result,
-      numberedText: numberSourceLines(result.text),
+      ...identity,
+      numberedText: numberSourceLines(text),
     }
   }
 
@@ -1273,7 +1278,7 @@ export class StudyService {
     if (record.explanationKeys.size >= MAX_EXPLANATIONS)
       throw new StudyError(
         'LIMIT_EXCEEDED',
-        `This run allows ${MAX_EXPLANATIONS} explanation intents.`,
+        `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; Codebook accepts no new explanation key for this run, and a key it already accepted answers its receipt again.`,
       )
     // Every diagram link is bound to this run's committed source; prose classifications remain agent-authored claims.
     for (const step of learningSummary?.steps ?? []) {
@@ -1862,6 +1867,9 @@ export class StudyService {
       ![...record.explanations.values()].some(
         (explanation) => explanation.learningSummary,
       )
+    // explain refuses every new key once the budget is spent, so the step is no longer offered then.
+    const explanationBudgetSpent =
+      record.explanationKeys.size >= MAX_EXPLANATIONS
     const nextActions = [
       canControl && record.prepared && runtime?.status === 'ready'
         ? runtime.nextAction
@@ -1869,7 +1877,9 @@ export class StudyService {
       participants.server?.resumable ? 'continue-server' : undefined,
       participants.browser.resumable ? 'continue-browser' : undefined,
       !record.stopped ? 'stop' : undefined,
-      lacksLearningSummary ? 'save-learning-summary' : undefined,
+      lacksLearningSummary && !explanationBudgetSpent
+        ? 'save-learning-summary'
+        : undefined,
       holdsHistory ? 'read-history' : undefined,
     ].filter((value) => value !== undefined)
     const material = {
@@ -2163,9 +2173,11 @@ export class StudyService {
           )
     return {
       ...material,
-      // Present only while nextActions names save-learning-summary; gone once an explanation with a learning summary is saved.
+      // Present while the run lacks a learning summary: the step to save one while explain still accepts a new key, the spent budget once it does not; gone once an explanation with a learning summary is saved.
       saveLearningSummary: lacksLearningSummary
-        ? SAVE_LEARNING_SUMMARY_ADVICE
+        ? explanationBudgetSpent
+          ? EXPLANATION_BUDGET_SPENT_ADVICE
+          : SAVE_LEARNING_SUMMARY_ADVICE
         : undefined,
       observedAt:
         observedAtMs === undefined
