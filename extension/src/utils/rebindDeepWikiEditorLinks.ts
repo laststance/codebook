@@ -1,12 +1,14 @@
+import { WIKI_OPEN_TARGET_ELEMENT_ID } from '../constants'
+
 import { escapeHtml } from './escapeHtml'
 import { unescapeHtml } from './unescapeHtml'
 
-/** The rail's entry as a site published by 0.2.29.0 carries it: one link whose whole text is "Open in VS Code". The second group is the link's attributes. */
-const ONE_LINE_OPEN_ENTRY =
-  /(<p class="open-in-editor"><a ([^>]*)>)Open in (?:VS Code|Cursor)(<\/a>)/g
-/** The label of the rail's entry as the publisher prints it since the entry names its target. */
+/** The label of the rail's entry inside its link, the pattern of 0.2.29.0: every page since carries "Open in VS Code" as the link's whole text, so each reader can name its own editor there. */
 const OPEN_ENTRY_LABEL =
-  /(<p class="open-in-editor"><a [^>]*><span class="open-label">)Open in (?:VS Code|Cursor)(<\/span>)/g
+  /(<p class="open-in-editor"><a [^>]*>)Open in (?:VS Code|Cursor)(<\/a>)/g
+/** A rail entry that ends with its link, as a site published by 0.2.29.0 carries it: no element beside the link names the target. The second group is the link's attributes. */
+const OPEN_ENTRY_WITHOUT_TARGET =
+  /(<p class="open-in-editor"><a )([^>]*)(>[^<]*<\/a>)(<\/p>)/g
 
 /**
  * Reads the query of the address a published link opens, out of the link's attributes; called by {@link openTargetOf}.
@@ -27,11 +29,11 @@ function publishedQueryOf(linkAttributes: string): URLSearchParams {
  * Reads the file and line a published source link opens and prints them as the rail's entry shows its target; called by {@link rebindDeepWikiEditorLinks} for an entry published without one.
  * @param linkAttributes - The attributes of the entry's link as the page carries them, with the escaped `href`.
  * @returns
- * - The target as HTML, a `<wbr>` after each slash of the path: `src/<wbr>utils/<wbr>a.ts:12`
+ * - The target as HTML, a `<wbr>` after each slash of the path and before the colon, so a long path wraps there and the line number stays whole: `src/<wbr>utils/<wbr>a.ts<wbr>:12`
  * - `undefined` when the address names no path or no line number
  * @example
  * openTargetOf('href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…"')
- * // => 'src/<wbr>a.ts:12'
+ * // => 'src/<wbr>a.ts<wbr>:12'
  */
 function openTargetOf(linkAttributes: string): string | undefined {
   const query = publishedQueryOf(linkAttributes)
@@ -40,22 +42,22 @@ function openTargetOf(linkAttributes: string): string | undefined {
   const line = String(query.get('line'))
   // An address without a readable target gets no target line: the entry never names a file it cannot tell.
   if (!path || !/^\d+$/.test(line)) return undefined
-  return `${escapeHtml(path).replaceAll('/', '/<wbr>')}:${line}`
+  return `${escapeHtml(path).replaceAll('/', '/<wbr>')}<wbr>:${line}`
 }
 
 /**
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
  *
- * Called by the Wiki reader for every HTML page it serves. A page published since the entry names its target keeps its two spans and gets the editor's name; a page published by 0.2.29.0 (one link, "Open in VS Code") gets the same two spans, the target read from the link's own address, so it names the target without being published again.
+ * Called by the Wiki reader for every HTML page it serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address, and the link is described by it; it names the target without being published again.
  *
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
- * @returns The page with Codebook action links bound to the active editor, and the rail's "Open in …" entry named after it and followed by its target. An entry whose address names no path or line keeps its one line.
+ * @returns The page with Codebook action links bound to the active editor, the rail's "Open in …" link named after it, and the file and line beside that link. An entry whose address names no path or line keeps its link alone.
  * @example
  * rebindDeepWikiEditorLinks('<a href="vscode://laststance.codebook/settings?root=%2Frepo">Settings</a>', 'cursor')
  * // => '<a href="cursor://laststance.codebook/settings?root=%2Frepo">Settings</a>'
  * rebindDeepWikiEditorLinks('<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…">Open in VS Code</a></p>', 'cursor')
- * // => '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…"><span class="open-label">Open in Cursor</span> <span class="open-target">src/<wbr>a.ts:12</span></a></p>'
+ * // => '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=…" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">src/<wbr>a.ts<wbr>:12</span></p>'
  */
 export function rebindDeepWikiEditorLinks(
   html: string,
@@ -75,14 +77,20 @@ export function rebindDeepWikiEditorLinks(
         (_match, opening: string, closing: string) =>
           `${opening}${openLabel}${closing}`,
       )
-      // A site published by 0.2.29.0 carries the one-line entry; it gets the label and the target the publisher prints today.
+      // A site published by 0.2.29.0 carries the link alone; it gets the target the publisher prints today.
       .replace(
-        ONE_LINE_OPEN_ENTRY,
-        (_match, opening: string, linkAttributes: string, closing: string) => {
+        OPEN_ENTRY_WITHOUT_TARGET,
+        (
+          entry: string,
+          opening: string,
+          linkAttributes: string,
+          link: string,
+          closing: string,
+        ) => {
           const target = openTargetOf(linkAttributes)
           return target === undefined
-            ? `${opening}${openLabel}${closing}`
-            : `${opening}<span class="open-label">${openLabel}</span> <span class="open-target">${target}</span>${closing}`
+            ? entry
+            : `${opening}${linkAttributes} aria-describedby="${WIKI_OPEN_TARGET_ELEMENT_ID}"${link} <span class="open-target" id="${WIKI_OPEN_TARGET_ELEMENT_ID}">${target}</span>${closing}`
         },
       )
   )

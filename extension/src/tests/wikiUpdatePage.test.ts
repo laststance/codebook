@@ -1929,7 +1929,7 @@ test('the update button and the reload button change under the pointer and while
   )
 })
 
-// Value: protects=the rail entry that opens a page's first cited source, on a served page of any age (an older site carries its own older stylesheet); fails_when=the page script stops injecting the entry's rest, hover, active or focus rule, so an older site's entry gives no feedback and its focus ring is cut by the rail, or the label and target lose their two-line form; why_new=Cycle 0046 row 28 (design review DR-8, DR-9); seam=none
+// Value: protects=the rail entry that opens a page's first cited source, on a served page of any age (an older site carries its own older stylesheet, which draws the block on the link); fails_when=the page script stops injecting the entry's rest, hover, active or focus rule, so an older site's entry gives no feedback and its focus ring is cut by the rail, or the link no longer covers the whole entry, so a press on the file and line opens nothing, or an older site's link keeps its own box inside the entry's, or the label and target lose their two-line form; why_new=Cycle 0046 row 28 (design review DR-8, DR-9), row 69; seam=none
 test('the entry that opens the page’s source answers the pointer, a press and the keyboard on a served page of any age, with its label on one line and its target under it', async () => {
   // Arrange
   const script = await readServedWikiScript()
@@ -1941,23 +1941,26 @@ test('the entry that opens the page’s source answers the pointer, a press and 
 
   // Assert
   for (const rule of [
-    '.open-in-editor a{display:block;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;text-decoration:none;font-size:.8rem;overflow-wrap:anywhere}',
-    '.open-in-editor a:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
-    '.open-in-editor a:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
-    '.open-in-editor a:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
-    '.open-label{display:block;white-space:nowrap}',
+    // The block is the entry; the link inside it has no box of its own (a site of 0.2.29.0 drew one on it) and covers the whole entry.
+    '.open-in-editor{position:relative;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;overflow-wrap:anywhere}',
+    '.open-in-editor a{display:block;border:0;border-radius:0;padding:0;font-size:inherit;white-space:nowrap;text-decoration:none}',
+    '.open-in-editor a::after{content:"";position:absolute;inset:-1px;border-radius:6px}',
+    '.open-in-editor:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
+    '.open-in-editor:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
+    '.open-in-editor a:focus-visible{outline:none}',
+    '.open-in-editor a:focus-visible::after{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
     '.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted,GrayText);overflow-wrap:anywhere}',
   ])
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
   // The entry changes at once: no rule of it names a transition or an animation.
   assert.doesNotMatch(
     styles,
-    /\.open-(?:in-editor|label|target)[^{}]*\{[^}]*(?:animation|transition)/,
+    /\.open-(?:in-editor|target)[^{}]*\{[^}]*(?:animation|transition)/,
   )
 })
 
-// Value: protects=the Wiki reader between 701 and 1000 px on a served page of any age, where the right rail is a row below the article; fails_when=the injected rules cap the rail again or stop capping the outline and an open detail, so the update panel's sentence is cut behind a scrollbar or a long outline takes the article's room, or the rules reach the single column below 701 px; why_new=Cycle 0046 row 28 (design review DR-10); seam=none
-test('where the rail is a row a served page caps the outline and an open update detail and never the rail or the update panel, and leaves the single column alone', async () => {
+// Value: protects=the Wiki reader between 701 and 1000 px on a served page of any age, where the right rail is a row below the article; fails_when=the injected rules cap the rail again or stop capping the outline and an open detail, so the update panel's sentence is cut behind a scrollbar or a long outline takes the article's room, or the detail's cap no longer follows a short window (14vh), so the rail passes 45vh at 960 x 600, or the output block shrinks until Change location breaks, or the ring of the detail's summary is cut by the detail, or the rules reach the single column below 701 px; why_new=Cycle 0046 row 28 (design review DR-10, second measurement), package SPB (the summary's ring); seam=none
+test('where the rail is a row a served page caps the outline and an open update detail and never the rail or the update panel, keeps the output block’s longest line whole and the ring of the detail’s summary inside the detail, and leaves the single column alone', async () => {
   // Arrange
   const script = await readServedWikiScript()
 
@@ -1969,7 +1972,7 @@ test('where the rail is a row a served page caps the outline and an open update 
   // Assert
   assert.ok(
     styles.includes(
-      '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:6rem;overflow:auto}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}}',
+      '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}.right-rail .output{min-width:max-content}}',
     ),
   )
   // The injected sheet comes after the site's own, so a rule of it for 1000 px and narrower would also win in the single column.
@@ -1989,7 +1992,26 @@ test('a served page of any age draws the focus ring of a chapter link and of an 
   // Assert
   for (const rule of [
     '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
-    '.right-rail{padding-left:5px;margin-left:-5px}',
+    '.right-rail{padding-left:5px;margin-left:-5px;scroll-padding-block:6px}',
+  ])
+    assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
+})
+
+// Value: protects=keyboard focus in the article and the composer of a served page of any age, which scroll and cut whatever lies outside them; fails_when=the page script stops giving an older site's article and composer their room for the focus ring, so the ring of the question field or of Ask Codebook is cut at the side, or gives the room without taking it back, so the reading column of an older site moves, or leaves the composer of the single column with the wide layout's height limit and margin; why_new=Cycle 0046 row 67; seam=none
+test('a served page of any age keeps room for the focus ring at the sides of the article and around the composer and takes the room back, and leaves the composer of the single column its own bottom padding', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  for (const rule of [
+    '.wiki-article{padding-left:5px;margin-left:-5px;scroll-padding-bottom:6px}',
+    '.composer{max-height:calc(34% + 5px);border-image:linear-gradient(to right,transparent 5px,var(--border,#777) 5px calc(100% - 5px),transparent calc(100% - 5px)) 1 0 0;padding-left:5px;padding-right:5px;padding-bottom:5px;margin:0 -5px -5px;scroll-padding-block:6px}',
+    '@media(max-width:700px){.composer{max-height:none;padding-bottom:.6rem;margin-bottom:0}}',
   ])
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
 })

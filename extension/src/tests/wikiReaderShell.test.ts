@@ -72,16 +72,16 @@ test('the published page changes the update button and the reload button under t
   for (const rule of [
     '.wiki-update:not([aria-disabled=true]):hover,[data-codebook-reload]:hover{filter:brightness(.9)}',
     '.wiki-update:not([aria-disabled=true]):active,[data-codebook-reload]:active{filter:brightness(.8)}',
-    // The entry that opens the page's source is unfilled, so the pointer gives it a fill and a link-coloured border, a press darkens it, and its focus ring lies inside it.
-    '.open-in-editor a:hover{background:var(--panel-2);border-color:var(--link)}',
-    '.open-in-editor a:active{background:var(--panel-2);border-color:var(--link);filter:brightness(.9)}',
-    '.open-in-editor a:focus-visible{outline:2px solid var(--link);outline-offset:-2px}',
+    // The entry that opens the page's source is unfilled, so the pointer gives the whole entry a fill and a link-coloured border, a press darkens it, and the focus ring of its link is drawn inside the whole entry.
+    '.open-in-editor:hover{background:var(--panel-2);border-color:var(--link)}',
+    '.open-in-editor:active{background:var(--panel-2);border-color:var(--link);filter:brightness(.9)}',
+    '.open-in-editor a:focus-visible{outline:none}.open-in-editor a:focus-visible::after{outline:2px solid var(--link);outline-offset:-2px}',
   ])
     assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
   // The entry changes at once, so reduced motion needs no rule of its own.
   assert.doesNotMatch(
     shell,
-    /\.open-(?:in-editor|label|target)[^{}]*\{[^}]*(?:animation|transition)/,
+    /\.open-(?:in-editor|target)[^{}]*\{[^}]*(?:animation|transition)/,
   )
   assert.deepEqual(
     shell.match(
@@ -246,7 +246,7 @@ test('the reader’s rail offers to open the page’s source in the editor that 
     const servedByCursor = await (await fetch(cursorReader.url)).text()
     const servedByCode = await (await fetch(codeReader.url)).text()
 
-    // Assert: the control sits between the outline and the output box, carries the address of the page's first citation and names the editor and, under it, the file and line it opens.
+    // Assert: the control sits between the outline and the output box. Its link carries the address of the page's first citation and holds the editor's name alone; the file and line it opens stand beside the link and describe it.
     const firstCitation =
       /<details class="source-files">.*?<a href="([^"]+)">/.exec(
         publishedPage,
@@ -257,17 +257,17 @@ test('the reader’s rail offers to open the page’s source in the editor that 
     )
     assert.ok(
       publishedPage.includes(
-        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}"><span class="open-label">Open in VS Code</span> <span class="open-target">source.ts:1</span></a></p><div class="output">`,
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p><div class="output">`,
       ),
     )
     assert.ok(
       servedByCode.includes(
-        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}"><span class="open-label">Open in VS Code</span> <span class="open-target">source.ts:1</span></a></p><div class="output">`,
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p><div class="output">`,
       ),
     )
     assert.ok(
       servedByCursor.includes(
-        `</ul></nav><p class="open-in-editor"><a href="${firstCitation.replace('vscode://', 'cursor://')}"><span class="open-label">Open in Cursor</span> <span class="open-target">source.ts:1</span></a></p><div class="output">`,
+        `</ul></nav><p class="open-in-editor"><a href="${firstCitation.replace('vscode://', 'cursor://')}" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p><div class="output">`,
       ),
     )
   } finally {
@@ -276,15 +276,15 @@ test('the reader’s rail offers to open the page’s source in the editor that 
   }
 })
 
-// Value: protects=the rail entry of a Wiki published by 0.2.29.0, whose pages carry the one-line entry "Open in VS Code"; fails_when=the reader serves such a page without the file and line the entry opens, so the learner must publish the Wiki again to see where the entry leads, or names the wrong editor in it; why_new=Cycle 0046 row 28 (design review DR-8, finding F16); seam=none
+// Value: protects=the rail entry of a Wiki published by 0.2.29.0, whose pages carry the entry as one link, "Open in VS Code", with nothing beside it; fails_when=the reader serves such a page without the file and line the entry opens, so the learner must publish the Wiki again to see where the entry leads, or names the wrong editor in it, or leaves the link without its description; why_new=Cycle 0046 row 28 (design review DR-8, finding F16), row 69; seam=none
 test('a page published by 0.2.29.0 is served by both editors with the entry named after that editor and the file and line read from its address', async () => {
-  // Arrange: a published Wiki whose overview is put back into the shape 0.2.29.0 printed: one link whose whole text is "Open in VS Code".
+  // Arrange: a published Wiki whose overview is put back into the shape 0.2.29.0 printed: the entry is its link alone, with no description and nothing beside it.
   const wiki = await publishedWikiFixture()
   const indexPath = join(wiki.outputDirectory, 'index.html')
   const publishedToday = await readFile(indexPath, 'utf8')
   const publishedBy02290 = publishedToday.replace(
-    '<span class="open-label">Open in VS Code</span> <span class="open-target">source.ts:1</span>',
-    'Open in VS Code',
+    ' aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>',
+    '>Open in VS Code</a></p>',
   )
   await writeFile(indexPath, publishedBy02290)
   const answer = async (): Promise<never> => {
@@ -318,12 +318,12 @@ test('a page published by 0.2.29.0 is served by both editors with the entry name
     )
     assert.ok(
       servedByCode.includes(
-        `<p class="open-in-editor"><a href="${address}"><span class="open-label">Open in VS Code</span> <span class="open-target">source.ts:1</span></a></p>`,
+        `<p class="open-in-editor"><a href="${address}" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>`,
       ),
     )
     assert.ok(
       servedByCursor.includes(
-        `<p class="open-in-editor"><a href="${address.replace('vscode://', 'cursor://')}"><span class="open-label">Open in Cursor</span> <span class="open-target">source.ts:1</span></a></p>`,
+        `<p class="open-in-editor"><a href="${address.replace('vscode://', 'cursor://')}" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>`,
       ),
     )
   } finally {
@@ -332,8 +332,69 @@ test('a page published by 0.2.29.0 is served by both editors with the entry name
   }
 })
 
-// Value: protects=the target line the reader adds to a one-line rail entry; fails_when=a path with folders is printed without its break points or with a character of the address unescaped, or an address that names no line gets an invented target; why_new=Cycle 0046 row 28 (design review DR-8); seam=none
-test('the target added to a one-line entry breaks after each slash and is escaped, and an address without a line keeps the one line', () => {
+/**
+ * Does to a page what the reader of 0.2.29.0 did to every page it served, so a test can read a page of this build as that reader shows it.
+ *
+ * The two replacements are quoted from `extension/src/utils/rebindDeepWikiEditorLinks.ts` at the tag v0.2.29.0 (`ae9c1f2`): the scheme of Codebook's links, and the label of the rail's entry by a pattern that expects the label to be the whole content of the entry's link. The suite cannot load that build, so the test applies its pattern. Called by the test of a page of this build under that reader.
+ *
+ * @param html - A published page.
+ * @param editorScheme - The scheme of the editor that reader runs in.
+ * @returns The page as the reader of 0.2.29.0 serves it.
+ * @example
+ * rebindAsTheReaderOf02290('<p class="open-in-editor"><a href="vscode://laststance.codebook/source?x=1">Open in VS Code</a></p>', 'cursor')
+ * // => '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?x=1">Open in Cursor</a></p>'
+ */
+function rebindAsTheReaderOf02290(
+  html: string,
+  editorScheme: 'vscode' | 'cursor',
+): string {
+  return html
+    .replace(
+      /(\s)href=(["'])(?:vscode|cursor):\/\/laststance\.codebook\/(source|update|settings)\?/g,
+      (_match, whitespace: string, quote: string, route: string) =>
+        `${whitespace}href=${quote}${editorScheme}://laststance.codebook/${route}?`,
+    )
+    .replace(
+      /(<p class="open-in-editor"><a [^>]*>)Open in (?:VS Code|Cursor)(<\/a>)/g,
+      (_match, opening: string, closing: string) =>
+        `${opening}Open in ${editorScheme === 'cursor' ? 'Cursor' : 'VS Code'}${closing}`,
+    )
+}
+
+// Value: protects=a Wiki published by this build that is opened in a Cursor which still runs Codebook 0.2.29.0; fails_when=the publisher prints the entry's label as anything but the whole content of its link, so that reader opens Cursor from an entry that still reads "Open in VS Code"; why_new=Cycle 0046 row 69 (the entry of design review DR-8 put the label into a span, which the pattern of 0.2.29.0 does not match); seam=none
+test('a page published by this build is served by the reader of 0.2.29.0 in Cursor with the entry named Open in Cursor, a cursor address and the file and line beside it', async () => {
+  // Arrange: a Wiki published by the shipped publisher, whose overview cites source.ts line 1.
+  const wiki = await publishedWikiFixture()
+  try {
+    const publishedPage = await readFile(
+      join(wiki.outputDirectory, 'index.html'),
+      'utf8',
+    )
+
+    // Act: the two replacements of the reader of 0.2.29.0, as Cursor. This is the pattern of that build applied to the page, not that build running.
+    const servedByCursor = rebindAsTheReaderOf02290(publishedPage, 'cursor')
+
+    // Assert: the whole entry, with the project's folder and the source's hash left out of its address.
+    const entry =
+      /<p class="open-in-editor">.*?<\/p>/.exec(servedByCursor)?.[0] ?? ''
+    assert.equal(
+      entry
+        .replace(/root=[^&]+&amp;/, 'root=…&amp;')
+        .replace(/sha256=[a-f0-9]{64}/, 'sha256=…'),
+      '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=…&amp;path=source.ts&amp;line=1&amp;sha256=…" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">source.ts<wbr>:1</span></p>',
+    )
+    assert.equal(
+      servedByCursor.includes('Open in VS Code'),
+      false,
+      'the page Cursor serves still names VS Code',
+    )
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the target the reader adds beside the link of a rail entry published by 0.2.29.0; fails_when=a path with folders is printed without its break points or with a character of the address unescaped, or the line number can break away from its colon or inside itself (no break point before the colon), or an address that names no line gets an invented target; why_new=Cycle 0046 row 28 (design review DR-8), rows 68 and 69; seam=none
+test('the target added to an entry of 0.2.29.0 breaks after each slash and before the colon and is escaped, and an address without a line keeps its link alone', () => {
   // Arrange: an entry in the shape of 0.2.29.0 for src/utils/a&b.ts line 12, and one whose address names no line.
   const withTarget =
     '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f">Open in VS Code</a></p>'
@@ -348,7 +409,7 @@ test('the target added to a one-line entry breaks after each slash and is escape
 
   // Assert
   assert.deepEqual(served, [
-    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f"><span class="open-label">Open in Cursor</span> <span class="open-target">src/<wbr>utils/<wbr>a&amp;b.ts:12</span></a></p>',
+    '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa%26b.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target">Open in Cursor</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span></p>',
     '<p class="open-in-editor"><a href="cursor://laststance.codebook/source?root=%2Frepo&amp;path=src%2Futils%2Fa.ts">Open in Cursor</a></p>',
   ])
 })
@@ -364,14 +425,12 @@ test('the open control is printed only where the publisher puts a page’s first
     ),
   )
   assert.doesNotMatch(shell, /<p class="open-in-editor">/)
-  assert.ok(
-    shell.includes(
-      '.open-in-editor{margin:0 0 1rem}.open-in-editor a{display:block;border:1px solid var(--border);border-radius:6px;padding:.5rem .7rem;text-decoration:none;font-size:.8rem;overflow-wrap:anywhere}',
-    ),
-  )
-  // The label keeps one line; the file and line it opens stand under it, muted and smaller, and wrap.
+  // The label is the link itself: a rule for a label element would style nothing.
+  assert.doesNotMatch(shell, /\.open-label/)
+  // The entry is the bordered block; its link keeps the label on one line and covers the whole block, so a press on the file and line under the label opens the file too; the file and line are muted and smaller, and wrap.
   for (const rule of [
-    '.open-label{display:block;white-space:nowrap}',
+    '.open-in-editor{position:relative;margin:0 0 1rem;border:1px solid var(--border);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;overflow-wrap:anywhere}',
+    '.open-in-editor a{display:block;white-space:nowrap;text-decoration:none}.open-in-editor a::after{content:"";position:absolute;inset:-1px;border-radius:6px}',
     '.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted);overflow-wrap:anywhere}',
   ])
     assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
@@ -416,7 +475,8 @@ test('where the right rail is a row below the article the outline and an open up
   for (const rule of [
     '.right-rail{grid-column:1/-1;max-height:none;overflow:visible;display:flex;gap:1rem}',
     '.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}',
-    '[data-codebook-update-detail][open]{max-height:6rem;overflow:auto}',
+    // 96 px, and 14vh in a window lower than 686 px, so the rail with an open detail stays within 45vh at 960 x 600.
+    '[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}',
     '[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}',
   ])
     assert.ok(rowRules?.includes(rule), `the row layout lacks the rule ${rule}`)
@@ -436,7 +496,7 @@ test('where the right rail is a row below the article the outline and an open up
     )
 })
 
-// Value: protects=keyboard focus in the chapter list and the right rail of the Wiki reader, which scroll and cut whatever lies outside them; fails_when=the focus ring of a full-width chapter or outline link lies outside its link again, so its sides are cut, or the rail loses the room at its left for the ring of the Change location link; why_new=Cycle 0046 row 61 (design review ND-3; the measured case and the stills are in the Wiki reader DOM check); seam=none
+// Value: protects=keyboard focus in the chapter list and the right rail of the Wiki reader, which scroll and cut whatever lies outside them; fails_when=the focus ring of a full-width chapter or outline link lies outside its link again, so its sides are cut, or the rail loses the room at its left for the ring of the Change location link, or the room above and below a control the Tab key scrolls back to the rail's edge; why_new=Cycle 0046 row 61 (design review ND-3; the measured cases and the stills are in the Wiki reader DOM check); seam=none
 test('the published page draws the focus ring of a chapter link and of an outline link inside the link, and keeps room in the rail for the ring of its last link', async () => {
   // Arrange / Act
   const shell = await readShell()
@@ -445,7 +505,7 @@ test('the published page draws the focus ring of a chapter link and of an outlin
   for (const rule of [
     'a:focus-visible,button:focus-visible,summary:focus-visible,textarea:focus-visible{outline:2px solid var(--link);outline-offset:3px}',
     '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
-    '.chapters,.right-rail{min-height:0;overflow:auto;font-size:.875rem}.right-rail{padding-left:5px;margin-left:-5px}',
+    '.chapters,.right-rail{min-height:0;overflow:auto;font-size:.875rem}.right-rail{padding-left:5px;margin-left:-5px;scroll-padding-block:6px}',
   ])
     assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
 })
@@ -461,4 +521,72 @@ test('a chapter title and an outline entry that cannot break wrap inside their c
     '.outline a{display:block;padding:.3rem 0;text-decoration:none;overflow-wrap:anywhere}',
   ])
     assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
+})
+
+// Value: protects=keyboard focus in the article and the composer of the Wiki reader, which scroll and cut whatever lies outside them; fails_when=the article or the composer loses its 5 px of room at the sides where a control reaches its edge (the question field, Ask Codebook, the summaries, a link at the start of a line), so the ring's side is cut again, or the room is no longer taken back by the margins, the height limit and the shortened top border, so the reading column moves; why_new=Cycle 0046 row 67 (the measured cases and the stills are in the Wiki reader DOM check); seam=none
+test('the published page keeps room for the focus ring at the sides of the article and around the composer, where they scroll, and takes the room back so that nothing moves', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const columnRules = /@media\(max-width:700px\)\{(.*)\}\n/.exec(shell)?.[1]
+
+  // Assert: 5 px of padding against 5 px of negative margin; the composer's height limit grows by its room below, its top border is drawn without the 5 px at each end, and a control the Tab key scrolls back to an edge keeps 6 px there.
+  for (const rule of [
+    '.wiki-article{flex:1;min-height:0;overflow:auto;padding:0 1rem 2rem 5px;margin-left:-5px;scroll-padding:1rem 0 6px}',
+    '.composer{flex:none;max-height:calc(34% + 5px);min-height:0;border-top:1px solid var(--border);border-image:linear-gradient(to right,transparent 5px,var(--border) 5px calc(100% - 5px),transparent calc(100% - 5px)) 1 0 0;padding:.6rem 5px 5px;margin:0 -5px -5px;overflow:auto;scroll-padding-block:6px}',
+  ])
+    assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
+  // In the single column the composer has its own bottom padding, which is room enough, and no height limit.
+  assert.ok(
+    columnRules?.includes(
+      '.composer{max-height:none;position:static;background:var(--bg);padding-bottom:.6rem;margin-bottom:0}',
+    ),
+    'the single column lacks the rule of the composer',
+  )
+})
+
+// Value: protects=the Output block of the Wiki reader's rail where the rail is a row (701 to 1000 px); fails_when=the block shrinks with the row again, so "Project folder" and "Change location" break into two lines each in a block of 58 px at 720 px, or the update panel can no longer give way to it, or the block keeps its minimum width in the single column; why_new=Cycle 0046 row 28 (design review DR-10, second measurement; the measured cases at 720 and 701 px are in the Wiki reader DOM check); seam=none
+test('where the right rail is a row the output block keeps its longest line whole and the update panel gives way, and below 700 px the block may shrink again', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const rowRules =
+    /@media\(max-width:1000px\)\{(.*)\}\n@media\(max-width:700px\)/.exec(
+      shell,
+    )?.[1]
+  const columnRules = /@media\(max-width:700px\)\{(.*)\}\n/.exec(shell)?.[1]
+
+  // Assert
+  for (const rule of [
+    '.right-rail .output{max-width:14rem;min-width:max-content}',
+    '[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}',
+  ])
+    assert.ok(rowRules?.includes(rule), `the row layout lacks the rule ${rule}`)
+  assert.ok(
+    columnRules?.includes('.right-rail .output{min-width:0}'),
+    'the single column lacks the rule .right-rail .output{min-width:0}',
+  )
+})
+
+// Value: protects=keyboard focus on the summary of an open update detail ("Show all 12 files") where the rail is a row and the detail scrolls inside its own bound; fails_when=the summary's ring lies outside the summary there again, so the detail cuts its left, upper and right side, or the inside ring reaches the single column, where nothing cuts a ring outside; why_new=Cycle 0046 package SPB, found while measuring row 67 (the detail scrolls since design review DR-10; the measured case and the still are in the Wiki reader DOM check); seam=none
+test('where the right rail is a row the summary of an open update detail has its focus ring inside the detail that scrolls, and below 700 px outside again', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+  const rowRules =
+    /@media\(max-width:1000px\)\{(.*)\}\n@media\(max-width:700px\)/.exec(
+      shell,
+    )?.[1]
+  const columnRules = /@media\(max-width:700px\)\{(.*)\}\n/.exec(shell)?.[1]
+
+  // Assert
+  assert.ok(
+    rowRules?.includes(
+      '[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}',
+    ),
+    'the row layout lacks the rule [data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}',
+  )
+  assert.ok(
+    columnRules?.includes(
+      '[data-codebook-update-detail][open]{max-height:none;overflow:visible}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:3px}',
+    ),
+    'the single column lacks the rule [data-codebook-update-detail][open]>summary:focus-visible{outline-offset:3px}',
+  )
 })

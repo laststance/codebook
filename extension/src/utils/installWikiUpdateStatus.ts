@@ -101,21 +101,28 @@ export function installWikiUpdateStatus(
     // Both buttons answer the pointer and a press at once, without a transition; a held-back button does not.
     '.wiki-update:not([aria-disabled=true]):hover,[data-codebook-reload]:hover{filter:brightness(.9)}',
     '.wiki-update:not([aria-disabled=true]):active,[data-codebook-reload]:active{filter:brightness(.8)}',
-    // The entry that opens the page's first cited source is an unfilled block: its fill and border answer the pointer, a press darkens it, and its focus ring lies inside it, because the rail scrolls and cuts a ring outside. No transition.
-    '.open-in-editor a{display:block;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;text-decoration:none;font-size:.8rem;overflow-wrap:anywhere}',
-    '.open-in-editor a:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
-    '.open-in-editor a:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
-    '.open-in-editor a:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
-    // Its label keeps one line and the file and line it opens wrap under it; the reader adds that target to a site published before the entry named it.
-    '.open-label{display:block;white-space:nowrap}',
+    // The entry that opens the page's first cited source is an unfilled block around its link and the file and line beside it. The link covers the whole block, so a press on the target opens the file too; the block's fill and border answer the pointer, a press darkens it, and the focus ring lies inside it, because the rail scrolls and cuts a ring outside. No transition. A site published by 0.2.29.0 drew the block on the link itself, so the link's own box is taken back here.
+    '.open-in-editor{position:relative;border:1px solid var(--border,#777);border-radius:6px;padding:.5rem .7rem;font-size:.8rem;overflow-wrap:anywhere}',
+    '.open-in-editor a{display:block;border:0;border-radius:0;padding:0;font-size:inherit;white-space:nowrap;text-decoration:none}',
+    '.open-in-editor a::after{content:"";position:absolute;inset:-1px;border-radius:6px}',
+    '.open-in-editor:hover{background:var(--panel-2,Canvas);border-color:var(--link,LinkText)}',
+    '.open-in-editor:active{background:var(--panel-2,Canvas);border-color:var(--link,LinkText);filter:brightness(.9)}',
+    '.open-in-editor a:focus-visible{outline:none}',
+    '.open-in-editor a:focus-visible::after{outline:2px solid var(--link,LinkText);outline-offset:-2px}',
+    // The file and line stand under the label, muted and smaller, and wrap; the reader adds them to a site published before the entry named them.
     '.open-target{display:block;margin-top:.15rem;font-size:.75rem;line-height:1.45;color:var(--muted,GrayText);overflow-wrap:anywhere}',
-    // The chapter list and the outline scroll, so the focus ring of their full-width links lies inside the link; the rail keeps room at its left for the ring of the link that changes the output location.
+    // The chapter list and the outline scroll, so the focus ring of their full-width links lies inside the link; the rail keeps room at its left for the ring of the link that changes the output location, and 6 px above and below a control the keyboard scrolls back to its edge (the ring's 5 px and the whole pixel a scroll position is rounded to).
     '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
-    '.right-rail{padding-left:5px;margin-left:-5px}',
+    '.right-rail{padding-left:5px;margin-left:-5px;scroll-padding-block:6px}',
+    // The article and the composer scroll too: they keep 5 px of room on the sides where a control reaches their edge, so its focus ring, 5 px outside it, is whole, also after the keyboard scrolled the control to the edge. Nothing moves: the padding is taken back by a negative margin, the composer's height limit grows by the room below it, and its top border is drawn 5 px shorter at each end, which is its length without the room.
+    '.wiki-article{padding-left:5px;margin-left:-5px;scroll-padding-bottom:6px}',
+    '.composer{max-height:calc(34% + 5px);border-image:linear-gradient(to right,transparent 5px,var(--border,#777) 5px calc(100% - 5px),transparent calc(100% - 5px)) 1 0 0;padding-left:5px;padding-right:5px;padding-bottom:5px;margin:0 -5px -5px;scroll-padding-block:6px}',
+    // In the single column the composer has no height limit and a bottom padding of its own, which is room enough.
+    '@media(max-width:700px){.composer{max-height:none;padding-bottom:.6rem;margin-bottom:0}}',
     // A chapter title or an outline entry that cannot break (an identifier) wraps inside its column instead of giving the column a sideways scrollbar.
     '.chapters a,.outline a{overflow-wrap:anywhere}',
-    // Where the rail is a row below the article (701 to 1000 px) the rail itself has no cap and no scrollbar: the outline and an open detail scroll inside their own bounds, and the update panel keeps a wide column and its own height, so its sentence is never cut. The target adds no width to its entry.
-    '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:6rem;overflow:auto}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}}',
+    // Where the rail is a row below the article (701 to 1000 px) the rail itself has no cap and no scrollbar: the outline and an open detail scroll inside their own bounds (the detail's is lower in a short window, so the rail stays under 45vh), and the update panel keeps a wide column and its own height, so its sentence is never cut. The target adds no width to its entry, and the output block keeps its longest line whole: the update panel gives way instead. An open detail scrolls there, so the ring of its summary lies inside it.
+    '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:min(6rem,14vh);overflow:auto}[data-codebook-update-detail][open]>summary:focus-visible{outline-offset:-2px}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}.right-rail .output{min-width:max-content}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
     '.wiki-update[aria-disabled=true]{background:transparent;color:var(--muted,GrayText);border:1px dashed currentColor;cursor:not-allowed}',
     // The status line is smaller than the rail text; an empty one takes no room, so it can stay in the accessibility tree.

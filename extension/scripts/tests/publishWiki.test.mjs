@@ -1204,8 +1204,8 @@ test('reader pages preserve authored content and build escaped chapter, outline 
   }
 })
 
-// Value: protects=the rail entry of a published page that opens the page's first cited source; fails_when=the entry names no file and line, so neither its text nor its accessible name says where it leads, or prints the path unescaped or without the break points a long path wraps at; why_new=Cycle 0046 row 28 (design review DR-8); seam=none
-test('the rail entry of a published page names the file and line of the page’s first source under its label, escaped and with a break point after each slash', async () => {
+// Value: protects=the rail entry of a published page that opens the page's first cited source; fails_when=the entry names no file and line, so nothing says where it leads, or prints the path unescaped or without the break points a long path wraps at, or without the break point before the colon, so a line number breaks in two, or puts anything but the label into the link, so the reader of 0.2.29.0 can no longer name its editor there, or no longer ties the file and line to the link as its description; why_new=Cycle 0046 row 28 (design review DR-8), rows 68 and 69; seam=none
+test('the rail entry of a published page is a link that holds the label alone and is described by the file and line of the page’s first source beside it, escaped, with a break point after each slash and before the colon', async () => {
   // Arrange: a page whose first source is src/utils/a&b.ts at line 12.
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-reader-open-target-')),
@@ -1230,14 +1230,14 @@ test('the rail entry of a published page names the file and line of the page’s
       outputDirectory: join(root, '.codebook/wiki'),
     })
 
-    // Assert: one link with no label attribute, so its content is its accessible name: "Open in VS Code src/utils/a&b.ts:12".
+    // Assert: the link's content is its accessible name, "Open in VS Code", exactly as 0.2.29.0 published it; the target beside it is the link's description, "src/utils/a&b.ts:12".
     const entry = pages
       .get('index.html')
       .match(/<p class="open-in-editor">.*?<\/p>/)?.[0]
     assert.ok(entry)
     assert.equal(
       entry.replace(/href="[^"]+"/, 'href="…"'),
-      '<p class="open-in-editor"><a href="…"><span class="open-label">Open in VS Code</span> <span class="open-target">src/<wbr>utils/<wbr>a&amp;b.ts:12</span></a></p>',
+      '<p class="open-in-editor"><a href="…" aria-describedby="codebook-open-target">Open in VS Code</a> <span class="open-target" id="codebook-open-target">src/<wbr>utils/<wbr>a&amp;b.ts<wbr>:12</span></p>',
     )
     const address = new URL(
       entry.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&'),
