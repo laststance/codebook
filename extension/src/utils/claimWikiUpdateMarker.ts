@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { Stats } from 'node:fs'
 import { lstat, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -186,6 +187,22 @@ async function readMarkerText(markerPath: string): Promise<string | undefined> {
 }
 
 /**
+ * Reads the owner that an entry beside the marker records, unless the entry is a link; called by {@link isExpiredMarkerClaim} with what its look at the entry found.
+ * Why: a link is no claim and no prepared file, whatever it leads to, so its age alone decides and nothing is read through it: neither the file a link at a claim's or a prepared marker's name leads to, nor a file in the folder a link at a prepared claim's name leads to.
+ * @param entry - What the look at the entry found, without following a link.
+ * @param ownerPath - The file that records the owner of that entry.
+ * @returns The recorded owner ({@link readRecordedOwner}); `undefined` for a link, and for a record that is no regular file or cannot be read.
+ * @example
+ * await readOwnerOfEntry(await lstat(claimPath), claimPath) // => { pid: 4242, machineKey: 'f9c8c7ddcf3d5f56', hostKey: 'd195d36bd79da7df', processStart: 'linux:16362446' }
+ */
+async function readOwnerOfEntry(
+  entry: Stats,
+  ownerPath: string,
+): Promise<RecordedOwner | undefined> {
+  return entry.isSymbolicLink() ? undefined : readRecordedOwner(ownerPath)
+}
+
+/**
  * Says whether a claim on the marker, or a file prepared beside it, is nobody's by its age; called by {@link removeIfExpired} for each entry the sweeps find.
  * Why: a claim is held for the time of one read and one removal, and a prepared file exists for the time of one write, so an old one was left by a killed window. Age decides only where the owner cannot be judged by this process ({@link canJudgeOwnerHere}): an entry of another machine, of 0.2.29.0, of a window whose process start could not be read, or one whose record cannot be read. An entry whose owner can be judged here is left to that judgement ({@link removeStaleStorageClaims}), so a live window that was suspended while it held the claim keeps it.
  * These paths lie in the learner's project folder, where a cloned repository can put anything: the entry is looked at without following a link, a link is judged by its age alone, and an owner's record is read only as a regular file of bounded size ({@link readRecordedOwner}), so a link to an endless device or to a pipe costs neither time nor memory.
@@ -203,10 +220,7 @@ async function isExpiredMarkerClaim(
 ): Promise<boolean> {
   const entry = await lstat(path).catch(() => undefined)
   if (!entry) return false
-  // A link is no claim and no prepared file: its age decides, and nothing is read through it.
-  const owner = entry.isSymbolicLink()
-    ? undefined
-    : await readRecordedOwner(ownerPath)
+  const owner = await readOwnerOfEntry(entry, ownerPath)
   if (owner && canJudgeOwnerHere(owner, identity)) return false
   return now() - entry.mtimeMs > WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS
 }
