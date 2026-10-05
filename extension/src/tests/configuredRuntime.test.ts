@@ -447,6 +447,75 @@ test('an after text condition that never holds ends the run with the after timeo
   assert.equal(run.view().operation?.afterVerified, false)
 })
 
+// Value: protects=the first admitted run of an agent whose after condition's selector matches several elements, one of which reads the expected text; fails_when=the run waits for a unique element and fails at the deadline, or does not journal which reading held; why_new=Cycle 0045 N14c-14 (DX-1 a): the VS Code agent's first admitted run reached its five stops and failed "Timed out waiting for configured after conditions: condition 1 (text) selector-not-unique." although one paragraph read the expected text; seam=the runtime harness's page, on which the run's own after-condition expression reads three labels
+test('an after condition whose selector matches several elements holds when one of them reads the expected text', async (context) => {
+  // Arrange: the declared after condition is text "Dark" on the selector label; after the click the page shows three labels, and only the second reads it.
+  const { run, advance, afterReads, showAfterPage } =
+    await configuredRuntimeHarness(context)
+  showAfterPage([
+    { selector: 'label', textContent: 'Light' },
+    { selector: 'label', textContent: ' Dark\n' },
+    { selector: 'label', textContent: 'System' },
+  ])
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured pause',
+  )
+  // Act: continue, and let the run's 20 s deadline pass once the conditions were read, as it would for a condition that never holds.
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(
+    () => run.view().operation?.afterVerified || afterReads() > 3,
+    'after conditions held or read repeatedly',
+  )
+  advance(20_000)
+  await run.stop()
+  // Assert
+  assert.deepEqual([...run.view().failures], [])
+  assert.equal(run.view().operation?.afterVerified, true)
+  assert.equal(
+    JSON.stringify(
+      run
+        .view()
+        .events.find(
+          (event) => event.type === 'condition.text-held-on-one-of-several',
+        )?.detail,
+    ),
+    '{"phase":"after","readings":[{"condition":1,"matchedElements":3,"readingElements":1}]}',
+  )
+})
+
+// Value: protects=an agent whose after condition's several elements all read other text reading the count and the rule in the run's failure; fails_when=the timeout says selector-not-unique or gives no count; why_new=Cycle 0045 N14c-14 (DX-1 c); seam=the runtime harness's page, on which the run's own after-condition expression reads two labels
+test('an after condition whose selector matches several elements, none of which reads the expected text, ends the run saying how many matched and the rule', async (context) => {
+  // Arrange: after the click the page shows two labels, and neither reads "Dark".
+  const { run, advance, afterReads, showAfterPage } =
+    await configuredRuntimeHarness(context)
+  showAfterPage([
+    { selector: 'label', textContent: 'Light' },
+    { selector: 'label', textContent: 'System' },
+  ])
+  await run.prepare()
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(
+    () => run.view().snapshots[0],
+    'captured pause',
+  )
+  await run.continue('browser', snapshot.pause)
+  await waitUntil(() => afterReads() > 0, 'after condition read')
+  // Act
+  advance(20_000)
+  await run.stop()
+  // Assert
+  assert.deepEqual(
+    [...run.view().failures],
+    [
+      "Timed out waiting for configured after conditions: condition 1 (text) text-mismatch. A text condition compares the element's whole textContent, trimmed and with whitespace runs collapsed; the texts of child elements are joined without a space (<b>Total</b><i>5</i> reads Total5), and CSS white-space, zero-width spaces and soft hyphens are not applied. Here the selector matched 2 elements and none of them reads the expected text; a text condition holds when one of them does, so correct the expected text or choose a selector that matches the element that shows it.",
+    ],
+  )
+  assert.equal(run.view().operation?.afterVerified, false)
+})
+
 test('a text relation the run does not know fails the read at once instead of timing out', async (context) => {
   // Arrange
   const { run, failBeforeWith, mouse } = await configuredRuntimeHarness(

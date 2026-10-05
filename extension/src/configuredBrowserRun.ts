@@ -44,6 +44,7 @@ import {
 import type { BundleSource } from './repositoryBundle'
 import {
   configuredDomFailureSchema,
+  configuredTextReadingsSchema,
   type ConfiguredDomFailure,
 } from './repositoryConfigSchemas'
 import { RepositorySourceService } from './repositorySource'
@@ -208,6 +209,7 @@ const domResultSchema = z.object({
   x: z.number().finite().optional(),
   y: z.number().finite().optional(),
   failure: configuredDomFailureSchema.optional(),
+  textReadings: configuredTextReadingsSchema.optional(),
 })
 // Diagnostic parsing admits pending fields without granting them binding authority or retaining arbitrary adapter data.
 const bindingReceiptSchema = z.object({
@@ -280,6 +282,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private unjournaledAdapterEvents = 0
   /** What the after conditions last answered while they did not hold, so the run's own deadline, which ends the after wait first, can still name the condition and its hint ({@link afterDeadlineReason}). */
   private lastAfterFailure?: ConfiguredDomFailure
+  /** The phases whose text conditions were journaled as held on one of several elements; each phase is journaled once ({@link journalTextReadings}). */
+  private readonly journaledTextReadingPhases = new Set<'before' | 'after'>()
   private progressTimer?: ReturnType<typeof setTimeout>
   /** True while {@link progressTimer} is the pause hold, the only deadline {@link renewPauseHold} may restart. */
   private holdingPause = false
@@ -4035,6 +4039,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Polls the declared DOM conditions without repeating application input; setup ({@link prepareOwned}) and after verification ({@link observeAfter}) call it.
+   * Once they hold, a text condition that held on one of several elements is journaled ({@link journalTextReadings}).
    * @param phase - Whether the conditions guard the input or prove the result.
    * @throws The text of {@link conditionTimeoutText} when the wait timed out ({@link WaitTimeoutError}, however the wait worded it) and the page named a condition; the invalid-selector text at once; any other failure of the wait unchanged.
    * @example
@@ -4065,6 +4070,34 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         throw error
       throw new Error(this.conditionTimeoutText(phase, lastResult.failure))
     }
+    this.journalTextReadings(phase, lastResult?.textReadings)
+  }
+  /**
+   * Journals which reading made a text condition hold when its selector matched several elements, so the run says what Codebook did with such a condition; called by {@link waitForDom} once the conditions of a phase held.
+   * @param phase - Whether the conditions guard the input or prove the result.
+   * @param textReadings - The page's counts for each text condition that held on one of several elements; absent when every condition matched one element.
+   * @returns Nothing; the entry `condition.text-held-on-one-of-several` is recorded with the phase and the counts, once per phase of a run.
+   * @example
+   * ```ts
+   * this.journalTextReadings('after', [{ conditionIndex: 0, matchedElements: 3, readingElements: 1 }])
+   * ```
+   */
+  private journalTextReadings(
+    phase: 'before' | 'after',
+    textReadings: z.infer<typeof configuredTextReadingsSchema> | undefined,
+  ): void {
+    // The after conditions are read several times before a result is certified; the first read that held is the one journaled.
+    if (!textReadings?.length || this.journaledTextReadingPhases.has(phase))
+      return
+    this.journaledTextReadingPhases.add(phase)
+    this.evidence.record('condition.text-held-on-one-of-several', {
+      phase,
+      readings: textReadings.map((reading) => ({
+        condition: reading.conditionIndex + 1,
+        matchedElements: reading.matchedElements,
+        readingElements: reading.readingElements,
+      })),
+    })
   }
   /** Revalidates all cited disk identities and open buffers at effect/pause/continue boundaries without owning raw tabs. @example await this.verifySources() */
   private async verifySources(): Promise<void> {

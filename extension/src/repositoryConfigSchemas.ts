@@ -109,15 +109,18 @@ export const repositoryConditionSchema = z.discriminatedUnion('kind', [
 ])
 /** Where a page failure is: a declared condition by its index, or the click target when absent. */
 const conditionIndexSchema = z.number().int().nonnegative().optional()
+/** How many elements a text condition's selector matched when it matched several; one element is the ordinary case and is not reported. */
+const severalElementsSchema = z.number().int().min(2)
 /**
  * What the owned page reports for the declared DOM condition or click target that does not hold, read by {@link ConfiguredBrowserRun} and handed to {@link configuredConditionHint}.
- * `textDifference` is a relation to the declared literal, never page text, and only a text mismatch may carry it; `candidates` holds counts of the page's controls, never their text, and only a missing click target may carry it. Any other key or value fails the read instead of being dropped.
+ * `textDifference` is a relation to the declared literal, never page text, and only a text mismatch may carry it; `matchedElements` counts the elements a text condition's selector matched when it matched several and none of them reads the expected text; `candidates` holds counts of the page's controls, never their text, and only a missing click target may carry it. Any other key or value fails the read instead of being dropped.
  */
 export const configuredDomFailureSchema = z.union([
   z.strictObject({
     conditionIndex: conditionIndexSchema,
     reason: z.literal('text-mismatch'),
     textDifference: z.literal('surrounding-text').optional(),
+    matchedElements: severalElementsSchema.optional(),
   }),
   z.strictObject({
     conditionIndex: conditionIndexSchema,
@@ -146,6 +149,18 @@ export const configuredDomFailureSchema = z.union([
     ]),
   }),
 ])
+/**
+ * What the owned page reports, with a read whose conditions hold, for each text condition that held on one of several elements its selector matched, as counts only; read by {@link ConfiguredBrowserRun}, which journals it.
+ */
+export const configuredTextReadingsSchema = z
+  .array(
+    z.strictObject({
+      conditionIndex: z.number().int().nonnegative(),
+      matchedElements: severalElementsSchema,
+      readingElements: z.number().int().positive(),
+    }),
+  )
+  .max(REPOSITORY_CONDITION_LIMIT)
 const conditionsSchema = z
   .array(repositoryConditionSchema)
   .min(1)

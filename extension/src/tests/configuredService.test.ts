@@ -1200,6 +1200,25 @@ test('configured help tells an agent that a continuation that sends no resume, b
   )
 })
 
+// Value: protects=an agent reading, before it declares conditions, that a text condition may match several elements and the other conditions may not; fails_when=the help no longer states the rule for a text condition or the uniqueness of the others; why_new=Cycle 0045 N14c-14; seam=none
+test('configured help says that a text condition whose selector matches several elements holds when one of them reads the expected text', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { initialState } = z
+    .object({ initialState: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    initialState.includes(
+      'A text condition whose selector matches several elements holds when one of them reads the expected text, and when none does its timeout says how many elements matched; a visible or attribute condition and the click target need a selector that matches exactly one element.',
+    ),
+    true,
+  )
+})
+
 // Value: protects=an agent that reads the help once knowing what a text condition compares, in both fields that speak about conditions; fails_when=either sentence drifts, or the old "exact literals" wording comes back and contradicts the new rule; why_new=the help named no rule for whitespace and child text; seam=none
 // Cycle 0044 (0041-F6): red while the help said the text rule without the joined child texts and the characters it does not normalize.
 test('configured help tells an agent that a text condition compares the whole textContent trimmed with whitespace collapsed and child texts joined without a space, and what to declare for a button with an icon', async (context) => {
