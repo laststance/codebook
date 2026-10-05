@@ -266,6 +266,8 @@ export type FakeWikiPageLoad = {
   heldAtLoad?: string[]
   /** The query of the address the page was opened at, with its question mark; none when omitted. */
   search?: string
+  /** Whether the window's `load` event has already passed when the page script runs, as on a page whose script was added late; a page script normally runs before it, which is the case when omitted. */
+  isLoadedBeforeTheScript?: boolean
 }
 
 /** A loaded fake page: its elements, its reader and the test's hands on time and input. */
@@ -292,6 +294,10 @@ export type FakeWikiPage = {
   focusWindow(): Promise<void>
   /** The page's address as it stands now: path and query. */
   address(): string
+  /** The document's title as it stands now; a fake page starts as "Overview · sample DeepWiki". */
+  title(): string
+  /** Ends the loading of the page: the document becomes complete and the window's `load` event fires once. @throws When the page has already loaded, so a test cannot state a second `load` a browser never fires. */
+  finishLoading(): Promise<void>
   /** Timers the page is waiting on. */
   pendingTimerCount(): number
   /** How often the page reloaded itself. */
@@ -420,6 +426,10 @@ export async function openFakeWikiPage(
     }
   const document = {
     hidden: false,
+    // The title the publisher gives the overview of a project folder named "sample".
+    title: 'Overview · sample DeepWiki',
+    // A page script runs while its document is still loading, unless the test says the load has passed.
+    readyState: load.isLoadedBeforeTheScript ? 'complete' : 'loading',
     head,
     body,
     createElement: (tagName: string): PageElement => new PageElement(tagName),
@@ -605,6 +615,15 @@ export async function openFakeWikiPage(
       await dispatch(windowListeners.get('focus'))
     },
     address: () => location.pathname + location.search,
+    title: () => document.title,
+    async finishLoading(): Promise<void> {
+      if (document.readyState === 'complete')
+        throw new Error(
+          'The fake page has already loaded: a window fires its load event once.',
+        )
+      document.readyState = 'complete'
+      await dispatch(windowListeners.get('load'))
+    },
     pendingTimerCount: () => pendingTimers.size,
     reloadCount: () => reloads,
   }

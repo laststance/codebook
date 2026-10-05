@@ -601,6 +601,10 @@ export const WIKI_SOURCE_CHANGE_DEBOUNCE_MS = 1_000
 export const WIKI_FRESHNESS_MIN_INTERVAL_MS = 5_000
 /** How many failed status reads in a row the reader page lets a running update survive before it says it lost contact with the editor. */
 export const WIKI_UPDATE_STATUS_RETRY_LIMIT = 3
+/** How long after the window's `load` event the reader page writes the sentence into the line that says the overview stands in for a missing page. The line is in the page, empty, before that, so its text is a change of a status region that already exists; a screen reader speaks the page itself while it loads. */
+export const WIKI_MISSING_PAGE_TEXT_DELAY_MS = 150
+/** How many characters of the page path named in the address the missing-page line shows at most; anyone can write the address, so a longer value gets the sentence without the path instead of filling the reading column. */
+export const WIKI_MISSING_PAGE_PATH_LIMIT_CHARS = 200
 export const WIKI_CURSOR_PROCESS_OUTPUT_LIMIT_BYTES = 65_536
 export const WIKI_CURSOR_PROMPT_LIMIT_BYTES = 131_072
 export const WIKI_HTTP_BODY_LIMIT_BYTES = 8_192
