@@ -718,25 +718,33 @@ export class StudyService {
    */
   private async refuseMissingBookNode(input: StartInput): Promise<void> {
     this.assertMutable(input.instanceId)
-    const parsed = startIntentSchema.safeParse(input)
+    const book = this.bookOfNewStart(input)
     // A repeated key answers its original run, and the other cases are answered by start itself.
-    if (
-      !parsed.success ||
-      !this.repository ||
-      this.retainedStart(input.key).previous
+    if (!book || !this.repository) return
+    const selected = await this.repository.readDefinition(
+      book.bookId,
+      book.revision,
     )
-      return
-    const book = parsed.data.configuration.book,
-      selected = await this.repository.readDefinition(
-        book.bookId,
-        book.revision,
-      )
     const nodeIds = selected.revision.document.nodes.map((node) => node.id)
     if (!nodeIds.includes(book.nodeId))
       throw new StudyError(
         'BOOK_UNAVAILABLE',
         describeMissingBookNode(book, nodeIds),
       )
+  }
+
+  /**
+   * Gives the book selection of a start that would begin a new run, for {@link StudyService.refuseMissingBookNode}.
+   * @param input - The start as the tool received it.
+   * @returns The configuration's `book` for arguments that parse under a key no accepted run holds; `undefined` for arguments that do not parse and for a repeat of an accepted start, which {@link StudyService.start} answers.
+   * @example
+   * this.bookOfNewStart(input) // => { bookId: 'interface', revision: 1, nodeId: 'theme', anchorIndex: 0 }
+   */
+  private bookOfNewStart(input: StartInput) {
+    const parsed = startIntentSchema.safeParse(input)
+    return parsed.success && !this.retainedStart(input.key).previous
+      ? parsed.data.configuration.book
+      : undefined
   }
 
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */

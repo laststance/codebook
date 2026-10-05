@@ -22,22 +22,47 @@ export function selfDeclaredInspectionHint(
   inspectionPath: string,
   citationEndLine = line,
 ): string {
-  const lines = source.split(/\r\n?|\n/)
+  const declaration = firstDeclaringLine(
+    source.split(/\r\n?|\n/),
+    line,
+    citationEndLine,
+    inspectionPath,
+  )
+  if (!declaration) return ''
+  const { declaringLine, binding } = declaration,
+    advice = `a stop that requires ${binding} must be on a line after line ${declaringLine}, so declare it on a later line within a citation that covers that line, or require a value that already exists before line ${line}.`
+  return declaringLine === line
+    ? ` Line ${line} declares ${binding}, so it has no value yet when the debugger pauses before that line runs; ${advice}`
+    : ` Line ${declaringLine} declares ${binding}, after line ${line} where the debugger paused, so it has no value yet there; ${advice}`
+}
+
+/**
+ * Finds the first line, from the paused one to the end of the stop's citation, that declares an inspection's binding; called by {@link selfDeclaredInspectionHint}.
+ * @param lines - The sealed source's lines.
+ * @param fromLine - The 1-based line the debugger paused on.
+ * @param toLine - The last line of the stop's citation (never past the source's last line).
+ * @param inspectionPath - The inspection's path; its first segment is the binding.
+ * @returns The declaring line and the binding, or `undefined` when no line in that range declares it.
+ * @example
+ * firstDeclaringLine(['const callbackUrl = read()', 'const [state] = use()'], 1, 2, 'state') // => { declaringLine: 2, binding: 'state' }
+ */
+function firstDeclaringLine(
+  lines: readonly string[],
+  fromLine: number,
+  toLine: number,
+  inspectionPath: string,
+): { declaringLine: number; binding: string } | undefined {
   // The first line from the paused one on that declares the binding is the one the stop must come after.
   for (
-    let declaringLine = line;
-    declaringLine <= Math.min(citationEndLine, lines.length);
+    let declaringLine = fromLine;
+    declaringLine <= Math.min(toLine, lines.length);
     declaringLine++
   ) {
     const [binding] = declaredInspectionBindings(
       lines[declaringLine - 1] ?? '',
       [inspectionPath],
     )
-    if (!binding) continue
-    const advice = `a stop that requires ${binding} must be on a line after line ${declaringLine}, so declare it on a later line within a citation that covers that line, or require a value that already exists before line ${line}.`
-    return declaringLine === line
-      ? ` Line ${line} declares ${binding}, so it has no value yet when the debugger pauses before that line runs; ${advice}`
-      : ` Line ${declaringLine} declares ${binding}, after line ${line} where the debugger paused, so it has no value yet there; ${advice}`
+    if (binding) return { declaringLine, binding }
   }
-  return ''
+  return undefined
 }

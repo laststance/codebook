@@ -87,7 +87,7 @@ const INSPECTIONS_RULE =
 /** The inspection rule of a repository-browser stop, which Codebook requests after its own line when that line declares a binding the stop requires ({@link ConfiguredBrowserRun}). */
 const INSPECTIONS_RULE_DESCRIPTION = `${INSPECTIONS_RULE} ${SELF_DECLARED_BINDING_HELP}`
 /** The inspections of one declared repository-browser stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of that profile is this schema. */
-export const stopInspectionsSchema = z
+const stopInspectionsSchema = z
   .array(repositoryInspectionSchema)
   .min(1)
   .max(REPOSITORY_INSPECTION_LIMIT)
