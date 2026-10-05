@@ -105,6 +105,33 @@ test("PROJECT_STATE's one next action is one action, without the earlier next ac
   )
 })
 
+// Value: protects=an agent that must read PROJECT_STATE in full at every session entry and after every context compaction, and a reader who wants the current state without the chronology; fails_when=the file is appended to again instead of overwritten: it links the records of more than the active cycle and the two before it, or outgrows one read; why_new=owner direction of 2026-10-05, when the file had 661,091 bytes and linked the records of 15 cycles; seam=none
+test('PROJECT_STATE keeps the active cycle and the two before it and stays short enough to read whole at every session entry', async () => {
+  // Arrange
+  const projectState = await readDocument('PROJECT_STATE.md')
+
+  // Act
+  const cyclesWithLinkedRecords = [
+    ...new Set(
+      [...projectState.matchAll(/docs\/cycles\/(\d{4})-/g)].map(
+        (match) => match[1],
+      ),
+    ),
+  ]
+
+  // Assert: the records of at most three cycles, and no more text than the current state needs.
+  assert.equal(
+    cyclesWithLinkedRecords.length <= 3,
+    true,
+    `the state links the records of ${cyclesWithLinkedRecords.length} cycles: ${cyclesWithLinkedRecords.join(', ')}`,
+  )
+  assert.equal(
+    projectState.length <= 40_000,
+    true,
+    `the state has ${projectState.length} characters`,
+  )
+})
+
 // Cycle 0045 (CR-1): red while the status paragraph retold every cycle from 0028 to 0043 (sixteen linked records) instead of leaving that history to the records and the change history.
 // Review of Cycle 0045 (tests-1 #2): the check read the first paragraph only, so it was green while the section's second paragraph linked the record of Cycle 0029 and retold what it changed.
 test("README's implementation status states the delivered and the open cycle and leaves the history of earlier cycles to their records and the change history", async () => {

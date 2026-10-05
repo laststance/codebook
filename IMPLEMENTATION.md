@@ -46,7 +46,7 @@ Acquire native macOS editor video through [the OBS Window Capture procedure](doc
 
 Reconcile every changed/dependent AC row against new source and evidence, including regressions. Preserve unaffected evidence only with a source/behavior impact rationale. Compare before/after gaps; retain missing implementation, missing proof and UNKNOWN. No status advances because a checkbox, skill, image or PR is complete.
 
-Update the cycle and PROJECT_STATE with results and **one executable next action**. Check that the route still reaches every active goal and the next candidate addresses the largest remaining blocker. Follow DEVELOPMENT.md for reviews, authorized delivery and issue mirrors; unavailable tracking leaves a pending sync, not missing local instructions.
+Update the cycle and PROJECT_STATE with results and **one executable next action**. PROJECT_STATE is overwritten, not appended to: it keeps the active cycle and the two before it ([rule](DEVELOPMENT.md#standing-owner-direction)). Check that the route still reaches every active goal and the next candidate addresses the largest remaining blocker. Follow DEVELOPMENT.md for reviews, authorized delivery and issue mirrors; unavailable tracking leaves a pending sync, not missing local instructions.
 
 **Closure gate:** a fresh agent can recover the accepted product, concrete code gaps, actual proof, authorized phase and next step locally. All affected rows, required checks and UI comparisons are recorded. Markdown supplies an auditable procedure; it cannot mechanically prove comprehension.
 
