@@ -2758,6 +2758,67 @@ test('the inspection and the journal of a stop declared on an unmapped line name
   )
 })
 
+// Value: protects=the first admitted run of an agent that declared a stop with a column on a blank line, meaning that line; fails_when=the run refuses that column, requests the breakpoint elsewhere than at the first mapped position after the line, or journals nothing about the column it set aside; why_new=Cycle 0045 N14c-13 (DX-1 a): the VS Code agent declared auth.ts 38:9 on a blank line and its start ended "configuration.additionalStops[0].source.column 9 lies past the end of its line: auth.ts:38 has a length of 0 (a blank line), so the highest column accepted is 1. Declare column 1."; seam=the runtime harness's adapter, which verifies a breakpoint on line 3 only
+test('a stop declared with a column on a blank line is admitted and requested at the first mapped position after it', async (context) => {
+  // Arrange: line 2 is blank and declared at column 9; line 3 is the next mapped line, and the citation covers lines 1 to 3.
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
+      mappings: 'AAAA;;AAEA',
+      fixture: {
+        source:
+          'const nextTheme = "dark";\n\nexport const theme = nextTheme;\n',
+        citationEndLine: 3,
+        declaredLine: 2,
+        declaredColumn: 9,
+      },
+    })
+  verifyBreakpointsOnlyOnLines([3])
+  // Act
+  await run.prepare()
+  const requested = breakpoints.find(
+    (breakpoint) => breakpoint.id === 'owned-breakpoint',
+  )?.location.range.start
+  run.action('one', 'repository-click')
+  const snapshot = await waitUntil(() => {
+    const view = run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return view.snapshots[0]
+  }, 'stop captured at the first mapped position after the blank line')
+  await run.stop()
+  const { service, record } = retainStoppedRun(
+    context,
+    run,
+    run.view().artifactDirectory,
+  )
+  const inspection = await readResource(
+    service,
+    service.state(record).observations[0]!.inspectionUri,
+  )
+  const journal = (type: string) =>
+    JSON.stringify(
+      run.view().events.find((event) => event.type === type)?.detail,
+    )
+  // Assert: requested and captured at 3:1, and the journal and the inspection say what was declared and what Codebook did.
+  assert.deepEqual(
+    { line: requested?.line, character: requested?.character },
+    { line: 2, character: 0 },
+  )
+  assert.equal(snapshot.source.line, 3)
+  assert.equal(snapshot.source.column, 1)
+  assert.equal(
+    journal('breakpoint.column-on-blank-line'),
+    '{"participant":"browser","field":"configuration.source.column","declared":{"line":2,"column":9},"taken":{"line":2,"column":1}}',
+  )
+  assert.equal(
+    journal('breakpoint.armed-after-declared-line'),
+    '{"participant":"browser","declared":{"line":2,"column":9},"armed":{"line":3,"column":1}}',
+  )
+  assert.ok('text' in inspection)
+  const facts = JSON.parse(JSON.parse(inspection.text).content)
+  assert.equal(JSON.stringify(facts.declaredSource), '{"line":2,"column":9}')
+  assert.equal(JSON.stringify(facts.armed), '{"line":3,"column":1}')
+})
+
 // Cycle 0044 (0041-N10-1b): red while the binding rule of such a stop was measured from its declared line: the debugger moved the requested 74:12 to 75:13 and the run ended "bound at 75:13, refused: line 74 between the declared line 73 and line 75 has a mapped position" (native, both hosts).
 test('a stop requested after its unmapped declared line that the debugger then binds on the next line commits there, as a stop declared on the requested line would', async (context) => {
   // Arrange: line 1 is a comment without a mapping, lines 2 and 3 are mapped; the debugger takes the request on line 2 and verifies it at 3:1.

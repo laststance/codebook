@@ -105,6 +105,7 @@ import { resolveArmedPlace } from './utils/resolveArmedPlace'
 import { sameScriptUrl } from './utils/sameScriptUrl'
 import { selfDeclaredInspectionHint } from './utils/selfDeclaredInspectionHint'
 import type { MappedPositionsScan } from './utils/sourceMapMappedPositions'
+import { takenStopPosition } from './utils/takenStopPosition'
 import { thrownMessage } from './utils/thrownMessage'
 import {
   withUnannouncedPauses,
@@ -446,8 +447,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         citation = this.definition.descriptor.anchors[stop.anchorIndex]!
       // The sealed map is scanned once per stop, from its declared line to the end of its citation; the place, the rule and the refusal below read that scan, and the pause handler only compares lines.
       const scan = verifier.mappedPositions(stop.source.line, citation.endLine),
+        taken = this.takeDeclaredPosition(stop, index),
         // The debugger verifies no breakpoint on a line without a mapped position, so such a stop is requested at the first mapped position after it, and its rule is measured from there.
-        armed = resolveArmedPlace(stop.source, scan)
+        armed = resolveArmedPlace(taken, scan)
       const bindingRule = createBindingLineRule(
         stop.source.line,
         citation,
@@ -575,6 +577,37 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     clearTimeout(this.progressTimer)
     this.status = 'ready'
     await this.persist()
+  }
+
+  /**
+   * Takes a declared stop at the position Codebook uses for it and journals the difference, for the preparation of each stop in {@link prepareOwned}: a column declared on a blank line means that line, so the stop is taken at the line's start ({@link takenStopPosition}) and its breakpoint is requested from there.
+   * @param stop - The declared stop, as {@link configuredStops} gives it.
+   * @param stopIndex - Its zero-based place among the declared stops, which names its configuration field.
+   * @returns
+   * - A stop declared past column 1 of a blank line: its line at column 1, after the journal entry `breakpoint.column-on-blank-line` with the field, the declared and the taken position
+   * - Any other stop: its declared position, and nothing is journaled
+   * @example
+   * ```ts
+   * this.takeDeclaredPosition(stop, 1) // => { line: 38, column: 1, … } for additionalStops[0] declared at 38:9 on a blank line 38
+   * ```
+   */
+  private takeDeclaredPosition(
+    stop: ReturnType<typeof configuredStops>[number],
+    stopIndex: number,
+  ): ReturnType<typeof configuredStops>[number]['source'] {
+    const taken = takenStopPosition(
+      stop.source,
+      this.definition.descriptor.sources,
+    )
+    // Only a column the run set aside is journaled, so the journal says what Codebook did with the declaration.
+    if (taken.column !== stop.source.column)
+      this.evidence.record('breakpoint.column-on-blank-line', {
+        participant: stop.participant,
+        field: `${configuredStopFields(this.definition.configuration.version, stopIndex).source}.column`,
+        declared: { line: stop.source.line, column: stop.source.column },
+        taken: { line: taken.line, column: taken.column },
+      })
+    return taken
   }
 
   /**

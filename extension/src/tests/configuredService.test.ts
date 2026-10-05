@@ -894,6 +894,25 @@ test('configured help states the binding rule from the line the stop is requeste
   assert.doesNotMatch(sourceBinding, /the column is a request/)
 })
 
+// Value: protects=an agent reading, where declaring a stop's line and column is explained, that a column on a blank line is taken at the line's start and where the run says so; fails_when=the help no longer says it, or names another journal entry than the run writes; why_new=Cycle 0045 N14c-13 (DX-1 a); seam=none
+test('configured help says that any column declared on a blank line is taken as the line’s start and names the journal entry that records it', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { sourceBinding } = z
+    .object({ sourceBinding: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    sourceBinding.includes(
+      "a line that is blank or only a comment carries none. A blank line has no column to choose: any column declared on it is taken as the line's start, and the run's journal records breakpoint.column-on-blank-line with the field, the declared and the taken position. The binding rule is counted",
+    ),
+    true,
+  )
+})
+
 // Cycle 0045 (SM-17): red while the README kept the rule counted from the declared line and said nothing about the second request.
 test('the extension README states the binding rule from the requested line, as the help does', async () => {
   // Arrange
