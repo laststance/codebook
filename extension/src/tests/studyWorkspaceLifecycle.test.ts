@@ -2015,6 +2015,82 @@ test("Close Study Workspace made with the learner's own file active gives the ac
   }
 })
 
+// Value: protects=the keyboard of a learner whose Settings page (a tab of the main editor that is no text editor) is the active editor when "Codebook: Close Study Workspace" runs in an editor without a chat tab: the active editor group has it once the panes' groups are closed, and the learner is told where it is; fails_when=Close settles the keyboard only while the editor names an active text editor or pane, the editor rebuilds its grid as the closed tabs' groups leave, and the keyboard is on the page body until the learner clicks; why_new=Cycle 0046 row 140, item 8 (the state of row 66 beside a page that is no text editor); seam=the workspace harness's addOpaqueTab, focusOpaqueTab, closeDisposedPanelTabsLater, removeEmptiedGroupsLater, loseKeyboardWhenGroupCloses, keyboardOnBody, command log and information messages
+test("Close Study Workspace made with the editor's Settings page active gives the active editor group the keyboard once the panes' groups closed, and says where it is", async () => {
+  // Arrange: an editor with one editor part; it removes a group its last tab left and lets the keyboard fall to the page body when it does; the reader is open and the Settings page in the first group is the active editor.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  harness.removeEmptiedGroupsLater()
+  harness.loseKeyboardWhenGroupCloses()
+  try {
+    await harness.reader.open()
+    const settingsPage = harness.addOpaqueTab('Settings', 1)
+    harness.focusOpaqueTab(settingsPage)
+    const activeTextEditorBeforeClose = harness.editor.window.activeTextEditor
+
+    // Act: Close, and longer than the fake editor takes to remove an emptied group.
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    // Assert
+    assert.equal(activeTextEditorBeforeClose, undefined)
+    assert.deepEqual(
+      {
+        groups: harness.groups.length,
+        tabInFront: harness.groups[0]!.activeTab,
+        keyboardOnBody: harness.keyboardOnBody(),
+        lastCommand: harness.commands.at(-1),
+        sentences: harness.informationMessages.map(
+          (message) => message.message,
+        ),
+      },
+      {
+        groups: 1,
+        tabInFront: settingsPage,
+        keyboardOnBody: false,
+        lastCommand: 'workbench.action.focusActiveEditorGroup',
+        sentences: [
+          'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner who types in Cursor's Agent chat (a tab of another editor part) while the editor still names a main group that shows its Settings page, when "Codebook: Close Study Workspace" runs: nothing is focused and nothing is told; fails_when=the rule for a page that is no text editor also runs beside a chat tab, where the editor reads the same whether the keyboard is in that page or in the chat, and Close takes the keyboard from the chat; why_new=Cycle 0046 row 140, item 8 (the other side: with a second editor part the state cannot be told from the chat holding the keyboard); seam=the workspace harness's addSeparateEditorPart, addOpaqueTab, focusOpaqueTab, the chat's focus, command log and information messages
+test("Close Study Workspace made while the editor names its Settings page beside Cursor's chat tab runs no focus command and tells nothing", async () => {
+  // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader is open, the Settings page is the tab in front of the first group, and the learner types in the chat while the editor goes on naming that group.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  try {
+    await harness.reader.open()
+    harness.focusOpaqueTab(harness.addOpaqueTab('Settings', 1))
+    chat.focus()
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.equal(chat.focused(), true)
+    assert.equal(
+      harness.commands
+        .slice(commandsBefore)
+        .some((command) => /^workbench\.action\.focus/.test(command)),
+      false,
+    )
+    assert.deepEqual(harness.informationMessages, [])
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const situation of [
   'the work window does not have the focus',
   'the Study workspace is not open',
