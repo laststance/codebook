@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path'
 
 import { isLeftEmpty } from './isLeftEmpty'
 import { isStaleStorageLock } from './isStaleStorageLock'
+import { listPlacedClaims } from './listPlacedClaims'
 import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { StorageOwnerIdentity } from './readRecordedOwner'
 
@@ -34,12 +35,12 @@ async function removeStalePreparedClaim(
     await rm(path, { recursive: true, force: true }).catch(() => undefined)
 }
 
-/** Removes the stale claims inside the claim directory `<lock>.takeover`, one owner file each. @example await removeStalePlacedClaims('/storage/learning/writer.lock.takeover', judgement) */
+/** Removes the stale claims inside the claim directory `<lock>.takeover`, one owner file each; a link or a file at that path is no claim directory and is removed by its own name, never listed ({@link listPlacedClaims}). @example await removeStalePlacedClaims('/storage/learning/writer.lock.takeover', judgement) */
 async function removeStalePlacedClaims(
   claimDirectory: string,
   judgement: LeftoverJudgement,
 ): Promise<void> {
-  for (const claimName of await readdir(claimDirectory).catch(() => []))
+  for (const claimName of await listPlacedClaims(claimDirectory))
     await removeStaleOwnerFile(join(claimDirectory, claimName), judgement)
 }
 

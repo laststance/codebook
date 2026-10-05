@@ -480,6 +480,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/isRecordedOwnerGone.ts',
     'extension/src/utils/isSameStorageMachine.ts',
     'extension/src/utils/isStaleStorageLock.ts',
+    'extension/src/utils/listPlacedClaims.ts',
     'extension/src/utils/namesMachineInClear.ts',
     'extension/src/utils/placeStorageLock.ts',
     'extension/src/utils/processStartFormHere.ts',

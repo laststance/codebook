@@ -5,6 +5,8 @@ import {
   readdir,
   realpath,
   rm,
+  symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -112,4 +114,41 @@ test('a prepared lock of a killed window is removed in the same sweep that keeps
   assert.deepEqual(await readdir(directory), [
     'writer.lock.pending-a-of-running-window',
   ])
+})
+
+// Value: protects=the files of a folder that a link at the claim folder's path leads to, when the takeover claim's sweep runs for a Wiki update's marker in a project folder (row 109); fails_when=the sweep lists `<lock>.takeover` through the link and unlinks, in the link's target, every file without content and every file that reads as the owner record of a gone process; why_new=Cycle 0046 row 109: no test put a link at the claim folder's path; seam=none (a junction on Windows, which needs no right)
+test('a link at the claim folder’s path is removed as a link by the takeover claim’s sweep: the file without content and the record of a gone process in the folder it leads to stay', async (context) => {
+  // Arrange: a folder with a file that has had no content for two minutes and a file that names a process of this machine that is gone, and a link to it where the claim folder would be.
+  const directory = await storageDirectory(context)
+  const linkedFolder = join(directory, 'a-folder-of-the-project')
+  await mkdir(linkedFolder)
+  await writeFile(join(linkedFolder, '.gitkeep'), '')
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
+  await utimes(join(linkedFolder, '.gitkeep'), twoMinutesAgo, twoMinutesAgo)
+  await writeFile(
+    join(linkedFolder, 'record.json'),
+    '{"pid":4194305,"hostname":"workstation"}',
+  )
+  await symlink(
+    linkedFolder,
+    join(directory, 'wiki.update-run.json.takeover'),
+    'junction',
+  )
+
+  // Act
+  await removeStaleStorageClaims(join(directory, 'wiki.update-run.json'), {
+    hostname: 'workstation',
+  })
+
+  // Assert
+  assert.deepEqual(
+    {
+      besideTheMarker: await readdir(directory),
+      linkedFolder: (await readdir(linkedFolder)).sort(),
+    },
+    {
+      besideTheMarker: ['a-folder-of-the-project'],
+      linkedFolder: ['.gitkeep', 'record.json'],
+    },
+  )
 })

@@ -17,6 +17,7 @@ import {
   type StorageLockTakeoverClaim,
 } from './claimStorageLockTakeover'
 import { currentStorageOwner } from './currentStorageOwner'
+import { listPlacedClaims } from './listPlacedClaims'
 import { placeStorageLock } from './placeStorageLock'
 import {
   readLiveWikiUpdateMarker,
@@ -255,6 +256,7 @@ async function removeExpiredPreparations(
  * Removes the claims on the marker, and what was prepared beside it, that are nobody's by their age, each by its own unique name; called by {@link tryMarkerClaim} before it asks for the claim.
  *
  * Why: {@link claimStorageLockTakeover} removes a claim whose owner is gone, which it can say only of an owner of this machine. A window of another machine, or of 0.2.29.0, that was killed while it held the claim would keep it for good, and every later start on a stale marker would fail. Such a claim is nobody's once it is older than {@link WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS} ({@link isExpiredMarkerClaim}).
+ * The claim folder's path lies in the learner's project folder, where a cloned repository can put a link: only a real directory there is listed, and anything else at that path is removed by its own name ({@link listPlacedClaims}), so the sweep never reaches the files a link leads to.
  *
  * @param markerPath - `<output>.update-run.json`; the claim is one owner file in the folder `<marker>.takeover`.
  * @param judgement - The identity of this process and the clock.
@@ -267,8 +269,8 @@ async function removeExpiredMarkerClaims(
   judgement: MarkerClaimJudgement,
 ): Promise<void> {
   const claimDirectory = `${markerPath}.takeover`
-  // A placed claim is one owner file inside the claim folder.
-  for (const claimName of await readdir(claimDirectory).catch(() => [])) {
+  // A placed claim is one owner file inside the claim folder; a link or a file at the folder's path is removed there and never listed.
+  for (const claimName of await listPlacedClaims(claimDirectory)) {
     const claimPath = join(claimDirectory, claimName)
     await removeIfExpired(claimPath, claimPath, judgement)
   }

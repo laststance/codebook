@@ -15,8 +15,8 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { test } from 'node:test'
+import { join, relative, resolve, sep } from 'node:path'
+import { test, type TestContext } from 'node:test'
 
 import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
@@ -1686,3 +1686,278 @@ test(
     }
   },
 )
+
+/**
+ * Makes a project as a cloned repository holds it, with an empty Wiki output folder in `.codebook`, and a folder beside the project. Every file and folder of both was last changed two minutes ago, longer than a claim on the marker may stay without an owner.
+ * All of it lies in one temporary folder of the test, which is removed with the test; a link of a test leads only to one of these two folders.
+ * @example const cloned = await createClonedProject(context)
+ */
+async function createClonedProject(context: TestContext): Promise<{
+  project: string
+  besideTheProject: string
+  outputDirectory: string
+  markerPath: string
+}> {
+  const temporaryFolder = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-claim-link-')),
+  )
+  context.after(() => rm(temporaryFolder, { recursive: true, force: true }))
+  const project = join(temporaryFolder, 'project')
+  const besideTheProject = join(temporaryFolder, 'beside-the-project')
+  const outputDirectory = join(project, '.codebook', 'wiki')
+  await mkdir(outputDirectory, { recursive: true })
+  await mkdir(join(project, 'src', 'utils'), { recursive: true })
+  await mkdir(join(project, 'docs'))
+  await mkdir(join(besideTheProject, 'photos'), { recursive: true })
+  const files = [
+    join(project, 'package.json'),
+    join(project, 'src', 'main.ts'),
+    join(project, 'src', 'utils', 'helper.ts'),
+    join(project, 'docs', 'guide.md'),
+    join(besideTheProject, 'notes.txt'),
+    join(besideTheProject, 'photos', 'holiday.txt'),
+  ]
+  for (const file of files) await writeFile(file, 'kept')
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
+  const folders = [
+    join(project, 'src', 'utils'),
+    join(project, 'src'),
+    join(project, 'docs'),
+    join(besideTheProject, 'photos'),
+    besideTheProject,
+  ]
+  for (const path of [...files, ...folders])
+    await utimes(path, twoMinutesAgo, twoMinutesAgo)
+  return {
+    project,
+    besideTheProject,
+    outputDirectory,
+    markerPath: `${outputDirectory}.update-run.json`,
+  }
+}
+
+/** Lists every file, folder and link below a folder as `/`-separated paths, sorted; a link is named and not followed. @example await entriesBelow('/tmp/project') // => ['docs', 'docs/guide.md', 'package.json'] */
+async function entriesBelow(folder: string): Promise<string[]> {
+  // With entry types the listing names a link and does not go into it.
+  return (await readdir(folder, { recursive: true, withFileTypes: true }))
+    .map((entry) =>
+      relative(folder, join(entry.parentPath, entry.name)).split(sep).join('/'),
+    )
+    .toSorted()
+}
+
+// Value: protects=the learner's own files in a project whose repository carries a link at `.codebook/wiki.update-run.json.takeover` (row 109, critical: one Update press deleted `src/`, `docs/` and `package.json`); fails_when=the claim's age sweep lists the claim folder's path through the link and removes every entry of the link's target that is older than 60 s as a claim nobody owns; why_new=Cycle 0046 row 109: no test put a link at the claim folder's path; seam=none (a junction on Windows, which needs no right)
+test('a link at the claim folder’s path that leads to the project folder is removed as a link when an update starts on a killed editor’s marker: every file and folder of the project stays, although each is older than a claim may be', async (context) => {
+  // Arrange: a killed editor's marker, so the start asks for the claim, and the link a repository carries.
+  const cloned = await createClonedProject(context)
+  await leaveKilledEditorsMarker(cloned.markerPath)
+  await symlink(cloned.project, `${cloned.markerPath}.takeover`, 'junction')
+
+  // Act
+  const start = await outcomeOf(
+    claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { start, project: await entriesBelow(cloned.project) },
+    {
+      start: 'holds the claim',
+      project: [
+        '.codebook',
+        '.codebook/wiki',
+        '.codebook/wiki.update-run.json',
+        'docs',
+        'docs/guide.md',
+        'package.json',
+        'src',
+        'src/main.ts',
+        'src/utils',
+        'src/utils/helper.ts',
+      ],
+    },
+  )
+  assert.equal(
+    JSON.parse(await readFile(cloned.markerPath, 'utf8')).windowId,
+    'window-a',
+  )
+})
+
+// Value: protects=the learner's own files in a project whose repository carries a link at `.codebook/wiki.update-run.json.takeover`, at the end of an update that started without a marker in the way (row 109); fails_when=the end of the run asks for the claim, and the claim's age sweep lists the link's target and removes what is older than 60 s; why_new=Cycle 0046 row 109; seam=none
+test('a link at the claim folder’s path that leads to the project folder is removed as a link when a run ends: every file and folder of the project stays and the run’s marker is removed', async (context) => {
+  // Arrange: a run that began with no marker in the way, so nothing looked at the claim folder yet.
+  const cloned = await createClonedProject(context)
+  await symlink(cloned.project, `${cloned.markerPath}.takeover`, 'junction')
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: Date.now(),
+    },
+    AS_THIS_WINDOW,
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(await entriesBelow(cloned.project), [
+    '.codebook',
+    '.codebook/wiki',
+    'docs',
+    'docs/guide.md',
+    'package.json',
+    'src',
+    'src/main.ts',
+    'src/utils',
+    'src/utils/helper.ts',
+  ])
+})
+
+// Value: protects=a folder outside the project (the learner's home, another checkout) when a repository carries a link to it at `.codebook/wiki.update-run.json.takeover` (row 109: the folder was emptied); fails_when=the claim's age sweep lists the claim folder's path through the link; why_new=Cycle 0046 row 109; seam=none
+test('a link at the claim folder’s path that leads out of the project is removed as a link when an update starts on a killed editor’s marker: the folder it leads to keeps every file', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await leaveKilledEditorsMarker(cloned.markerPath)
+  await symlink(
+    cloned.besideTheProject,
+    `${cloned.markerPath}.takeover`,
+    'junction',
+  )
+
+  // Act
+  const start = await outcomeOf(
+    claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      start,
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+      besideTheWiki: await entriesBelow(join(cloned.project, '.codebook')),
+    },
+    {
+      start: 'holds the claim',
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+      besideTheWiki: ['wiki', 'wiki.update-run.json'],
+    },
+  )
+})
+
+// Value: protects=a folder outside the project when a repository carries a link to it at `.codebook/wiki.update-run.json.takeover`, at the end of an update (row 109); fails_when=the end of the run asks for the claim, and the claim's age sweep lists the link's target; why_new=Cycle 0046 row 109; seam=none
+test('a link at the claim folder’s path that leads out of the project is removed as a link when a run ends: the folder it leads to keeps every file and the run’s marker is removed', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await symlink(
+    cloned.besideTheProject,
+    `${cloned.markerPath}.takeover`,
+    'junction',
+  )
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: Date.now(),
+    },
+    AS_THIS_WINDOW,
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(
+    {
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+      besideTheWiki: await entriesBelow(join(cloned.project, '.codebook')),
+    },
+    {
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+      besideTheWiki: ['wiki'],
+    },
+  )
+})
+
+// Value: protects=the folders that links lead to which a repository carries where a killed window's claim, prepared claim folder or prepared marker would lie; fails_when=an entry that is nobody's by its age is removed through the link (its target is emptied) instead of by its own name; why_new=Cycle 0046 row 109, the audit of every removal beside the marker: these three removals take a link as a link, and nothing stated it; seam=the clock handed to the claim
+test('links where a killed window’s claim, its prepared claim folder and its prepared marker would lie are removed as links once they are older than 60 s, and the folders they lead to keep every file', async (context) => {
+  // Arrange: a real claim folder that holds a link, and two links beside the marker with the names of prepared entries.
+  const cloned = await createClonedProject(context)
+  await mkdir(`${cloned.markerPath}.takeover`)
+  await symlink(
+    cloned.besideTheProject,
+    join(`${cloned.markerPath}.takeover`, 'left-by-a-killed-window'),
+    'junction',
+  )
+  await symlink(
+    join(cloned.project, 'src'),
+    `${cloned.markerPath}.takeover-left-by-a-killed-window`,
+    'junction',
+  )
+  await symlink(
+    join(cloned.project, 'docs'),
+    `${cloned.markerPath}.pending-left-by-a-killed-window`,
+    'junction',
+  )
+  const aMinuteAndASecondLater = Date.now() + 61_000
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: aMinuteAndASecondLater,
+    },
+    { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(
+    {
+      project: await entriesBelow(cloned.project),
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+    },
+    {
+      project: [
+        '.codebook',
+        '.codebook/wiki',
+        'docs',
+        'docs/guide.md',
+        'package.json',
+        'src',
+        'src/main.ts',
+        'src/utils',
+        'src/utils/helper.ts',
+      ],
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
