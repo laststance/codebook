@@ -105,26 +105,35 @@ test("PROJECT_STATE's one next action is one action, without the earlier next ac
   )
 })
 
-// Value: protects=an agent that must read PROJECT_STATE in full at every session entry and after every context compaction, and a reader who wants the current state without the chronology; fails_when=the file is appended to again instead of overwritten: it links the records of more than the active cycle and the two before it, or outgrows one read; why_new=owner direction of 2026-10-05, when the file had 661,091 bytes and linked the records of 15 cycles; seam=none
+// Value: protects=an agent that must read PROJECT_STATE in full at every session entry and after every context compaction, and a reader who wants the current state without the chronology; fails_when=the file is appended to again instead of overwritten: it links the record of a cycle that is neither the active one nor one of the two before it, leaves one of those three out, or outgrows one read; why_new=owner direction of 2026-10-05, when the file had 661,091 bytes and linked the records of 15 cycles; Cycle 0046 row 126: the two upper bounds alone passed a file that linked three old records; seam=none
 test('PROJECT_STATE keeps the active cycle and the two before it and stays short enough to read whole at every session entry', async () => {
   // Arrange
   const projectState = await readDocument('PROJECT_STATE.md')
 
-  // Act
+  // Act: the cycle the state table names as active, the two before it, and every cycle whose record the file links.
+  const activeCycle = Number(
+    /^\| Active cycle \| \[Cycle (\d{4})\]/m.exec(projectState)?.[1],
+  )
+  const activeCycleAndTwoBefore = [
+    activeCycle - 2,
+    activeCycle - 1,
+    activeCycle,
+  ].map((cycle) => String(cycle).padStart(4, '0'))
   const cyclesWithLinkedRecords = [
     ...new Set(
       [...projectState.matchAll(/docs\/cycles\/(\d{4})-/g)].map(
         (match) => match[1],
       ),
     ),
-  ]
+  ].toSorted()
 
-  // Assert: the records of at most three cycles, and no more text than the current state needs.
+  // Assert: the records of exactly those three cycles, and no more text than the current state needs.
   assert.equal(
-    cyclesWithLinkedRecords.length <= 3,
+    Number.isInteger(activeCycle),
     true,
-    `the state links the records of ${cyclesWithLinkedRecords.length} cycles: ${cyclesWithLinkedRecords.join(', ')}`,
+    'the row "Active cycle" of the state table links no cycle as [Cycle NNNN]',
   )
+  assert.deepEqual(cyclesWithLinkedRecords, activeCycleAndTwoBefore)
   assert.equal(
     projectState.length <= 40_000,
     true,
@@ -235,6 +244,57 @@ test('the test execution guide says that a failed coverage upload does not fail 
   )
 })
 
+// Value: protects=a maintainer or an agent who sees every test of package.test.mjs fail together reading in the guide that a checkout changed during the shared build does that, with the sentence to look for; fails_when=the guide no longer says that the checkout must stay as it is while the package tests run, quotes another sentence than the build's guard has, or the tests stop sharing one build; why_new=Cycle 0046 row 124: all 32 tests failed together at a merge because a tracked document was regenerated while the build compiled, and the record kept only the failed titles; seam=none
+test('the test execution guide says that a checkout changed while the package tests build fails every test of package.test.mjs with the sentence of the build, as the build and the test file have it', async () => {
+  // Arrange
+  const guide = await readDocument('docs/qa/test-execution.md')
+  const build = await readDocument('extension/scripts/utils/buildPackage.mjs')
+  const commandRunner = await readDocument(
+    'extension/scripts/utils/runPackageCommand.mjs',
+  )
+  const packageTests = await readDocument(
+    'extension/scripts/tests/package.test.mjs',
+  )
+
+  // Act: the guide's paragraph, the guard's sentence in the build, and how often the test file builds for its tests.
+  const paragraph =
+    guide
+      .split('\n\n')
+      .find((part) =>
+        part.startsWith(
+          'The checkout must also stay as it is while the package tests run.',
+        ),
+      ) ?? ''
+  const sharedBuilds = packageTests.match(
+    /^ {2}receipt = await buildPackage\(repository, artifact\)$/gm,
+  )
+
+  // Assert
+  assert.equal(
+    paragraph,
+    "The checkout must also stay as it is while the package tests run. `extension/scripts/tests/package.test.mjs` builds one VSIX in a hook that every test of the file shares, and that build reads the checkout's identity before and after its compilation: the revision, whether Git reports any change (a tracked file that differs or an untracked file that is not ignored, anywhere in the repository) and the hashes of the package's sources. When the two readings differ, for example because a document was regenerated or a commit was made while the compiler ran, the build is refused with `Source inputs changed during compilation. Retry from a stable checkout.` and every test of the file fails with that one message. The list of failed titles does not show it: read the first failure. It is no defect of the package: leave the checkout untouched until the run has ended, then run it again. A command of the build that fails (`Package command failed: pnpm (<code>)`) or runs longer than three minutes (`Package command exceeded its time limit.`) fails every test of the file in the same way, with its own sentence.",
+  )
+  assert.equal(
+    build.includes(
+      "'Source inputs changed during compilation. Retry from a stable checkout.',",
+    ),
+    true,
+  )
+  assert.equal(
+    commandRunner.includes(
+      '`Package command failed: ${executable} (${signal ?? code})`',
+    ),
+    true,
+  )
+  assert.equal(
+    commandRunner.includes("'Package command exceeded its time limit.'"),
+    true,
+  )
+  assert.deepEqual(sharedBuilds, [
+    '  receipt = await buildPackage(repository, artifact)',
+  ])
+})
+
 // Value: protects=an author of the generation skill reading in its plan where a Wiki run's temporary scripts go, which the editor's approvals depend on; fails_when=the plan no longer names the folder, or the bundled skill names another folder than the plan; why_new=Cycle 0046 row 45: the rule of skill 1.0.42 stood in the skill and the CHANGELOG only (documentation audit DA-2); seam=none
 test("the generation skill's plan names the workspace folder of a Wiki run's temporary scripts, as the bundled skill does", async () => {
   // Arrange
@@ -273,9 +333,15 @@ test('the LLM Wiki contract names the rail entry that opens the first cited sour
     "Delivered reference, no further requirement: besides the inline citations, every page's right rail has the entry **Open in VS Code** (**Open in Cursor** when Cursor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label.",
   )
 
+  // The label is read from the template that prints the entry: the publisher's text also quotes it in a docstring.
+  const printedLabel =
+    /const openSourceEntry = \(source, line\) => `<p class="open-in-editor"><a [^>]*>([^<]*)<\/a>/.exec(
+      publisher,
+    )?.[1]
+
   // Assert
   assert.equal(namesEntry, true)
-  assert.equal(publisher.includes('Open in VS Code'), true)
+  assert.equal(printedLabel, 'Open in VS Code')
 })
 
 // Value: protects=a later reader of the Cycle 0045 record who wants to know that a private evidence folder is still the one the record describes; fails_when=the record names an evidence folder of its final round without the file count and the SHA-256 of that folder's list, or says again that the red team added PL-28 and PL-29; why_new=Cycle 0046 row 46: the folders after N14-c were named without a per-file SHA-256; seam=none
