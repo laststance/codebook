@@ -2484,6 +2484,39 @@ async function check(page, options, collected) {
         actual: { panelTopsBefore, panelTopsWithHint, panelHintBelowControls },
         passed: panelTopsBefore === panelTopsWithHint && panelHintBelowControls,
       })
+      // Act: the hint and its button are measured against the panel, which is 180 px high here.
+      const panelHint = await page.evaluate(() => {
+        const hint = document
+            .getElementById('playback-hint')
+            .getBoundingClientRect(),
+          control = document
+            .getElementById('playback-show-variables')
+            .getBoundingClientRect()
+        return {
+          panelHeight: window.innerHeight,
+          buttonHeight: Math.round(control.height),
+          buttonBottom: Math.round(control.bottom),
+          hintBottom: Math.round(hint.bottom),
+          buttonRightOfHint: control.left >= hint.right,
+          buttonBesideHint:
+            control.top < hint.bottom && control.bottom > hint.top,
+        }
+      })
+      await page.screenshot({
+        path: `${options.output}/bottom-panel-values-hint.png`,
+      })
+      // Assert
+      cases.push({
+        name: 'in a bottom panel 180 px high the values hint and its 44 px Show Variables button stand side by side under the controls, both inside the panel',
+        actual: panelHint,
+        passed:
+          panelHint.panelHeight === 180 &&
+          panelHint.buttonHeight === 44 &&
+          panelHint.buttonBottom <= 180 &&
+          panelHint.hintBottom <= 180 &&
+          panelHint.buttonRightOfHint &&
+          panelHint.buttonBesideHint,
+      })
 
       // Arrange: the bottom panel alone shows the replay (the summary is collapsed), and its transport has no line above the moment (rows 26 and 60, DR-3, ND-2).
       await publish(panelReplay)
