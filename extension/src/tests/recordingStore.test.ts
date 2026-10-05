@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   appendFile,
+  mkdir,
   mkdtemp,
   open,
   readFile,
@@ -688,4 +689,30 @@ test('a recording an earlier session left unfinished still has every frame read 
   // Assert
   assert.equal(readFrame.mock.callCount(), 1)
   assert.equal(index.entries.length, 1)
+})
+
+// Value: protects=a folder in a recording root whose name is no study id leaves recordings startable and listable (Cycle 0046 row 47); fails_when=the root's folder names are parsed as study ids, which throws and breaks the recording start's admission and the recording list together; why_new=every recording test named its folders after study ids; seam=the recording root, into which the test puts the stray folder
+test('a stray folder x in the recording root leaves a recording startable and the recordings listed', async (context) => {
+  // Arrange
+  const { directory, binding, store } = await recordingHarness(context)
+  await mkdir(join(directory, 'recordings.v2', 'x'), { recursive: true })
+  // Act
+  const start = await store.start(binding, 10).then(
+    async (writer) => {
+      await writer.finish(20)
+      return 'started'
+    },
+    (error: unknown) => String(error),
+  )
+  const listed = await store.list().then(
+    (recordings) => recordings.map((recording) => recording.studyId),
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.equal(start, 'started')
+  assert.deepEqual(listed, [binding.studyId])
+  assert.deepEqual(
+    (await readdir(join(directory, 'recordings.v2'))).sort(),
+    [binding.studyId, 'x'].sort(),
+  )
 })
