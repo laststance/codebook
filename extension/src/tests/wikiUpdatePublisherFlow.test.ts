@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
@@ -210,6 +210,63 @@ test('a candidate that exists before the click refuses the start as somebody els
       wiki.errors[0] ?? '',
       /^Update failed at \d{1,2}:\d{2}(?:\s?[AP]M)?: An earlier chat or another editor window appears to be updating this Wiki \(candidate wiki\.stage-[0-9a-f-]{36}, written [^)]+\)\. Codebook waits for it until [^.]+\. If that chat was stopped, choose Update anyway in the editor’s notification\. The last usable site is kept\.$/,
     )
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the one agent per Wiki that "Update anyway" must keep; fails_when=the button ignores every leftover at the time of its press, so a press in the Notification Center after another chat staged a new candidate starts a second agent beside it; why_new=Cycle 0045 pre-landing review PL-24 (row 32 of Cycle 0046); seam=the learner's press of the notification's button, which the test makes after the new candidate was written
+test('Update anyway pressed after a new candidate was written since the refusal is refused again, names the new candidate and sends no chat request', async () => {
+  // Arrange: a candidate refuses the press; the learner presses Update anyway on that notification later.
+  let pressUpdateAnyway = (): void => {}
+  const laterPress = new Promise<string>((resolvePress) => {
+    pressUpdateAnyway = (): void => resolvePress('Update anyway')
+  })
+  let offersOfUpdateAnyway = 0
+  const wiki = await openPublishedWikiWindow({
+    // Only the first refusal's button is pressed; the second refusal is left alone.
+    chooseAction: (_message, actions) => {
+      if (!actions.includes('Update anyway')) return undefined
+      offersOfUpdateAnyway += 1
+      return offersOfUpdateAnyway === 1 ? laterPress : undefined
+    },
+  })
+  try {
+    const firstStage = await wiki.prepare()
+    await wiki.clickUpdate()
+    const refused = wiki.status()
+    // Another chat prepares its own candidate after the refusal.
+    await agentTakesAMoment()
+    const newStage = await wiki.prepare()
+
+    // Act
+    pressUpdateAnyway()
+    const deadline = Date.now() + 6_000
+    while (wiki.offeredActions.length < 2 && Date.now() < deadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20))
+
+    // Assert
+    const refusedAgain = wiki.status()
+    assert.equal(refused.state, 'failed')
+    assert.match(
+      refused.state === 'failed' ? refused.reason : '',
+      new RegExp(`\\(candidate ${basename(firstStage)}, written `),
+    )
+    assert.equal(refusedAgain.state, 'failed')
+    assert.match(
+      refusedAgain.state === 'failed' ? refusedAgain.reason : '',
+      new RegExp(
+        `^An earlier chat or another editor window appears to be updating this Wiki \\(candidate ${basename(newStage)}, written \\d{1,2}:\\d{2}[^)]*\\)\\. Codebook waits for it until \\d{1,2}:\\d{2}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\.$`,
+      ),
+    )
+    assert.deepEqual(
+      wiki.offeredActions.map((offered) => offered.actions),
+      [
+        ['Update anyway', 'Open LLM Wiki'],
+        ['Update anyway', 'Open LLM Wiki'],
+      ],
+    )
+    assert.deepEqual(wiki.chatRequests, [])
   } finally {
     await wiki.close()
   }

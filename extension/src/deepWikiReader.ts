@@ -15,6 +15,7 @@ import {
   WIKI_HTTP_BODY_LIMIT_BYTES,
   WIKI_LOOPBACK_HOSTS,
   WIKI_MANIFEST_FILE,
+  WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_QUESTION_LIMIT_CHARS,
   WIKI_QUESTION_ROUTE,
   WIKI_SOURCE_CHANGE_DEBOUNCE_MS,
@@ -81,7 +82,7 @@ const qaClient = `(function () {
     { action: 'Keyboard shortcuts', keys: '?', context: 'DeepWiki, outside text inputs', selector: '[data-shortcut-help]' },
     { action: 'Close keyboard shortcuts', keys: 'Esc', context: 'Keyboard shortcuts dialog' }
   ], 'body');
-  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)} });
+  (${installWikiUpdateStatus.toString()})({ readerPrefix: prefix, pagePublication: (document.currentScript && document.currentScript.getAttribute('data-codebook-publication')) || undefined, updateStatusRoute: '${WIKI_UPDATE_STATUS_ROUTE}', freshnessRoute: '${WIKI_FRESHNESS_ROUTE}', describeUpdate: (${describeWikiUpdate.toString()}), statusPollMs: ${WIKI_UPDATE_STATUS_POLL_MS}, idlePollMs: ${WIKI_UPDATE_IDLE_POLL_MS}, freshnessMinIntervalMs: ${WIKI_FRESHNESS_MIN_INTERVAL_MS}, startWaitMs: ${WIKI_UPDATE_START_WAIT_MS}, statusRetryLimit: ${WIKI_UPDATE_STATUS_RETRY_LIMIT}, pathLimit: ${WIKI_UPDATE_SHOWN_PATH_LIMIT}, reasonLimitChars: ${WIKI_UPDATE_REASON_LIMIT_CHARS}, msPerMinute: ${MS_PER_MINUTE}, recoveryRequest: ${JSON.stringify(WIKI_UPDATE_RECOVERY_REQUEST)}, outsideOutputApprovalsNote: ${JSON.stringify(WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE)} });
   var form = document.querySelector('#qa-form, [data-codebook-question]');
   if (!form) return;
   var status = document.querySelector('[data-codebook-status]');

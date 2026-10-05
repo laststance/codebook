@@ -5,12 +5,12 @@ import {
   WIKI_CURSOR_SHUTDOWN_GRACE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_OUTPUT_LIMIT_BYTES,
-  WIKI_UPDATE_TIMED_OUT_ERROR_NAME,
   WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON,
 } from '../constants'
 
 import { terminateCursorAgentProcess } from './requestCursorWikiText'
 import { resolveCursorAgentExecutable } from './resolveCursorAgentExecutable'
+import { WikiUpdateTimeoutError } from './wikiUpdateTimeoutError'
 
 type CursorCliResult = {
   type?: unknown
@@ -73,7 +73,7 @@ function unfinishedExitError(
   )
 }
 
-/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window, which aborts with {@link WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON} and so gets the shorter grace before the hard stop. @param timeoutMs - Bound after which the agent is stopped; the caller passes the bound it announced. @returns The agent's reply, once the agent process has closed. @throws An error named {@link WIKI_UPDATE_TIMED_OUT_ERROR_NAME} at the bound; a plain error for a cancel (also one that arrives while the executable is looked up, which starts no process), a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed, and after a stop nothing of the agent's process group is left running. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal, 900_000) */
+/** Starts the shared Codebook skill in the opened Cursor project when its browser update button is used. @param projectRoot - Canonical opened repository. @param prompt - Project-bound update request sent over stdin. @param signal - The run's abort: the learner's Cancel in the progress UI, or the closing editor window, which aborts with {@link WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON} and so gets the shorter grace before the hard stop. @param timeoutMs - Bound after which the agent is stopped; the caller passes the bound it announced. @returns The agent's reply, once the agent process has closed. @throws A {@link WikiUpdateTimeoutError} at the bound; a plain error for a cancel (also one that arrives while the executable is looked up, which starts no process), a failed start, a non-zero exit or an unusable reply. In every case the promise settles only after the process closed, and after a stop nothing of the agent's process group is left running. @example await runCursorWikiUpdate('/repo', '/codebook Update LLM Wiki...', controller.signal, 900_000) */
 export async function runCursorWikiUpdate(
   projectRoot: string,
   prompt: string,
@@ -135,10 +135,10 @@ export async function runCursorWikiUpdate(
       )
     }
     const timeout = setTimeout(() => {
-      const timedOut = new Error('Cursor Agent timed out updating the Wiki.')
-      // The caller tells the bound apart from a failure by this name and records `timed-out`.
-      timedOut.name = WIKI_UPDATE_TIMED_OUT_ERROR_NAME
-      stop(timedOut)
+      // The caller tells the bound apart from a failure by this type and records `timed-out`.
+      stop(
+        new WikiUpdateTimeoutError('Cursor Agent timed out updating the Wiki.'),
+      )
     }, timeoutMs)
     const cancel = (): void => stop(new Error('The Wiki update was cancelled.'))
     signal?.addEventListener('abort', cancel, { once: true })

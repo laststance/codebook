@@ -1,4 +1,4 @@
-import { setTimeout as sleepFor } from 'node:timers/promises'
+import { sleepUntilAborted } from './sleepUntilAborted'
 
 /** How a watch for a published Wiki ended; `published` carries the new publish token and what the caller read from the new manifest, `unreadable` the token of a publish whose manifest stayed unreadable. */
 export type WikiPublishWait<Published> =
@@ -7,16 +7,6 @@ export type WikiPublishWait<Published> =
   | { outcome: 'blocked'; paths: string[] }
   | { outcome: 'cancelled' }
   | { outcome: 'timed-out' }
-
-/** Resolves after the delay or when the signal aborts, whichever comes first; the timer never keeps the process alive. */
-function sleepUntilAborted(
-  delayMs: number,
-  signal: AbortSignal,
-): Promise<void> {
-  return sleepFor(delayMs, undefined, { signal, ref: false }).catch(
-    () => undefined,
-  )
-}
 
 /**
  * Watches the owned manifest until the editor agent publishes a new site, the learner cancels or the bound passes.

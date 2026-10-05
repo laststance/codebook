@@ -1174,6 +1174,47 @@ test('a start refused for an unfinished publish names the recovery request on th
   )
 })
 
+// Value: protects=the page's running line of a VS Code update whose output lies outside the project; fails_when=the page writes its own copy of the note the editor shows in its confirmation and progress title, so a change of that note leaves the page saying something else; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=the constants of the loaded reader, whose note is reworded
+test('the running line of a VS Code update whose output lies outside the project ends with the note the editor shows, also after the note is reworded', async () => {
+  // Arrange: a reader whose editor note on approvals outside the project reads differently from today's.
+  const editorNote =
+    'The chat asks before each step in a folder outside this project.'
+  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
+    resolve(__dirname, '../deepWikiReader.js'),
+    {
+      './constants': {
+        ...constants,
+        WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE: editorNote,
+      },
+    },
+    // The loaded reader parses each request's address.
+    { URL },
+  )
+  const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
+  try {
+    const script = await readServedWikiScript(wiki)
+
+    // Act
+    const page = await openFakeWikiPage(script, 'published-before-the-group', {
+      updateStatus: {
+        ...runningInVsCode,
+        isOutputOutsideProject: true,
+        outputDirectory: '/srv/wiki',
+        outputLabel: '/srv/wiki',
+      },
+      freshness: 'changed',
+    })
+
+    // Assert
+    assert.equal(
+      page.find('[data-codebook-update-status]')?.textContent,
+      'Updating LLM Wiki… The request went to the VS Code chat at 12:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. The chat asks before each step in a folder outside this project.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('each kind of update state has its own colour on the state words, with fallbacks for sites that lack the tokens', async () => {
   // Arrange
   const script = await readServedWikiScript()

@@ -42,6 +42,8 @@ export type WikiUpdatePageSettings = {
   msPerMinute: number
   /** The chat request of the publisher's recovery, handed to the embedded sentence writer like the minute length. */
   recoveryRequest: string
+  /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, handed to the embedded sentence writer like the recovery request, so the running line says what the editor says. */
+  outsideOutputApprovalsNote: string
 }
 
 /**
@@ -70,6 +72,7 @@ export type WikiUpdatePageSettings = {
  *   reasonLimitChars: 160,
  *   msPerMinute: 60_000,
  *   recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project',
+ *   outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
  * })
  * ```
  */
@@ -474,6 +477,7 @@ export function installWikiUpdateStatus(
       reasonLimitChars: settings.reasonLimitChars,
       msPerMinute: settings.msPerMinute,
       recoveryRequest: settings.recoveryRequest,
+      outsideOutputApprovalsNote: settings.outsideOutputApprovalsNote,
       // The page shows the freshness label above the update line.
       freshnessLabelPlace: 'above',
       // The host names both publications, so the browser's clock decides nothing.
