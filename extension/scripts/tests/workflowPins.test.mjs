@@ -596,3 +596,17 @@ test('the Test workflow has as many shards as Codecov waits for before it report
   ])
   assert.deepEqual(awaitedUploads, ['14', '14'])
 })
+
+// Value: protects=the result of every Test job, which must follow the tests and not a third-party upload; fails_when=the coverage upload step can fail the job (an outage of Codecov's download host then turns fourteen green test runs red and no pull request can merge); why_new=on 2026-10-05 cli.codecov.io refused every TLS handshake and all fourteen jobs failed in the upload with their tests green; seam=none
+test('a coverage upload that fails does not fail a Test job whose tests passed', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  const uploadStep = /- name: Upload coverage to Codecov\n((?: {8}.*\n)+)/.exec(
+    workflow,
+  )?.[1]
+
+  // Assert
+  assert.equal(uploadStep?.includes('        continue-on-error: true\n'), true)
+})

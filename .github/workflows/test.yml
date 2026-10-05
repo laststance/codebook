@@ -74,8 +74,11 @@ jobs:
             echo "::notice title=Codecov upload skipped::CODECOV_TOKEN is not available to this repository. Add it as a repository secret to upload coverage."
           fi
 
+      # Coverage is a report, not a gate: the tests above have already decided the job. On 2026-10-05 Codecov's download host
+      # (cli.codecov.io) refused the TLS handshake of every client, so all fourteen jobs failed in this step with their tests green.
       - name: Upload coverage to Codecov
         if: steps.codecov.outputs.available == 'true'
+        continue-on-error: true
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
