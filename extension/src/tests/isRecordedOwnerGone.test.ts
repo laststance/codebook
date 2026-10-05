@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import {
   mkdir,
   mkdtemp,
@@ -92,11 +91,10 @@ test('a real running process recorded with its start is not gone when the clock 
   assert.equal(isGone, false)
 })
 
-// Value: protects=a killed holder's reused pid is not taken for it; fails_when=the start is not compared, so a lock or claim stays for as long as any process has its owner's id (Cycle 0046 row 2, LK-F1); why_new=the judgement by the process start is new; seam=the injected start reader, then none (real child processes)
+// Value: protects=a killed holder's reused pid is not taken for it; fails_when=the start is not compared, so a lock or claim stays for as long as any process has its owner's id (Cycle 0046 row 2, LK-F1); why_new=the judgement by the process start is new; seam=the injected start reader, then none (a real child process, and an id no process has)
 test('an owner whose pid is used by another process is gone, and so is one whose process has ended', async (context) => {
-  // Arrange: a record of a killed window whose id a live process of this test has now, and a record of a process that has ended.
+  // Arrange: a record of a killed window whose id a live process of this test has now, and a record of a process that has ended: its id is one no process has. The id of a child that just exited would not do, because the system may give it to another process before the judgement asks.
   const processWithTheReusedId = await idleChild(context)
-  const ended = spawnSync(process.execPath, ['-e', ''])
   const identity = { hostname: 'workstation', boot: { id: 'boot-1' } }
   const startsAsked: number[] = []
   // Act
@@ -125,7 +123,7 @@ test('an owner whose pid is used by another process is gone, and so is one whose
   )
   const isEndedProcessGone = await isRecordedOwnerGone(
     {
-      pid: ended.pid,
+      pid: ID_OF_NO_PROCESS,
       hostname: 'workstation',
       boot: { id: 'boot-1' },
       processStart: startOfKilledWindow(),
