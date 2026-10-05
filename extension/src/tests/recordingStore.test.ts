@@ -716,3 +716,37 @@ test('a stray folder x in the recording root leaves a recording startable and th
     [binding.studyId, 'x'].sort(),
   )
 })
+
+// Value: protects=a file in a recording root leaves recordings startable and listable, as a stray folder does (Cycle 0046 row 93); fails_when=an entry of the root that is no folder is refused for the whole root, so every run records "Recording unavailable before input" and no recording is listed, for example after the learner opened the folder in Finder, which writes a .DS_Store; why_new=row 47 put a stray folder into the root, no test a file or a link; seam=the recording root, into which the test puts the file and the link
+test('a stray .DS_Store file and a link in the recording root leave a recording startable and the recordings listed, and both stay where they are', async (context) => {
+  // Arrange: the file Finder writes, and a link named like a study id that points outside the root.
+  const { directory, binding, store } = await recordingHarness(context)
+  const root = join(directory, 'recordings.v2'),
+    outside = join(directory, 'outside'),
+    linkedStudyId = `${randomUUID()}_${randomUUID()}`
+  await mkdir(root, { recursive: true })
+  await mkdir(outside)
+  await writeFile(join(root, '.DS_Store'), 'Bud1')
+  await symlink(outside, join(root, linkedStudyId))
+  // Act
+  const start = await store.start(binding, 10).then(
+    async (writer) => {
+      await writer.finish(20)
+      return 'started'
+    },
+    (error: unknown) => String(error),
+  )
+  const listed = await store.list().then(
+    (recordings) => recordings.map((recording) => recording.studyId),
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.equal(start, 'started')
+  assert.deepEqual(listed, [binding.studyId])
+  assert.deepEqual(
+    (await readdir(root)).sort(),
+    ['.DS_Store', binding.studyId, linkedStudyId].sort(),
+  )
+  assert.equal(await readFile(join(root, '.DS_Store'), 'utf8'), 'Bud1')
+  assert.deepEqual(await readdir(outside), [])
+})

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {
+import fsPromises, {
   appendFile,
   mkdir,
   mkdtemp,
@@ -15,6 +15,7 @@ import { mock, test } from 'node:test'
 import { NODE_TEST_HISTORY_DIRECTORY } from '../constants'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { sha256 } from '../runtimeSupport/utils/sha256'
+import { citationContext } from '../utils/citationContext'
 
 const createWorkspaceKey = () => sha256('node-history-test-workspace')
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
@@ -549,6 +550,92 @@ test('a stray file and a stray folder in the Node history directory take no plac
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+// Value: protects=a Node test whose history could not be started takes no place of the saved study limit; fails_when=the history's folder is made before the header's size is checked, or stays after its header file could not be written: no list shows such a folder, nothing removes it, and every later start counts it, so each failure takes one place of the limit for good (Cycle 0046 row 95); why_new=no test made a start fail; seam=a header above its size limit, and the creation of the header file, which the disk refuses once
+test('a Node test whose history cannot be started leaves no folder behind, and the next test under a limit of one is admitted', async (context) => {
+  // Arrange: a limit of one history. The first header is above its limit of 8,388,608 bytes (six sources of 262,144 control characters each make 9,440,675 bytes of JSON); for the second start the disk refuses the header file after the history's folder was made.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-failed-start-'),
+  )
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
+  const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
+  const refusedByDisk = nodeTestHistoryHeader(workspaceKey),
+    admitted = nodeTestHistoryHeader(workspaceKey),
+    template = nodeTestHistoryHeader(workspaceKey)
+  const largeText = '\u0001'.repeat(262_144)
+  const largeSources = Array.from({ length: 6 }, (_, index) => ({
+    path: `src/large-${index}.ts`,
+    hash: sha256(largeText),
+    text: largeText,
+    lineCount: 1,
+  }))
+  const largeAnchors = largeSources.map(({ path, hash }) => ({
+    path,
+    hash,
+    startLine: 1,
+    endLine: 1,
+  }))
+  const aboveItsLimit = {
+    ...template,
+    descriptor: {
+      ...template.descriptor,
+      anchors: largeAnchors,
+      citationContext: citationContext(largeAnchors),
+      sources: largeSources,
+    },
+  }
+  const openBefore = fsPromises.open
+  context.mock.method(
+    fsPromises,
+    'open',
+    async (...input: Parameters<typeof openBefore>) => {
+      if (
+        input[0] ===
+        join(historyDirectory, refusedByDisk.studyId, 'header.json')
+      )
+        throw Object.assign(
+          new Error('ENOSPC: no space left on device, open'),
+          { code: 'ENOSPC' },
+        )
+      return openBefore(...input)
+    },
+  )
+  const outcomeOf = (starting: Promise<unknown>): Promise<string> =>
+    starting.then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+  // Act
+  const startAboveItsLimit = await outcomeOf(store.start(aboveItsLimit))
+  const foldersAfterTheLargeHeader = await readdir(historyDirectory)
+  const startRefusedByDisk = await outcomeOf(store.start(refusedByDisk))
+  const foldersAfterTheRefusedFile = await readdir(historyDirectory)
+  const nextStart = await outcomeOf(
+    store
+      .start(admitted)
+      .then((writer) =>
+        writer.finish('partial', 'The learner stopped this run.'),
+      ),
+  )
+  // Assert
+  assert.equal(
+    startAboveItsLimit,
+    'Error: Node history article context exceeds its storage limit.',
+  )
+  assert.deepEqual(foldersAfterTheLargeHeader, [])
+  assert.equal(
+    startRefusedByDisk,
+    'Error: ENOSPC: no space left on device, open',
+  )
+  assert.deepEqual(foldersAfterTheRefusedFile, [])
+  assert.equal(nextStart, 'admitted')
+  assert.deepEqual(
+    (await store.list()).map((entry) => entry.studyId),
+    [admitted.studyId],
+  )
 })
 
 test('a refused history entry still lets the run seal its verified prefix as partial history', async () => {

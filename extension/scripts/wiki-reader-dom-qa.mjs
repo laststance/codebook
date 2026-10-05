@@ -22,6 +22,7 @@ import {
 
 import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
 import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
+import { readerDomSessionName } from './utils/readerDomSessionName.mjs'
 
 /** What the check expects of its cases: `verify` that all pass, `red` that at least one fails (a new case shown failing before its fix). */
 const mode = process.argv[2] ?? 'verify'
@@ -29,8 +30,8 @@ assert.match(mode, /^(?:red|verify)$/)
 /** The folder that receives the report, the stills and the logs of the browser calls. */
 const output = resolve(process.argv[3] ?? 'artifacts/wiki-reader-dom')
 await mkdir(output, { recursive: true })
-/** The browser CLI's session of this check; another check running beside it has another name. */
-const session = `cb-wiki-reader-${mode}`
+/** The browser CLI's session of this run: another check, and another run of this check into another folder, has another name ({@link readerDomSessionName}). */
+const session = readerDomSessionName('wiki-reader', mode, output)
 
 /** The first source the sample overview cites: a path long enough to wrap in the rail's entry, and the line the entry names. */
 const OPEN_TARGET = {
