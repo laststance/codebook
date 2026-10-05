@@ -272,26 +272,30 @@ test('the packaged README names the rail entry Open in VS Code or Open in Cursor
   assert.equal(MAX_EXPLANATIONS, 32)
 })
 
-// Value: protects=a learner who reads one of the two keyboard notices finding in the README when Codebook shows it; fails_when=the README loses a notice, or quotes another sentence than the reader shows; why_new=Cycle 0046, found by package DOA: rows 1 and 5 added the two notices and no document named them; seam=none
-test('the packaged README quotes the notice of Close Study Workspace about the keyboard and the notice of a captured source that took the keyboard at a pause, as the reader shows them', async () => {
+// Value: protects=a learner who reads one of the two keyboard notices finding in the README when Codebook shows it, in which editor and chat layout, and that it comes once in an editor session; fails_when=the README loses a notice, quotes another sentence than the reader shows, or still says that a close beside the learner's own file shows nothing and that Cursor shows no sentence at a pause; why_new=Cycle 0046, found by package DOA: rows 1 and 5 added the two notices and no document named them; rewritten with rows 5 (Cursor half) and 66, which changed both sentences and when they are told; seam=none
+test('the packaged README quotes the notice of Close Study Workspace about the keyboard and the notice of a Codebook pane that took the keyboard at a pause as the reader shows them, and says in which editor and chat layout each is told', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
-    '**Codebook: Close Study Workspace** run while a Codebook pane or the captured source is the active editor gives the active editor group the keyboard, and Codebook says so: `Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.` A close made while your own file is the active editor shows nothing.',
-    'In VS Code, the first time in an editor session that the captured source takes the place of the file the debugger opened at a pause, Codebook says where the keyboard is: `Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.` Cursor shows no such sentence.',
+    '**Codebook: Close Study Workspace** run in the focused window while a Codebook pane, the captured source or your own file is the active editor gives the active editor group the keyboard once the panes are closed, in VS Code and in Cursor: closing the panes can otherwise leave the keyboard on no element.',
+    'The first time in an editor session, Codebook says so: `Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.`',
+    'A close made while Cursor shows its Agent chat as an editor tab and that chat has the keyboard moves nothing and shows nothing, and so does a close in a window that does not have the focus.',
+    "When a live run pauses, the editor's debugger opens the paused file with the keyboard. The first time in an editor session that a Codebook pane (the Application pane or the captured source) takes that file's place and Codebook knows of no chat to give the keyboard back to, it says where the keyboard is: `The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.`",
+    'That is so in VS Code, in Cursor while its Agent chat is a pane of the secondary side bar, and in Cursor with the chat as an editor tab when you were working in a file or another tab before the pause.',
+    'Where Cursor shows its Agent chat as an editor tab and that chat had the keyboard before the pause, Codebook gives the keyboard back to the chat at that pause, and shows no sentence.',
   ])
 
-  // Assert: the README holds both, and the reader shows the sentences it quotes.
-  assert.deepEqual(delivered, [true, true])
+  // Assert: the README holds each sentence, and the reader shows the sentences it quotes.
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
   assert.equal(
     STUDY_CLOSE_KEYBOARD_MESSAGE,
-    'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.',
+    'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
   )
   assert.equal(
     SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
-    'Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+    'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
   )
 })
 

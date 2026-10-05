@@ -46,9 +46,32 @@ function openTargetOf(linkAttributes: string): string | undefined {
 }
 
 /**
+ * Chooses the id of the target the reader adds to a rail entry: the publisher's id, or that id with a number when an element of the page already carries it; called by {@link rebindDeepWikiEditorLinks}.
+ *
+ * A page published before the publisher kept the ids of a page's content apart from the reader's may carry the id on a heading of its article. The entry's link names its description by id, and an id that stands twice names the first element, which would be that heading.
+ *
+ * @param html - The published page.
+ * @returns
+ * - `codebook-open-target` when no element of the page carries it
+ * - otherwise `codebook-open-target-2`, or the first higher number that is free
+ * @example
+ * freeOpenTargetIdIn('<h2 id="codebook-open-target">Targets</h2>') // => 'codebook-open-target-2'
+ */
+function freeOpenTargetIdIn(html: string): string {
+  /** Whether a start tag of the page carries the id, quoted or bare. */
+  const isCarried = (id: string): boolean =>
+    new RegExp(`\\s[iI][dD]\\s*=\\s*["']?${id}(?=["'\\s>])`).test(html)
+  let id = WIKI_OPEN_TARGET_ELEMENT_ID
+  // The publisher's id first, then the same with 2, 3, …
+  for (let count = 2; isCarried(id); count += 1)
+    id = `${WIKI_OPEN_TARGET_ELEMENT_ID}-${count}`
+  return id
+}
+
+/**
  * Binds Wiki actions to the host serving each reader response so one published site works in both editors, and names the file and line the rail's entry opens on every served page.
  *
- * Called by the Wiki reader for every HTML page it serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address, and the link is described by it; it names the target without being published again.
+ * Called by the Wiki reader for every HTML page it serves. The entry's link holds the label alone, so the pattern of 0.2.29.0 names the serving editor in it on a page of any age. A page published by 0.2.29.0, whose entry ends with its link, gets the target the publisher prints today beside the link, read from the link's own address, and the link is described by it; it names the target without being published again. The added target takes an id no element of that page carries ({@link freeOpenTargetIdIn}).
  *
  * @param html - The published page with its static editor fallback.
  * @param editorScheme - The scheme registered by the editor serving this request.
@@ -88,9 +111,9 @@ export function rebindDeepWikiEditorLinks(
           closing: string,
         ) => {
           const target = openTargetOf(linkAttributes)
-          return target === undefined
-            ? entry
-            : `${opening}${linkAttributes} aria-describedby="${WIKI_OPEN_TARGET_ELEMENT_ID}"${link} <span class="open-target" id="${WIKI_OPEN_TARGET_ELEMENT_ID}">${target}</span>${closing}`
+          if (target === undefined) return entry
+          const targetId = freeOpenTargetIdIn(html)
+          return `${opening}${linkAttributes} aria-describedby="${targetId}"${link} <span class="open-target" id="${targetId}">${target}</span>${closing}`
         },
       )
   )

@@ -187,8 +187,8 @@ export function studyHtml(kind: 'context' | 'moments'): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src data:;"><style nonce="${nonce}">${STUDY_STYLES}</style></head><body class="${markupOnlyIn(kind, 'moments', 'moments-only')}">
 <p id="bootstrap-status" class="status" role="status" aria-live="polite">Loading study…</p><main id="study-content" hidden inert>
 <header class="learning-header"><p id="reader-kind" class="muted">Codebook study</p><h1 id="title">Codebook study</h1><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">Keyboard shortcuts <kbd>?</kbd></button></header>
-<details id="reader-options" open ${markupOnlyIn(kind, 'moments', 'hidden')}><summary>Study view and pane controls</summary><header class="presentation-header"><nav class="row study-read-tools" aria-label="Study pane reading"><button data-action="read-app" aria-label="Read application">App</button><button data-action="read-source" aria-label="Read captured source">Source</button><button data-action="read-context" aria-label="Read explanation">Explanation</button><button data-presentation="restore">Restore</button></nav><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-action="enlarge-app">Enlarge application</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p></header></details>
-<button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite">No running study</div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
+<details id="reader-options" open ${markupOnlyIn(kind, 'moments', 'hidden')}><summary>Study view and pane controls</summary><header class="presentation-header"><nav class="row study-read-tools" aria-label="Study pane reading"><button data-action="read-app" aria-label="Read application">App</button><button data-action="read-source" aria-label="Read captured source">Source</button><button data-action="read-context" aria-label="Read explanation">Explanation</button><button data-presentation="restore">Restore</button></nav><details id="presentation-options"><summary>View options</summary><p id="presentation-caption" class="muted mode-caption"></p><div class="row presentation-tools"><button data-action="enlarge-app">Enlarge application</button><button data-action="enlarge-context">Enlarge explanation</button><button data-presentation="save-preference" hidden>Save preference</button></div></details></header></details><p id="presentation-status" class="presentation-status" role="status" aria-live="polite"></p>
+<button data-action="return-wiki" hidden>← Return to Wiki</button><button data-action="open-article" hidden>Open article</button><div class="live-strip"><div id="runtime" role="status" aria-live="polite"></div><div class="row"><button data-action="return-current">Return to current pause</button><button class="primary" data-action="continue">Continue inspected pause</button><button data-action="stop">Stop</button></div><small class="muted" id="deadline"></small></div>
 <p id="errors" class="error" role="status" aria-live="polite"></p><button data-action="retry" hidden>Retry storage / refresh</button>
 
 <div ${markupOnlyIn(kind, 'moments', 'hidden')}>
@@ -204,7 +204,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section id="node-history"><h2>Node test history</h2><p class="muted">Step through a saved Node test entry selected in Saved studies. Captured source and native debugger state appear only at verified stops; output and result events clear debugger state. This test has no application video or synchronized application replay.</p><p id="node-history-status" class="status" role="status"></p><p id="node-history-position" class="status" role="status" aria-live="polite"></p><p id="node-history-hint" class="muted" role="status" aria-live="polite"></p><button id="node-history-show-variables" type="button" data-action="show-variables" hidden>Show Variables</button><label><input id="node-history-understood" type="checkbox"><span>I understand this test history <span id="node-history-understanding-state" class="muted"></span></span></label><section id="node-history-learning" hidden><h3 id="node-learning-title"></h3><p id="node-learning-question" class="muted"></p><p id="node-learning-summary"></p><div id="node-learning-sequence" aria-label="Node test learning sequence"></div><p class="muted">This learning material describes the saved test journal; it does not create application video or claim synchronized application replay.</p></section><div class="playback-row"><button id="node-history-playback-toggle" class="primary" type="button" data-node-history-playback="play">Play</button><label for="node-history-playhead" class="visually-hidden">Recorded test time</label><div class="timeline-track"><input id="node-history-playhead" type="range" min="0" max="0" step="any" value="0" disabled></div><span id="node-history-playback-position" class="muted">Test journal playback</span></div><p class="muted">Timeline follows recorded test events; application video is unavailable.</p><pre id="node-history-output" aria-label="Recorded test output through selected event"></pre><div class="row"><button id="node-history-moment-previous" type="button">Previous event</button><button id="node-history-moment-next" type="button">Next event</button><span id="node-history-page" class="muted"></span><button id="node-history-previous" type="button">Previous page</button><button id="node-history-next" type="button">Next page</button></div><div id="node-history-events"></div></section>
 <section id="observed-moments"><h2>Observed moments</h2><p class="muted" id="moments-caption">Select a captured observation or open Recording to follow its time.</p><div id="moments" class="moments"></div></section>
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
-<section id="recording-transport" aria-label="Recorded playback" hidden>${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
+<section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
 <script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()})</script></body></html>`
 }
@@ -354,11 +354,11 @@ function studyClient(
     readerOptionsOpenedByLearner = !readerOptions.hasAttribute('open')
   })
   const transport = element('recording-transport')
-  // Reserve the actual footer height, including expanded recovery details, so reading controls remain reachable.
+  // Reserve the actual footer height, including expanded recovery details, so reading controls remain reachable; a transport this pane does not show is rendered with nothing in it and has no height.
   new ResizeObserver(() =>
     document.documentElement.style.setProperty(
       '--playback-height',
-      `${transport.hidden ? 0 : transport.getBoundingClientRect().height}px`,
+      `${transport.getBoundingClientRect().height}px`,
     ),
   ).observe(transport)
   /**
@@ -1428,7 +1428,10 @@ function studyClient(
         offeredFor,
         hostAnsweredFilesOf(message, offeredFor),
       )
+    const focusedBefore = focusedInStudyFiles()
     showStudyFilesAnswer(message, offeredFor)
+    // While the host is asked again (Retry storage / refresh made it forget its list) the disclosure shows no button: a focus that stood on one goes to the summary, not to the document body.
+    keepFocusInSavedStudies(focusedBefore)
   }
   /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
   const focusRestsOnDeleteButton = (): boolean =>
@@ -1542,7 +1545,7 @@ function studyClient(
     !(recording.cleared && recording.readiness === 'loading')
   /**
    * Gives what the transport's second status region says for a replay: the remedy for a recorded application another tab covers, exactly while the transport's status carries the covered label for a moment that is shown (the observation is not loading, the moment is neither failed nor pending).
-   * The region is written with {@link text} on every Study message that carries a recording, so a screen reader hears the remedy once, when the cover begins, after the status that names the label; the summary's visible line stays in `#loading`, which is no live region.
+   * The region is written with {@link text} on every Study message that carries a recording, in the pane that shows the transport, so a screen reader hears the remedy once, when the cover begins, after the status that names the label; the summary's visible line stays in `#loading`, which is no live region.
    * @param recording - The replay of the current Study message.
    * @param isLoading - Whether the selected observation is loading.
    * @returns
@@ -1557,6 +1560,104 @@ function studyClient(
     recording.applicationCovered && !isLoading && showsMomentStatus(recording)
       ? options.applicationCovered.announcement
       : ''
+  // The bottom panel's pane shows the replay transport and the moments only.
+  const isBottomPanel = document.body.classList.contains('moments-only')
+  /**
+   * Gives what a presentation that is neither being saved nor changing has to report; read by {@link presentationStatus}.
+   * @param presentation - The presentation of the current Study message.
+   * @returns
+   * - The host gave a reason for the presentation or for its preference: that reason
+   * - The layout is not confirmed: what the learner does about it
+   * - Otherwise: an empty text
+   * @example presentationNotice(message.presentation) // => 'Layout not confirmed. Restore it or focus a pane below.'
+   */
+  const presentationNotice = (presentation: PresentationState): string =>
+    presentation.reason ??
+    presentation.preference.reason ??
+    (presentation.layoutConfirmed
+      ? ''
+      : 'Layout not confirmed. Restore it or focus a pane below.')
+  /**
+   * Gives what the status line under "Study view and pane controls" says about the presentation; read on every Study message that carries a presentation.
+   * The line stands outside that disclosure, so it is rendered while the Recording tab keeps the disclosure closed, and its first text changes a status region that exists. The bottom panel's pane has no pane controls: its line stays empty, as it never showed one, and the Study pane alone announces the status.
+   * @param presentation - The presentation of the current Study message.
+   * @returns
+   * - In the bottom panel's pane: an empty text
+   * - The preference is being saved, or the presentation is changing: that progress
+   * - Otherwise: what {@link presentationNotice} gives
+   * @example presentationStatus(message.presentation) // => 'Changing presentation…'
+   */
+  const presentationStatus = (presentation: PresentationState): string => {
+    if (isBottomPanel) return ''
+    if (presentation.preference.status === 'saving')
+      return 'Layout applied · saving preference…'
+    if (presentation.state === 'applying') return 'Changing presentation…'
+    return presentationNotice(presentation)
+  }
+  /**
+   * Names the live run in the strip's status; read by {@link liveStripStatus}.
+   * @param message - The current Study message.
+   * @param profileTitle - The title of the live run's profile, when the message lists that profile.
+   * @param generalName - What the run is called when neither names it.
+   * @returns The title the host gives the run, else its profile's title, else `generalName`.
+   * @example liveRunName(message, undefined, 'Runtime') // => 'Runtime'
+   */
+  const liveRunName = (
+    message: StudyViewMessage,
+    profileTitle: string | undefined,
+    generalName: string,
+  ): string => message.liveTitle ?? profileTitle ?? generalName
+  /**
+   * Gives what the live strip's status says; read on every Study message.
+   * The strip is never taken from the page: its status is empty while no run of this window is live, and the stylesheet shows nothing of a strip whose status is empty. The first state of a run therefore changes a status region that exists.
+   * @param message - The current Study message.
+   * @param profileTitle - The title of the live run's profile, when the message lists that profile.
+   * @returns
+   * - No run of this window is live (none started, or it stopped): an empty text
+   * - The run is paused at an item of the study: its title and that item
+   * - Otherwise: its title and its state
+   * @example liveStripStatus(message, 'Repository operation') // => 'Repository operation — paused at Theme'
+   */
+  const liveStripStatus = (
+    message: StudyViewMessage,
+    profileTitle: string | undefined,
+  ): string => {
+    if (!message.liveState || message.liveState === 'stopped') return ''
+    return message.model.currentItemId
+      ? `${liveRunName(message, profileTitle, 'Live study')} — paused at ${message.model.currentItemTitle}`
+      : `${liveRunName(message, profileTitle, 'Runtime')} — ${message.liveState}`
+  }
+  /**
+   * Says whether this pane shows the replay transport for a Study message; read on every Study message before the transport is written.
+   * @param message - The current Study message.
+   * @returns
+   * - No recording is open: `false`
+   * - The Study pane while the bottom panel is visible, which owns the transport then: `false`
+   * - Otherwise: `true`
+   * @example showsTransport(message) // => true in the bottom panel's pane during a replay
+   */
+  const showsTransport = (message: StudyViewMessage): boolean =>
+    Boolean(message.recording) &&
+    !(message.playbackPanelVisible && !isBottomPanel)
+  /**
+   * Shows the replay transport or leaves it out without taking it from the page; called on every Study message before the transport's parts are written.
+   * The section stays rendered, so its status regions exist before their first text. A transport this pane does not show has empty status regions, which is what the stylesheet reads to show nothing of it, and no name, so it is no empty landmark; a shown transport is the landmark its name makes.
+   * @param isShown - Whether this pane shows the transport, see {@link showsTransport}.
+   * @example offerTransport(showsTransport(message))
+   */
+  const offerTransport = (isShown: boolean): void => {
+    if (isShown) {
+      transport.setAttribute('aria-label', options.replayTransportLabel)
+      return
+    }
+    transport.removeAttribute('aria-label')
+    for (const regionId of [
+      'recording-status',
+      'application-covered-remedy',
+      'playback-hint',
+    ])
+      text(regionId, '')
+  }
   /**
    * Makes each title that its two-line clamp cuts a tab stop, so the keyboard can open it (a focused title is shown whole), and takes the tab stop from a title that fits; called after every Study message and when the pane is resized.
    * A focused title is not measured: it is shown whole and would read as fitting.
@@ -1643,18 +1744,7 @@ function studyClient(
           ? 'Recorded application and source stay in the editor; learning summary stays in the sidebar.'
           : (descriptor?.description ?? ''),
       )
-      text(
-        'presentation-status',
-        mode.preference.status === 'saving'
-          ? 'Layout applied · saving preference…'
-          : applying
-            ? 'Changing presentation…'
-            : (mode.reason ??
-              mode.preference.reason ??
-              (!mode.layoutConfirmed
-                ? 'Layout not confirmed. Restore it or focus a pane below.'
-                : '')),
-      )
+      text('presentation-status', presentationStatus(mode))
       for (const control of Array.from(
         document.querySelectorAll<HTMLButtonElement>('[data-presentation]'),
       )) {
@@ -1682,18 +1772,11 @@ function studyClient(
     button('open-article')!.hidden =
       !message.repositoryArticleAvailable ||
       Boolean(message.repositoryReturnAvailable)
-    // Offline replay prioritizes its own controls; an independently active runtime keeps its explicit stop/return strip.
-    if (strip)
-      strip.hidden = !message.liveState || message.liveState === 'stopped'
     element('next-scenario').hidden = Boolean(recording)
     element('study-controls').hidden = Boolean(recording)
     // A visible bottom panel owns transport; closing it restores the summary fallback.
-    element('recording-transport').hidden =
-      !recording ||
-      Boolean(
-        message.playbackPanelVisible &&
-        !document.body.classList.contains('moments-only'),
-      )
+    const isTransportShown = showsTransport(message)
+    offerTransport(isTransportShown)
     if (recording) {
       const range = recording.range,
         pending = recording.cleared && recording.readiness === 'loading'
@@ -1708,18 +1791,21 @@ function studyClient(
         timeline.gaps.some(
           (gap) => presentedMs >= gap.startMs && presentedMs < gap.endMs,
         )
-      text(
-        'recording-status',
-        recording.readiness === 'failed'
-          ? 'Playback stopped — presentation unavailable'
-          : pending
-            ? 'Loading matching image, source and values…'
-            : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}${recording.applicationCovered ? ` · ${options.applicationCovered.label}` : ''}`,
-      )
-      text(
-        'application-covered-remedy',
-        coveredAnnouncement(recording, message.loading),
-      )
+      // The transport's status regions carry text only in the pane that shows the transport; in the other pane they stay as empty as {@link offerTransport} left them.
+      if (isTransportShown) {
+        text(
+          'recording-status',
+          recording.readiness === 'failed'
+            ? 'Playback stopped — presentation unavailable'
+            : pending
+              ? 'Loading matching image, source and values…'
+              : `${recording.mode === 'playing' ? 'Playing' : 'Paused'} · ${recording.recordingStatus ?? 'Loading recording'}${selectedHistoryGap ? ' · Not recorded at this moment' : ''}${recording.applicationCovered ? ` · ${options.applicationCovered.label}` : ''}`,
+        )
+        text(
+          'application-covered-remedy',
+          coveredAnnouncement(recording, message.loading),
+        )
+      }
       text(
         'playback-position',
         `${recording.presentedMs === undefined ? 'No position presented' : `Presented ${seconds(recording.presentedMs)}`}${range ? ` / ${seconds(range.endMs)}${range.endKnown ? '' : ' — last verified time; end unknown'}` : ''}`,
@@ -1745,12 +1831,13 @@ function studyClient(
         failed ? options.playbackFailureRecovery : diagnostic,
       )
       // Unloaded native values are guidance, not an error; a failed moment shows only its recovery.
-      text(
-        'playback-hint',
-        !failed && recording.nativeValuesUninspected
-          ? options.nativeValuesHint
-          : '',
-      )
+      if (isTransportShown)
+        text(
+          'playback-hint',
+          !failed && recording.nativeValuesUninspected
+            ? options.nativeValuesHint
+            : '',
+        )
       // The hint comes with a control that opens Run and Debug and expands Variables in one click.
       offerShowVariables(
         'playback-show-variables',
@@ -1876,12 +1963,8 @@ function studyClient(
         ? 'Ask your agent to prepare a new operation in this article. Reading saved configuration never starts it.'
         : (selectedProfile?.description ?? 'Scenario unavailable.'),
     )
-    text(
-      'runtime',
-      model.currentItemId
-        ? `${message.liveTitle ?? liveProfile?.title ?? 'Live study'} — paused at ${model.currentItemTitle}`
-        : `${message.liveTitle ?? liveProfile?.title ?? 'Runtime'} — ${message.liveState ?? 'not running'}`,
-    )
+    // Offline replay prioritizes its own controls; an independently active runtime keeps its explicit stop/return strip.
+    text('runtime', liveStripStatus(message, liveProfile?.title))
     text(
       'deadline',
       message.deadlineAt && !message.study?.terminal

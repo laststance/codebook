@@ -33,7 +33,7 @@ const FULL_LIBRARY_SENTENCES: Record<
     },
     'no-trash': {
       belowMaximum: `Study library is full. Increase ${SETTING} in Settings before starting another run; this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can change the setting; an editor agent cannot. Existing learning was kept.`,
-      atMaximum: `Study library is full at its maximum of ${MAX_SAVED_STUDIES} saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: Saved studies lists the files of a chosen study for removal by hand; an editor agent never deletes files. Existing learning was kept.`,
+      atMaximum: `Study library is full at its maximum of ${MAX_SAVED_STUDIES} saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Only the learner can make room: choose a study in Saved studies and open Remove by hand to list its files, then remove them by hand; an editor agent never deletes files. Existing learning was kept.`,
     },
   },
   save: {
@@ -47,7 +47,7 @@ const FULL_LIBRARY_SENTENCES: Record<
     },
     'no-trash': {
       belowMaximum: `Study library is full. Increase ${SETTING} in Settings, then retry storage; this window has no Trash, so Codebook cannot delete a saved study here. Existing learning was kept.`,
-      atMaximum: `Study library is full at its maximum of ${MAX_SAVED_STUDIES} saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Saved studies lists the files of a chosen study for removal by hand; remove them, then retry storage. Existing learning was kept.`,
+      atMaximum: `Study library is full at its maximum of ${MAX_SAVED_STUDIES} saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Choose a study in Saved studies and open Remove by hand to list its files; remove them, then retry storage. Existing learning was kept.`,
     },
   },
   recording: {
@@ -61,14 +61,14 @@ const FULL_LIBRARY_SENTENCES: Record<
     },
     'no-trash': {
       belowMaximum: `Recording library is full. Increase ${SETTING} in Settings before starting another session; this window has no Trash, so Codebook cannot delete a saved study here. Existing recordings were kept.`,
-      atMaximum: `Recording library is full at its maximum of ${MAX_SAVED_STUDIES} recordings, and this window has no Trash, so Codebook cannot delete a saved study here. Saved studies lists the files of a chosen study that has a recording for removal by hand; remove them before starting another session. Existing recordings were kept.`,
+      atMaximum: `Recording library is full at its maximum of ${MAX_SAVED_STUDIES} recordings, and this window has no Trash, so Codebook cannot delete a saved study here. Choose a study that has a recording in Saved studies and open Remove by hand to list its files; remove them before starting another session. Existing recordings were kept.`,
     },
   },
 }
 
 /**
  * Words the refusal of a full library with a remedy that works at the current limit; called by {@link StudyService} at a run's admission, by {@link LearningLibrary.saveStudy} and by {@link RecordingStore.start}.
- * Below the maximum the setting is named first; at the maximum only a removal makes room, so the setting is not named. A run refusal, which an editor agent receives, says that only the learner can apply the remedy. In a window without a Trash the sentences say so and, at the maximum, name the removal by hand that Saved studies lists the files for.
+ * Below the maximum the setting is named first; at the maximum only a removal makes room, so the setting is not named. A run refusal, which an editor agent receives, says that only the learner can apply the remedy. In a window without a Trash the sentences say so and, at the maximum, name the removal by hand: the files of a study are listed once the learner has chosen it in Saved studies and opened Remove by hand.
  * @param refusal - Which operation the full library refused.
  * @param limit - The valid Saved Study Limit in force.
  * @param removal - Whether this window can remove a saved study; the delete remedy is named only while it is `available`, and a window without a Trash is told apart from a Trash that refused.
