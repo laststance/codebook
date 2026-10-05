@@ -77,6 +77,7 @@ jobs:
       # Coverage is a report, not a gate: the tests above have already decided the job. On 2026-10-05 Codecov's download host
       # (cli.codecov.io) refused the TLS handshake of every client, so all fourteen jobs failed in this step with their tests green.
       - name: Upload coverage to Codecov
+        id: upload
         if: steps.codecov.outputs.available == 'true'
         continue-on-error: true
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -87,3 +88,8 @@ jobs:
           flags: unittests
           disable_search: true
           fail_ci_if_error: true
+
+      # continue-on-error hides a failed upload from the job's result, so a lasting failure (an expired token, say) is told here.
+      - name: Report a failed coverage upload
+        if: steps.upload.outcome == 'failure'
+        run: echo "::warning title=Coverage upload failed::The tests passed, the upload to Codecov did not. Read the log of the upload step."

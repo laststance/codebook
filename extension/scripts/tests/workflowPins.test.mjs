@@ -610,3 +610,29 @@ test('a coverage upload that fails does not fail a Test job whose tests passed',
   // Assert
   assert.equal(uploadStep?.includes('        continue-on-error: true\n'), true)
 })
+
+// Value: protects=the notice of a lasting coverage upload failure, which `continue-on-error` hides from the job's result; fails_when=the upload step has no id or the warning step does not read its outcome (a broken token then shows nothing anywhere); why_new=the upload was made non-fatal on 2026-10-05 and the delegated review asked for the failure to stay visible; seam=none
+test('a coverage upload that fails leaves a warning in the Test job', async () => {
+  // Arrange
+  const workflow = await repositoryText('.github/workflows/test.yml')
+
+  // Act
+  const uploadStep = /- name: Upload coverage to Codecov\n((?: {8}.*\n)+)/.exec(
+    workflow,
+  )?.[1]
+  const warningStep =
+    /- name: Report a failed coverage upload\n((?: {8}.*\n)+)/.exec(
+      workflow,
+    )?.[1]
+
+  // Assert
+  assert.equal(uploadStep?.includes('        id: upload\n'), true)
+  assert.equal(
+    warningStep?.includes("        if: steps.upload.outcome == 'failure'\n"),
+    true,
+  )
+  assert.equal(
+    warningStep?.includes('::warning title=Coverage upload failed::'),
+    true,
+  )
+})
