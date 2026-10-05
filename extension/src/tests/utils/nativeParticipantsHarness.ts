@@ -225,6 +225,8 @@ export async function nativeParticipantsHarness(
   let earlyBrowserPause: 'pending' | 'sent' | undefined
   // The page is paused at a server stop's breakpoint in its stub of the server module; the next browser continue resumes only that pause.
   let browserAtServerBreakpoint = false
+  // How the browser's adapter answers the run's resume of that pause: at once, only once the test releases it, or with a refusal.
+  let stubResume: 'answered' | 'refused' | Promise<void> = 'answered'
   // The editor breakpoints, by participant session, that the adapter sent `changed` news about: the editor keeps no column of such news for a breakpoint that has none of its own.
   const breakpointsWithNews: Record<Participant, Set<string>> = {
     browser: new Set(),
@@ -342,6 +344,9 @@ export async function nativeParticipantsHarness(
           command,
           arguments: args,
         })
+        // The adapter refuses the resume, or answers it only after the test let it: the page stays paused meanwhile.
+        if (stubResume === 'refused') throw new Error('Thread is not paused')
+        if (stubResume !== 'answered') await stubResume
         run.onEvent(sessions[name], {
           type: 'event',
           seq: ++sequence,
@@ -1119,6 +1124,18 @@ export async function nativeParticipantsHarness(
           hitBreakpointIds: [adapterId(serverBreakpoint)],
         },
       })
+    },
+    /** Makes the browser's adapter refuse the run's resume of the next page pause at a server stop's breakpoint, as an adapter whose thread is no longer paused does. @example harness.refuseStubResume() */
+    refuseStubResume(): void {
+      stubResume = 'refused'
+    },
+    /** Keeps the browser adapter's answer to the run's resume of the next page pause at a server stop's breakpoint back until released, so a test can let time pass while the page is still paused. @example const resume = harness.holdStubResume(); harness.advance(300); resume.release() */
+    holdStubResume(): { release(): void } {
+      let release = (): void => {}
+      stubResume = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { release }
     },
     /** Ends the wait for an accepted stop's own pause after one look, as its 3 s bound would. */
     expireSourceBoundWait(): void {

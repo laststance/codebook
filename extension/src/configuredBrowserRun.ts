@@ -3660,7 +3660,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Resumes a browser pause at a server stop's breakpoint ({@link serverStopOfBrowserPause}), for {@link onEvent}: the run sends the `continue` itself and reserves it, so {@link onRequest} does not take it for a manual resume, and journals `dap.server-breakpoint-browser-stop-resumed`. The runtime pause it ends is retired by {@link onCdpResumed} like a pause the debugger made for itself.
+   * Resumes a browser pause at a server stop's breakpoint ({@link serverStopOfBrowserPause}), for {@link onEvent}: the run sends the `continue` itself and reserves it, so {@link onRequest} does not take it for a manual resume, and journals `dap.server-breakpoint-browser-resume-requested` when it sends the request and `dap.server-breakpoint-browser-stop-resumed` once the adapter answered it: a request the adapter refuses or never answers leaves no entry that says resumed. The runtime pause it ends is retired by {@link onCdpResumed} like a pause the debugger made for itself.
    * @param session - The browser session that is paused.
    * @param body - The `stopped` event's body; its thread is resumed.
    * @param stop - The server stop whose breakpoint the page paused at.
@@ -3676,18 +3676,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): Promise<void> {
     this.participants.browser.expectedResumeRequests++
-    this.evidence.record('dap.server-breakpoint-browser-stop-resumed', {
+    const detail = {
       participant: 'browser',
       threadId: body.threadId,
       hitBreakpointIds: body.hitBreakpointIds,
       declared: this.declaredAt(stop),
       inputDispatched: this.operation?.inputDispatched ?? false,
-    })
+    }
+    // The journal says what happened: the request now, the resume only once the adapter answered it.
+    this.evidence.record(
+      'dap.server-breakpoint-browser-resume-requested',
+      detail,
+    )
     await awaitResponse(
       session.customRequest('continue', { threadId: body.threadId }),
       'browser resume of a server stop breakpoint',
       this.abort.signal,
     )
+    this.evidence.record('dap.server-breakpoint-browser-stop-resumed', detail)
   }
 
   /** Tells {@link onEvent} and {@link adapterPauseLimitMs} whether this participant's accepted stop has no pause of its own yet: {@link inspect} is still waiting for it, or took a pause held elsewhere in the stop's module and is about to judge its binding. @example this.awaitsOwnPause('server') // true during the wait of pauseOfAcceptedStop */

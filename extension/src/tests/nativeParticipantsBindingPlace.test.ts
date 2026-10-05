@@ -659,3 +659,36 @@ test('a server stop judged from its reported place before the pause is judged on
     },
   ])
 })
+
+// Cycle 0046 (row 162): red while `dap.server-breakpoint-browser-stop-resumed` was journaled before the `continue` was sent, so a resume the adapter refused left an entry that said the page was resumed.
+test('a page pause at a server stop’s breakpoint whose resume the adapter refuses leaves the request in the journal and no entry that says resumed', async (context) => {
+  // Arrange: the server stop is armed and its breakpoint is set in the page too; the browser's adapter will refuse the run's resume.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.refuseStubResume()
+  // Act: the page pauses in its stub of the server module, naming the server breakpoint.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the run ended with the adapter’s refusal',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().failures[0], 'Error: Thread is not paused')
+  assert.deepEqual(
+    journaled(harness, 'dap.server-breakpoint-browser-resume-requested'),
+    [
+      {
+        participant: 'browser',
+        threadId: 1,
+        hitBreakpointIds: [12],
+        declared: 'src/mode.ts:1',
+        inputDispatched: false,
+      },
+    ],
+  )
+  assert.deepEqual(
+    journaled(harness, 'dap.server-breakpoint-browser-stop-resumed'),
+    [],
+  )
+})
