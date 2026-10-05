@@ -20,6 +20,7 @@ import { join, relative, resolve, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import type * as takeoverModule from '../utils/claimStorageLockTakeover'
+import { claimStorageLockTakeover } from '../utils/claimStorageLockTakeover'
 import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -1610,9 +1611,9 @@ test('the reservation a window wrote beside the marker and could not move over i
   }
 })
 
-// Value: protects=two users of one computer who work on one shared project folder; fails_when=the marker is created private to its writer like a storage lock, so the other user's window cannot read whose update runs, takes the file for an entry that is nobody's and removes it, and both update the Wiki; why_new=Cycle 0046 row 16: the marker is created by placeStorageLock, which creates private files unless told otherwise; seam=the process's file mode mask, set for the test
+// Value: protects=two users of one computer who work on one shared project folder; fails_when=the marker is created private to its writer like a storage lock, so the other user's window cannot read whose update runs, takes the file for an entry that is nobody's and removes it, and both update the Wiki; or the claim on the marker is private to its creator, so the other user's window can neither judge nor clear the claim a killed window left, and its starts on a stale marker and the ends of its runs fail until the first user starts Codebook again (row 116); why_new=Cycle 0046 row 16: the marker is created by placeStorageLock, which creates private files unless told otherwise, and row 116 for the claim; seam=the process's file mode mask, set for the test, and the read of the marker under the claim, at which the claim's modes are noted
 test(
-  'a marker and the reservation that replaces it are readable for the other users of the project folder, as the file mode mask allows',
+  'a marker, the reservation that replaces it and the claim under which it is replaced are readable for the other users of the project folder, as the file mode mask allows',
   {
     skip:
       process.platform === 'win32'
@@ -1620,17 +1621,40 @@ test(
         : false,
   },
   async () => {
-    // Arrange: the usual file mode mask, which takes the write permission from group and others.
+    // Arrange: the usual file mode mask, which takes the write permission from group and others; the claim's modes are read while the claim is held.
     const wiki = await createWikiFolder()
+    const claimFolder = `${wiki.markerPath}.takeover`
+    let modesOfTheClaim: { folder: number; file: number } | undefined
+    const { claimWikiUpdateMarker: claimAndNoteTheClaimsModes } =
+      await loadModule<typeof claimModule>(
+        resolve(__dirname, '../utils/claimWikiUpdateMarker.js'),
+        {
+          './readWikiRegularFile': {
+            readWikiRegularFile: async (path: string) => {
+              const [claimName] = await readdir(claimFolder)
+              assert.ok(claimName, 'the claim is held at this read')
+              modesOfTheClaim = {
+                folder: (await stat(claimFolder)).mode & 0o777,
+                file: (await stat(join(claimFolder, claimName))).mode & 0o777,
+              }
+              return readWikiRegularFile(path)
+            },
+          },
+        },
+      )
     const previousMask = process.umask(0o022)
     try {
       // Act
-      const claim = await claimWikiUpdateMarker(wiki.outputDirectory, {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: Date.now(),
-      })
+      const claim = await claimAndNoteTheClaimsModes(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      )
       assert.ok('reserve' in claim)
       const modeOfTheMarker = (await stat(wiki.markerPath)).mode & 0o777
       await claim.reserve(Date.now())
@@ -1638,12 +1662,55 @@ test(
 
       // Assert
       assert.deepEqual(
-        { modeOfTheMarker, modeOfTheReservation },
-        { modeOfTheMarker: 0o644, modeOfTheReservation: 0o644 },
+        { modeOfTheMarker, modeOfTheReservation, modesOfTheClaim },
+        {
+          modeOfTheMarker: 0o644,
+          modeOfTheReservation: 0o644,
+          modesOfTheClaim: { folder: 0o755, file: 0o644 },
+        },
       )
     } finally {
       process.umask(previousMask)
       await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the takeover claim of a storage lock, which lies in the editor's private storage and names the computer by its host name and the editor's machine id; fails_when=the modes a marker's claim gets in a project folder since row 116 become the claim's modes everywhere, so another user of the computer can read the record; why_new=Cycle 0046 row 116: the claim's modes are named by its caller since then; seam=the process's file mode mask, set for the test
+test(
+  'the takeover claim of a storage lock stays private to its user: its folder and its file give group and others no permission, whatever the file mode mask allows',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no permission bits for a group and for others'
+        : false,
+  },
+  async () => {
+    // Arrange: a storage directory, and the usual file mode mask, which would leave group and others the read permission.
+    const storage = await createWikiFolder()
+    const claimFolder = join(storage.directory, 'writer.lock.takeover')
+    const previousMask = process.umask(0o022)
+    try {
+      // Act
+      const claim = await claimStorageLockTakeover(
+        join(storage.directory, 'writer.lock'),
+        AS_THIS_WINDOW.identity,
+        readStartOfThisWindow,
+      )
+      assert.ok(claim)
+      const [claimName] = await readdir(claimFolder)
+      assert.ok(claimName, 'the claim is held')
+      const modesOfTheClaim = {
+        folder: (await stat(claimFolder)).mode & 0o777,
+        file: (await stat(join(claimFolder, claimName))).mode & 0o777,
+      }
+      await claim.release()
+
+      // Assert
+      assert.deepEqual(modesOfTheClaim, { folder: 0o700, file: 0o600 })
+    } finally {
+      process.umask(previousMask)
+      await rm(storage.directory, { recursive: true, force: true })
     }
   },
 )

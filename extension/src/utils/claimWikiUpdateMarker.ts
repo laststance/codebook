@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS,
+  WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE,
   WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
   WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS,
   WIKI_UPDATE_MARKER_FILE_MODE,
@@ -284,7 +285,7 @@ async function removeExpiredMarkerClaims(
 
 /**
  * Asks once for the exclusive right to remove or replace the marker file; called by {@link claimMarkerChange} for each of its attempts.
- * The claim file lies in the learner's project folder, so it records this process without the host name and the editor's machine id ({@link machineAndProcessOf}).
+ * The claim file lies in the learner's project folder, so it records this process without the host name and the editor's machine id ({@link machineAndProcessOf}), and the claim is created with the modes of the project's own files, as the marker is: a window of another user on a shared project folder can then judge a claim a killed window left, and clear it where the folder lets it write.
  * @param markerPath - `<output>.update-run.json`.
  * @param judgement - The identity of this process, the reader of process starts and the clock.
  * @returns The claim, or `undefined` while another window holds it and when the claim cannot be made at all (for example a folder that cannot be written).
@@ -303,6 +304,10 @@ async function tryMarkerClaim(
       judgement.identity,
       judgement.readStart,
       { pid: process.pid, ...machineAndProcessOf(judgement.identity) },
+      {
+        directoryMode: WIKI_UPDATE_MARKER_CLAIM_DIRECTORY_MODE,
+        fileMode: WIKI_UPDATE_MARKER_FILE_MODE,
+      },
     )
   } catch {
     return undefined

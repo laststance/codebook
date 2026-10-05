@@ -31,6 +31,9 @@ export type StorageLockTakeoverClaim = {
   isStillHeld: () => Promise<boolean>
 }
 
+/** The modes a claim's directory and its owner file are created with; the process's file mode mask narrows both. @example const modes: StorageLockTakeoverClaimModes = { directoryMode: 0o700, fileMode: 0o600 } */
+type StorageLockTakeoverClaimModes = { directoryMode: number; fileMode: number }
+
 /**
  * Removes one claim file this process placed, and remembers it while it cannot be removed; called by `release` of {@link claimStorageLockTakeover} and by {@link removeUnreleasedClaims}.
  * @param claimPath - The uniquely named owner file of this process's claim, `<lock>.takeover/<uuid>`.
@@ -67,6 +70,7 @@ async function removeUnreleasedClaims(): Promise<void> {
  * @param identity - The machine and the boot of this process, by which the leftovers of earlier claims are judged.
  * @param readStart - Reads the start of the process that has a leftover claim's process id now, handed on to {@link removeStaleStorageClaims}; {@link readProcessStart} unless a test names its own.
  * @param record - What the claim file says about its owner; the process id with the whole identity, as the lock records it, unless the caller names less (a claim in a project folder must not name the computer).
+ * @param modes - The modes of the claim directory and of its owner file: private to this user, as everything in the editor's private storage is, unless the caller names others (the claim of a marker in a project folder is created like the project's own files, so that another user of a shared folder can judge it and clear what a killed window left).
  * @returns
  * - The claim, when this caller holds it: `release` gives it back and answers whether its claim file is gone, and `isStillHeld` says whether this window's claim file is still in place
  * - `undefined` while another running window holds the claim
@@ -80,17 +84,21 @@ export async function claimStorageLockTakeover(
   identity: StorageOwnerIdentity,
   readStart: ProcessStartReader = readProcessStart,
   record: RecordedOwner = { pid: process.pid, ...identity },
+  modes: StorageLockTakeoverClaimModes = {
+    directoryMode: PRIVATE_DIRECTORY_MODE,
+    fileMode: PRIVATE_FILE_MODE,
+  },
 ): Promise<StorageLockTakeoverClaim | undefined> {
   const claimDirectory = `${lockPath}.takeover`,
     claimName = randomUUID(),
     preparedDirectory = `${claimDirectory}-${claimName}`,
     claimPath = join(claimDirectory, claimName)
-  await mkdir(preparedDirectory, { mode: PRIVATE_DIRECTORY_MODE })
+  await mkdir(preparedDirectory, { mode: modes.directoryMode })
   try {
     await writeFile(
       join(preparedDirectory, claimName),
       JSON.stringify(record),
-      { mode: PRIVATE_FILE_MODE },
+      { mode: modes.fileMode },
     )
     await removeUnreleasedClaims()
     await removeStaleStorageClaims(lockPath, identity, readStart)
