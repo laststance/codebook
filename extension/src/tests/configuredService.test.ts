@@ -2918,6 +2918,45 @@ test('after a publish with expectedRevision 0 is refused for an existing article
   assert.equal(service.state(record).nextActions[0], 'repository-click')
 })
 
+// Value: protects=an agent whose own document was refused and that then starts on its node id in an existing revision learning at once which nodes that revision has; fails_when=codebook_start accepts the run and it ends without a runtime saying only "configuration.book.nodeId does not exist in the exact selected revision." (the Cursor agent of N14-d, run 48e4a83d); why_new=Cycle 0045 N14d-16 (DX-1 c); seam=none
+test('a start on a node id its selected revision does not have is refused in the answer of codebook_start, naming the revision’s nodes and the two ways on', async (context) => {
+  // Arrange: revision 1 of the book "interface" has the one node "theme".
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unpublished-node',
+      configuration: {
+        ...configuration,
+        book: { ...configuration.book, nodeId: 'invalid-login-path' },
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.deepEqual(
+    z
+      .object({
+        error: z.object({ code: z.string(), message: z.string() }),
+      })
+      .parse(refused.structuredContent).error,
+    {
+      code: 'BOOK_UNAVAILABLE',
+      message:
+        'configuration.book.nodeId invalid-login-path does not exist in revision 1 of book interface, which has the node: theme. Use it, or publish your own document under its own book id and start on that revision.',
+    },
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
 // Value: protects=the source-only help agreeing with the conflict's own answer; fails_when=the help still says "Revision conflict: read the current book.", which is what the conflict used to say; why_new=Cycle 0045 cause 5; seam=none
 test('repository help says that a revision conflict names the current revision and gives the two ways on', async (context) => {
   // Arrange

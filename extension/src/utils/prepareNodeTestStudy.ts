@@ -10,6 +10,7 @@ import { sha256 } from '../runtimeSupport/utils/sha256'
 
 import { assertCitedSourceStops } from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
+import { describeMissingBookNode } from './describeMissingBookNode'
 import { requireNodeTestTitles } from './requireNodeTestTitles'
 
 /** Pins a Node test's checked source stops to the exact retained article revision before an owned test can launch. Called during Node profile preparation. @param input - Validated test and citation intent. @param books - Current workspace's retained articles. @param control - Shared cancellation and preparation deadline. @example await prepareNodeTestStudy(config, books, { signal, deadlineAt }) */
@@ -43,7 +44,10 @@ export async function prepareNodeTestStudy(
   if (!node)
     throw new StudyError(
       'BOOK_UNAVAILABLE',
-      'configuration.book.nodeId does not exist in the exact selected revision.',
+      describeMissingBookNode(
+        configuration.book,
+        selected.revision.document.nodes.map((candidate) => candidate.id),
+      ),
     )
   if (node.learningItemId !== undefined)
     throw new StudyError(

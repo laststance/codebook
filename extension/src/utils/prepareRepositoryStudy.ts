@@ -16,6 +16,7 @@ import { assertConfiguredDescriptor } from './assertConfiguredDescriptor'
 import { citationContext } from './citationContext'
 import { describeCitationMismatch } from './describeCitationMismatch'
 import { describeColumnPastLineEnd } from './describeColumnPastLineEnd'
+import { describeMissingBookNode } from './describeMissingBookNode'
 
 /**
  * Words why a start's declared stops were refused, so an agent can correct the one field that is wrong; called by {@link prepareRepositoryStudy} when {@link assertConfiguredDescriptor} refuses a start.
@@ -71,7 +72,10 @@ export async function prepareRepositoryStudy(
   if (!node)
     throw new StudyError(
       'BOOK_UNAVAILABLE',
-      'configuration.book.nodeId does not exist in the exact selected revision.',
+      describeMissingBookNode(
+        configuration.book,
+        selected.revision.document.nodes.map((candidate) => candidate.id),
+      ),
     )
   if (node.learningItemId !== undefined)
     throw new StudyError(

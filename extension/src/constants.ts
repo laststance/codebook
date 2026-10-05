@@ -419,6 +419,8 @@ export const NUMBERED_SOURCE_LINES_HELP =
 /** Said where an agent reads the inspection rule before it declares a stop (the description of every `inspections` field of `codebook_start` and the repository-browser help's `inspections`), so it knows that Codebook requests a stop whose own line declares a binding it requires on the next line that can pause, and what to require for the state before that line. */
 export const SELF_DECLARED_BINDING_HELP =
   "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs."
+/** The most node ids a refused start names of the revision it selected, before the rest is counted ({@link describeMissingBookNode}). */
+export const MISSING_BOOK_NODE_IDS_NAMED_LIMIT = 5
 export const REPOSITORY_SOURCE_EXTENSIONS = [
   '.ts',
   '.tsx',

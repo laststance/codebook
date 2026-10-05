@@ -91,6 +91,7 @@ import type { StudyWorkspace } from './studyWorkspace'
 import { buildRecordingContext } from './utils/buildRecordingContext'
 import { declaredStopOfSnapshot } from './utils/declaredStopOfSnapshot'
 import { describeBoundPlace, type BoundPlace } from './utils/describeBoundPlace'
+import { describeMissingBookNode } from './utils/describeMissingBookNode'
 import {
   explanationPlace,
   type ExplanationPlace,
@@ -693,6 +694,49 @@ export class StudyService {
       )
     await this.presentationController.returnToCurrent(input)
     return this.presentationState(input.instanceId)
+  }
+
+  /**
+   * Starts a run only on a node its selected book revision has, so a start on a node id or a revision that does not exist is refused in the answer of `codebook_start` itself instead of being accepted and ending without a runtime; the `codebook_start` tool calls it, and it then reserves the run with {@link StudyService.start}.
+   * @param input - The start as the tool received it.
+   * @returns The receipt of {@link StudyService.start}.
+   * @throws A `BOOK_UNAVAILABLE` {@link StudyError} for a selected revision that does not exist or a node id it does not have ({@link describeMissingBookNode}); what {@link StudyService.start} throws otherwise.
+   * @example
+   * await service.startOnStoredBook(input) // throws 'configuration.book.nodeId mode does not exist in revision 1 of book interface, which has the node: theme. …'
+   */
+  async startOnStoredBook(input: StartInput) {
+    await this.refuseMissingBookNode(input)
+    return this.start(input)
+  }
+
+  /**
+   * Reads the book revision a start selects and refuses a node id it does not have, before {@link StudyService.startOnStoredBook} reserves the run.
+   * @param input - The start as the tool received it.
+   * @throws A `STALE_INSTANCE` error for another instance; a `BOOK_UNAVAILABLE` {@link StudyError} for a revision that does not exist or a node id it does not have. Arguments that do not parse, a repeat of an accepted start's key and an editor without book storage are left to {@link StudyService.start}, which answers them as before.
+   * @example
+   * await this.refuseMissingBookNode(input) // resolves for a node the revision has
+   */
+  private async refuseMissingBookNode(input: StartInput): Promise<void> {
+    this.assertMutable(input.instanceId)
+    const parsed = startIntentSchema.safeParse(input)
+    // A repeated key answers its original run, and the other cases are answered by start itself.
+    if (
+      !parsed.success ||
+      !this.repository ||
+      this.retainedStart(input.key).previous
+    )
+      return
+    const book = parsed.data.configuration.book,
+      selected = await this.repository.readDefinition(
+        book.bookId,
+        book.revision,
+      )
+    const nodeIds = selected.revision.document.nodes.map((node) => node.id)
+    if (!nodeIds.includes(book.nodeId))
+      throw new StudyError(
+        'BOOK_UNAVAILABLE',
+        describeMissingBookNode(book, nodeIds),
+      )
   }
 
   /** Reserves intent before prerequisite I/O so duplicate starts cannot create two runtimes. @example service.start(input).runUri */
