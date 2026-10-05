@@ -957,8 +957,8 @@ test('a cold reader keeps the newer selected study and its observation when an o
       'readCheckpoint',
       async function (this: LearningLibrary, id: string) {
         const checkpoint = await readCheckpoint.call(this, id)
-        // Retry first reconciles A; hold only its later reload of the selected archive.
-        if (id === firstStudyId && ++firstStudyReads === 2) {
+        // Retry reconciles A from the library's one listing, not through this method; hold its reload of the selected archive, the first read here.
+        if (id === firstStudyId && ++firstStudyReads === 1) {
           entered()
           await held
         }
