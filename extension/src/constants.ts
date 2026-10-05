@@ -416,6 +416,9 @@ export const REPOSITORY_SOURCE_LIMIT_BYTES = 262_144
 /** Said where an agent reads source text before it cites lines or declares a stop (the description of `codebook_source`, the source-only help and the repository-browser help), so it takes each line from Codebook's numbered copy instead of counting lines. */
 export const NUMBERED_SOURCE_LINES_HELP =
   'numberedText gives the same lines as text, each after its one-based number and a tab: take the line of every citation and every stop from it instead of counting lines.'
+/** Said where an agent reads the inspection rule before it declares a stop (the description of every `inspections` field of `codebook_start` and the repository-browser help's `inspections`), so it knows that Codebook requests a stop whose own line declares a binding it requires on the next line that can pause, and what to require for the state before that line. */
+export const SELF_DECLARED_BINDING_HELP =
+  "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line after it within the stop's citation that can pause and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs."
 export const REPOSITORY_SOURCE_EXTENSIONS = [
   '.ts',
   '.tsx',

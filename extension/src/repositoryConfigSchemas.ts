@@ -22,6 +22,7 @@ import {
   REPOSITORY_STORAGE_VALUE_LIMIT_CHARS,
   REPOSITORY_ENTRY_PATH_LIMIT_CHARS,
   REPOSITORY_INPUT_LIMIT,
+  SELF_DECLARED_BINDING_HELP,
 } from './constants'
 import { bookIdSchema } from './identitySchemas'
 import { repositoryHashSchema, repositoryPathSchema } from './sourceSchemas'
@@ -80,15 +81,21 @@ const repositoryInspectionSchema = z.strictObject({
   mode: z.enum(['value', 'type']),
   required: z.boolean(),
 })
-/** The rule every stop's inspections follow, said where an agent reads last before it declares a run: the description of each `inspections` field in the input schema of `codebook_start`, for both profiles. */
-const INSPECTIONS_RULE_DESCRIPTION =
-  'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only. A required value is read when the debugger pauses, before the stop\'s line runs, so a binding that the stop\'s own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.'
-/** The inspections of one declared stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of both profiles is this schema. */
+/** The rule every stop's inspections follow, said where an agent reads last before it declares a run: the description of each `inspections` field in the input schema of `codebook_start`, for both profiles, each followed by what that profile does with a binding the stop's own line declares. */
+const INSPECTIONS_RULE =
+  'Every stop needs at least one inspection with mode "value" and required true, of a primitive the stop can read (for an object, one of its members); type inspections may be added beside it, and a stop cannot consist of type inspections only.'
+/** The inspection rule of a repository-browser stop, which Codebook requests after its own line when that line declares a binding the stop requires ({@link ConfiguredBrowserRun}). */
+const INSPECTIONS_RULE_DESCRIPTION = `${INSPECTIONS_RULE} ${SELF_DECLARED_BINDING_HELP}`
+/** The inspections of one declared repository-browser stop, described with {@link INSPECTIONS_RULE_DESCRIPTION}; every `inspections` field of that profile is this schema. */
 export const stopInspectionsSchema = z
   .array(repositoryInspectionSchema)
   .min(1)
   .max(REPOSITORY_INSPECTION_LIMIT)
   .describe(INSPECTIONS_RULE_DESCRIPTION)
+/** The inspections of one node-test stop: the same schema, described with the rule for a stop Codebook requests where it was declared; every `inspections` field of that profile is this schema. */
+export const nodeTestStopInspectionsSchema = stopInspectionsSchema.describe(
+  `${INSPECTIONS_RULE} A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; require a value that already exists before that line, or declare the stop on a later line.`,
+)
 export const repositoryConditionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('visible'), selector: selectorSchema }),
   z.strictObject({
