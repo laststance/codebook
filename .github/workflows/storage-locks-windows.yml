@@ -20,6 +20,7 @@ on:
       - extension/src/tests/isProcessGone.test.ts
       - extension/src/tests/isRecordedOwnerGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
+      - extension/src/tests/processStartFormHere.test.ts
       - extension/src/tests/readBootIdentity.test.ts
       - extension/src/tests/readProcessStart.test.ts
       - extension/src/tests/readRecordedOwner.test.ts
@@ -40,6 +41,7 @@ on:
       - extension/src/utils/isSameStorageMachine.ts
       - extension/src/utils/isStaleStorageLock.ts
       - extension/src/utils/placeStorageLock.ts
+      - extension/src/utils/processStartFormHere.ts
       - extension/src/utils/readBootIdentity.ts
       - extension/src/utils/readProcessStart.ts
       - extension/src/utils/readRecordedOwner.ts
@@ -60,6 +62,7 @@ on:
       - extension/src/tests/isProcessGone.test.ts
       - extension/src/tests/isRecordedOwnerGone.test.ts
       - extension/src/tests/isSameStorageMachine.test.ts
+      - extension/src/tests/processStartFormHere.test.ts
       - extension/src/tests/readBootIdentity.test.ts
       - extension/src/tests/readProcessStart.test.ts
       - extension/src/tests/readRecordedOwner.test.ts
@@ -80,6 +83,7 @@ on:
       - extension/src/utils/isSameStorageMachine.ts
       - extension/src/utils/isStaleStorageLock.ts
       - extension/src/utils/placeStorageLock.ts
+      - extension/src/utils/processStartFormHere.ts
       - extension/src/utils/readBootIdentity.ts
       - extension/src/utils/readProcessStart.ts
       - extension/src/utils/readRecordedOwner.ts
@@ -129,4 +133,4 @@ jobs:
 
       - name: Run the storage lock tests
         working-directory: extension
-        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js
+        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/processStartFormHere.test.js

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readlinkSync } from 'node:fs'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -39,9 +40,14 @@ function linuxStat(startTicks: number): string {
   return `4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 ${startTicks} 16637952 1813`
 }
 
-// Value: protects=a Linux pid is told by field 22 of its stat; fails_when=the parser splits at the first ")" or counts from the line start; why_new=new utility (Cycle 0046 rows 2 and 9, ER-1); seam=the injected platform and file read
-test('reads the start of a Linux process whose command name holds spaces and parentheses', async () => {
-  // Arrange: the command name itself looks like the end of a name followed by fields.
+/** Answers the link of the pid namespace as a process in the namespace 4026531836 reads it. @example inNamespace4026531836() // => 'pid:[4026531836]' */
+function inNamespace4026531836(): string {
+  return 'pid:[4026531836]'
+}
+
+// Value: protects=a Linux pid is told by field 22 of its stat, in the pid namespace it was read in; fails_when=the parser splits at the first ")" or counts from the line start, or the start names no namespace, so the same pid and tick in another namespace of this kernel count as this process (Cycle 0046 row 65); why_new=new utility (Cycle 0046 rows 2 and 9, ER-1); seam=the injected platform, file read and namespace link
+test('reads the start of a Linux process whose command name holds spaces and parentheses, and names it with the pid namespace it was read in', async () => {
+  // Arrange: the command name itself looks like the end of a name followed by fields; the reading process is in the pid namespace 4026531836.
   const readPaths: string[] = []
   const stat =
     '4242 (a) b c d e f g h i j k l m n o p q r s 77 (z) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 16362446 16637952 1813 18446744073709551615'
@@ -52,10 +58,41 @@ test('reads the start of a Linux process whose command name holds spaces and par
       readPaths.push(path)
       return stat
     },
+    readLink: (path) => {
+      readPaths.push(path)
+      return 'pid:[4026531836]'
+    },
   })
   // Assert
-  assert.equal(start, 'linux:16362446')
-  assert.deepEqual(readPaths, ['/proc/4242/stat'])
+  assert.equal(start, 'linux@4026531836:16362446')
+  assert.deepEqual(readPaths, ['/proc/4242/stat', '/proc/self/ns/pid'])
+})
+
+// Value: protects=a Linux window whose pid namespace cannot be read (a sandbox that hides it) still records and reads a start, in the form without a namespace, and never a broken one; fails_when=an unreadable or unexpected link gives no start at all, throws, or is written into the form as it is (Cycle 0046 row 65); why_new=the form names the namespace since row 65; seam=the injected platform, file read and namespace link
+test('a Linux start whose pid namespace cannot be read, or is named in another way, has the form without a namespace', async () => {
+  // Arrange
+  const startWith = (readLink: () => string): Promise<string | undefined> =>
+    readProcessStart(4242, {
+      platform: 'linux',
+      readFile: async () => linuxStat(16362446),
+      readLink,
+    })
+  // Act
+  const starts = {
+    linkCannotBeRead: await startWith(() => {
+      throw Object.assign(new Error('EACCES: permission denied, readlink'), {
+        code: 'EACCES',
+      })
+    }),
+    linkNamesSomethingElse: await startWith(() => 'net:[4026531840]'),
+    linkHasMoreText: await startWith(() => 'pid:[4026531836]:x'),
+  }
+  // Assert
+  assert.deepEqual(starts, {
+    linkCannotBeRead: 'linux:16362446',
+    linkNamesSomethingElse: 'linux:16362446',
+    linkHasMoreText: 'linux:16362446',
+  })
 })
 
 // Value: protects=an unreadable stat never becomes an identity; fails_when=a short or missing stat returns a value or throws; why_new=new utility (ER-1); seam=the injected platform and file read
@@ -249,15 +286,16 @@ test('a start kept for a sweep confirms a record of the same start without a sec
       reads += 1
       return linuxStat(200)
     },
+    readLink: inNamespace4026531836,
     cache: new Map(),
-    expectedStart: 'linux:200',
+    expectedStart: 'linux@4026531836:200',
   }
   // Act
   const atTheFirstRecord = await readProcessStart(4242, sweep),
     atTheSecondRecord = await readProcessStart(4242, sweep)
   // Assert
-  assert.equal(atTheFirstRecord, 'linux:200')
-  assert.equal(atTheSecondRecord, 'linux:200')
+  assert.equal(atTheFirstRecord, 'linux@4026531836:200')
+  assert.equal(atTheSecondRecord, 'linux@4026531836:200')
   assert.equal(reads, 1)
 })
 
@@ -271,15 +309,16 @@ test('a start kept for a sweep that differs from the recorded one is read again'
     readProcessStart(4242, {
       platform: 'linux',
       readFile: async () => stats[reads++] ?? linuxStat(300),
+      readLink: inNamespace4026531836,
       cache,
       expectedStart,
     })
   // Act
-  const atTheFirstLook = await look('linux:100'),
-    atTheSecondLook = await look('linux:300')
+  const atTheFirstLook = await look('linux@4026531836:100'),
+    atTheSecondLook = await look('linux@4026531836:300')
   // Assert
-  assert.equal(atTheFirstLook, 'linux:200')
-  assert.equal(atTheSecondLook, 'linux:300')
+  assert.equal(atTheFirstLook, 'linux@4026531836:200')
+  assert.equal(atTheSecondLook, 'linux@4026531836:300')
   assert.equal(reads, 2)
 })
 
@@ -294,8 +333,32 @@ test('names a running process by a start that stays the same and differs from an
     startOfEarlierAgain = await readProcessStart(earlier.pid!),
     startOfLater = await readProcessStart(later.pid!)
   // Assert
-  assert.match(startOfEarlier ?? 'no start', /^(linux|ps|win):./)
-  assert.match(startOfLater ?? 'no start', /^(linux|ps|win):./)
+  assert.match(startOfEarlier ?? 'no start', /^(linux@\d+|linux|ps|win):./)
+  assert.match(startOfLater ?? 'no start', /^(linux@\d+|linux|ps|win):./)
   assert.equal(startOfEarlierAgain, startOfEarlier)
   assert.notEqual(startOfLater, startOfEarlier)
 })
+
+// Value: protects=the real Linux start names the pid namespace this process really is in, so two WSL distributions of one computer, or a container and its host, never take each other's records for their own; fails_when=the real read gives a start without a namespace, or with another number than the kernel names for this process (Cycle 0046 row 65); why_new=only a real read shows it; seam=none (a real child process and the kernel's own link). Linux only: no other system has pid namespaces.
+test(
+  'the start read for a real child process carries the pid namespace of this process',
+  {
+    skip: process.platform !== 'linux' && 'pid namespaces exist on Linux only',
+  },
+  async (context) => {
+    // Arrange: what the kernel names as this process's pid namespace, "pid:[<number>]".
+    const child = await idleChild(context)
+    const namespaceNumber = readlinkSync('/proc/self/ns/pid').slice(
+      'pid:['.length,
+      -']'.length,
+    )
+    // Act
+    const start = await readProcessStart(child.pid!)
+    // Assert
+    assert.match(namespaceNumber, /^\d+$/)
+    assert.equal(
+      start?.slice(0, start.indexOf(':')),
+      `linux@${namespaceNumber}`,
+    )
+  },
+)

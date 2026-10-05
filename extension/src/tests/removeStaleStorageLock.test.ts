@@ -27,11 +27,11 @@ async function storageDirectory(context: TestContext): Promise<string> {
   return directory
 }
 
-/** This window as both tests name it: a Linux process of the host "workstation" under the kernel boot "boot-1", begun at clock tick 16362446. Its takeover claim records that start, so the start reader must answer it for this process. */
+/** This window as both tests name it: a Linux process of the host "workstation" under the kernel boot "boot-1", in the pid namespace 4026531836, begun at clock tick 16362446. Its takeover claim records that start, so the start reader must answer it for this process. */
 const THIS_WINDOW = {
   hostname: 'workstation',
   boot: { id: 'boot-1' },
-  processStart: 'linux:16362446',
+  processStart: 'linux@4026531836:16362446',
 }
 
 /**
@@ -47,6 +47,7 @@ function linuxStartReader(statOfProcess4242: () => string): ProcessStartReader {
     readProcessStart(pid, {
       ...inputs,
       platform: 'linux',
+      readLink: () => 'pid:[4026531836]',
       ownStart,
       readFile: async (path) =>
         path === '/proc/4242/stat' ? statOfProcess4242() : linuxStat(16362446),
@@ -64,10 +65,10 @@ test('a lock that a new window with the same process id placed between the two l
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
   const lockOfTheNewWindow =
-    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:300"}'
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026531836:300"}'
   await writeFile(
     lockPath,
-    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:100"}',
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026531836:100"}',
   )
   context.mock.method(process, 'kill', (): true => true)
   let reads = 0
@@ -100,7 +101,7 @@ test('a stale lock whose process id another process keeps through both looks of 
   const lockPath = join(directory, 'writer.lock')
   await writeFile(
     lockPath,
-    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:100"}',
+    '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux@4026531836:100"}',
   )
   context.mock.method(process, 'kill', (): true => true)
   const readStart = linuxStartReader(() => linuxStat(200))

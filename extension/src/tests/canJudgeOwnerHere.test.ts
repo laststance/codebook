@@ -98,7 +98,7 @@ test('an owner whose start has another system’s form cannot be judged here, no
   assert.equal(ofAnotherMachine, false)
 })
 
-// Value: protects=a window whose own start could not be read still takes over what a killed window of its system left: this system's form is then the one its platform's query answers; fails_when=an identity without a start has no form, so every record with a start counts as one of another system and no stale lock is taken over for the 60 s until the own start is read again; why_new=the predicate is new; seam=none (the platform this test runs on)
+// Value: protects=a window whose own start could not be read still takes over what a killed window of its system and its pid namespace left: its form is then the one every start it reads here has; fails_when=an identity without a start has no form, or on Linux one without the pid namespace, so every record with a start counts as one of another space and no stale lock is taken over for the 60 s until the own start is read again (Cycle 0046 rows 58 and 65); why_new=the predicate is new; seam=none (the platform and the pid namespace this test runs in)
 test('a window whose own start is unknown judges an owner whose start has the form of the platform it runs on, and no other', () => {
   // Arrange: a start in the form this platform's query answers, and one in a form no platform answers.
   const windowWithoutItsStart = { hostname: 'workstation' }
@@ -118,4 +118,106 @@ test('a window whose own start is unknown judges an owner whose start has the fo
   // Assert
   assert.equal(ofThisPlatform, true)
   assert.equal(ofNoPlatform, false)
+})
+
+/** A window in one WSL distribution of the computer "workstation": a Linux process of the pid namespace 4026531836 under the kernel boot "boot-of-the-shared-kernel". */
+const WINDOW_IN_NAMESPACE_4026531836 = {
+  hostname: 'workstation',
+  machineKey: 'f9c8c7ddcf3d5f56',
+  hostKey: 'd195d36bd79da7df',
+  boot: { id: 'boot-of-the-shared-kernel' },
+  processStart: 'linux@4026531836:16362446',
+}
+
+// Value: protects=the live window of another WSL distribution of one computer keeps the age rule of its claim and the run expiry of its marker, because its record cannot be judged here; fails_when=only the system is compared and not the pid namespace, or a namespace one side could not read counts as the other side's (Cycle 0046 row 65); why_new=the form names the namespace since row 65; seam=none
+test('an owner of another pid namespace under the same kernel boot cannot be judged here, nor can one where a namespace or a kernel boot id is missing on either side', () => {
+  // Arrange: records of this machine by the host-name digest, each with a Linux start.
+  const ofThisMachine = {
+    pid: 4242,
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+  }
+  // Act
+  const ofAnotherNamespace = canJudgeOwnerHere(
+      {
+        ...ofThisMachine,
+        boot: { id: 'boot-of-the-shared-kernel' },
+        processStart: 'linux@4026532214:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    ),
+    recordNamesNoNamespace = canJudgeOwnerHere(
+      {
+        ...ofThisMachine,
+        boot: { id: 'boot-of-the-shared-kernel' },
+        processStart: 'linux:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    ),
+    windowNamesNoNamespace = canJudgeOwnerHere(
+      {
+        ...ofThisMachine,
+        boot: { id: 'boot-of-the-shared-kernel' },
+        processStart: 'linux@4026532214:100',
+      },
+      { ...WINDOW_IN_NAMESPACE_4026531836, processStart: 'linux:16362446' },
+    ),
+    recordNamesNoKernelBoot = canJudgeOwnerHere(
+      { ...ofThisMachine, processStart: 'linux@4026532214:100' },
+      WINDOW_IN_NAMESPACE_4026531836,
+    ),
+    windowNamesNoKernelBoot = canJudgeOwnerHere(
+      {
+        ...ofThisMachine,
+        boot: { id: 'boot-before-the-restart' },
+        processStart: 'linux@4026532214:100',
+      },
+      { ...WINDOW_IN_NAMESPACE_4026531836, boot: undefined },
+    ),
+    windowNamesABootTime = canJudgeOwnerHere(
+      {
+        ...ofThisMachine,
+        boot: { startedAtMs: 1_000 },
+        processStart: 'linux@4026532214:100',
+      },
+      {
+        ...WINDOW_IN_NAMESPACE_4026531836,
+        boot: { startedAtMs: 1_790_000_000_000 },
+      },
+    )
+  // Assert
+  assert.equal(ofAnotherNamespace, false)
+  assert.equal(recordNamesNoNamespace, false)
+  assert.equal(windowNamesNoNamespace, false)
+  assert.equal(recordNamesNoKernelBoot, false)
+  assert.equal(windowNamesNoKernelBoot, false)
+  assert.equal(windowNamesABootTime, false)
+})
+
+// Value: protects=the predicate answers as the judgement does: a record from before a restart is judged (and is gone) whatever space of process ids it names, so the claim of a window killed before the restart is not kept for its 60 s lease as if it could not be judged; fails_when=the form decides before the kernel boot (Cycle 0046 row 65); why_new=the form names the namespace since row 65; seam=none
+test('an owner of another pid namespace recorded under another kernel boot id can be judged here, and so can one of this pid namespace', () => {
+  // Act
+  const ofAnotherNamespaceBeforeTheRestart = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        machineKey: '1fb1404a9738d5ed',
+        hostKey: 'd195d36bd79da7df',
+        boot: { id: 'boot-before-the-restart' },
+        processStart: 'linux@4026532214:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    ),
+    ofThisNamespace = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        machineKey: '1fb1404a9738d5ed',
+        hostKey: 'd195d36bd79da7df',
+        boot: { id: 'boot-of-the-shared-kernel' },
+        processStart: 'linux@4026531836:100',
+      },
+      WINDOW_IN_NAMESPACE_4026531836,
+    )
+  // Assert
+  assert.equal(ofAnotherNamespaceBeforeTheRestart, true)
+  assert.equal(ofThisNamespace, true)
 })

@@ -67,14 +67,14 @@ async function hasItsIdGoneToAnotherProcess(
 
 /**
  * Says whether the process a storage lock, a takeover claim, a connection descriptor or a profile marker names no longer exists, so that what a killed editor left behind is told from what a running one owns; called by {@link isStaleStorageLock}, {@link evidenceInUseElsewhere} and {@link removeAbandonedProfiles}.
- * A record that carries its owner's process start is judged by that start: no clock moves it, and a process id that is in use again has another one. The boot time, which a correction of the clock moves, then decides nothing; only two kernel boot ids that differ still do, without a read. Such a record is judged only where its process can be probed ({@link canJudgeOwnerHere}): a start of another system's form names a process of another space of process ids (a Windows window and a WSL window share a host name), whose id names another process here, or none, and whose owner is therefore never called gone.
+ * A record that carries its owner's process start is judged by that start: no clock moves it, and a process id that is in use again has another one. The boot time, which a correction of the clock moves, then decides nothing; only two kernel boot ids that differ still do, without a read. Such a record is judged only where its process can be probed ({@link canJudgeOwnerHere}): a start of another form names a process of another space of process ids (a Windows window and a WSL window share a host name, and two WSL distributions also the kernel and its boot id, which is why a Linux start names its pid namespace), whose id names another process here, or none, and whose owner is therefore never called gone, unless it was recorded under another kernel boot id.
  * A record without a start (written by 0.2.29.0, or by a window whose start could not be read) is judged by its process id and its boot, as before.
  * @param owner - The owner the file records.
  * @param identity - The machine, the boot and the process start of this process.
  * @param readStart - Reads the start of the process that has the owner's id now; {@link readProcessStart} unless a caller adds its cache or a test names its own. It is given the recorded start as `expectedStart`, which a kept start may confirm.
  * @returns
- * - `false` for an owner of another machine, or of none, and for one whose start has another system's form: its process cannot be probed here and may run. Nothing is probed or read for it
- * - `true` for an owner recorded under another kernel boot id, whatever process has its id now, and for one whose process id names no process
+ * - `false` for an owner of another machine, or of none, and for one whose start has another form (another system, another pid namespace) under the same kernel boot, or where either side names no kernel boot id: its process cannot be probed here and may run. Nothing is probed or read for it
+ * - `true` for an owner recorded under another kernel boot id, whatever process has its id now and whatever form its start has, and for one whose process id names no process
  * - A record with a start, whose process id is in use: `true` when the process that has the id now began at another time; `false` when it began at the recorded time, and when its start cannot be read
  * - A record without a start, whose process id is in use: `true` when its boot time lies before this boot's by more than the tolerance ({@link isFromEarlierBoot}); `false` otherwise, also for a process this user may not signal
  * @example
