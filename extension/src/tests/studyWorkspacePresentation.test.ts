@@ -4003,6 +4003,109 @@ for (const open of [
     }
   })
 
+// Value: protects=a Restore after a Read in a live run ending confirmed, with the keyboard on the pane that had it, when the editor names another group as the active one for a moment while the Read's maximization ends; fails_when=that event of the Restore's own un-maximize is read as the learner choosing another tab, and the Restore, which arranged the panes, answers "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved." although nobody touched the window; why_new=Cycle 0046 row 4 (Cycle 0045 NF-7b, Cursor checks F8 and F6); seam=the workspace harness's nameAnotherGroupWhenMaximizationEnds and the controlled runtime
+test('a Restore after a Read in a live run is confirmed when the editor names another group for a moment while the maximization ends', async () => {
+  // Arrange: a paused live run in its two rows; the learner read the Application pane enlarged, and the editor names the source's group for 40 ms when that maximization ends.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.nameAnotherGroupWhenMaximizationEnds(2, 40)
+  try {
+    await pauseLiveRun(harness)
+    await harness.reader.open()
+    await harness.reader.action('read-app')
+    const focusedBefore = harness.focusedPanel()
+    const state = harness.reader.presentationState()
+
+    // Act
+    const restored = await harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+
+    // Assert
+    assert.equal(focusedBefore, 'codebook.scopedBrowser')
+    assert.equal(restored.layoutConfirmed, true)
+    assert.equal(restored.reason, undefined)
+    assert.equal(harness.focusedPanel(), 'codebook.scopedBrowser')
+    assert.equal(harness.maximizedEditorGroup(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the pane's Restore after a Read in the three-pane Study layout ending confirmed when the editor names another group as the active one for a moment while the Read's maximization ends; fails_when=the three-pane Restore reads that event of its own un-maximize as the learner choosing another tab and leaves the layout unconfirmed with "The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved."; why_new=Cycle 0046 row 4 (the three-pane Restore uses the same guard as the live one); seam=the workspace harness's nameAnotherGroupWhenMaximizationEnds
+test('a Restore after a Read in the three-pane Study layout is confirmed when the editor names another group for a moment while the maximization ends', async () => {
+  // Arrange: the learner read the explanation enlarged; the editor names the Application pane's group for 40 ms when that maximization ends.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.nameAnotherGroupWhenMaximizationEnds(1, 40)
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.focusedPanel(), 'codebook.studyContext')
+    assert.equal(harness.maximizedEditorGroup(), false)
+    const restored = await harness.reader.readPresentationState()
+    assert.equal(restored.layoutConfirmed, true)
+    assert.equal(restored.reason, undefined)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=a learner who selects another tab while a Restore after a Read in a live run ends the maximization keeping that tab, the Restore refused with the sentence that says so; fails_when=the allowance for the editor's own events of the un-maximize also swallows a change that lasts, and the Restore takes the keyboard back from the learner's tab; why_new=Cycle 0046 row 4 (the separation of the editor's event from a learner's change needs its other side); seam=holdNextCommand on the Restore's un-maximize, the learner's focusMutableDraft, the controlled runtime
+test('a learner who selects another tab while a Restore in a live run ends the maximization keeps that tab and the Restore says so', async () => {
+  // Arrange: a paused live run in its two rows; the learner read the Application pane enlarged.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await pauseLiveRun(harness)
+    await harness.reader.open()
+    await harness.reader.action('read-app')
+    const state = harness.reader.presentationState()
+    const held = harness.holdNextCommand(
+      'workbench.action.minimizeOtherEditors',
+    )
+    release = held.release
+
+    // Act: while the Restore ends the maximization, the learner selects a file of their own in the source's group.
+    const restoring = harness.reader.changePresentation({
+      presentationId: state.presentationId,
+      expectedRevision: state.presentationControlRevision,
+      mode: 'study-workspace',
+      action: 'restore',
+    })
+    await held.started
+    const draft = harness.focusMutableDraft('newer-notes.txt', 2)
+    release()
+    const refusal = await restoring.then(
+      () => 'restored',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      refusal,
+      'Error: The learner changed native tab focus while the Study layout command was pending. The newer choice was preserved.',
+    )
+    assert.equal(
+      harness.editor.window.tabGroups.activeTabGroup.activeTab,
+      draft.tab,
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's side bars through a Read of the captured source in a recording and Close Study Workspace: a bar the learner keeps closed is closed afterwards and an open one is open; fails_when=the replay arrangement's two rows give no width, the Read hides both bars and Close shows both, which opens the bar the learner had closed; why_new=Cycle 0045 local review study-1 #1 (the replay arrangement was covered only by a test that pinned both show commands); seam=the recorded reader harness, the workspace harness's side bar model and the fake editor's maximized group
 test('a Read in a recording and Close Study Workspace leave a side bar the learner had closed as it was', async () => {
   // Arrange: a recording is open in its two rows, the primary side bar closed and the secondary one open; the learner reads the captured source enlarged.

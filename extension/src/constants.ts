@@ -196,6 +196,12 @@ export const PRESENTATION_READY_TIMEOUT_MS = 5_000
  * widthWithoutPrimaryPx - widthPx > HIDDEN_SIDE_BAR_MIN_GAIN_PX // => true for 874 - 660
  */
 export const HIDDEN_SIDE_BAR_MIN_GAIN_PX = 50
+/**
+ * How long a Restore waits, after its own commands ended a Read's maximization, for the editor to name the focused tab's group as the active one again before it counts another group as the learner's change: Cursor names another group for a moment while a maximization ends (Cycle 0045 NF-7b), as it did for 25 to 46 ms while a layout was applied (Cycle 0045 NF-7).
+ * @example
+ * await waitUntil(() => retainsFocus(), 'the focus after the maximization ended', UNMAXIMIZE_FOCUS_SETTLE_MS)
+ */
+export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

@@ -554,6 +554,9 @@ export async function workspaceHarness(
     primary: SIDE_BAR_WINDOW_PX.primary,
     auxiliary: SIDE_BAR_WINDOW_PX.auxiliary,
   }
+  /** The editor group the fake editor names as the active one for a moment when a group's maximization ends, as `nameAnotherGroupWhenMaximizationEnds` sets it up; `undefined` names none. */
+  let transientGroupAtUnmaximize:
+    { column: number; durationMs: number } | undefined
   /** The width of the fake window in pixels, which `resizeWindow` changes as a learner who drags the window's edge does. */
   let windowWidthPx = SIDE_BAR_WINDOW_PX.window
   /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
@@ -2063,6 +2066,30 @@ export async function workspaceHarness(
           )
             closeTabs([activeTabGroup.activeTab])
           if (name === 'workbench.action.minimizeOtherEditors') {
+            const transientGroup = maximizedEditorGroup
+              ? groups.find(
+                  (group) =>
+                    group.viewColumn === transientGroupAtUnmaximize?.column,
+                )
+              : undefined
+            // The editor names another group for one event while the maximization ends, and the group that has the keyboard again shortly after the command answered.
+            if (transientGroup && transientGroup !== activeTabGroup) {
+              const focusedGroup = activeTabGroup
+              activeTabGroup = transientGroup
+              changedGroups({
+                opened: [],
+                closed: [],
+                changed: [transientGroup, focusedGroup],
+              })
+              setTimeout(() => {
+                activeTabGroup = focusedGroup
+                changedGroups({
+                  opened: [],
+                  closed: [],
+                  changed: [focusedGroup, transientGroup],
+                })
+              }, transientGroupAtUnmaximize!.durationMs)
+            }
             maximizedEditorGroup = false
             // Native Expand also changes group proportions while exiting maximization.
             const layout = structuredClone(editorLayout)
@@ -3335,6 +3362,18 @@ export async function workspaceHarness(
     },
     /** The side bars the fake window shows now, and whether one of them has the keyboard; `undefined` bars without `modelSideBars`. @example harness.sideBars() // => { primary: true, auxiliary: true, hasKeyboard: false } */
     sideBars: () => ({ ...sideBars, hasKeyboard: keyboardInSideBar }),
+    /**
+     * Makes the fake editor name another editor group as the active one for a moment when `workbench.action.minimizeOtherEditors` ends a group's maximization: one group event names that group while the command runs, and a second one, after the given time, names the group that had the keyboard again. This is how this cycle's row 4 explains a Restore refused as a learner's change in Cursor 3.23.12 although nobody touched the window (Cycle 0045 NF-7b, checks F8 and F6), after the same kind of moment Cycle 0045 NF-7 measured for the Application group (25 to 46 ms).
+     * @param column - The view column of the group named for that moment.
+     * @param durationMs - How long after the command the group that had the keyboard is named again.
+     * @example harness.nameAnotherGroupWhenMaximizationEnds(2, 40)
+     */
+    nameAnotherGroupWhenMaximizationEnds(
+      column: number,
+      durationMs: number,
+    ): void {
+      transientGroupAtUnmaximize = { column, durationMs }
+    },
     /**
      * Makes the fake window wider or narrower, as a learner who drags its edge: the side bars keep their widths and the editor area between them takes the difference, which the next layout read of columns reports.
      * @param widthPx - The window's new width; 1335 px until a test changes it.

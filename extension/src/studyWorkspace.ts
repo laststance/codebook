@@ -55,6 +55,7 @@ import {
   SUMMARY_PLACEMENT_ANSWERED_KEY,
   SUMMARY_PLACEMENT_CONTEXT_KEY,
   SUMMARY_PLACEMENT_OFFER,
+  UNMAXIMIZE_FOCUS_SETTLE_MS,
   UNRETRYABLE_READER_ERROR_KINDS,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
@@ -1338,11 +1339,13 @@ export class StudyWorkspace {
       const pending = (async () => {
         try {
           // Read/Enlarge may hide the other main leaf; restore visibility before measuring the two-pane layout.
-          await vscode.commands.executeCommand(
-            'workbench.action.minimizeOtherEditors',
-          )
-          this.maximizedByRead = false
-          await this.showSideBarsHiddenByRead()
+          await focusedPane.endReadMaximization(async () => {
+            await vscode.commands.executeCommand(
+              'workbench.action.minimizeOtherEditors',
+            )
+            this.maximizedByRead = false
+            await this.showSideBarsHiddenByRead()
+          })
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
@@ -1777,11 +1780,13 @@ export class StudyWorkspace {
     pending = (async () => {
       try {
         // The maximized group can hide the other leaves from getEditorLayout; restore its grid before measuring ratios.
-        await vscode.commands.executeCommand(
-          'workbench.action.minimizeOtherEditors',
-        )
-        this.maximizedByRead = false
-        await this.showSideBarsHiddenByRead()
+        await focusedPane.endReadMaximization(async () => {
+          await vscode.commands.executeCommand(
+            'workbench.action.minimizeOtherEditors',
+          )
+          this.maximizedByRead = false
+          await this.showSideBarsHiddenByRead()
+        })
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
@@ -3613,6 +3618,7 @@ export class StudyWorkspace {
     assertUndeparted(): void
     assertCurrent(): void
     beforeScopeFocus(acquire?: RepositoryFocusTarget): void
+    endReadMaximization(end: () => Promise<void>): Promise<void>
     dispose(): void
   } {
     const group = vscode.window.tabGroups.activeTabGroup,
@@ -3658,7 +3664,8 @@ export class StudyWorkspace {
     }
     let departed = false,
       borrowed: RepositoryFocusTarget | undefined,
-      pendingBorrow: RepositoryFocusTarget | undefined
+      pendingBorrow: RepositoryFocusTarget | undefined,
+      endingMaximization = false
     const observe = (): void => {
       if (departed) return
       // Leaving the work window revokes Restore even if focus returns before native measurement completes.
@@ -3666,6 +3673,8 @@ export class StudyWorkspace {
         departed = true
         return
       }
+      // While Codebook's own commands end a Read's maximization, the editor's group events are judged by the focus they leave once they settled.
+      if (endingMaximization) return
       if (pendingBorrow?.matchesGroup()) {
         // Only the announced native target can replace the old focus; returning to the original pane ends the borrow.
         borrowed = retainsFocus() ? undefined : pendingBorrow
@@ -3704,6 +3713,35 @@ export class StudyWorkspace {
             'The Study scope focus target could not be retained safely.',
           )
         pendingBorrow = acquire
+        observe()
+      },
+      /**
+       * Runs Codebook's own commands that end a Read's maximization (the un-maximize and the side bars shown again); called by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement} before they measure.
+       * Cursor names another editor group as the active one for a moment while a maximization ends (Cycle 0045 NF-7b): an active group the editor names while these commands run, and one it names again within {@link UNMAXIMIZE_FOCUS_SETTLE_MS} after them, is their event, not the learner's change. A change that lasts past that moment, and leaving the work window, still count.
+       * @param end - The commands that end the maximization.
+       * @returns Once the commands answered and the editor names the watched focus again, or the settle time passed.
+       * @throws What `end` throws.
+       * @example
+       * ```ts
+       * await focusedPane.endReadMaximization(async () => {
+       *   await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+       *   await this.showSideBarsHiddenByRead()
+       * })
+       * ```
+       */
+      async endReadMaximization(end): Promise<void> {
+        endingMaximization = true
+        try {
+          await end()
+          // A group named for the un-maximize alone gives way to the watched focus within the settle time; a change that lasts is the learner's.
+          await waitUntil(
+            () => !vscode.window.state.focused || retainsFocus(),
+            'the focus after the maximization ended',
+            UNMAXIMIZE_FOCUS_SETTLE_MS,
+          ).catch(() => undefined)
+        } finally {
+          endingMaximization = false
+        }
         observe()
       },
       dispose(): void {
