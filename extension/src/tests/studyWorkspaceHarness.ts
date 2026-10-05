@@ -563,6 +563,10 @@ export async function workspaceHarness(
   let keyboardInSideBar = false
   // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
   let activeStackItem: unknown, focusEditorOnBreak: boolean | undefined
+  /** The reader's listeners for a change of the selected stack item of Run and Debug; `setActiveStackItem` calls them. */
+  const activeStackItemListeners = new Set<() => void>()
+  /** Whether the fake editor lets the keyboard fall to the page body when it removes an emptied editor group while a text editor has the keyboard; see `loseKeyboardWhenGroupCloses`. */
+  let losesKeyboardWhenGroupCloses = false
   // Every text document the reader showed, with the group and whether it left the keyboard focus where it was.
   const textDocumentShows: {
     name: string
@@ -957,6 +961,13 @@ export async function workspaceHarness(
       .toSorted((left, right) => left.viewColumn - right.viewColumn)
     // The editor keeps its last group even when it is empty.
     if (main.length < 2 || !groups.includes(emptied)) return
+    // Cursor rebuilds its editor grid when a group closes, and the text editor that had the keyboard loses it to the page body.
+    if (
+      losesKeyboardWhenGroupCloses &&
+      !separateEditorPart?.focused &&
+      focusedSourceEditor()
+    )
+      keyboardOnBody = true
     editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
     groups.splice(groups.indexOf(emptied), 1)
     for (const remaining of groups)
@@ -2675,6 +2686,14 @@ export async function workspaceHarness(
         get activeStackItem() {
           return activeStackItem
         },
+        onDidChangeActiveStackItem: (listener: () => void) => {
+          activeStackItemListeners.add(listener)
+          return {
+            dispose(): void {
+              activeStackItemListeners.delete(listener)
+            },
+          }
+        },
       },
       workspace: {
         getConfiguration: (section: string) => ({
@@ -2683,7 +2702,10 @@ export async function workspaceHarness(
               ? savedStudyCapacity
               : section === 'debug' && key === 'focusEditorOnBreak'
                 ? focusEditorOnBreak
-                : undefined,
+                : // The fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`.
+                  section === 'workbench.editor' && key === 'closeEmptyGroups'
+                  ? closeDisposedPanelTabsLater
+                  : undefined,
         }),
         onDidChangeConfiguration: (
           listener: (event: {
@@ -3383,7 +3405,7 @@ export async function workspaceHarness(
       windowWidthPx = widthPx
     },
     /**
-     * Sets what the fake editor reports as the selected stack item of Run and Debug: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
+     * Sets what the fake editor reports as the selected stack item of Run and Debug and tells the reader's listeners of the change: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`; Cursor's and VS Code's debugger open that file first and select the stack item after it), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
      * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
@@ -3391,6 +3413,16 @@ export async function workspaceHarness(
     setActiveStackItem(item: unknown, focusesEditorOnBreak?: boolean): void {
       activeStackItem = item
       focusEditorOnBreak = focusesEditorOnBreak
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Makes the fake editor let the keyboard fall to the page body when it removes an editor group whose last tab closed while a text editor of another group has the keyboard, as Cursor 3.23.12 was seen to after "Codebook: Close Study Workspace" with the learner's own file active (Cycle 0046 row 66: the captured source's group closed, the grid was rebuilt and `document.activeElement` was the page body 20 ms later). Groups are removed only with `closeDisposedPanelTabsLater`.
+     * @example
+     * harness.closeDisposedPanelTabsLater()
+     * harness.loseKeyboardWhenGroupCloses()
+     */
+    loseKeyboardWhenGroupCloses(): void {
+      losesKeyboardWhenGroupCloses = true
     },
     /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
     textDocumentShows: () => [...textDocumentShows],
@@ -4381,9 +4413,9 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
-    /** Runs the reader's step for a captured source that took the keyboard from the file the debugger focused at a pause, as each such capture of an editor session does. @example readerSeams(harness).tellSourceTookPausedFocus() */
-    tellSourceTookPausedFocus: (): void =>
-      reader['tellSourceTookPausedFocus'](),
+    /** Runs the reader's step for an Application pane that took the keyboard from the file the debugger focused at a pause, as the pane's viewport does through its lease after such a reveal. @example await readerSeams(harness).paneTookKeyboardAtPause() */
+    paneTookKeyboardAtPause: (): Promise<void> =>
+      reader['settleKeyboardAtPause'](true),
     /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
     publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */

@@ -221,17 +221,27 @@ export const HIDDEN_SIDE_BAR_MIN_GAIN_PX = 50
  */
 export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
 /**
- * What "Codebook: Close Study Workspace" tells the learner when it gave the active editor group the keyboard because a closed pane or the captured source was the active editor. The extension API cannot tell whether the keyboard was in that pane or in the terminal or a view before the Command Palette opened (`window.activeTerminal` is also the terminal that had the focus last, a webview panel stays `active` while another part has the keyboard, and every webview reports a blur when the palette opens), so the sentence names both.
+ * How long before a pause of a live run the editor's own opening of the paused file may lie and still not count as the learner leaving the chat: the editor's debugger opens that file with the keyboard first and selects the stack item right after it, so {@link StudyWorkspace} sees a text editor become active a moment before it sees the pause.
+ * @example performance.now() - leftAtMs <= PAUSE_FOCUS_LOOKBACK_MS // => true for the paused file the debugger opened 20 ms before the stack item
+ */
+export const PAUSE_FOCUS_LOOKBACK_MS = 1_000
+/**
+ * How long "Codebook: Close Study Workspace" waits, once its panes' tabs are gone, for the editor to remove the groups those tabs left empty before it gives the active editor group the keyboard: the removal rebuilds the editor grid and takes the keyboard from the editor that had it (Cursor removed the captured source's group 57 ms after its tab, and the Study pane's 12 ms after its tab).
+ * @example await waitUntil(() => hasNoEmptiedGroup(), 'the emptied editor groups to close', CLOSE_GROUP_SETTLE_MS)
+ */
+export const CLOSE_GROUP_SETTLE_MS = 250
+/**
+ * What "Codebook: Close Study Workspace" tells the learner, once in an editor session, when it gave the active editor group the keyboard after it closed a pane or the captured source while a pane, the captured source or the learner's own file was the active editor. Closing the panes can leave the keyboard on no element at all (the editor rebuilds its grid when their groups close), so the group gets it. The extension API cannot tell whether the keyboard was in that editor or in the terminal, a view or a side-view chat before (`window.activeTerminal` is also the terminal that had the focus last, a webview panel stays `active` while another part has the keyboard, the active text editor stays the active one, and every webview reports a blur when the Command Palette opens): for a learner who was typing there this Close moves the keyboard into the editor, and the sentence says so.
  * @example void showPlainNotice(vscode.window, 'information', STUDY_CLOSE_KEYBOARD_MESSAGE)
  */
 export const STUDY_CLOSE_KEYBOARD_MESSAGE =
-  'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.'
+  'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.'
 /**
- * What the reader tells the learner, once in an editor session, when the captured source took the keyboard from the file the editor's debugger had opened at a pause (`debug.focusEditorOnBreak`), in an editor whose chat is a side view (VS Code). There the extension API reads the same whether the keyboard was in that file or in the chat input (Cycle 0045 X7-A.4), so Codebook cannot give it back to the chat and says where it is instead. Cursor names its chat's state and gets no such sentence.
+ * What the reader tells the learner, once in an editor session, when one of its panes (the Application pane or the captured source) took the keyboard from the file the editor's debugger had opened at a pause of a live run (`debug.focusEditorOnBreak`) and the reader knew of no chat to give it back to. That is VS Code, where the chat is a side view, and Cursor while its Agent chat is a pane of the secondary side bar: there the extension API reads the same whether the keyboard was in a file or in the chat input (Cycle 0045 X7-A.4, Cycle 0046 row 5), so Codebook cannot give it back and says where it is instead. Where Cursor's chat is a tab of another editor part and had the keyboard before the pause, the reader gives it back and tells nothing.
  * @example void showPlainNotice(vscode.window, 'information', SOURCE_TOOK_PAUSED_FOCUS_MESSAGE)
  */
 export const SOURCE_TOOK_PAUSED_FOCUS_MESSAGE =
-  'Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.'
+  'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'
