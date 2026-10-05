@@ -8,14 +8,23 @@ import {
   MAX_EXPLANATIONS,
   MAX_SESSIONS,
   MILLISECONDS_PER_SECOND,
+  MS_PER_MINUTE,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
+  STORAGE_LOCK_UNWRITTEN_GRACE_MS,
+  STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS,
   STUDY_CLOSE_KEYBOARD_MESSAGE,
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_OFFER,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_CURSOR_UPDATE_TIMEOUT_MS,
+  WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS,
+  WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS,
+  WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS,
+  WIKI_UPDATE_MARKER_WRITE_GRACE_MS,
+  WIKI_UPDATE_RUN_MARKER_SUFFIX,
   WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
@@ -121,6 +130,102 @@ test("the packaged README quotes the storage lock's refusal with the lock file i
   // Assert
   assert.equal(quotations, 2)
   assert.equal(oldQuotations, 0)
+})
+
+// Value: protects=a learner who meets a storage lock that stays reading what the lock records, how a window of this build judges it and which locks are never taken over; fails_when=a lock passage describes the judgement of 0.2.29.0 again (a lock whose process id is in use stays, a lock of another system of this computer is removed by itself), or names another time for an empty lock than the product keeps; why_new=Cycle 0046 row 119: rows 2, 9, 58 and 65 changed the judgement and both passages still described 0.2.29.0; seam=none
+test('the packaged README says in both lock passages what a storage lock records, that a window of this build judges it by the start of its writer’s process, also when another process has its process id, and that a lock of another system of this computer stays', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "The lock records its writer's process id and when that process began, the host name, two digests that stand for the machine (of the host name, and of the editor's machine id where the window has one), the boot and, in a local window, the editor's machine id.",
+    "A window of this build judges a lock that names this machine by the start of its writer's process: the lock counts as left behind when no process has its process id any more, when the process that has that id now began at another time (the id went to another process), or, on Linux, when the lock names another boot of the kernel than the running one. A correction of the clock changes none of this.",
+    'A lock without a process start (written by 0.2.29.0, or by a window that could not read its own start) is judged as 0.2.29.0 judged it, by its process id and its boot.',
+    'A lock that was created and stayed empty for 10 seconds counts as left behind too.',
+    'A lock stays when its writer may still be alive: a process that still runs, a lock written on another host (a home directory shared between machines), a lock written by an editor of another system of this computer (a Windows window and a WSL window that reach the same file: they share the host name, and a process id of one names another process, or none, in the other), or a file without a readable owner record.',
+    'means that another Codebook window is writing, or that a lock stays whose writer may still be alive: a process that still runs, a lock written on another host, a lock written by an editor of another system of this computer (a Windows window and a WSL window that reach the same file), or a file without a readable owner record.',
+    "The lock records its writer's process id and when that process began, with the host name, two digests that stand for the machine and the boot, and a window of this build judges it by that start: a lock whose process id another process has since is taken over as well, because that process began at another time.",
+    'For a lock that stays, make sure that no Codebook window on any host or system still writes to this storage, then move the named file away and retry ([What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits).',
+  ])
+  const retired = [
+    "The lock records its writer's process id, host name, boot and, in a local window, the editor's machine id; it counts as left behind when it names this machine and either an earlier boot or a process id that no longer exists",
+    'a lock written on another host, or a file without a readable owner record.',
+    'make sure that no Codebook window on any host still writes to this storage',
+  ].filter((sentence) => readme.includes(sentence))
+
+  // Assert: the README holds each sentence, none of 0.2.29.0's, and the time the product keeps for an empty lock.
+  assert.deepEqual(delivered, [true, true, true, true, true, true, true, true])
+  assert.deepEqual(retired, [])
+  assert.equal(STORAGE_LOCK_UNWRITTEN_GRACE_MS / MILLISECONDS_PER_SECOND, 10)
+})
+
+// Value: protects=a learner who finds the file of a running Wiki update in the project folder, or whose update is refused because of another window, reading what the file holds, that it names no computer, host or user in clear, and how long a marker counts that no window here can judge; fails_when=the README loses the marker's paragraphs, or names another longest time than the product computes for Cursor and VS Code; why_new=Cycle 0046 row 119 (amendment ER-14): no document described the marker; seam=none
+test('the packaged README says what the marker of a running Wiki update holds, that it names no computer, host or user in clear, that a killed window’s marker does not refuse a start, and that a marker nobody here can judge counts for at most 21 minutes in Cursor and 21 minutes 30 seconds in VS Code', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act: the two paragraphs under "LLM Wiki: open and update", whole.
+  const delivered = heldSentences(readme, [
+    "While an update runs, its window keeps a marker file beside the output folder, `<folder>.update-run.json` (`.codebook/wiki.update-run.json` unless the setting names another folder), so that a second editor window on the same project does not start a second update. That window's start is refused with `Another editor window is updating this Wiki (<editor>, started <time>). Wait for it to finish, then press Update LLM Wiki again.` The marker usually lies in your project folder, so it holds nothing that names the computer, its host or its user in clear: it records the process id of the window's extension host and when that process began, a random id of the window, the editor, the time the run started, the kernel's boot id on Linux, and two digests that stand for the machine. A digest is a pseudonym and no secret: a commit of the file publishes it, and the digest of a common host name can be found by trying names. When the run ends, its window removes the marker; after a stopped VS Code watch the file stays as that window's note that the chat may still publish, and the window removes it later or the next update does.",
+    "A marker that a killed editor left on this machine does not refuse a start: a window of this build judges a marker by the start of its owner's process, so the marker counts as nobody's when that process is gone and also when another process has its process id since, and the next start removes it. A marker whose owner cannot be judged here counts until its run's longest time has passed at the latest: 21 minutes after the run began for Cursor and 21 minutes 30 seconds for VS Code (the 15 minutes of a run, in VS Code after the 30 seconds for the chat's first answer, then 1 minute, then the 5 minutes by which two clocks may differ). That is a marker written on another computer (a project folder shared between machines), in another system or another pid namespace of this computer (a Windows window beside a WSL window, another WSL distribution, a container), where its process id means another process, or by 0.2.29.0 when a process still has its process id. [What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits.",
+  ])
+  const longestCursorMarkerMs =
+    WIKI_CURSOR_UPDATE_TIMEOUT_MS +
+    WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
+    WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
+  const longestVsCodeMarkerMs =
+    WIKI_CHAT_OPEN_TIMEOUT_MS +
+    WIKI_UPDATE_WATCH_TIMEOUT_MS +
+    WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
+    WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
+
+  // Assert: both paragraphs, and the file name and the times the product keeps: 21 minutes, 21 minutes 30 seconds, and their parts.
+  assert.deepEqual(delivered, [true, true])
+  assert.equal(WIKI_UPDATE_RUN_MARKER_SUFFIX, '.update-run.json')
+  assert.equal(longestCursorMarkerMs, 1_260_000)
+  assert.equal(longestVsCodeMarkerMs, 1_290_000)
+  assert.equal(WIKI_CURSOR_UPDATE_TIMEOUT_MS, 900_000)
+  assert.equal(WIKI_UPDATE_WATCH_TIMEOUT_MS, 900_000)
+  assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS, 30_000)
+  assert.equal(WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS, 60_000)
+  assert.equal(WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS, 300_000)
+})
+
+// Value: protects=a learner or a maintainer who needs to know where a storage lock and the Wiki update marker stop protecting: beside a window of 0.2.29.0, across hosts and systems, with equal host names, with clocks apart, without hard links, with a suspended window, and on the systems nobody observed; fails_when=the README loses a limit, or names another number than the product keeps (60 seconds of a claim, 2 seconds of a marker being written, 5 minutes between clocks, a minute between boot times); why_new=Cycle 0046 row 119: amendment ER-14 asked the README to carry these statements and none was written; seam=none
+test('the packaged README states the limits of a storage lock and of the Wiki update marker: a window of 0.2.29.0 on the same folder, another host or system, two computers with one host name, clocks more than 5 minutes apart, a file system without hard links, a suspended window, and the systems observed', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act: the heading, the paragraph under it and its seven limits, each whole.
+  const delivered = heldSentences(readme, [
+    '### What a lock or an update marker cannot tell\n',
+    "Two files keep editor windows from writing at the same time: `writer.lock` in each private storage folder (the learning storage, the Cursor skill and its catalog) and the marker of a running Wiki update beside the Wiki folder ([LLM Wiki: open and update](#llm-wiki-open-and-update)). Between windows of this build a lock, a marker and the claim a window holds for the moment in which it removes or replaces one of them are judged by the start of the owner's process. The limits:",
+    "- **A window of 0.2.29.0 on the same storage or project folder.** That window writes and judges as 0.2.29.0 did, so beside it the guarantees are those of 0.2.29.0. Its lock, its marker and its claim name no process start: this build judges such a lock by its process id and its boot, such a marker by its process id alone, and removes such a claim once it is 60 seconds old. The older window judges the files of this build in its own way: a lock or a marker whose process id went to another process stays for it, where the boot is a computed time (macOS, Windows) a clock set forward by more than a minute while a lock is held can make it take over that lock although its writer still runs, it removes a claim after 60 seconds although the claim's window still runs, it creates its marker in place, so that the file is empty for the time of one write, and when it finds no marker under its claim it removes the marker another window has just written. Update every window to leave these limits behind.",
+    "- **Another host, another system.** A lock or a marker written on another computer, or by an editor of another system of this computer (a Windows window beside a WSL window), is not judged by a process here, because its process id means another process there. Such a lock stays until you move it away; such a marker counts until its run's longest time has passed at the latest, and a claim on it for 60 seconds. For a marker and its claim, another pid namespace of this computer (another WSL distribution, a container) is such a system too.",
+    "- **Two computers with one host name.** A marker names its machine by digests, and the digest of the host name is the one VS Code and Cursor on one computer share. Two computers with the same host name on one shared project folder therefore look like one machine to the marker: each judges the other's marker by its own processes and its own boot, and a second update can start beside a running one.",
+    "- **Clocks.** The marker's times allow the clocks of two windows, or one clock before and after a correction, to differ by 5 minutes. Computers whose clocks differ by more, a clock that moves by more during an update and a computer that sleeps for longer during one are not covered: a second update can start beside a running one.",
+    '- **A file system without hard links.** A lock or a marker is written beside its path and then linked into place, so it never exists without its content. Where the file system cannot link, the file is created in place and is empty for the time of one write. Another window takes an empty marker younger than 2 seconds for one that is being written and refuses its own start, which narrows that race without closing it.',
+    '- **A suspended window.** A window that is suspended in the instant between the check of its claim and its change of the marker can still remove or replace a marker that another window wrote meanwhile.',
+    "- **Systems observed.** The judgement by the process start was observed in editors on Linux, for the update marker: the marker of a killed window did not refuse the other editor's start. On macOS and in a Windows editor it has not been observed, for a lock or for a marker: tests cover it there, for Windows on a Windows runner and for macOS with a stand-in for the `ps` query.",
+  ])
+
+  // Assert: every limit, and the numbers the product keeps for them.
+  assert.deepEqual(delivered, [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+  ])
+  assert.equal(WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS / MILLISECONDS_PER_SECOND, 60)
+  assert.equal(WIKI_UPDATE_MARKER_WRITE_GRACE_MS / MILLISECONDS_PER_SECOND, 2)
+  assert.equal(WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS / MS_PER_MINUTE, 5)
+  assert.equal(STORAGE_OWNER_BOOT_TIME_TOLERANCE_MS / MS_PER_MINUTE, 1)
 })
 
 // Cycle 0045 (S1a-F2): red while the README said that a focused editor that is no text editor refuses a presentation selection; since cause 7 such a tab is admitted, stays where it is and gets its focus back.
