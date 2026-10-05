@@ -4312,6 +4312,79 @@ async function check(page, options, collected) {
       afterStudyLeft.focus === 'studies',
   })
 
+  // Arrange: three listed files of the third study, Remove by hand open, and the keyboard focus on Retry storage / refresh inside it (row 73).
+  const threeListedFiles = [
+    '/home/learner/.config/Code/User/globalStorage/laststance.codebook/agent/window/run-third09',
+    '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-third09.study.meta.v2.json',
+    '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-third09.study.v2.json',
+  ]
+  /** Reads which control of Remove by hand holds the keyboard focus: its tag, and the element it stands in. */
+  const focusInRemoveByHand = () =>
+    page.evaluate(() => ({
+      tag: document.activeElement.tagName,
+      within: document.activeElement.parentElement?.id,
+    }))
+  await library(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyFiles: { [thirdStudy.id]: threeListedFiles },
+  })
+  await toggleByKeyboard('study-files')
+  const threeListed = await removalControl()
+  await page.locator('#study-files [data-action="retry"]').focus()
+  // Act: the learner, who removed two of the files by hand, presses Retry storage / refresh; the host forgets its lists and names no files for the study, and then answers the pane's new request.
+  await page.keyboard.press('Enter')
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  const askedAfterRetry = await removalControl(),
+    focusWhileListing = await focusInRemoveByHand()
+  await library(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [threeListedFiles[2]],
+    }),
+    studyFiles: { [thirdStudy.id]: [threeListedFiles[2]] },
+  })
+  const oneLeft = await removalControl(),
+    focusAfterAnswer = await focusInRemoveByHand()
+  // Assert
+  cases.push({
+    name: 'after Retry storage / refresh, for which the host forgets its file lists, an open Remove by hand asks the host again by itself and shows the one file that is left of three, and the keyboard focus that stood on Retry storage / refresh rests on the disclosure’s summary',
+    actual: {
+      threeListed,
+      askedAfterRetry,
+      focusWhileListing,
+      oneLeft,
+      focusAfterAnswer,
+    },
+    passed:
+      // The host already held the list when the disclosure was opened: nothing was asked.
+      threeListed.removeByHand.open &&
+      JSON.stringify(threeListed.removeByHand.files) ===
+        JSON.stringify(threeListedFiles) &&
+      askedAfterRetry.retries === threeListed.retries + 1 &&
+      // One new request for the same study, under the Study message that names no files.
+      askedAfterRetry.deletes.length === threeListed.deletes.length + 1 &&
+      askedAfterRetry.deletes.at(-1)[0] === thirdStudy.id &&
+      askedAfterRetry.removeByHand.open &&
+      askedAfterRetry.removeByHand.note === "Listing this study's files…" &&
+      askedAfterRetry.removeByHand.files.length === 0 &&
+      !askedAfterRetry.removeByHand.copyVisible &&
+      !askedAfterRetry.removeByHand.retryVisible &&
+      // The pressed button is not rendered while the host is asked; the focus stays with the disclosure.
+      JSON.stringify(focusWhileListing) ===
+        JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }) &&
+      oneLeft.removeByHand.note === listedSentence &&
+      JSON.stringify(oneLeft.removeByHand.files) ===
+        JSON.stringify([threeListedFiles[2]]) &&
+      oneLeft.removeByHand.copyVisible &&
+      oneLeft.removeByHand.retryVisible &&
+      oneLeft.deletes.length === askedAfterRetry.deletes.length &&
+      JSON.stringify(focusAfterAnswer) ===
+        JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }),
+  })
+
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).
   const deletesBeforeReasons = (await removalControl()).deletes.length
   /** Reads the reason shown under the list and whether Remove by hand is offered beside it. */

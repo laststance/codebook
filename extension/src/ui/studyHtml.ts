@@ -1428,7 +1428,10 @@ function studyClient(
         offeredFor,
         hostAnsweredFilesOf(message, offeredFor),
       )
+    const focusedBefore = focusedInStudyFiles()
     showStudyFilesAnswer(message, offeredFor)
+    // While the host is asked again (Retry storage / refresh made it forget its list) the disclosure shows no button: a focus that stood on one goes to the summary, not to the document body.
+    keepFocusInSavedStudies(focusedBefore)
   }
   /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
   const focusRestsOnDeleteButton = (): boolean =>
