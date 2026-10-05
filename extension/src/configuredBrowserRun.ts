@@ -2055,7 +2055,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
 
   /**
-   * Judges the adapter's news about a stop's owned breakpoint once more by the debugger's own break locations when the source map alone refused the place it names, for {@link onEvent} right after a `breakpoint` event changed that place: when they accept it, the breakpoint stands there ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), so its verified place is what a pause is compared with.
+   * Judges the adapter's news about a stop's owned breakpoint once more by the debugger's own break locations when the source map alone refused the place it names, for {@link onEvent} right after a `breakpoint` event changed that place and for {@link judgeNewsRefusedBeforeModule} once the stop's module is announced: when they accept it, the breakpoint stands there ({@link OwnedRepositoryBreakpoint.retakeRefusedPlace}), so its verified place is what a pause is compared with.
    * @param stop - The declared stop whose owned breakpoint the news is about.
    * @param session - The session that sent the news.
    * @example
@@ -4505,7 +4505,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           line: callFrame.location.lineNumber,
           column: callFrame.location.columnNumber ?? 0,
         },
-        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position (or, once the debugger listed its break locations, a break location), and the requested line is the declared one or the first mapped line after it.
+        // The stop's rule accepted this bound line: no line between it and the requested one has a mapped position (or, once the debugger listed its break locations, a break location between the two generated places), and the requested line is the declared one or the first mapped line after it.
         binding: {
           declaredLine: position.line,
           ...(stop.armed.line === position.line

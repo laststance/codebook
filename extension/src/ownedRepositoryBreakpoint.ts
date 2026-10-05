@@ -46,7 +46,7 @@ const registrationResponseSchema = z.object({
 type RegistrationBinding = z.infer<
   typeof registrationResponseSchema
 >['breakpoints'][number]
-/** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. {@link ConfiguredBrowserRun} reads a browser binding with it too. */
+/** A verified adapter breakpoint that names its whole position; anything less cannot say where the breakpoint is. {@link OwnedRepositoryBreakpoint.assertBoundAsDeclared} reads a binding with it, and {@link ConfiguredBrowserRun} names a browser binding it completed ({@link verifiedLineSchema}) by its type. */
 export const verifiedPlaceSchema = z.object({
   verified: z.literal(true),
   line: z.number().int(),
