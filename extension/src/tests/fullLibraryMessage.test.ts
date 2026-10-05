@@ -89,7 +89,7 @@ test('a save or a recording refused by a full library in a window without a Tras
   )
   assert.equal(
     fullLibraryMessage('save', 256, 'no-trash'),
-    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Saved studies lists the files of a chosen study for removal by hand; remove them, then retry storage. Existing learning was kept.',
+    'Study library is full at its maximum of 256 saved studies, and this window has no Trash, so Codebook cannot delete a saved study here. Choose a study in Saved studies and open Remove by hand to list its files; remove them, then retry storage. Existing learning was kept.',
   )
   assert.equal(
     fullLibraryMessage('recording', 64, 'no-trash'),
@@ -97,6 +97,6 @@ test('a save or a recording refused by a full library in a window without a Tras
   )
   assert.equal(
     fullLibraryMessage('recording', 256, 'no-trash'),
-    'Recording library is full at its maximum of 256 recordings, and this window has no Trash, so Codebook cannot delete a saved study here. Saved studies lists the files of a chosen study that has a recording for removal by hand; remove them before starting another session. Existing recordings were kept.',
+    'Recording library is full at its maximum of 256 recordings, and this window has no Trash, so Codebook cannot delete a saved study here. Choose a study that has a recording in Saved studies and open Remove by hand to list its files; remove them before starting another session. Existing recordings were kept.',
   )
 })

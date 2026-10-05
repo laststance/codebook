@@ -4441,6 +4441,64 @@ test('after the listed files of a study were removed by hand, a refresh lists th
   }
 })
 
+// Value: protects=in a window without a Trash the learner who removed only some of a study's listed files and pressed Retry storage / refresh is shown the files that are left; fails_when=the reader keeps the list it made before the removal for a study the library still holds, so "Remove by hand" goes on showing paths that are gone, Copy paths copies them, and the pane never asks again because the reader still names files for that study; why_new=Cycle 0046 row 73 (the kept list was dropped only for a study that left the library); seam=the editor's remote name, and the file system, on which the test removes two of the three listed paths
+test('in a window without a Trash, after two of a study’s three listed files were removed by hand, Retry storage / refresh forgets the list and the next request lists the one file that is left', async () => {
+  // Arrange: a WSL remote window with a study an older Codebook saved (it cannot be opened, and Retry writes no catalog file for it again) and the raw evidence of its run; a request has listed its three paths.
+  const harness = await workspaceHarness(true, false, 'wsl')
+  try {
+    await harness.reader.learningStorage()
+    const directory = harness.reader.inspect().libraryDirectory!,
+      run = { instanceId: randomUUID(), runId: randomUUID() },
+      studyId = `${run.instanceId}_${run.runId}`,
+      evidenceDirectory = evidenceDirectoryOf(harness, run),
+      catalogFile = join(directory, `${studyId}.study.meta.v2.json`),
+      archive = join(directory, `${studyId}.study.v2.json`)
+    await mkdir(evidenceDirectory, { recursive: true })
+    await writeFile(catalogFile, '{}')
+    await writeFile(archive, '{}')
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    await requestRemoval(harness, studyId, 1)
+    const listedBeforeRemoval = structuredClone(
+      harness.reader.inspect().view!.studyFiles,
+    )
+    // Act: the learner removes the first two listed paths and presses Retry storage / refresh; the pane, whose open disclosure is named no files any more, asks again.
+    await rm(evidenceDirectory, { recursive: true })
+    await rm(catalogFile)
+    await harness.reader.action('retry')
+    const afterRetry = structuredClone({
+      isStillListed: harness.reader
+        .inspect()
+        .view!.studies.some((entry) => entry.id === studyId),
+      studyFiles: harness.reader.inspect().view!.studyFiles,
+      hasRemovalAnswer:
+        harness.reader.inspect().view!.studyRemoval !== undefined,
+    })
+    await requestRemoval(harness, studyId, 2)
+    // Assert
+    assert.deepEqual(listedBeforeRemoval, {
+      [studyId]: [evidenceDirectory, catalogFile, archive],
+    })
+    assert.deepEqual(afterRetry, {
+      isStillListed: true,
+      studyFiles: {},
+      hasRemovalAnswer: false,
+    })
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.studyFiles), { [studyId]: [archive] })
+    assert.deepEqual(structuredClone(view.studyRemoval), {
+      status: 'refused',
+      studyId,
+      text: 'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
+      files: [archive],
+      request: 2,
+    })
+    assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner can copy the files of a study a window without a Trash listed, to remove them in a terminal; fails_when=the copy request copies nothing, or text the pane sent instead of the reader's own list (RT-7, DR-14); why_new=the reader had no list to copy; seam=the editor's clipboard, recorded by the harness
 test('in a window without a Trash, copying the listed files of a study puts the reader’s own list on the clipboard, one path a line', async () => {
   // Arrange: a WSL remote window with one saved study whose files a delete request has listed.

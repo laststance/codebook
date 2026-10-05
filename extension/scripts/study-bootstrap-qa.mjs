@@ -124,6 +124,85 @@ async function check(page, options, collected) {
     await page.keyboard.press(key)
     await page.evaluate(() => window.disclosureToggled)
   }
+  /** Reads one status region of the pane: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor has the `hidden` attribute or `display:none`, and when a closed disclosure holds it; a region that is rendered exists for assistive technology before its first text. */
+  const statusRegion = (id) =>
+    page.evaluate((id) => {
+      const region = document.getElementById(id)
+      return {
+        id,
+        role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+        text: region.textContent,
+        isRendered: region.checkVisibility(),
+      }
+    }, id)
+  /** What {@link statusRegion} reads for a region that is in the page, rendered and empty. */
+  const emptyRegion = (id) => ({
+    id,
+    role: 'status/polite',
+    text: '',
+    isRendered: true,
+  })
+  /** Says whether the pane is laid out and painted the same with one of its parts in place as with that part taken out by the `hidden` attribute: `moved` names the page (its scroll size) and every rendered element outside the part whose box differs, and `samePixels` compares a screenshot of the whole page. Nothing moves and the pixels are equal only for a part that shows nothing and takes no room. Two frames pass before each reading, so the pane's resize observers have answered, and each screenshot is repeated until the picture stands still. */
+  const looksAsWithout = async (selector) => {
+    const reading = async () => {
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+      const boxes = await page.evaluate((selector) => {
+        const part = document.querySelector(selector),
+          root = document.documentElement
+        return [
+          ['page', `${root.scrollWidth} x ${root.scrollHeight}`],
+          ...[...document.body.querySelectorAll('*')]
+            // What a closed disclosure holds is not laid out and keeps the box of an earlier layout: only rendered elements are compared.
+            .filter(
+              (element) => !part.contains(element) && element.checkVisibility(),
+            )
+            .map((element) => {
+              const box = element.getBoundingClientRect()
+              return [
+                element.id || `${element.tagName}.${element.className}`,
+                [box.x, box.y, box.width, box.height].join(' '),
+              ]
+            }),
+        ]
+      }, selector)
+      // What the browser still settles after a change (a hover that sets in, a scrollbar that fades) is not the part's doing: the picture is taken until two in a row are equal.
+      let pixels = await page.screenshot({ fullPage: true })
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const again = await page.screenshot({ fullPage: true })
+        if (again.equals(pixels)) break
+        pixels = again
+      }
+      return { boxes, pixels }
+    }
+    const setHidden = (isHidden) =>
+      page.locator(selector).evaluate((part, isHidden) => {
+        part.hidden = isHidden
+      }, isHidden)
+    // A text field that has the focus blinks its caret, which two screenshots catch differently; the page's content security policy keeps the browser tool from hiding it, so the check hides it on the focused element for the two readings.
+    const setCaretColor = (color) =>
+      page.evaluate((color) => {
+        document.activeElement.style.caretColor = color
+      }, color)
+    await setCaretColor('transparent')
+    const inPlace = await reading()
+    await setHidden(true)
+    const takenOut = await reading()
+    await setHidden(false)
+    await setCaretColor('')
+    return {
+      moved: inPlace.boxes.flatMap(([name, box], index) =>
+        box === takenOut.boxes[index]?.[1]
+          ? []
+          : [`${name}: ${box} / ${takenOut.boxes[index]?.[1]}`],
+      ),
+      samePixels: inPlace.pixels.equals(takenOut.pixels),
+    }
+  }
   const inspect = () =>
     page.evaluate(() => ({
       text: document.body.innerText,
@@ -338,6 +417,159 @@ async function check(page, options, collected) {
         }
       }
     }
+    // Arrange: a loaded study with no run and no recording, so the pane shows neither its live strip nor its replay transport (row 74).
+    const paneName = kind === 'context' ? 'Study pane' : 'bottom panel'
+    await page.setViewportSize({ width: 420, height: 720 })
+    await publish(options.message)
+    /** Reads what the live strip shows: its status, its height and whether its Stop button is rendered. */
+    const liveStrip = () =>
+      page.evaluate(() => ({
+        status: document.getElementById('runtime').textContent,
+        height: Math.round(
+          document.querySelector('.live-strip').getBoundingClientRect().height,
+        ),
+        stopShown: document
+          .querySelector('[data-action="stop"]')
+          .checkVisibility(),
+      }))
+    // Act: the strip's status is read before a run, when a run reports its first state, and after that run stopped.
+    const stripBeforeRun = {
+      region: await statusRegion('runtime'),
+      strip: await liveStrip(),
+      looks: await looksAsWithout('.live-strip'),
+    }
+    await publish({
+      ...options.message,
+      liveState: 'running',
+      liveTitle: 'Repository operation',
+    })
+    const stripDuringRun = {
+      region: await statusRegion('runtime'),
+      strip: await liveStrip(),
+    }
+    await publish({
+      ...options.message,
+      liveState: 'stopped',
+      liveTitle: 'Repository operation',
+    })
+    const stripAfterRun = {
+      region: await statusRegion('runtime'),
+      strip: await liveStrip(),
+      looks: await looksAsWithout('.live-strip'),
+    }
+    // Assert
+    cases.push({
+      name: `in the ${paneName} the live strip’s status is in the page, rendered and empty, before a run starts, and the pane looks as it does without the strip; the run’s first state is the status’s first text, and a stopped run empties it again`,
+      actual: { stripBeforeRun, stripDuringRun, stripAfterRun },
+      passed:
+        JSON.stringify(stripBeforeRun) ===
+          JSON.stringify({
+            region: emptyRegion('runtime'),
+            strip: { status: '', height: 0, stopShown: false },
+            looks: { moved: [], samePixels: true },
+          }) &&
+        JSON.stringify(stripDuringRun.region) ===
+          JSON.stringify({
+            ...emptyRegion('runtime'),
+            text: 'Repository operation — running',
+          }) &&
+        stripDuringRun.strip.height > 0 &&
+        stripDuringRun.strip.stopShown &&
+        JSON.stringify(stripAfterRun) === JSON.stringify(stripBeforeRun),
+    })
+
+    // Arrange: the same study without a recording; the transport's three status regions have had no text yet (row 74).
+    const transportRegionIds = [
+      'recording-status',
+      'application-covered-remedy',
+      'playback-hint',
+    ]
+    /** Reads the transport as this pane holds it: its three status regions, the name that makes its section a landmark, its height, and whether the pane looks as it does without it. */
+    const transportHeld = async () => ({
+      regions: [
+        await statusRegion(transportRegionIds[0]),
+        await statusRegion(transportRegionIds[1]),
+        await statusRegion(transportRegionIds[2]),
+      ],
+      landmarkName: await page
+        .locator('#recording-transport')
+        .getAttribute('aria-label'),
+      height: await page
+        .locator('#recording-transport')
+        .evaluate((transport) =>
+          Math.round(transport.getBoundingClientRect().height),
+        ),
+      looks: await looksAsWithout('#recording-transport'),
+    })
+    const transportBeforeRecording = await transportHeld()
+    // Act: a recording opens whose moment another tab covers and whose native values are not loaded, which gives each region its first text; then the recording is left.
+    await publish({
+      ...options.message,
+      contentTab: 'recording',
+      recording: {
+        revision: revisionAt(1),
+        mode: 'paused',
+        readiness: 'ready',
+        cleared: false,
+        presentedMs: 2000,
+        range: { startMs: 0, endMs: 5000, endKnown: true },
+        recordingStatus: 'finalized',
+        nativeValuesUninspected: true,
+        applicationCovered: true,
+      },
+    })
+    const transportWithRecording = {
+      regions: [
+        await statusRegion(transportRegionIds[0]),
+        await statusRegion(transportRegionIds[1]),
+        await statusRegion(transportRegionIds[2]),
+      ],
+      landmarkName: await page
+        .locator('#recording-transport')
+        .getAttribute('aria-label'),
+      playShown: await page.locator('#playback-toggle').isVisible(),
+    }
+    await publish(options.message)
+    const transportAfterRecording = await transportHeld()
+    // Assert: one case a region, each with the transport it stands in.
+    const firstTexts = [
+      'Paused · finalized · Recorded application is covered by another tab',
+      'Bring the Recorded application tab to the front to show this moment again.',
+      'Recorded values for this moment are not loaded yet. Show Variables opens Run and Debug and expands them; if the first scope stays closed, expand it. If Call Stack lists several sessions, select “Codebook · Recorded learning” first.',
+    ]
+    /** Says whether a reading of {@link transportHeld} shows one region empty in a transport that is left out: no name, no height, nothing moved and no pixel changed by taking the transport out. */
+    const transportLeftOut = (held, index) =>
+      JSON.stringify([
+        held.regions[index],
+        held.landmarkName,
+        held.height,
+        held.looks,
+      ]) ===
+      JSON.stringify([
+        emptyRegion(transportRegionIds[index]),
+        null,
+        0,
+        { moved: [], samePixels: true },
+      ])
+    for (const [index, regionId] of transportRegionIds.entries())
+      cases.push({
+        name: `in the ${paneName} the transport’s status region #${regionId} is in the page, rendered and empty, before a recording opens, in a transport that shows nothing, takes no room and is no landmark; the recording gives the region its first text, and leaving the recording empties it again`,
+        actual: {
+          beforeRecording: transportBeforeRecording,
+          withRecording: transportWithRecording,
+          afterRecording: transportAfterRecording,
+        },
+        passed:
+          transportLeftOut(transportBeforeRecording, index) &&
+          JSON.stringify(transportWithRecording.regions[index]) ===
+            JSON.stringify({
+              ...emptyRegion(regionId),
+              text: firstTexts[index],
+            }) &&
+          transportWithRecording.landmarkName === 'Recorded playback' &&
+          transportWithRecording.playShown &&
+          transportLeftOut(transportAfterRecording, index),
+      })
     if (kind === 'context') {
       await publish({
         ...options.message,
@@ -419,10 +651,43 @@ async function check(page, options, collected) {
         name: 'visible bottom panel removes duplicate summary transport',
         passed: !(await page.locator('#recording-transport').isVisible()),
       })
+      // While the bottom panel shows the transport, the Learning summary keeps its own in the page with nothing in it, also at a moment that has a text for each of its three status regions: another tab covers the application and the native values are not loaded (row 74).
+      await publish({
+        ...replay,
+        playbackPanelVisible: true,
+        recording: {
+          ...replay.recording,
+          nativeValuesUninspected: true,
+          applicationCovered: true,
+        },
+      })
+      const transportWhilePanelOwnsIt = await transportHeld()
       await publish({ ...replay, playbackPanelVisible: false })
       cases.push({
         name: 'closing bottom panel restores summary playback controls',
         passed: await page.locator('#recording-transport').isVisible(),
+      })
+      const transportAfterPanelClosed = {
+        status: await statusRegion('recording-status'),
+        landmarkName: await page
+          .locator('#recording-transport')
+          .getAttribute('aria-label'),
+      }
+      cases.push({
+        name: 'while the bottom panel shows the transport, the status regions of the Learning summary’s own transport stay in the page, rendered and empty, and say nothing a second time; the summary looks as it does without that transport, which is no landmark; closing the panel writes the status into the region that was there',
+        actual: { transportWhilePanelOwnsIt, transportAfterPanelClosed },
+        passed:
+          transportRegionIds.every((regionId, index) =>
+            transportLeftOut(transportWhilePanelOwnsIt, index),
+          ) &&
+          JSON.stringify(transportAfterPanelClosed) ===
+            JSON.stringify({
+              status: {
+                ...emptyRegion('recording-status'),
+                text: 'Paused · finalized · Not recorded at this moment',
+              },
+              landmarkName: 'Recorded playback',
+            }),
       })
 
       const help = page
@@ -559,6 +824,105 @@ async function check(page, options, collected) {
         passed: await help.evaluate(
           (element) => document.activeElement === element,
         ),
+      })
+
+      // Arrange: the Keyboard shortcuts dialog is open and nothing was searched; its no-match line is a status region (row 81).
+      const noMatchSelector = '.shortcut-dialog [role=status]'
+      /** Reads the no-match line of the open dialog: its text, whether it is rendered, whether it or an ancestor up to the dialog has the `hidden` attribute or `display:none`, its height, how many shortcuts are listed and whether Clear search is shown. */
+      const noMatchLine = () =>
+        page.evaluate((selector) => {
+          const line = document.querySelector(selector),
+            dialog = line.closest('dialog'),
+            upToDialog = []
+          for (let node = line; node !== dialog; node = node.parentElement)
+            upToDialog.push(node)
+          return {
+            role: line.getAttribute('role'),
+            text: line.textContent,
+            isRendered: line.checkVisibility(),
+            isTakenOut: [...upToDialog, dialog].some(
+              (node) =>
+                node.hidden || getComputedStyle(node).display === 'none',
+            ),
+            height: Math.round(line.getBoundingClientRect().height),
+            hasRows: dialog.querySelectorAll('.shortcut-row').length > 0,
+            clearShown: [...dialog.querySelectorAll('button')]
+              .find((button) => button.textContent === 'Clear search')
+              .checkVisibility(),
+          }
+        }, noMatchSelector)
+      await help.click()
+      const lineBeforeSearch = {
+        line: await noMatchLine(),
+        looks: await looksAsWithout(noMatchSelector),
+      }
+      // Act: a search with matches, read also in a page whose stylesheet gives the line a paragraph's margins (as the Wiki reader's page does); a search without a match; a matching search again; and Clear search after one without.
+      await shortcutSearch.fill('seek')
+      await page.evaluate((selector) => {
+        const paragraphMargins = new CSSStyleSheet()
+        paragraphMargins.replaceSync(
+          `${selector.replace('[role=status]', 'p[role=status]')}{margin:16px 0}`,
+        )
+        document.adoptedStyleSheets = [paragraphMargins]
+      }, noMatchSelector)
+      const lineWithMatch = {
+        line: await noMatchLine(),
+        looks: await looksAsWithout(noMatchSelector),
+      }
+      await page.evaluate(() => {
+        document.adoptedStyleSheets = []
+      })
+      await shortcutSearch.fill('no-such-shortcut')
+      const lineWithoutMatch = await noMatchLine()
+      await shortcutSearch.fill('seek')
+      const lineWithMatchAgain = await noMatchLine()
+      await shortcutSearch.fill('no-such-shortcut')
+      await page
+        .getByRole('button', { name: 'Clear search', exact: true })
+        .click()
+      const lineAfterClear = await noMatchLine()
+      await shortcutSearch.press('Escape')
+      // Assert
+      const emptyLine = {
+        role: 'status',
+        text: '',
+        isRendered: true,
+        isTakenOut: false,
+        height: 0,
+        hasRows: true,
+      }
+      cases.push({
+        name: 'the no-match line of the Keyboard shortcuts list is in the open dialog, rendered and empty, while a search has matches, and the dialog looks as it does without the line, also where a stylesheet gives the line a paragraph’s margins; a search without a match gives it No shortcuts match., and a matching search or Clear search empties it again',
+        actual: {
+          lineBeforeSearch,
+          lineWithMatch,
+          lineWithoutMatch,
+          lineWithMatchAgain,
+          lineAfterClear,
+        },
+        passed:
+          JSON.stringify(lineBeforeSearch) ===
+            JSON.stringify({
+              line: { ...emptyLine, clearShown: false },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(lineWithMatch) ===
+            JSON.stringify({
+              line: { ...emptyLine, clearShown: true },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(lineWithoutMatch) ===
+            JSON.stringify({
+              ...emptyLine,
+              text: 'No shortcuts match.',
+              height: 24,
+              hasRows: false,
+              clearShown: true,
+            }) &&
+          JSON.stringify(lineWithMatchAgain) ===
+            JSON.stringify({ ...emptyLine, clearShown: true }) &&
+          JSON.stringify(lineAfterClear) ===
+            JSON.stringify({ ...emptyLine, clearShown: false }),
       })
       await page.waitForFunction(
         () =>
@@ -2068,10 +2432,6 @@ async function check(page, options, collected) {
 
       // Arrange: a replay with nothing to report: no error, no hint, no removal, no saved study, no layout notice (row 63, ND-5).
       await publish(withValues)
-      // The pane and layout controls are a disclosure the Recording tab closes; its status is read while they are open.
-      await page.locator('#reader-options').evaluate((details) => {
-        details.open = true
-      })
       // Act: every status region that can be empty is read before it has text.
       const emptyStatusRegions = await page.evaluate(() =>
         [
@@ -2103,9 +2463,6 @@ async function check(page, options, collected) {
           }
         }),
       )
-      await page.locator('#reader-options').evaluate((details) => {
-        details.open = false
-      })
       // Assert
       cases.push({
         name: 'each status region of the Study pane is in the page before it has text, rendered and taking no room, so its first text is a change of a region that exists',
@@ -2131,6 +2488,74 @@ async function check(page, options, collected) {
               roomTaken: 0,
             })),
           ),
+      })
+
+      // Arrange: Live, then Overview, then Recording: the Recording tab closes "Study view and pane controls", and the presentation has nothing to report (row 74).
+      const presentationOf = (layoutConfirmed) => ({
+        presentationId: '11111111-1111-4111-8111-111111111111',
+        presentationControlRevision: 1,
+        mode: 'study-workspace',
+        state: 'open',
+        layoutConfirmed,
+        preference: { status: 'default' },
+        panes: {},
+      })
+      await publish({ ...options.message, contentTab: 'live' })
+      await publish({ ...options.message, contentTab: 'overview' })
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      /** Reads the presentation status and the disclosure it stands under: the region, whether the disclosure is open, the line's height and how far it starts below the disclosure. */
+      const presentationLine = () =>
+        page.evaluate(() => {
+          const line = document
+              .getElementById('presentation-status')
+              .getBoundingClientRect(),
+            disclosure = document.getElementById('reader-options')
+          return {
+            disclosureOpen: disclosure.open,
+            height: Math.round(line.height),
+            belowDisclosure: Math.round(
+              line.top - disclosure.getBoundingClientRect().bottom,
+            ),
+          }
+        })
+      const statusBeforeNotice = {
+        region: await statusRegion('presentation-status'),
+        line: await presentationLine(),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Act: the host reports that the layout is not confirmed, and then that it is.
+      await publish({ ...withValues, presentation: presentationOf(false) })
+      const statusWithNotice = {
+        region: await statusRegion('presentation-status'),
+        line: await presentationLine(),
+      }
+      await publish({ ...withValues, presentation: presentationOf(true) })
+      const statusAfterNotice = {
+        region: await statusRegion('presentation-status'),
+        line: await presentationLine(),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Assert
+      cases.push({
+        name: 'on the Recording tab, which closes Study view and pane controls, the presentation status is in the page, rendered and empty, and the pane looks as it does without it; a layout that is not confirmed is its first text, shown under the closed disclosure, and a confirmed layout empties it again',
+        actual: { statusBeforeNotice, statusWithNotice, statusAfterNotice },
+        passed:
+          JSON.stringify(statusBeforeNotice) ===
+            JSON.stringify({
+              region: emptyRegion('presentation-status'),
+              line: { disclosureOpen: false, height: 0, belowDisclosure: 8 },
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(statusWithNotice) ===
+            JSON.stringify({
+              region: {
+                ...emptyRegion('presentation-status'),
+                text: 'Layout not confirmed. Restore it or focus a pane below.',
+              },
+              line: { disclosureOpen: false, height: 24, belowDisclosure: 8 },
+            }) &&
+          JSON.stringify(statusAfterNotice) ===
+            JSON.stringify(statusBeforeNotice),
       })
 
       // Arrange: a press on the replay thumb that moves nothing fires neither input nor change (SD-17).
@@ -2601,6 +3026,43 @@ async function check(page, options, collected) {
         name: 'in the bottom panel the transport is not bounded while Playback details are open',
         actual: panelTransportBound,
         passed: panelTransportBound === 'none',
+      })
+
+      // Arrange: the bottom panel during a replay; it has no pane controls, so a presentation's status is the Study pane's to report (row 74).
+      await publish(panelReplay)
+      const panelStatusBeforeNotice = {
+        region: await statusRegion('presentation-status'),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Act: the host reports a layout that is not confirmed.
+      await publish({
+        ...panelReplay,
+        presentation: {
+          presentationId: '11111111-1111-4111-8111-111111111111',
+          presentationControlRevision: 1,
+          mode: 'study-workspace',
+          state: 'open',
+          layoutConfirmed: false,
+          preference: { status: 'default' },
+          panes: {},
+        },
+      })
+      const panelStatusWithNotice = {
+        region: await statusRegion('presentation-status'),
+        looks: await looksAsWithout('#presentation-status'),
+      }
+      // Assert
+      cases.push({
+        name: 'in the bottom panel, which has no pane controls, the presentation status is in the page, rendered and empty, and stays empty when the layout is not confirmed, so only the Study pane reports it; the panel looks as it does without the line',
+        actual: { panelStatusBeforeNotice, panelStatusWithNotice },
+        passed:
+          JSON.stringify(panelStatusBeforeNotice) ===
+            JSON.stringify({
+              region: emptyRegion('presentation-status'),
+              looks: { moved: [], samePixels: true },
+            }) &&
+          JSON.stringify(panelStatusWithNotice) ===
+            JSON.stringify(panelStatusBeforeNotice),
       })
     }
   }
@@ -3961,6 +4423,79 @@ async function check(page, options, collected) {
       afterStudyLeft.removeByHand === null &&
       afterStudyLeft.chosen === '' &&
       afterStudyLeft.focus === 'studies',
+  })
+
+  // Arrange: three listed files of the third study, Remove by hand open, and the keyboard focus on Retry storage / refresh inside it (row 73).
+  const threeListedFiles = [
+    '/home/learner/.config/Code/User/globalStorage/laststance.codebook/agent/window/run-third09',
+    '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-third09.study.meta.v2.json',
+    '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-third09.study.v2.json',
+  ]
+  /** Reads which control of Remove by hand holds the keyboard focus: its tag, and the element it stands in. */
+  const focusInRemoveByHand = () =>
+    page.evaluate(() => ({
+      tag: document.activeElement.tagName,
+      within: document.activeElement.parentElement?.id,
+    }))
+  await library(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyFiles: { [thirdStudy.id]: threeListedFiles },
+  })
+  await toggleByKeyboard('study-files')
+  const threeListed = await removalControl()
+  await page.locator('#study-files [data-action="retry"]').focus()
+  // Act: the learner, who removed two of the files by hand, presses Retry storage / refresh; the host forgets its lists and names no files for the study, and then answers the pane's new request.
+  await page.keyboard.press('Enter')
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  const askedAfterRetry = await removalControl(),
+    focusWhileListing = await focusInRemoveByHand()
+  await library(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [threeListedFiles[2]],
+    }),
+    studyFiles: { [thirdStudy.id]: [threeListedFiles[2]] },
+  })
+  const oneLeft = await removalControl(),
+    focusAfterAnswer = await focusInRemoveByHand()
+  // Assert
+  cases.push({
+    name: 'after Retry storage / refresh, for which the host forgets its file lists, an open Remove by hand asks the host again by itself and shows the one file that is left of three, and the keyboard focus that stood on Retry storage / refresh rests on the disclosure’s summary',
+    actual: {
+      threeListed,
+      askedAfterRetry,
+      focusWhileListing,
+      oneLeft,
+      focusAfterAnswer,
+    },
+    passed:
+      // The host already held the list when the disclosure was opened: nothing was asked.
+      threeListed.removeByHand.open &&
+      JSON.stringify(threeListed.removeByHand.files) ===
+        JSON.stringify(threeListedFiles) &&
+      askedAfterRetry.retries === threeListed.retries + 1 &&
+      // One new request for the same study, under the Study message that names no files.
+      askedAfterRetry.deletes.length === threeListed.deletes.length + 1 &&
+      askedAfterRetry.deletes.at(-1)[0] === thirdStudy.id &&
+      askedAfterRetry.removeByHand.open &&
+      askedAfterRetry.removeByHand.note === "Listing this study's files…" &&
+      askedAfterRetry.removeByHand.files.length === 0 &&
+      !askedAfterRetry.removeByHand.copyVisible &&
+      !askedAfterRetry.removeByHand.retryVisible &&
+      // The pressed button is not rendered while the host is asked; the focus stays with the disclosure.
+      JSON.stringify(focusWhileListing) ===
+        JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }) &&
+      oneLeft.removeByHand.note === listedSentence &&
+      JSON.stringify(oneLeft.removeByHand.files) ===
+        JSON.stringify([threeListedFiles[2]]) &&
+      oneLeft.removeByHand.copyVisible &&
+      oneLeft.removeByHand.retryVisible &&
+      oneLeft.deletes.length === askedAfterRetry.deletes.length &&
+      JSON.stringify(focusAfterAnswer) ===
+        JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }),
   })
 
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).

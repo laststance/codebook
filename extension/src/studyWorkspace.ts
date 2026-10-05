@@ -12582,11 +12582,24 @@ export class StudyWorkspace {
   }
 
   /**
+   * Forgets every file list the reader kept for "Remove by hand" and the answer that carries one, because the learner may have removed some of those files since; called by {@link forgetStudiesRemovedByHand} when Retry storage / refresh starts.
+   * A Study message then names no files for any study, so a pane whose disclosure is open asks again and shows the files that are left, also for a study the library still holds.
+   * @example this.forgetListedStudyFiles()
+   */
+  private forgetListedStudyFiles(): void {
+    this.listedStudyFiles.clear()
+    // The answer to the last request for files holds its list too; a refusal without files, and a removal of a window with a Trash, stay.
+    if (this.studyRemoval?.files) this.studyRemoval = undefined
+  }
+
+  /**
    * Follows studies that left the library without a removal of this reader, as after the learner removed the listed files by hand; called by Retry storage / refresh before it reads the ledger and writes the selection.
+   * The file lists kept for "Remove by hand" are forgotten first, also when a later step fails: a list made before the learner removed files names paths that may be gone ({@link forgetListedStudyFiles}).
    * Such a study is one the reader listed before and the library no longer holds, or one the ledger still named. The ledger's references are dropped under the storage lock, a run of this window is forgotten like a removed one (so it is not written back), and a reader that selects the study selects none. A study that was never saved is in neither group and is left alone.
    * @example await this.forgetStudiesRemovedByHand()
    */
   private async forgetStudiesRemovedByHand(): Promise<void> {
+    this.forgetListedStudyFiles()
     const listedBefore = this.catalog.map((entry) => entry.id)
     const namedByLedger = await this.library!.forgetAbsentStudies()
     this.catalog = await this.library!.list()
@@ -12596,7 +12609,6 @@ export class StudyWorkspace {
       ),
     )
     for (const studyId of gone) {
-      this.listedStudyFiles.delete(studyId)
       // A run of this window whose saved study is gone would otherwise be checkpointed into the library again.
       if (this.recordOfStudy(studyId)) await this.forgetRemovedStudy(studyId)
       this.activeArchive = withoutStudy(this.activeArchive, studyId)
