@@ -44,6 +44,8 @@ const NATIVE_VARIABLES_REFRESH_MS = 400
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 /** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
 const DISPOSED_TAB_CLOSE_DELAY_MS = 20
+/** How long after a disposed pane's tab closed the fake editor removes the group that tab left empty, in the model of `removeEmptiedGroupsLater`: Cursor 3.23.12 removed the captured source's group 57 ms after its tab at "Codebook: Close Study Workspace", and the Study pane's 12 ms after its tab (Cycle 0046 row 66). The longer of the two is modelled: it is longer than one poll of the reader's wait for the panes' tabs, so the group is still there when that wait ends. */
+const EMPTIED_GROUP_CLOSE_DELAY_MS = 57
 /** The fake window of {@link workspaceHarness}'s side bar model, in pixels as Cursor 3.23.12 showed it (Cycle 0045 NF-22, obs15 P4): primary side bar 214, editor area 660, secondary side bar 461. */
 const SIDE_BAR_WINDOW_PX = { window: 1335, primary: 214, auxiliary: 461 }
 /**
@@ -569,6 +571,8 @@ export async function workspaceHarness(
   const activeStackItemListeners = new Set<() => void>()
   /** Whether the fake editor lets the keyboard fall to the page body when it removes an emptied editor group while a text editor has the keyboard; see `loseKeyboardWhenGroupCloses`. */
   let losesKeyboardWhenGroupCloses = false
+  /** Whether the fake editor removes the group a disposed pane's tab left empty a moment after that tab closed instead of with it; see `removeEmptiedGroupsLater`. */
+  let removesEmptiedGroupsLater = false
   // Every text document the reader showed, with the group and whether it left the keyboard focus where it was.
   const textDocumentShows: {
     name: string
@@ -1555,6 +1559,25 @@ export async function workspaceHarness(
               ))
                 removeEmptiedGroup(group)
             })
+          } else if (
+            closeDisposedPanelTabsLater &&
+            removesEmptiedGroupsLater &&
+            emptied.length
+          ) {
+            // The tab's close is reported first; the group it left empty goes a moment later, and every main group that is empty then goes with it, from the last column to the first.
+            replaceGroupObjects()
+            const timer = setTimeout(() => {
+              pendingEditorTimers.delete(timer)
+              const emptyGroups = groups
+                .filter(
+                  (candidate) =>
+                    candidate !== separateEditorPart?.group &&
+                    !candidate.tabs.length,
+                )
+                .toSorted((left, right) => right.viewColumn - left.viewColumn)
+              for (const group of emptyGroups) removeEmptiedGroup(group)
+            }, EMPTIED_GROUP_CLOSE_DELAY_MS)
+            pendingEditorTimers.add(timer)
           } else if (closeDisposedPanelTabsLater && emptied.length) {
             // From the last column to the first, each group looked up again by its column, as in the close of dead panes above.
             const laterEmptiedColumns = emptied
@@ -1751,10 +1774,14 @@ export async function workspaceHarness(
       this.historicalHtml = html
       this.panel.webview.html = html
     }
-    /** Reveals the leased pane with the keyboard and tells the lease's owner, as the real viewport does when its reveal covers the file the debugger focused at a pause. @example viewport.takeKeyboardAtPause() */
-    takeKeyboardAtPause(): void {
+    /**
+     * Reveals the leased pane with the keyboard and tells the lease's owner, as the real viewport does when its reveal covers the file the debugger focused at a pause.
+     * @param reported - Whether the fake editor reports the pane's focus (the pane's group is the active one and the pane is active); `false` brings the pane to the front without that report, for an editor that keeps naming another group.
+     * @example viewport.takeKeyboardAtPause(true)
+     */
+    takeKeyboardAtPause(reported: boolean): void {
       assert.equal(this.closed, false)
-      this.panel.reveal(undefined, false)
+      this.panel.reveal(undefined, !reported)
       this.lease.tookKeyboardAtPause?.()
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
@@ -3462,16 +3489,26 @@ export async function workspaceHarness(
     },
     /**
      * Lets the live run's Application pane take the keyboard from the file the debugger focused at a pause, as its viewport does at the end of a capture when the debugger opened that file in the pane's group: the pane is revealed with the keyboard and the viewport tells the reader through its lease. The reader answers without being awaited, as in the product: a test waits for what it expects.
+     * @param report - `'not reported'` models Cursor beside its chat's tab, which does not report every focus a pane takes there (Cycle 0045, obs15 P2 and R, seen for the first group's focus command and for a shown document): the pane is in front and has the keyboard, the editor goes on naming the chat's group as the active one, and neither a text editor nor a pane is active. Whether Cursor reports a pane revealed with the keyboard at a pause is not recorded; the reader must not depend on it.
      * @example
      * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
      * harness.applicationPaneTakesKeyboardAtPause()
      */
-    applicationPaneTakesKeyboardAtPause(): void {
+    applicationPaneTakesKeyboardAtPause(
+      report: 'reported' | 'not reported' = 'reported',
+    ): void {
       const viewport = viewportInstances.findLast(
         (candidate) => candidate.mode === 'live',
       )
       assert.ok(viewport)
-      viewport.takeKeyboardAtPause()
+      if (report === 'not reported') {
+        assert.ok(separateEditorPart)
+        // The keyboard is in the pane; the editor's name for the active group stays the chat's.
+        activeTabGroup = separateEditorPart.group
+        separateEditorPart.focused = false
+        keyboardOnBody = false
+      }
+      viewport.takeKeyboardAtPause(report === 'reported')
     },
     /**
      * Makes the fake editor let the keyboard fall to the page body when it removes an editor group whose last tab closed while a text editor of another group has the keyboard, as Cursor 3.23.12 was seen to after "Codebook: Close Study Workspace" with the learner's own file active (Cycle 0046 row 66: the captured source's group closed, the grid was rebuilt and `document.activeElement` was the page body 20 ms later). Groups are removed only with `closeDisposedPanelTabsLater`.
@@ -3481,6 +3518,15 @@ export async function workspaceHarness(
      */
     loseKeyboardWhenGroupCloses(): void {
       losesKeyboardWhenGroupCloses = true
+    },
+    /**
+     * Makes the fake editor remove the group a disposed pane's tab left empty {@link EMPTIED_GROUP_CLOSE_DELAY_MS} after that tab closed, instead of in the same turn, as Cursor 3.23.12 was seen to at "Codebook: Close Study Workspace" (Cycle 0046 row 66, `r1c3.tabs.json`: the captured source's group closed 57 ms after its tab, the Study pane's 12 ms after its tab). The tab's close is reported at once. Only the groups of disposed panes are delayed, and only in the model of `closeDisposedPanelTabsLater`.
+     * @example
+     * harness.closeDisposedPanelTabsLater()
+     * harness.removeEmptiedGroupsLater()
+     */
+    removeEmptiedGroupsLater(): void {
+      removesEmptiedGroupsLater = true
     },
     /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
     textDocumentShows: () => [...textDocumentShows],

@@ -2405,7 +2405,7 @@ export class StudyWorkspace {
    * @param activatedByClose - The tab the editor activated in place of a focused leftover tab this selection just closed; {@link capturePresentationFocus} keeps that group's focus itself.
    * @returns
    * - `undefined` when a Study pane or a text editor has the focus, no tab is active, the active tab is a Study pane's, or the focused tab is one {@link capturePresentationFocus} refuses or handles (a preview, a captured source without a text editor, `activatedByClose`).
-   * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Called with `true` by {@link settleKeyboardAtPause}, it also gives the keyboard back from the file the editor's debugger opened at a pause, and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
+   * - Otherwise the function that gives the keyboard back once the panes are arranged, and answers whether it ran a focus command. Called with `true` by {@link returnsKeyboardToChatAtPause}, it gives the keyboard back at a pause without asking the editor where the focus is (the caller knows that the reader's pane just took it, or that the editor's debugger gave it to the paused file), and then only to the chat through {@link CURSOR_FOCUS_AGENT_COMMAND}: a tab of one of the main editor's groups gets nothing back at a pause, like a learner's file. A tab of one of the main editor's groups gets it through the editor's focus command for that group, while the tab is still the one its group shows. A tab of another editor part (Cursor's Agent chat), and the chat input that held the keyboard while the editor named a learner's file without an active text editor, get it through {@link CURSOR_FOCUS_AGENT_COMMAND} where the host registers it: the numbered focus command of such a group's column would open a new empty group in the main editor, so it is never run for it, and without the host's command the focus stays where the arrangement ended. The keyboard is given back only for a group no Study pane uses and while the focus is where the arrangement left it (a Codebook pane, the captured source, or the file's editor the measurement focused); in every other case the focus stays and nothing is guessed.
    * @example
    * ```ts
    * const returnForeignFocus = this.retainForeignTabFocus(undefined)
@@ -2470,7 +2470,7 @@ export class StudyWorkspace {
             ))) ||
         !(
           leftByMeasurement ||
-          (leftByPause && this.hasTextEditorAtPause()) ||
+          leftByPause ||
           this.app?.active ||
           this.contextPanel?.active ||
           (activeUri !== undefined &&
@@ -2530,18 +2530,6 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a text editor is the active one while a debug session is paused; asked by the function {@link retainForeignTabFocus} answers when {@link settleKeyboardAtPause} gives the keyboard back: the editor's debugger opens the paused file with the keyboard, in whichever group it chooses.
-   * @returns `true` while Run and Debug has a selected stack item and the editor names an active text editor.
-   * @example this.hasTextEditorAtPause() // => true right after the debugger opened "actions.ts" at a breakpoint
-   */
-  private hasTextEditorAtPause(): boolean {
-    return (
-      vscode.debug.activeStackItem !== undefined &&
-      vscode.window.activeTextEditor !== undefined
-    )
-  }
-
-  /**
    * Starts the record of the keyboard outside the text editors and the Study panes for the whole editor session; called once by {@link installReaders}.
    * The record must exist before a run pauses: the editor's debugger opens the paused file with the keyboard before any code of the reader runs for that pause.
    * @example this.watchKeyboardOutsideEditors()
@@ -2587,7 +2575,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the editor names a text editor or a Study pane as the active one; asked by {@link markKeyboardLeftForEditors}, {@link judgeKeyboardAtStackItemChange}, {@link returnsKeyboardToChatAtPause} and {@link close}.
+   * Says whether the editor names a text editor or a Study pane as the active one; asked by {@link markKeyboardLeftForEditors}, {@link judgeKeyboardAtStackItemChange} and {@link close}.
    * In Cursor's tab layout of the Agent chat that means the keyboard is there and not in the chat. In VS Code, and in Cursor while the chat is a pane of the secondary side bar, it is also what the editor reads while the chat, the terminal or a view has the keyboard.
    * @returns `true` when a text editor or one of the reader's two panes is active.
    * @example this.hasKeyboardInEditors() // => false while Cursor's chat tab has the keyboard
@@ -2646,21 +2634,26 @@ export class StudyWorkspace {
    */
   private async settleKeyboardAtPause(tookKeyboard: boolean): Promise<void> {
     if (!this.isPausedBesideLiveRun()) return
-    const chatHasKeyboard = await this.returnsKeyboardToChatAtPause()
-    if (tookKeyboard && !chatHasKeyboard) this.tellPaneTookPausedFocus()
+    const gaveBack = await this.returnsKeyboardToChatAtPause(tookKeyboard)
+    if (tookKeyboard && !gaveBack) this.tellPaneTookPausedFocus()
   }
 
   /**
    * Gives the keyboard back to the chat that had it just before a pause; the first step of {@link settleKeyboardAtPause}.
+   * The keyboard is taken from the reader's pane that just took it, which the reader knows without the editor's report (Cursor does not report every focus a pane takes beside its chat), or from the paused file the editor's debugger opened, which the editor names as the active text editor. In any other state the keyboard is not known to have left the chat, and nothing is run.
+   * @param tookKeyboard - Whether the reader's pane took the keyboard from the paused file just now.
    * @returns
-   * - `true` when the record of {@link sampleKeyboardOutsideEditors} holds a tab and no text editor or Study pane is active (an earlier step of this pause gave the keyboard back already), or the function {@link retainForeignTabFocus} answered ran the chat's focus command now.
-   * - `false` without a record, and when that function gave nothing back (the remembered tab is one of the main editor's, its group is gone or a Study pane's, the window lost the focus, or the host has no command for its chat).
-   * @example const chatHasKeyboard = await this.returnsKeyboardToChatAtPause()
+   * - `true` when the function {@link retainForeignTabFocus} answered ran the chat's focus command now.
+   * - `false` without a record of {@link sampleKeyboardOutsideEditors}, when no pane took the keyboard and no text editor is active (an earlier step of this pause gave the keyboard back already, or the learner chose the chat or a pane), and when that function gave nothing back (the remembered tab is one of the main editor's, its group is gone or a Study pane's, the window lost the focus, or the host has no command for its chat).
+   * @example const gaveBack = await this.returnsKeyboardToChatAtPause(true)
    */
-  private async returnsKeyboardToChatAtPause(): Promise<boolean> {
+  private async returnsKeyboardToChatAtPause(
+    tookKeyboard: boolean,
+  ): Promise<boolean> {
     const remembered = this.keyboardOutsideEditors
-    if (!remembered) return false
-    return !this.hasKeyboardInEditors() || remembered.giveBack(true)
+    if (!remembered || !(tookKeyboard || vscode.window.activeTextEditor))
+      return false
+    return remembered.giveBack(true)
   }
 
   /**

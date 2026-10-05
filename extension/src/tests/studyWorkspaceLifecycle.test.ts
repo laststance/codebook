@@ -1964,18 +1964,22 @@ test("Close Study Workspace made with the keyboard in the captured source leaves
 
 // Value: protects=the keyboard of a learner whose own file is the active editor when "Codebook: Close Study Workspace" runs: the active editor group has it once the panes' groups are closed, and the learner is told once in an editor session where it is; fails_when=Close runs its focus command only when a pane or the captured source was active, the editor rebuilds its grid as the closed tabs' groups leave, and the keyboard is on the page body until the learner clicks (Cursor 3.23.12, two of two takes), or the sentence comes at every Close; why_new=Cycle 0046 row 66 (native check (c) of row 1; this replaces the Cycle 0045 test "Close Study Workspace made with the keyboard in the learner's own file runs no focus command", whose rule left that keyboard on the page body); seam=the workspace harness's closeDisposedPanelTabsLater, loseKeyboardWhenGroupCloses, keyboardOnBody, command log and information messages
 test("Close Study Workspace made with the learner's own file active gives the active editor group the keyboard once the panes' groups closed, and says where it is once in an editor session", async () => {
-  // Arrange: the editor removes a group its last tab left and lets the keyboard fall to the page body when it does; the reader is open and the learner's file in the first group is the active editor.
+  // Arrange: the editor closes a disposed pane's tab 20 ms after the disposal, removes the group that tab left empty 57 ms after that, and lets the keyboard fall to the page body when a group goes; the reader is open and the learner's file in the first group is the active editor.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.closeDisposedPanelTabsLater()
+  harness.removeEmptiedGroupsLater()
   harness.loseKeyboardWhenGroupCloses()
   try {
     await harness.reader.open()
     const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const groupsBeforeClose = harness.groups.length
 
-    // Act: Close; then the Study workspace is opened and closed once more in the same editor session.
+    // Act: Close, and longer than the fake editor takes to remove an emptied group; then the Study workspace is opened and closed once more in the same editor session.
     await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
     const afterFirstClose = {
+      groups: harness.groups.length,
       keyboardOnBody: harness.keyboardOnBody(),
       lastCommand: harness.commands.at(-1),
       panels: harness.counts().panels,
@@ -1985,9 +1989,12 @@ test("Close Study Workspace made with the learner's own file active gives the ac
     await harness.reader.open()
     harness.focusMutableDraft('actions.ts', 1)
     await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
 
     // Assert
+    assert.equal(groupsBeforeClose, 3)
     assert.deepEqual(afterFirstClose, {
+      groups: 1,
       keyboardOnBody: false,
       lastCommand: 'workbench.action.focusActiveEditorGroup',
       panels: 0,
