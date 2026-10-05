@@ -122,19 +122,45 @@ async function check(page, options, collected) {
         )
         .join(','),
     )
-  /** Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure. */
+  /**
+   * Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure.
+   * The wait is bounded: a disclosure that does not toggle rejects after five seconds with a sentence that names it, which ends the flow as one failed case, instead of holding the flow until the limit of its one browser call.
+   */
   const toggleByKeyboard = async (disclosureId, key = 'Enter') => {
+    const toggleWaitMs = 5_000
     await page.evaluate((id) => {
-      window.disclosureToggled = new Promise((resolve) =>
-        document
-          .getElementById(id)
-          .addEventListener('toggle', () => resolve(), { once: true }),
+      window.disclosureToggled = false
+      document.getElementById(id).addEventListener(
+        'toggle',
+        () => {
+          window.disclosureToggled = true
+        },
+        { once: true },
       )
     }, disclosureId)
     await page.locator(`#${disclosureId} > summary`).focus()
     await page.keyboard.press(key)
-    await page.evaluate(() => window.disclosureToggled)
+    await page
+      .waitForFunction(() => window.disclosureToggled, undefined, {
+        timeout: toggleWaitMs,
+      })
+      .catch((error) => {
+        throw new Error(
+          `The disclosure #${disclosureId} did not toggle within ${toggleWaitMs} ms of ${key} on its summary (${error.message})`,
+        )
+      })
   }
+  /** Names the element that holds the keyboard focus: `body`, else its id, its action, or its tag with its text. */
+  const focusName = () =>
+    page.evaluate(() => {
+      const focused = document.activeElement
+      if (focused === document.body) return 'body'
+      return (
+        focused.id ||
+        focused.dataset.action ||
+        `${focused.tagName.toLowerCase()}: ${focused.textContent.trim()}`
+      )
+    })
   /** Reads one status region of the pane: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor has the `hidden` attribute or `display:none`, and when a closed disclosure holds it; a region that is rendered exists for assistive technology before its first text. */
   const statusRegion = (id) =>
     page.evaluate((id) => {
@@ -2150,6 +2176,23 @@ async function check(page, options, collected) {
           !(await page.locator('#learning-material').isVisible()) &&
           (await page.locator('#learning-unavailable').isVisible()),
       })
+      // Arrange: the saved sequence again, with the keyboard focus on a step's inspection control (row 85).
+      await publish(learning)
+      await page.locator('[data-summary-step="derive"]').focus()
+      const focusOnSequenceStep = await page.evaluate(
+        () => document.activeElement.dataset.summaryStep,
+      )
+      // Act: the reader shows a history without learning material, so the sequence leaves under the focus.
+      await publish({ ...replay, revision: revisionAt(10) })
+      const focusAfterSequenceLeft = await focusName()
+      // Assert
+      cases.push({
+        name: 'in the Study pane, when the learning material leaves while a step’s inspection control holds the keyboard focus, the focus goes to the selected content tab, not to the document body',
+        actual: { focusOnSequenceStep, focusAfterSequenceLeft },
+        passed:
+          focusOnSequenceStep === 'derive' &&
+          focusAfterSequenceLeft === 'recording-tab',
+      })
 
       // Arrange: one replay moment without its native values and the same moment with them (SD-8, T-3, SD-15).
       const withoutValues = {
@@ -3054,6 +3097,625 @@ async function check(page, options, collected) {
       })
     }
   }
+  // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.
+  /** Loads a fresh document of one pane at a size and waits until it is ready for its first Study message; `html` is the pane's document unless a case gives its own. */
+  const openPane = async (kind, size, html = options.html[kind]) => {
+    await page.setViewportSize(size)
+    await page.goto(options.url)
+    await page.evaluate(() => {
+      window.sent = []
+      window.acquireVsCodeApi = () => ({
+        getState: () => undefined,
+        setState() {},
+        postMessage: (message) => window.sent.push(message),
+      })
+    })
+    await page.setContent(html)
+    await page.waitForFunction(() =>
+      window.sent.some((message) => message.type === 'ready'),
+    )
+  }
+  /** Opens the disclosures a case needs by script, as an arrangement: the pane then closes or hides them itself. */
+  const openDisclosures = (ids) =>
+    page.evaluate((ids) => {
+      for (const id of ids) document.getElementById(id).open = true
+    }, ids)
+  /**
+   * Runs one situation twice from the same start: with the focus on a control of the part that leaves, and with it on a control that stays. `between` are Study messages the host publishes before the part leaves, as while it works on a pressed control.
+   * @returns The focus before and after the part left, and the focus of the second run after it, which must be the staying control.
+   */
+  const focusWhenPartLeaves = async ({
+    before,
+    opened = [],
+    leaving,
+    staying,
+    between = [],
+    after,
+  }) => {
+    const run = async (selector) => {
+      await publish(before)
+      await openDisclosures(opened)
+      await page.locator(selector).first().focus()
+      const held = await focusName()
+      for (const message of between) await publish(message)
+      await publish(after)
+      return { held, then: await focusName() }
+    }
+    return { leaving: await run(leaving), staying: await run(staying) }
+  }
+  const storageError = 'Error: History not saved: disk is read-only',
+    liveRun = {
+      ...options.message,
+      liveState: 'running',
+      liveTitle: 'Repository operation',
+    },
+    stoppedRun = { ...liveRun, liveState: 'stopped' },
+    openRecording = {
+      ...options.message,
+      contentTab: 'recording',
+      recording: {
+        revision: revisionAt(1),
+        mode: 'paused',
+        readiness: 'ready',
+        cleared: false,
+        presentedMs: 2000,
+        range: { startMs: 0, endMs: 5000, endKnown: true },
+        recordingStatus: 'finalized',
+      },
+    },
+    overview = { ...options.message, contentTab: 'overview' },
+    savedOne = {
+      id: 'window_run-focus01',
+      savedAt: '2026-09-20T00:00:10.000Z',
+      profile: 'repository-browser',
+      format: 'v3',
+      outcome: 'demonstrated',
+      metadata: 'validated',
+    }
+  const helpButtonName = 'button: Keyboard shortcuts ?'
+  /**
+   * Runs one situation in which the host disables a control while it works and then offers it again, twice from the same start: with the focus left where the press put it, and with the learner moving the focus to another control while the first is disabled.
+   * @returns The focus on the control, while it is disabled and when it is offered again; and for the second run the focus after the control is offered again, which must still be the other control.
+   */
+  const focusWhenControlReturns = async ({
+    before,
+    opened = [],
+    control,
+    working,
+    after,
+    other,
+  }) => {
+    const press = async () => {
+      await publish(before)
+      await openDisclosures(opened)
+      await page.locator(control).first().focus()
+      const held = await focusName()
+      await publish(working)
+      return { held, whileDisabled: await focusName() }
+    }
+    const kept = await press()
+    await publish(after)
+    kept.offeredAgain = await focusName()
+    await press()
+    await page.locator(other).first().focus()
+    await publish(after)
+    return { kept, movedOn: await focusName() }
+  }
+  const recordedStops = [1000, 3000, 4000].map((elapsedMs, index) => ({
+      id: `recorded-stop-${index}`,
+      itemId: options.message.model.selection.itemId,
+      title: 'Recorded stop',
+      elapsedMs,
+      at: '2026-09-27T00:00:00.000Z',
+    })),
+    /** A recording with three recorded stops, shown at one position: Next recorded stop can be used at 2 s and at 3 s. */
+    recordingAt = (presentedMs, extra = {}) => ({
+      ...openRecording,
+      moments: recordedStops,
+      ...extra,
+      recording: { ...openRecording.recording, presentedMs },
+    }),
+    /** The same recording while a requested moment is not shown yet, which disables the recorded steps. */
+    recordingPendingAt = (presentedMs, extra = {}) => {
+      const shown = recordingAt(presentedMs, extra)
+      return {
+        ...shown,
+        recording: { ...shown.recording, readiness: 'loading', cleared: true },
+      }
+    }
+  const returningSituations = (paneName, otherBesideStop, extra = {}) => [
+    {
+      name: `in the ${paneName}, after Next recorded stop is pressed by keyboard and the requested moment is shown, the keyboard focus is on Next recorded stop again, so a second press steps on; a learner who moved the focus meanwhile keeps it`,
+      before: recordingAt(2000, extra),
+      control: '#next-moment',
+      working: recordingPendingAt(2000, extra),
+      after: recordingAt(3000, extra),
+      other: '#playback-toggle',
+      expected: ['next-moment', 'playback-toggle'],
+    },
+    {
+      name: `in the ${paneName}, when Stop is disabled while the host works and offered again because the run goes on, the keyboard focus is on Stop again; a learner who moved the focus meanwhile keeps it`,
+      before: { ...liveRun, ...extra },
+      control: '[data-action="stop"]',
+      working: { ...liveRun, ...extra, busy: true },
+      after: { ...liveRun, ...extra },
+      other: otherBesideStop.selector,
+      expected: ['stop', otherBesideStop.name],
+    },
+  ]
+  /** Adds one case a situation of {@link focusWhenControlReturns}. */
+  const addReturningCases = async (situations) => {
+    for (const situation of situations) {
+      const actual = await focusWhenControlReturns(situation)
+      cases.push({
+        name: situation.name,
+        actual,
+        passed:
+          JSON.stringify(actual) ===
+          JSON.stringify({
+            kept: {
+              held: situation.expected[0],
+              whileDisabled: 'body',
+              offeredAgain: situation.expected[0],
+            },
+            movedOn: situation.expected[1],
+          }),
+      })
+    }
+  }
+
+  // Arrange: the Study pane.
+  await openPane('context', { width: 600, height: 800 })
+  await publish(options.message)
+  const studyPaneSituations = [
+    {
+      name: 'in the Study pane, when the run stops while Stop holds the keyboard focus, the live strip leaves and the focus goes to the selected content tab, not to the document body; a focus outside the strip stays where it was',
+      before: liveRun,
+      leaving: '[data-action="stop"]',
+      staying: '[data-action="outline"]',
+      after: stoppedRun,
+      expected: ['stop', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Stop is pressed, the host first reports that it is working, which disables Stop under the focus, and then that the run stopped: the focus goes to the selected content tab, not to the document body; a focus outside the strip stays where it was',
+      before: liveRun,
+      leaving: '[data-action="stop"]',
+      staying: '[data-action="outline"]',
+      between: [{ ...liveRun, busy: true }],
+      after: stoppedRun,
+      expected: ['stop', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the bottom panel takes the transport over while Play holds the keyboard focus, the focus goes to the selected content tab, not to the document body; a focus outside the transport stays where it was',
+      before: openRecording,
+      leaving: '#playback-toggle',
+      staying: '[data-action="outline"]',
+      after: { ...openRecording, playbackPanelVisible: true },
+      expected: ['playback-toggle', 'recording-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the recording is left while Play holds the keyboard focus, the transport leaves and the focus goes to the selected content tab, not to the document body; a focus outside the transport stays where it was',
+      before: openRecording,
+      leaving: '#playback-toggle',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['playback-toggle', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Retry storage / refresh leaves after its press because the error is gone, the focus goes to the selected content tab, not to the document body; a focus on another control stays where it was',
+      before: { ...options.message, errors: [storageError] },
+      leaving: '#study-content > [data-action="retry"]',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['retry', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Save preference leaves after its press because the preference is saved, the focus goes to the summary of View options, which holds the button, not to the document body; a focus on another control stays where it was',
+      before: {
+        ...overview,
+        presentation: openPresentation({ preference: { status: 'failed' } }),
+      },
+      opened: ['reader-options', 'presentation-options'],
+      leaving: '[data-presentation="save-preference"]',
+      staying: '[data-action="outline"]',
+      after: {
+        ...overview,
+        presentation: openPresentation({ preference: { status: 'saved' } }),
+      },
+      expected: ['button: Save preference', 'summary: View options', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the Recording tab closes Study view and pane controls while a control inside holds the keyboard focus, the focus goes to that disclosure’s summary, not to the document body; a focus outside the disclosure stays where it was',
+      before: overview,
+      opened: ['reader-options'],
+      leaving: '[data-action="read-app"]',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: [
+        'read-app',
+        'summary: Study view and pane controls',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when Recording error details leave because the replay no longer fails while their summary holds the keyboard focus, the focus goes to the summary of Playback details, which holds them, not to the document body; a focus outside stays where it was',
+      before: {
+        ...openRecording,
+        recording: {
+          ...openRecording.recording,
+          readiness: 'failed',
+          reason: 'A recorded frame is missing.',
+        },
+      },
+      opened: ['playback-options', 'playback-diagnostics'],
+      leaving: '#playback-diagnostics > summary',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: [
+        'summary: Recording error details',
+        'summary: Playback details',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when Open article leaves after its press because the article is open, the focus goes to the selected content tab, not to the document body; a focus on another control stays where it was',
+      before: { ...options.message, repositoryArticleAvailable: true },
+      leaving: '[data-action="open-article"]',
+      staying: '[data-action="outline"]',
+      after: {
+        ...options.message,
+        repositoryArticleAvailable: true,
+        repositoryReturnAvailable: true,
+      },
+      expected: ['open-article', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the selected observation starts to load while Open current file holds the keyboard focus, the observation’s part leaves and the focus goes to the selected content tab, not to the document body; a focus outside that part stays where it was',
+      before: options.message,
+      leaving: '[data-action="current-file"]',
+      staying: '[data-action="outline"]',
+      after: { ...options.message, loading: true },
+      expected: ['current-file', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when the host changes the content tab while Read the linked source of the Overview holds the keyboard focus, the Overview leaves and the focus goes to the selected content tab, not to the document body; a focus outside the Overview stays where it was',
+      before: overview,
+      leaving: '#overview [data-action="source"]',
+      staying: '[data-action="outline"]',
+      after: { ...options.message, contentTab: 'live' },
+      expected: ['source', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when a recording opens while the summary of Study controls holds the keyboard focus, Study controls leave and the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: options.message,
+      leaving: '#study-controls > summary',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: ['summary: Study controls', 'recording-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when a study is no longer shown while the summary of Evidence status holds the keyboard focus, Evidence status leaves and the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: {
+        ...options.message,
+        study: {
+          terminal: true,
+          studyOutcome: 'demonstrated',
+          historyOutcome: 'saved',
+          finalOutcome: 'demonstrated',
+          recordingSave: { status: 'finalized', contextStatus: 'saved' },
+        },
+      },
+      leaving: '#evidence-details > summary',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['evidence-summary', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Return to Wiki leaves after its press because the reader is back in the Wiki, the focus goes to the selected content tab, not to the document body; a focus on another control stays where it was',
+      before: { ...options.message, repositoryReturnAvailable: true },
+      leaving: '[data-action="return-wiki"]',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: ['return-wiki', 'live-tab', 'outline'],
+    },
+    {
+      name: 'in the Study pane, when Later annotations leave because the recorded time has none while their summary holds the keyboard focus, the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: {
+        ...openRecording,
+        recording: {
+          ...openRecording.recording,
+          laterInterpretations: [
+            { text: 'A revision saved later.', availableMs: 7000 },
+          ],
+        },
+      },
+      leaving: '#later-annotations > summary',
+      staying: '[data-action="outline"]',
+      after: openRecording,
+      expected: [
+        'summary: Later annotations — not available at this recorded time',
+        'recording-tab',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when the observed moment whose control holds the keyboard focus is no longer listed, the focus goes to the selected content tab, not to the document body; a focus on a control that stays is left alone',
+      before: {
+        ...options.message,
+        moments: [
+          {
+            id: 'observed-1',
+            itemId: 'no-item-of-the-next-list',
+            title: 'Observed stop',
+            at: '2026-09-27T00:00:00.000Z',
+          },
+        ],
+      },
+      leaving: '#moments button',
+      staying: '[data-action="outline"]',
+      after: options.message,
+      expected: [
+        `button: Observed stop · ${new Date('2026-09-27T00:00:00.000Z').toLocaleTimeString()}`,
+        'live-tab',
+        'outline',
+      ],
+    },
+    {
+      name: 'in the Study pane, when the last saved study leaves the library by another pane’s removal while Delete saved study… holds the keyboard focus, the button leaves and the focus goes to the selected content tab, not to the document body; a focus on the Saved studies list stays where it was',
+      before: {
+        ...options.message,
+        studies: [savedOne],
+        model: {
+          ...options.message.model,
+          selection: {
+            ...options.message.model.selection,
+            studyId: savedOne.id,
+          },
+        },
+      },
+      leaving: '#delete-study',
+      staying: '#studies',
+      after: options.message,
+      expected: ['delete-study', 'live-tab', 'studies'],
+    },
+  ]
+  // Act
+  for (const situation of studyPaneSituations)
+    situation.actual = await focusWhenPartLeaves(situation)
+  // Assert
+  for (const { name, actual, expected } of studyPaneSituations)
+    cases.push({
+      name,
+      actual,
+      passed:
+        JSON.stringify(actual) ===
+        JSON.stringify({
+          leaving: { held: expected[0], then: expected[1] },
+          staying: { held: expected[2], then: expected[2] },
+        }),
+    })
+
+  // Arrange: controls of the Study pane the host disables while it works on their press (found with row 85): the browser hands the focus of a disabled control to the document body.
+  await addReturningCases([
+    ...returningSituations('Study pane', {
+      selector: '[data-action="outline"]',
+      name: 'outline',
+    }),
+    {
+      name: 'in the Study pane, when Restore is disabled while the presentation changes and offered again, the keyboard focus is on Restore again; a learner who moved the focus meanwhile keeps it',
+      before: { ...overview, presentation: openPresentation({}) },
+      opened: ['reader-options'],
+      control: '[data-presentation="restore"]',
+      working: {
+        ...overview,
+        presentation: openPresentation({ state: 'applying' }),
+      },
+      after: { ...overview, presentation: openPresentation({}) },
+      other: '[data-action="read-app"]',
+      expected: ['button: Restore', 'read-app'],
+    },
+  ])
+  // Arrange: Play holds the focus and the learner leaves the pane, so the document has no focus when the next message arrives and nothing is settled for it.
+  await publish(recordingAt(2000))
+  await page.locator('#playback-toggle').focus()
+  await page.evaluate(() => {
+    document.hasFocus = () => false
+  })
+  await publish(recordingAt(2000))
+  // Act: the learner comes back with a click on a place that takes no focus, which takes it off Play; the pane gets its focus event.
+  await page.evaluate(() => {
+    document.activeElement.blur()
+    delete document.hasFocus
+    window.dispatchEvent(new Event('focus'))
+  })
+  const focusAfterLearnerLeftControl = await focusName()
+  // Assert
+  cases.push({
+    name: 'a focus the learner took off a control that is shown and can be used is not put back at the pane’s next focus event',
+    actual: focusAfterLearnerLeftControl,
+    passed: focusAfterLearnerLeftControl === 'body',
+  })
+
+  // Arrange: the bottom panel's pane, which has no content tabs: a focus that loses its control goes to Play while the transport is shown, else to the first control the pane shows.
+  await openPane('moments', { width: 1200, height: 400 })
+  await publish(options.message)
+  const panelRecording = {
+      ...openRecording,
+      playbackPanelVisible: true,
+      errors: [storageError],
+    },
+    panelWithoutRecording = {
+      ...options.message,
+      errors: [storageError],
+      studies: [savedOne],
+      moments: [
+        {
+          id: 'observed-1',
+          itemId: options.message.model.selection.itemId,
+          title: 'Observed stop',
+          at: '2026-09-27T00:00:00.000Z',
+        },
+      ],
+    },
+    mainRetry = '#study-content > [data-action="retry"]'
+  const bottomPanelSituations = [
+    {
+      name: 'in the bottom panel, when the run stops while Stop holds the keyboard focus, the live strip leaves and the focus goes to the first control the pane shows, not to the document body; a focus outside the strip stays where it was',
+      before: { ...liveRun, studies: [savedOne] },
+      leaving: '[data-action="stop"]',
+      staying: '#studies',
+      after: { ...stoppedRun, studies: [savedOne] },
+      expected: ['stop', helpButtonName, 'studies'],
+    },
+    {
+      name: 'in the bottom panel, when Stop is pressed, the host first reports that it is working, which disables Stop under the focus, and then that the run stopped: the focus goes to the first control the pane shows, not to the document body; a focus outside the strip stays where it was',
+      before: { ...liveRun, studies: [savedOne] },
+      leaving: '[data-action="stop"]',
+      staying: '#studies',
+      between: [{ ...liveRun, studies: [savedOne], busy: true }],
+      after: { ...stoppedRun, studies: [savedOne] },
+      expected: ['stop', helpButtonName, 'studies'],
+    },
+    {
+      name: 'in the bottom panel, when the recording is left while Play holds the keyboard focus, the transport leaves and the focus goes to the first control the pane shows, not to the document body; a focus outside the transport stays where it was',
+      before: panelRecording,
+      leaving: '#playback-toggle',
+      staying: mainRetry,
+      after: panelWithoutRecording,
+      expected: ['playback-toggle', helpButtonName, 'retry'],
+    },
+    {
+      name: 'in the bottom panel, when a recording opens while the Saved studies list holds the keyboard focus, Saved studies leave and the focus goes to Play, not to the document body; a focus on a control that stays is left alone',
+      before: panelWithoutRecording,
+      leaving: '#studies',
+      staying: mainRetry,
+      after: { ...panelRecording, studies: [savedOne] },
+      expected: ['studies', 'playback-toggle', 'retry'],
+    },
+    {
+      name: 'in the bottom panel, when a recording opens while an observed moment holds the keyboard focus, Observed moments leave and the focus goes to Play, not to the document body; a focus on a control that stays is left alone',
+      before: panelWithoutRecording,
+      leaving: '#moments button',
+      staying: mainRetry,
+      after: { ...panelRecording, moments: panelWithoutRecording.moments },
+      expected: [
+        `button: Observed stop · ${new Date('2026-09-27T00:00:00.000Z').toLocaleTimeString()}`,
+        'playback-toggle',
+        'retry',
+      ],
+    },
+    {
+      name: 'in the bottom panel, when a recording opens while Keyboard shortcuts of the heading holds the keyboard focus, the heading leaves and the focus goes to Play, not to the document body; a focus on a control that stays is left alone',
+      before: panelWithoutRecording,
+      leaving: '.learning-header [data-shortcut-help]',
+      staying: mainRetry,
+      after: panelRecording,
+      expected: [helpButtonName, 'playback-toggle', 'retry'],
+    },
+    {
+      name: 'in the bottom panel, when Retry storage / refresh leaves after its press because the error is gone, the focus goes to the first control the pane shows, not to the document body; a focus on another control stays where it was',
+      before: panelWithoutRecording,
+      leaving: mainRetry,
+      staying: '#studies',
+      after: { ...panelWithoutRecording, errors: [] },
+      expected: ['retry', helpButtonName, 'studies'],
+    },
+  ]
+  // Act
+  for (const situation of bottomPanelSituations)
+    situation.actual = await focusWhenPartLeaves(situation)
+  // Assert
+  for (const { name, actual, expected } of bottomPanelSituations)
+    cases.push({
+      name,
+      actual,
+      passed:
+        JSON.stringify(actual) ===
+        JSON.stringify({
+          leaving: { held: expected[0], then: expected[1] },
+          staying: { held: expected[2], then: expected[2] },
+        }),
+    })
+
+  await addReturningCases(
+    returningSituations(
+      'bottom panel',
+      { selector: '#studies', name: 'studies' },
+      { playbackPanelVisible: true },
+    ),
+  )
+
+  // Arrange: a page whose own content carries the two ids the Keyboard shortcuts list names its dialog and its tooltip by, as a Wiki page published before the publisher kept such ids apart can (row 101); the Study pane's document stands in for it, with two such elements ahead of the pane.
+  /** Reads what Chrome's accessibility tree holds for one element: its role, its name and its description. */
+  const accessibleNode = async (selector) => {
+    const accessibility = await page.context().newCDPSession(page)
+    const { root } = await accessibility.send('DOM.getDocument')
+    const { nodeId } = await accessibility.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector,
+    })
+    const { nodes } = await accessibility.send(
+      'Accessibility.getPartialAXTree',
+      { nodeId, fetchRelatives: false },
+    )
+    await accessibility.detach()
+    return {
+      role: nodes[0]?.role?.value,
+      name: nodes[0]?.name?.value,
+      description: nodes[0]?.description?.value,
+    }
+  }
+  /** Puts the focus on the heading's Keyboard shortcuts button, which shows the tooltip, opens the dialog with it, and reads how both are named: the ids they refer to and what Chrome's accessibility tree gives. */
+  const keyboardHelpNaming = async () => {
+    const helpSelector = '.learning-header [data-shortcut-help]'
+    await page.locator(helpSelector).focus()
+    const button = await accessibleNode(helpSelector)
+    const describedBy = await page
+      .locator(helpSelector)
+      .getAttribute('aria-describedby')
+    await page.locator(helpSelector).press('Enter')
+    const dialog = await accessibleNode('.shortcut-dialog')
+    const labelledBy = await page
+      .locator('.shortcut-dialog')
+      .getAttribute('aria-labelledby')
+    await page.keyboard.press('Escape')
+    return { button, describedBy, dialog, labelledBy }
+  }
+  await openPane(
+    'context',
+    { width: 600, height: 800 },
+    options.html.context.replace(
+      '<p id="bootstrap-status"',
+      '<h2 id="shortcut-title">A heading of the page</h2><p id="shortcut-tooltip">A paragraph of the page</p><p id="bootstrap-status"',
+    ),
+  )
+  await publish(options.message)
+  // Act: the same reading on that page and on the Study pane as it is.
+  const namingBesideThePagesIds = await keyboardHelpNaming()
+  await openPane('context', { width: 600, height: 800 })
+  await publish(options.message)
+  const namingInTheStudyPane = await keyboardHelpNaming()
+  // Assert
+  const helpNaming = (describedBy, labelledBy) => ({
+    button: {
+      role: 'button',
+      name: 'Keyboard shortcuts',
+      description: 'Keyboard shortcuts — ? (Codebook, outside text inputs)',
+    },
+    describedBy,
+    dialog: { role: 'dialog', name: 'Keyboard shortcuts' },
+    labelledBy,
+  })
+  cases.push({
+    name: 'on a page whose content carries the ids shortcut-title and shortcut-tooltip, Chrome names the Keyboard shortcuts dialog Keyboard shortcuts and describes the focused Keyboard shortcuts button by the tooltip, not by the page’s elements; the Study pane keeps both ids as they were',
+    actual: { namingBesideThePagesIds, namingInTheStudyPane },
+    passed:
+      JSON.stringify(namingBesideThePagesIds) ===
+        JSON.stringify(helpNaming('shortcut-tooltip-2', 'shortcut-title-2')) &&
+      JSON.stringify(namingInTheStudyPane) ===
+        JSON.stringify(helpNaming('shortcut-tooltip', 'shortcut-title')),
+  })
+
   // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
   await page.setViewportSize({ width: 420, height: 720 })
   await page.goto(options.url)
