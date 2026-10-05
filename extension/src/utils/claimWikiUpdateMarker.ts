@@ -39,7 +39,7 @@ import { systemErrorCode } from './systemErrorCode'
 import { withoutBootTime } from './withoutBootTime'
 
 /** A marker that is in the way at the moment another window removes or replaces it under its claim: it is no run that holds the Wiki, and this window may not remove it either. @example const inChange: WikiUpdateMarkerInChange = { isMarkerInChange: true } */
-export type WikiUpdateMarkerInChange = { isMarkerInChange: true }
+type WikiUpdateMarkerInChange = { isMarkerInChange: true }
 
 /** What holds the Wiki against a start: another window's running update, a marker another window is writing at this moment, or a marker another window is removing or replacing at this moment. */
 type WikiUpdateHolder =
