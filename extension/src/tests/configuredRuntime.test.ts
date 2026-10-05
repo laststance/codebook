@@ -2888,21 +2888,18 @@ test('a stop declared with a column on a blank line is admitted and requested at
   assert.equal(JSON.stringify(facts.armed), '{"line":3,"column":1}')
 })
 
-// Value: protects=the first admitted run of an agent that declared a stop on the line that declares the binding it requires (the Cursor agent of N14-d: app/ui/login-form.tsx 21:3 on `const [state, dispatch] = useActionState(…)` with value:state); fails_when=the stop is requested on its declaring line, where the debugger pauses before the binding has a value, and the run ends at that stop; why_new=Cycle 0045 N14d-15 (DX-1 a): cause 11 was closed by texts only and ended two of the three Cursor submissions; seam=the runtime harness's adapter, which binds a breakpoint where it is requested
+// Value: protects=the first admitted run of an agent that declared a stop on the line that declares the binding it requires (the Cursor agent of N14-d: app/ui/login-form.tsx 21:3 on `const [state, dispatch] = useActionState(…)` with value:state); fails_when=the stop is requested on its declaring line, where the debugger pauses before the binding has a value, and the run ends at that stop; why_new=Cycle 0045 N14d-15 (DX-1 a): cause 11 was closed by texts only and ended two of the three Cursor submissions; seam=the runtime harness's adapter, which verifies a breakpoint on lines 1 and 2 and pauses where it was requested
 test('a stop that requires a value its own line declares is requested on the first mapped line after it and reaches its pause with the value', async (context) => {
   // Arrange: line 1 declares nextTheme, which the stop requires; line 2 is the next mapped line, and the citation covers lines 1 to 2.
-  const { run, breakpoints } = await configuredRuntimeHarness(
-    context,
-    undefined,
-    [],
-    {
+  const { run, breakpoints, verifyBreakpointsOnlyOnLines } =
+    await configuredRuntimeHarness(context, undefined, [], {
       mappings: 'AAAA;AACA',
       fixture: {
         source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\n',
         citationEndLine: 2,
       },
-    },
-  )
+    })
+  verifyBreakpointsOnlyOnLines([1, 2])
   // Act
   await run.prepare()
   const requested = breakpoints.find(
@@ -2929,19 +2926,25 @@ test('a stop that requires a value its own line declares is requested on the fir
     boundLine: 2,
     mappedLinesBetween: 0,
   })
-  assert.deepEqual(run.view().failures, [])
+  assert.equal(run.view().failures.length, 0)
 })
 
-// Value: protects=the evidence and the agent's inspection saying that Codebook moved a stop off the line that declares the binding it requires, and where to; fails_when=the journal has no entry naming the declared place, the armed place and the bindings, or the inspection names no armed place or says the debugger moved the stop; why_new=Cycle 0045 N14d-15 (DX-1 a); seam=the runtime harness's adapter, which binds a breakpoint where it is requested
+// Value: protects=the evidence and the agent's inspection saying that Codebook moved a stop off the line that declares the binding it requires, and where to; fails_when=the journal has no entry naming the declared place, the armed place and the bindings, or the inspection names no armed place or says the debugger moved the stop; why_new=Cycle 0045 N14d-15 (DX-1 a); seam=the runtime harness's adapter, which verifies a breakpoint on lines 1 and 2 and pauses where it was requested
 test('a stop moved off the line that declares its required binding is journaled with its declared place, its armed place and the bindings, and its inspection names both places', async (context) => {
   // Arrange: line 1 declares nextTheme, which the stop requires; line 2 is the next mapped line.
-  const { run } = await configuredRuntimeHarness(context, undefined, [], {
-    mappings: 'AAAA;AACA',
-    fixture: {
-      source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\n',
-      citationEndLine: 2,
+  const { run, verifyBreakpointsOnlyOnLines } = await configuredRuntimeHarness(
+    context,
+    undefined,
+    [],
+    {
+      mappings: 'AAAA;AACA',
+      fixture: {
+        source: 'const nextTheme = "dark";\nsetTheme(nextTheme);\n',
+        citationEndLine: 2,
+      },
     },
-  })
+  )
+  verifyBreakpointsOnlyOnLines([1, 2])
   await run.prepare()
   run.action('one', 'repository-click')
   await waitUntil(() => {
