@@ -55,7 +55,10 @@ import {
   answerDeepWikiQuestionWithPrompt,
 } from './utils/answerDeepWikiQuestion'
 import { buildWikiUpdatePrompt } from './utils/buildWikiUpdatePrompt'
-import { claimWikiUpdateMarker } from './utils/claimWikiUpdateMarker'
+import {
+  claimWikiUpdateMarker,
+  type WikiUpdateMarkerClaim,
+} from './utils/claimWikiUpdateMarker'
 import {
   classifyWikiUpdateEnd,
   type WikiUpdateEndFacts,
@@ -997,11 +1000,13 @@ export function activate(
           )
         })
     }
-    /** The sentence for another window's running update; nothing overrides it. */
+    /** The sentence for another window's running update, or for the marker another window is writing at this moment because its update begins; nothing overrides it. */
     const describeOtherWindow = (
-      marker: Awaited<ReturnType<typeof readLiveWikiUpdateMarker>> & object,
+      holder: Extract<WikiUpdateMarkerClaim, { heldBy: unknown }>['heldBy'],
     ): string =>
-      `Another editor window is updating this Wiki (${marker.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(marker.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
+      'beingWrittenSinceMs' in holder
+        ? 'Another editor window is starting an update of this Wiki. Wait a moment and try again.'
+        : `Another editor window is updating this Wiki (${holder.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(holder.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
     for (const isLastAttempt of [false, true]) {
       // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
       const startBlock = await findWikiUpdateStartBlock(outputDirectory)
@@ -1044,10 +1049,15 @@ export function activate(
         return undefined
       }
       // Each window holds its own run state; the marker is the trace of another window's run before its agent has staged anything.
-      const otherWindow = await readLiveWikiUpdateMarker(
+      const markerLook = await readLiveWikiUpdateMarker(
         outputDirectory,
         wikiWindowId,
       )
+      // A marker another window is writing at this moment is the beginning of its run.
+      if (markerLook.kind === 'being-written')
+        return refuse(describeOtherWindow(markerLook.heldBy))
+      const otherWindow =
+        markerLook.kind === 'live' ? markerLook.heldBy : undefined
       // A run that is active in another window refuses the start, and nothing overrides it.
       if (otherWindow && otherWindow.watchEndedAtMs === undefined)
         return refuse(describeOtherWindow(otherWindow))

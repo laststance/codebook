@@ -1594,8 +1594,8 @@ test('a second window’s Update is refused while the first window’s run has s
 })
 
 // Value: protects=the Update button after an editor was killed during an update and its process id went to another process; fails_when=the start check takes the leftover marker for another window's running update for as long as that id answers, and refuses every press with a sentence that offers no "Update anyway"; why_new=Cycle 0045 local review wiki-1 #2; seam=none
-test('a marker a killed editor left seventeen minutes ago does not refuse the update, although a process has its id', async () => {
-  // Arrange: the marker of another window's run; its recorded process is this test process, which runs.
+test('a marker a killed editor of 0.2.29.0 left twenty-two minutes ago does not refuse the update, although a process has its id', async () => {
+  // Arrange: the marker of another window's run as 0.2.29.0 writes it; its recorded process is this test process, which runs. A VS Code run's marker counts for 21 minutes and 30 s.
   const wiki = await openWikiWindow()
   await writeFile(
     `${wiki.outputDirectory}.update-run.json`,
@@ -1603,7 +1603,7 @@ test('a marker a killed editor left seventeen minutes ago does not refuse the up
       pid: process.pid,
       windowId: 'a-window-that-was-killed',
       host: 'vscode',
-      startedAtMs: Date.now() - 17 * 60_000,
+      startedAtMs: Date.now() - 22 * 60_000,
     }),
   )
   try {
@@ -1614,6 +1614,67 @@ test('a marker a killed editor left seventeen minutes ago does not refuse the up
     assert.equal(wiki.status().state, 'running')
     assert.equal(wiki.chatRequests.length, 1)
     assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner who presses Update at the moment another window (one of 0.2.29.0, or one on a file system without hard links) has created its marker and not yet written it; fails_when=the start check takes the marker file without content for nobody's and starts beside the other window's update (row 16), or refuses with a sentence that names an editor and a start time it cannot know; why_new=Cycle 0046 rows 9 and 16 (ER-11); seam=the marker file's modification time
+test('an Update is refused with the sentence of a starting update while another window’s marker file has no content yet, and the file stays', async () => {
+  // Arrange: a marker file another window has created and not yet written. Its time lies a little ahead, so the look falls into the 2 s a write may take on a machine of any speed.
+  const wiki = await openWikiWindow()
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  await writeFile(markerPath, '')
+  const aMomentAhead = new Date(Date.now() + 30_000)
+  await utimes(markerPath, aMomentAhead, aMomentAhead)
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const refused = wiki.status()
+    assert.equal(refused.state, 'failed')
+    assert.equal(
+      refused.state === 'failed' ? refused.reason : '',
+      'Another editor window is starting an update of this Wiki. Wait a moment and try again.',
+    )
+    assert.deepEqual(wiki.chatRequests, [])
+    assert.equal(await readFile(markerPath, 'utf8'), '')
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner who presses Update at the moment another window begins its update, while this window still has a leftover of its own (a stopped watch); fails_when=the marker another window is writing is weighed after the leftovers, so the refusal names the leftover and offers "Update anyway", which a learner takes to start beside the other window's update; why_new=Cycle 0046 rows 9 and 16 (ER-11): the look names a marker being written since this cycle; seam=the marker file's modification time
+test('a marker file another window is writing refuses an Update before this window’s own stopped watch is weighed, so Update anyway is not offered', async () => {
+  // Arrange: this window stopped its watch, which alone would refuse the next press with an override; then another window creates its marker and has not yet written it.
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    chooseAction: (_message, actions) =>
+      actions.find((action) => action === 'Update anyway'),
+  })
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    await writeFile(markerPath, '')
+    const aMomentAhead = new Date(Date.now() + 30_000)
+    await utimes(markerPath, aMomentAhead, aMomentAhead)
+    const chatRequestsBefore = wiki.chatRequests.length
+
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const refused = wiki.status()
+    assert.equal(
+      refused.state === 'failed' ? refused.reason : refused.state,
+      'Another editor window is starting an update of this Wiki. Wait a moment and try again.',
+    )
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, ['Open LLM Wiki'])
+    assert.equal(wiki.chatRequests.length, chatRequestsBefore)
   } finally {
     await wiki.close()
   }
