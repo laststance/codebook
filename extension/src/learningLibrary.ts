@@ -997,26 +997,50 @@ export class LearningLibrary {
       }
     >()
     for (const name of await readdir(this.directory)) {
-      const archive = this.archiveOfName(name),
-        parsedId = studyIdSchema.safeParse(archive?.id)
+      const entry = this.entryOfName(name)
       // A file named like an archive whose prefix is no study id (a stray `x.study.v5.json`) is nobody's study and is skipped.
-      if (!archive || !parsedId.success) continue
-      const id = parsedId.data,
-        prior = entries.get(id)
-      if (!prior || archive.version > prior.version)
-        entries.set(id, {
-          id,
-          path: join(this.directory, name),
-          format: archive.format,
-          version: archive.version,
-        })
+      if (!entry) continue
+      if (this.ownsStudyOver(entry, entries.get(entry.id)))
+        entries.set(entry.id, entry)
     }
     // More archives than the maximum (a study restored from the Trash into a full library) stay listed, so the learner can delete them; admission refuses new studies until the count is below the limit.
     return [...entries.values()]
   }
 
   /**
-   * Reads which study a file of the library directory is the archive of, and in which format; called by {@link entries} for every file name.
+   * Reads the entry a file of the library directory gives its study; called by {@link entries} for every file name.
+   * @param name - A file name of the library directory.
+   * @returns The study id with the file's path, format and format number; `undefined` for a file that is no study archive ({@link archiveOfName}) and for one whose prefix is no study id.
+   * @example this.entryOfName('x.study.v5.json') // => undefined
+   */
+  private entryOfName(name: string): LibraryEntry | undefined {
+    const archive = this.archiveOfName(name),
+      parsedId = studyIdSchema.safeParse(archive?.id)
+    if (!archive || !parsedId.success) return undefined
+    return {
+      id: parsedId.data,
+      path: join(this.directory, name),
+      format: archive.format,
+      version: archive.version,
+    }
+  }
+
+  /**
+   * Says whether an archive owns its study over the one found before; asked by {@link entries} for every archive of the library directory.
+   * @param entry - The archive just read.
+   * @param prior - The study's archive found so far, `undefined` for the first one.
+   * @returns `true` for a study's first archive and for one with a higher format number than the one found before.
+   * @example this.ownsStudyOver({ id, path, format: 'v3', version: 3 }, { id, path, format: 'v2', version: 2 }) // => true
+   */
+  private ownsStudyOver(
+    entry: LibraryEntry,
+    prior: LibraryEntry | undefined,
+  ): boolean {
+    return !prior || entry.version > prior.version
+  }
+
+  /**
+   * Reads which study a file of the library directory is the archive of, and in which format; called by {@link entryOfName} for every file name.
    * @param name - A file name of the library directory.
    * @returns The unvalidated study id with the format and its number: a known format by its suffix, `newer` for a format number this Codebook does not know yet. `undefined` for a file that is no study archive.
    * @example this.archiveOfName('a_b.study.v3.json') // => { id: 'a_b', format: 'v3', version: 3 }

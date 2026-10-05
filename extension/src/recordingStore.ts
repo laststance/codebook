@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { Dirent } from 'node:fs'
 import { lstat, mkdir, open, opendir } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
@@ -965,15 +966,26 @@ export class RecordingStore {
       if (!stat.isDirectory())
         throw new Error('Recording root is not a regular directory.')
       // More recordings than the maximum (one restored from the Trash into a full library) stay listed, so their studies can be deleted.
-      for await (const entry of await opendir(directory)) {
-        if (!entry.isDirectory())
-          throw new Error('Recording library contains a non-directory entry.')
-        const parsedId = studyIdSchema.safeParse(entry.name)
-        // A folder whose name is no study id (a stray `x`) is nobody's recording and is skipped.
-        if (parsedId.success) identities.add(parsedId.data)
-      }
+      for await (const entry of await opendir(directory))
+        this.addIdentityOf(entry, identities)
     }
     return [...identities]
+  }
+
+  /**
+   * Counts one entry of a recording root as its study's recording; called by {@link identities} for every entry of every root.
+   * @param entry - An entry of a recording root.
+   * @param identities - The study ids found so far, which gain this entry's.
+   * @throws When the entry is no directory: a recording root holds only recording folders.
+   * @example
+   * this.addIdentityOf(entry, identities) // identities gains '<study id>' for a folder of that name
+   */
+  private addIdentityOf(entry: Dirent, identities: Set<string>): void {
+    if (!entry.isDirectory())
+      throw new Error('Recording library contains a non-directory entry.')
+    const parsedId = studyIdSchema.safeParse(entry.name)
+    // A folder whose name is no study id (a stray `x`) is nobody's recording and is skipped.
+    if (parsedId.success) identities.add(parsedId.data)
   }
 
   /** Creates private storage without following a symlink in the recording root. @example await this.initialize() */
