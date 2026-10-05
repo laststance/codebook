@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fsPromises, {
   mkdir,
@@ -31,6 +30,7 @@ import {
   workspaceHarness,
 } from './studyWorkspaceHarness'
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 
 type Harness = Awaited<ReturnType<typeof workspaceHarness>>
 
@@ -3911,7 +3911,7 @@ test('a removal leaves the raw evidence in place and says so while another Codeb
   }
 })
 
-// Value: protects=deleting a saved study of a window of a build up to 0.2.28 that crashed also takes its raw evidence out of the agent storage; fails_when=a connection descriptor that names a process and no machine holds the evidence back for good, although its process has ended (Cycle 0046 row 10, PL-2); why_new=the removal tests wrote descriptors without a process id only; seam=the editor's dialog and Trash, stubbed at the vscode boundary, and a real exited process
+// Value: protects=deleting a saved study of a window of a build up to 0.2.28 that crashed also takes its raw evidence out of the agent storage; fails_when=a connection descriptor that names a process and no machine holds the evidence back for good, although its process has ended (Cycle 0046 row 10, PL-2); why_new=the removal tests wrote descriptors without a process id only; seam=the editor's dialog and Trash, stubbed at the vscode boundary, and a process id that no process has
 test('a removal also moves the raw evidence of a crashed window whose connection descriptor names an ended process and no machine', async () => {
   // Arrange: the study's run belongs to another instance; that window crashed and left its descriptor, written by a build up to 0.2.28, in the agent storage.
   const harness = await workspaceHarness()
@@ -3926,7 +3926,7 @@ test('a removal also moves the raw evidence of a crashed window whose connection
         'agent',
         `${study.instanceId}.connection.json`,
       ),
-      JSON.stringify({ pid: spawnSync(process.execPath, ['-e', '']).pid }),
+      JSON.stringify({ pid: ID_OF_NO_PROCESS }),
     )
     harness.answerWarningDialogs(async ([confirm]) => confirm)
     // Act

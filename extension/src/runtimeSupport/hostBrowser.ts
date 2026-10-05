@@ -20,6 +20,7 @@ import {
   MANAGED_PROFILE_ROOT,
 } from '../constants'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 
 import type { BrowserViewport, BrowserViewportFactory } from './browserViewport'
 import type { Cdp } from './cdp'
@@ -72,7 +73,7 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
-  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it and awaited by {@link close}; it never rejects. */
+  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it ({@link startAbandonedProfileSweep}) and awaited by {@link close}; it never rejects, and none is started once the browser is closing. */
   private abandonedProfileSweep?: Promise<void>
 
   /**
@@ -104,7 +105,7 @@ export class HostBrowser {
     return this.leftProfile
   }
 
-  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) without waiting for it, and marks its own folder as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
+  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch that was not cancelled while its owner was read starts the removal of the profile folders a killed editor left ({@link startAbandonedProfileSweep}) without waiting for it, and marks its own folder as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
   async launch(
     configuration: vscode.DebugConfiguration,
     signal: AbortSignal,
@@ -131,19 +132,9 @@ export class HostBrowser {
       )
       signal.throwIfAborted()
       const owner = await currentStorageOwner()
-      // What a killed editor left behind is removed beside this run's start, which does not wait for it; this run's own folder is never removed by it, because its marker names this running process. The sweep never fails the launch, and close awaits it.
-      this.abandonedProfileSweep ??= removeAbandonedProfiles(
-        this.profileRoot,
-        owner,
-      )
-        .then((abandoned) => {
-          if (abandoned.length)
-            this.record('browser.abandoned-profiles-removed', {
-              profiles: abandoned,
-            })
-        })
-        .catch(() => undefined)
+      // A launch cancelled while its owner was read removes nothing and creates nothing.
       signal.throwIfAborted()
+      this.startAbandonedProfileSweep(owner)
       this.managedProfile = await realpath(
         await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
       )
@@ -338,6 +329,29 @@ export class HostBrowser {
       this.record('fault.browser-acquisition-held')
       await delay(INTERFERENCE_DELAY_MS, undefined, { signal })
     }
+  }
+
+  /**
+   * Starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) beside a managed run's start, which does not wait for it; called by {@link launch} once its owner is read and its signal is still not aborted.
+   * This run's own folder is never removed by the sweep, because its marker names this running process. The sweep never fails the launch, and {@link close} awaits it.
+   * A browser that is closing starts none: its close may already have passed the step that waits for a sweep, and a sweep started after it would outlive the run. A browser starts at most one sweep.
+   * @param owner - The machine, the boot and the start of this process, by which a folder's marker is judged.
+   * @example
+   * this.startAbandonedProfileSweep(await currentStorageOwner()) // journal, once the sweep ended: browser.abandoned-profiles-removed { profiles: ['/tmp/codebook-browser-a1b2c3'] }
+   */
+  private startAbandonedProfileSweep(owner: StorageOwnerIdentity): void {
+    if (this.closing || this.abandonedProfileSweep) return
+    this.abandonedProfileSweep = removeAbandonedProfiles(
+      this.profileRoot,
+      owner,
+    )
+      .then((abandoned) => {
+        if (abandoned.length)
+          this.record('browser.abandoned-profiles-removed', {
+            profiles: abandoned,
+          })
+      })
+      .catch(() => undefined)
   }
 
   /** Binds the owned viewport only after {@link ConfiguredBrowserRun} identifies the exact child/page. @example await browser.attachViewport(cdp, signal) */

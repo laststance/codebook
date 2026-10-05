@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import fsPromises, { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +6,7 @@ import { test, type TestContext } from 'node:test'
 
 import { evidenceInUseElsewhere } from '../utils/evidenceInUseElsewhere'
 
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /** Creates an agent storage with one other instance's run evidence, so a test only adds or leaves out that instance's connection descriptor. @example const agent = await agentStorage(context) */
@@ -38,14 +38,13 @@ test('the evidence of another window whose connection descriptor names a running
   assert.equal(inUse, true)
 })
 
-// Value: protects=a descriptor left by a crashed window does not keep that instance's evidence in place forever; fails_when=only the descriptor's existence is checked (0039-F5); why_new=no test arranged a descriptor of an exited process; seam=a real exited process
+// Value: protects=a descriptor left by a crashed window does not keep that instance's evidence in place forever; fails_when=only the descriptor's existence is checked (0039-F5); why_new=no test arranged a descriptor of an exited process; seam=none (the descriptor names a process id that no process has)
 test('the evidence of a window whose connection descriptor names an exited process moves with its study', async (context) => {
-  // Arrange
+  // Arrange: the id of a child that just exited could be given to another process before the descriptor is judged, so the descriptor names an id no process can have.
   const agent = await agentStorage(context)
-  const exited = spawnSync(process.execPath, ['-e', ''])
   await writeFile(
     agent.descriptor,
-    JSON.stringify({ pid: exited.pid, hostname: hostname() }),
+    JSON.stringify({ pid: ID_OF_NO_PROCESS, hostname: hostname() }),
   )
   // Act
   const inUse = await evidenceInUseElsewhere(
@@ -149,12 +148,11 @@ test('the evidence of a running window stays in use elsewhere although the boot 
   assert.equal(inUse, true)
 })
 
-// Value: protects=deleting a study of a window of a build up to 0.2.28 that crashed also removes its evidence (frames, captured values); fails_when=a descriptor that names a process and no machine is taken for another machine's, so the evidence of every crashed window of such a build stays on disk for good (Cycle 0046 row 10, PL-2); why_new=the retired test "the evidence of a window whose connection descriptor names a process and no machine stays in use elsewhere" stated the old behavior; seam=a real exited process
+// Value: protects=deleting a study of a window of a build up to 0.2.28 that crashed also removes its evidence (frames, captured values); fails_when=a descriptor that names a process and no machine is taken for another machine's, so the evidence of every crashed window of such a build stays on disk for good (Cycle 0046 row 10, PL-2); why_new=the retired test "the evidence of a window whose connection descriptor names a process and no machine stays in use elsewhere" stated the old behavior; seam=none (the descriptor names a process id that no process has)
 test('the evidence of a crashed window whose connection descriptor names a process and no machine moves with its study', async (context) => {
-  // Arrange: a descriptor as a build up to 0.2.28 wrote it, with the id of a process that has ended.
+  // Arrange: a descriptor as a build up to 0.2.28 wrote it, with the id of a process that has ended: an id no process can have.
   const agent = await agentStorage(context)
-  const exited = spawnSync(process.execPath, ['-e', ''])
-  await writeFile(agent.descriptor, JSON.stringify({ pid: exited.pid }))
+  await writeFile(agent.descriptor, JSON.stringify({ pid: ID_OF_NO_PROCESS }))
   // Act
   const inUse = await evidenceInUseElsewhere(
     agent.evidenceDirectory,
