@@ -227,9 +227,9 @@ test('a look tells a marker path that holds nothing from one that holds an entry
   })
 })
 
-// Value: protects=the Update button in a checkout whose repository holds a marker file; fails_when=a marker with a start in the far future counts for as long as its process id answers (process 1 always does), so every start is refused with "Another editor window is updating this Wiki" until the learner deletes the file by hand; why_new=Cycle 0046 row 17 (PL-9), rule 2; seam=the clock handed to the look
-test('a marker whose run starts more than 5 minutes ahead of the clock is nobody’s, so a marker file a repository supplies cannot refuse every start', async (context) => {
-  // Arrange: a marker as 0.2.29.0 writes it, whose process id answers (this test process).
+// Value: protects=the Update button in a checkout whose repository holds a marker file; fails_when=a marker with a start in the far future counts for as long as its process id answers (process 1 always does), so every start is refused with "Another editor window is updating this Wiki" until the learner deletes the file by hand, or a reservation whose watch ended in the far future counts for good and refuses a start with a sentence that names a chat that never existed (row 114); why_new=Cycle 0046 row 17 (PL-9), rule 2, and row 114 for the reservation; seam=the clock handed to the look
+test('a marker whose run starts, or whose stopped watch ended, more than 5 minutes ahead of the clock is nobody’s, so a marker file a repository supplies cannot refuse every start', async (context) => {
+  // Arrange: a run's marker and a stopped watch's reservation as 0.2.29.0 writes them, whose process id answers (this test process). The reservation's run began ten minutes before its watch ended.
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
@@ -239,17 +239,31 @@ test('a marker whose run starts more than 5 minutes ahead of the clock is nobody
       startedAtMs: NOW_MS,
     }),
   )
+  const reserved = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS - 600_000,
+      watchEndedAtMs: NOW_MS,
+    }),
+  )
 
   // Act
   const looks = {
     started5MinutesAhead: (await lookAt(marked, NOW_MS - 300_000)).kind,
     startedFurtherAhead: (await lookAt(marked, NOW_MS - 300_001)).kind,
+    watchEnded5MinutesAhead: (await lookAt(reserved, NOW_MS - 300_000)).kind,
+    watchEndedFurtherAhead: (await lookAt(reserved, NOW_MS - 300_001)).kind,
   }
 
   // Assert
   assert.deepEqual(looks, {
     started5MinutesAhead: 'live',
     startedFurtherAhead: 'unowned',
+    watchEnded5MinutesAhead: 'live',
+    watchEndedFurtherAhead: 'unowned',
   })
 })
 
