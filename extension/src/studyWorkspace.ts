@@ -662,6 +662,8 @@ export class StudyWorkspace {
   private presentationOperation?: Promise<PresentationState>
   /** Set from the start of a recording load until its first ready position, which retires a replay control's reported failure. */
   private replayLoadAwaitingReady = false
+  /** The ledger write {@link saveShownRecordingSelection} started for the recording shown last; the playback controller's position save waits for it, so an unbounded {@link PlaybackController.settle} (tests, {@link PlaybackController.dispose}) ends after it, and {@link openLearningReplay} awaits it after its bounded one. It never rejects. */
+  private shownRecordingSelectionSaved: Promise<void> = Promise.resolve()
   /** The playback presentation revision of the read that {@link open}'s reveal restarted, for {@link loadPlayback}: that read leaves the arrangement to the entry. */
   private recordingRevealedByEntry?: number
   private presentationWrite?: Promise<void>
@@ -6132,6 +6134,8 @@ export class StudyWorkspace {
             if (this.replayLoadAwaitingReady) {
               this.replayLoadAwaitingReady = false
               this.errors.delete('replay-control')
+              // The first shown position of an opened recording is the one moment its study is known to be on screen.
+              this.saveShownRecordingSelection(state.studyId)
             }
           }
           // A failed load has no live renderer to finish its loading state; retire any pending image before showing the reason.
@@ -6146,18 +6150,22 @@ export class StudyWorkspace {
           this.flushDeferredOpenReplies()
           this.publish()
         },
-        save: (bundle) =>
-          // A position save that was still queued must not write the playback file of a study that went to the Trash.
-          this.isRemovedStudy(bundle.studyId) ||
-          this.movingStudyId() === bundle.studyId
-            ? Promise.resolve()
-            : this.recordings!.savePreference({
-                version: 1,
-                workspaceKey: key,
-                studyId: bundle.studyId,
-                contextHash: bundle.contextHash,
-                positionMs: bundle.projection.positionMs,
-              }),
+        save: async (bundle) => {
+          // The first position save of a shown recording also carries the selection write that showing it started, so a settled playback has both on disk.
+          await Promise.all([
+            this.shownRecordingSelectionSaved,
+            // A position save that was still queued must not write the playback file of a study that went to the Trash.
+            this.isStudyLeavingLibrary(bundle.studyId)
+              ? Promise.resolve()
+              : this.recordings!.savePreference({
+                  version: 1,
+                  workspaceKey: key,
+                  studyId: bundle.studyId,
+                  contextHash: bundle.contextHash,
+                  positionMs: bundle.projection.positionMs,
+                }),
+          ])
+        },
       })
       // Current files may disappear while immutable saved observations remain independently readable.
       await this.readBaselines().catch(() => undefined)
@@ -6722,7 +6730,7 @@ export class StudyWorkspace {
    * editor keeps on screen until its window has the focus again.
    *
    * @param studyId - The saved study whose recording the entry names.
-   * @returns Once the recording is presented, its load failed and the notification was shown, another recording took its place, or the bound passed.
+   * @returns Once the recording is presented and its study's selection written to the ledger, its load failed and the notification was shown, another recording took its place, or the bound passed.
    * @throws Whatever {@link openRecording} throws before the load is admitted.
    * @example await workspace.openLearningReplay(studyId)
    */
@@ -6733,6 +6741,8 @@ export class StudyWorkspace {
     await playback
       .settle(undefined, OPEN_REPLAY_RESULT_WAIT_MS)
       .catch(() => undefined)
+    // A bounded settle leaves the saves out; the selection write that the shown recording started is awaited here, so the command ends with the ledger naming it.
+    await this.shownRecordingSelectionSaved
     const state = playback.state()
     if (
       state.studyId !== studyId ||
@@ -13209,6 +13219,38 @@ export class StudyWorkspace {
       this.report('progress', error)
     }
   }
+
+  /**
+   * Writes the selection of the study whose recording was just shown to the ledger, so the Study workspace opens on that study after a restart; the playback controller's `changed` callback calls it once per opened recording, at the first shown position of its load.
+   *
+   * A load that failed or was superseded never reaches a shown position, so it writes nothing and the ledger keeps the earlier selection.
+   * Seeks, Play and Pause of the open recording are not loads and write nothing. The selection's tab is written as the reader holds it.
+   *
+   * @param studyId - The study of the shown recording, as the playback state names it.
+   * @returns Nothing; the write is kept in {@link shownRecordingSelectionSaved}, which the position save of the same shown position waits for, and a storage failure becomes the pane's `progress` line through {@link saveSelection}.
+   * @example this.saveShownRecordingSelection(this.playback?.state().studyId)
+   */
+  private saveShownRecordingSelection(studyId: string | undefined): void {
+    // A selection that already names another study, or a study on its way to the Trash, is not written.
+    if (
+      !studyId ||
+      this.selection.studyId !== studyId ||
+      this.isStudyLeavingLibrary(studyId)
+    )
+      return
+    this.shownRecordingSelectionSaved = this.saveSelection()
+  }
+
+  /**
+   * Says whether a study is moving to the Trash or was moved there by this window, so a queued write about it is dropped; the playback controller's position save and {@link saveShownRecordingSelection} ask it.
+   * @param studyId - The study the queued write names.
+   * @returns `true` while a confirmed removal moves its files or after {@link isRemovedStudy} reports it removed, otherwise `false`.
+   * @example if (this.isStudyLeavingLibrary(bundle.studyId)) return
+   */
+  private isStudyLeavingLibrary(studyId: string): boolean {
+    return this.isRemovedStudy(studyId) || this.movingStudyId() === studyId
+  }
+
   /** Retires only a replay-loading mode warning once the controller confirms its first position; playback changes call it. @example this.clearReadyReplayWarning() */
   private clearReadyReplayWarning(): void {
     const state = this.playback?.state(),

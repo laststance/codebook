@@ -14,6 +14,11 @@ import {
   readerSeams,
   recordedReaderHarness,
 } from './studyWorkspaceHarness'
+import {
+  advanceClockUntilSettled,
+  enableFakeClock,
+  resetFakeClock,
+} from './utils/fakeClock'
 test('updating repository source and extension location preserves recorded bytes and learner history while requesting source review', async () => {
   // Arrange: persist actual archive/recording files; only editor and runtime effects are simulated.
   const harness = await recordedReaderHarness()
@@ -1552,6 +1557,260 @@ test('Retry storage keeps the line of a ledger it could not clean of studies rem
       'Error: The storage lock is held by another window.',
     ])
     assert.equal(readerSeams(harness).hasErrorOfKind('archive'), true)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the study a learner had open as a recording being the one the Study workspace opens on after the editor restarts; fails_when=a recording opened through the status bar's Open replay changes the selection in memory only, so the ledger keeps a study chosen in an earlier session; why_new=Cycle 0045 N14c-F2 (the final VS Code submission reopened on another study after the restart); seam=none
+test("a recording opened for the status bar's Open replay is the study the reader opens on after a restart", async () => {
+  // Arrange: two saved studies with recordings; the learner last chose the second one in Saved studies.
+  const harness = await recordedReaderHarness()
+  let restarted: ReturnType<typeof harness.createReader> | undefined
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const otherRecord = [...harness.service.records.values()].at(-1)!
+    await otherRecord.preparation
+    assert.ok(otherRecord.recording)
+    otherRecord.recording.frame({
+      bytes: harness.png,
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(1_100)
+    await harness.reader.action('click')
+    harness.clock(1_200)
+    await harness.reader.action('stop')
+    const otherStudyId = otherRecord.recording.header.studyId
+    await harness.reader['receive'](
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: otherStudyId,
+      },
+      'context',
+    )
+    const library = await harness.reader.learningStorage()
+    const ledgerBeforeOpen = (await library.readProgress()).selection
+
+    // Act: Open replay names the first study; the editor is then quit and started again.
+    await harness.reader.openLearningReplay(harness.studyId)
+    const ledgerAfterOpen = (await library.readProgress()).selection
+    await harness.reader.dispose()
+    restarted = harness.createReader()
+    await restarted.open()
+
+    // Assert
+    assert.equal(ledgerBeforeOpen?.studyId, otherStudyId)
+    assert.equal(ledgerAfterOpen?.studyId, harness.studyId)
+    assert.equal(ledgerAfterOpen?.tab, 'live')
+    const view = restarted.inspect().view!
+    assert.equal(view.model.selection.studyId, harness.studyId)
+    assert.equal(view.model.selection.tab, 'live')
+    assert.equal(view.study?.id, harness.studyId)
+  } finally {
+    await restarted?.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the ledger's selection after an Open replay whose load failed; fails_when=the selection of a recording that was never shown is written before its load can still fail, so the restarted reader opens on a study the learner never saw; why_new=Cycle 0045 N14c-F2 (the write is made once a recording is shown, not when its study is first known); seam=the harness's window focus, and node:test setTimeout mock
+test(
+  'a recording whose load failed leaves the earlier selection in the ledger, and the reader opens on that study after a restart',
+  { timeout: 30_000 },
+  async (context) => {
+    // Arrange: two saved studies with recordings; the learner last chose the second one; the reader is closed and another window keeps the desktop focus.
+    const harness = await recordedReaderHarness()
+    let restarted: ReturnType<typeof harness.createReader> | undefined
+    try {
+      harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const otherRecord = [...harness.service.records.values()].at(-1)!
+      await otherRecord.preparation
+      assert.ok(otherRecord.recording)
+      otherRecord.recording.frame({
+        bytes: harness.png,
+        elapsedMs: 20,
+        kind: 'stream',
+      })
+      harness.clock(1_100)
+      await harness.reader.action('click')
+      harness.clock(1_200)
+      await harness.reader.action('stop')
+      const otherStudyId = otherRecord.recording.header.studyId
+      await harness.reader['receive'](
+        {
+          type: 'history',
+          revision: harness.reader.inspect().view!.revision,
+          studyId: otherStudyId,
+        },
+        'context',
+      )
+      const library = await harness.reader.learningStorage()
+      await harness.reader.close()
+      harness.changeWindowFocus(false)
+      enableFakeClock(context)
+
+      // Act: Open replay names the first study; its load fails after the 10 s wait for the focus, then the editor is started again.
+      const opening = harness.reader.openLearningReplay(harness.studyId).then(
+        () => 'completed',
+        (error: unknown) => String(error),
+      )
+      await advanceClockUntilSettled(context, opening, 40_000)
+      resetFakeClock(context)
+      harness.changeWindowFocus(true)
+      const loadReadiness = harness.controller.state().readiness
+      const ledgerAfterFailedOpen = (await library.readProgress()).selection
+      await harness.reader.dispose()
+      restarted = harness.createReader()
+      await restarted.open()
+
+      // Assert
+      assert.equal(await opening, 'completed')
+      assert.equal(loadReadiness, 'failed')
+      assert.equal(ledgerAfterFailedOpen?.studyId, otherStudyId)
+      assert.equal(
+        restarted.inspect().view!.model.selection.studyId,
+        otherStudyId,
+      )
+    } finally {
+      resetFakeClock(context)
+      harness.changeWindowFocus(true)
+      await restarted?.dispose()
+      await harness.close()
+    }
+  },
+)
+
+// Value: protects=the ledger's selection while a recording's load is overtaken by another recording; fails_when=the overtaken load writes its study to the ledger before it is shown, so an editor quit at that moment reopens on a study that never appeared; why_new=Cycle 0045 N14c-F2 (the write is made once a recording is shown); seam=the reader's recording store with a held playback preference read
+test('a recording whose load was replaced by another recording before it was shown never writes its study to the ledger', async () => {
+  // Arrange: two saved studies with recordings; the learner last chose the second one; the first recording's load is held after its study was read.
+  const harness = await recordedReaderHarness()
+  let releaseLoad = (): void => {}
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const otherRecord = [...harness.service.records.values()].at(-1)!
+    await otherRecord.preparation
+    assert.ok(otherRecord.recording)
+    otherRecord.recording.frame({
+      bytes: harness.png,
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(1_100)
+    await harness.reader.action('click')
+    harness.clock(1_200)
+    await harness.reader.action('stop')
+    const otherStudyId = otherRecord.recording.header.studyId
+    await harness.reader['receive'](
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: otherStudyId,
+      },
+      'context',
+    )
+    const library = await harness.reader.learningStorage()
+    const readerStore = harness.reader['recordings']
+    assert.ok(readerStore)
+    const readPreference = readerStore.readPreference
+    let enteredHeldRead = (): void => {}
+    const heldReadEntered = new Promise<void>((resolve) => {
+        enteredHeldRead = resolve
+      }),
+      loadReleased = new Promise<void>((resolve) => {
+        releaseLoad = resolve
+      })
+    readerStore.readPreference = async () => {
+      enteredHeldRead()
+      await loadReleased
+      return readPreference.call(readerStore)
+    }
+
+    // Act: the first recording is opened and held; the second recording replaces it before it is shown.
+    await harness.reader.openRecording(harness.studyId)
+    await heldReadEntered
+    const ledgerWhileFirstLoads = (await library.readProgress()).selection
+    Reflect.deleteProperty(readerStore, 'readPreference')
+    await harness.reader.openRecording(otherStudyId)
+    releaseLoad()
+    await harness.controller.settle()
+    const ledgerAfterReplacement = (await library.readProgress()).selection
+
+    // Assert
+    assert.equal(ledgerWhileFirstLoads?.studyId, otherStudyId)
+    assert.equal(harness.controller.state().studyId, otherStudyId)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.equal(ledgerAfterReplacement?.studyId, otherStudyId)
+  } finally {
+    releaseLoad()
+    await harness.close()
+  }
+})
+
+// Value: protects=the ledger being written once per opened recording; fails_when=the selection is written on every shown position (each seek, pause or Play tick rewrites the ledger file), or an opened recording writes nothing; why_new=Cycle 0045 N14c-F2 (the write is tied to a recording's load, not to its playhead); seam=the reader's learning storage with a recording select
+test('every opened recording writes its study to the ledger once, and seeking within it writes nothing more', async () => {
+  // Arrange: two saved studies with recordings; every selection the reader writes to the ledger is recorded.
+  const harness = await recordedReaderHarness()
+  try {
+    harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const otherRecord = [...harness.service.records.values()].at(-1)!
+    await otherRecord.preparation
+    assert.ok(otherRecord.recording)
+    otherRecord.recording.frame({
+      bytes: harness.png,
+      elapsedMs: 20,
+      kind: 'stream',
+    })
+    harness.clock(1_100)
+    await harness.reader.action('click')
+    harness.clock(1_200)
+    await harness.reader.action('stop')
+    const otherStudyId = otherRecord.recording.header.studyId
+    const library = await harness.reader.learningStorage()
+    const select = library.select.bind(library)
+    const writtenStudyIds: (string | undefined)[] = []
+    library.select = async (selection): Promise<void> => {
+      writtenStudyIds.push(selection.studyId)
+      return select(selection)
+    }
+
+    // Act: the first recording is opened through Open replay and sought twice, then the second recording is opened.
+    await harness.reader.openLearningReplay(harness.studyId)
+    for (const positionMs of [100, 20]) {
+      harness.controller.command({
+        action: 'seek',
+        studyId: harness.studyId,
+        expectedRevision: harness.controller.state().revision,
+        positionMs,
+      })
+      await harness.controller.settle()
+    }
+    await harness.reader.openLearningReplay(otherStudyId)
+
+    // Assert
+    assert.equal(harness.controller.state().studyId, otherStudyId)
+    assert.equal(harness.controller.state().readiness, 'ready')
+    assert.deepEqual(writtenStudyIds, [harness.studyId, otherStudyId])
   } finally {
     await harness.close()
   }
