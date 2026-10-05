@@ -1880,6 +1880,47 @@ for (const holder of ['the captured source', 'the Study pane'] as const)
     }
   })
 
+for (const keyboardBeforePalette of ['the terminal', 'the Study pane'] as const)
+  // Value: protects=the learner told where the keyboard is after "Codebook: Close Study Workspace" from the Command Palette while the Study pane is the active editor, whether the keyboard was in that pane or in the terminal before the palette opened; fails_when=Close moves the keyboard to the active editor group without a word, so a learner who was typing in the terminal finds the keyboard in an editor; why_new=Cycle 0046 row 1 (Cycle 0045 study-1 #5: the extension API reads the same for both cases, and the Study pane reports a blur in both before the command runs); seam=the workspace harness's information messages and command log, the Study pane's pane-focus report
+  test(`Close Study Workspace from the Command Palette with the keyboard in ${keyboardBeforePalette} gives the active editor group the keyboard and says so`, async () => {
+    // Arrange: the Study pane is the active editor. With the keyboard in the terminal its document reported a blur when the learner left it; with the keyboard in the pane it reported focus, and a blur when the palette opened. The editor's API reads the same in both cases.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      harness.focusMutableDraft('actions.ts', 1)
+      await harness.reader.open()
+      const studyPaneActive = harness.focusedPanel() === 'codebook.studyContext'
+      if (keyboardBeforePalette === 'the Study pane')
+        await readerSeams(harness).receive(
+          { type: 'pane-focus', focused: true },
+          'context',
+        )
+      await readerSeams(harness).receive(
+        { type: 'pane-focus', focused: false },
+        'context',
+      )
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.equal(studyPaneActive, true)
+      assert.equal(harness.reader.presentationState().state, 'closed')
+      assert.equal(
+        harness.commands.at(-1),
+        'workbench.action.focusActiveEditorGroup',
+      )
+      assert.deepEqual(
+        harness.informationMessages.map((message) => message.message),
+        [
+          'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.',
+        ],
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the keyboard after Close Study Workspace in an editor that closes a disposed pane's tab a moment after the disposal, as Cursor and VS Code do: the group that remains gets the keyboard once the panes' tabs are gone; fails_when=the focus command runs right after the disposal, reaches the group that still shows the closing Application pane, and the keyboard goes with that tab to the page body; why_new=Cycle 0045 cause 12 (f), second native result (obs15 R, `e-after.dom.json`: `document.activeElement` is the page body after Close with the caret in the captured source; the first fix passed its test because the fake editor closed the panes' tabs at once); seam=the workspace harness's closeDisposedPanelTabsLater and keyboardOnBody
 test("Close Study Workspace made with the keyboard in the captured source leaves the keyboard in the editor group that remains when the editor closes the panes' tabs a moment later", async () => {
   // Arrange: the learner's file is a tab of the first group; the reader is open, the keyboard is in the captured source, and the editor closes a disposed pane's tab 20 ms after the disposal and removes a group its last tab left empty.
@@ -1946,6 +1987,8 @@ test("Close Study Workspace made with the keyboard in the learner's own file run
       harness.editor.window.activeTextEditor?.document,
       learnerFile.document,
     )
+    // The keyboard did not move, so Close says nothing about it.
+    assert.deepEqual(harness.informationMessages, [])
   } finally {
     await harness.close()
   }

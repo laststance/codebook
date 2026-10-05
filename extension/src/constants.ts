@@ -202,6 +202,12 @@ export const HIDDEN_SIDE_BAR_MIN_GAIN_PX = 50
  * await waitUntil(() => retainsFocus(), 'the focus after the maximization ended', UNMAXIMIZE_FOCUS_SETTLE_MS)
  */
 export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
+/**
+ * What "Codebook: Close Study Workspace" tells the learner when it gave the active editor group the keyboard because a closed pane or the captured source was the active editor. The extension API cannot tell whether the keyboard was in that pane or in the terminal or a view before the Command Palette opened (`window.activeTerminal` is also the terminal that had the focus last, a webview panel stays `active` while another part has the keyboard, and every webview reports a blur when the palette opens), so the sentence names both.
+ * @example void showPlainNotice(vscode.window, 'information', STUDY_CLOSE_KEYBOARD_MESSAGE)
+ */
+export const STUDY_CLOSE_KEYBOARD_MESSAGE =
+  'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

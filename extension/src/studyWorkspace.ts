@@ -41,6 +41,7 @@ import {
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
   SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
   SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
+  STUDY_CLOSE_KEYBOARD_MESSAGE,
   STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
@@ -5922,7 +5923,13 @@ export class StudyWorkspace {
     }
   }
 
-  /** Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels. @example await workspace.close() */
+  /**
+   * Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels; called by the command "Codebook: Close Study Workspace".
+   * When a closed pane or the captured source was the active editor, the active editor group gets the keyboard and the learner is told so with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}: the editor does not say whether the keyboard was in that pane or in the terminal or a view before the Command Palette opened. {@link dispose} closes the reader too, when the extension host ends, and shows nothing.
+   * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
+   * @throws When the editor refused to close a captured source's tab.
+   * @example await workspace.close()
+   */
   async close(): Promise<void> {
     if (this.closingPromise) return this.closingPromise
     // A pane or the captured source that has the keyboard is closed below: the editor group that remains then gets it.
@@ -6041,6 +6048,13 @@ export class StudyWorkspace {
         await vscode.commands
           .executeCommand('workbench.action.focusActiveEditorGroup')
           .then(undefined, () => undefined)
+        // The keyboard may have been in the terminal or a view before the Command Palette; the editor does not say, so the learner is told where it is now. A reader closed with its extension host has no learner to tell.
+        if (closesKeyboardHolder && !this.disposed)
+          void showPlainNotice(
+            vscode.window,
+            'information',
+            STUDY_CLOSE_KEYBOARD_MESSAGE,
+          )
       }
       clearTimeout(this.citationRefreshTimer)
       this.citationRevision++
