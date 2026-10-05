@@ -12,7 +12,6 @@ import {
   VITEST_LIST_ERROR_LIMIT_CHARS,
 } from '../constants'
 import { awaitResponse } from '../runtimeSupport/utils/awaitResponse'
-import { WaitTimeoutError } from '../runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 
 import { buildNodeTestEnvironment } from './buildNodeTestEnvironment'
@@ -54,10 +53,10 @@ const listedFilesSchema = z.array(
  * @param request.signal - The run's cancellation.
  * @param request.timeoutMs - Listing deadline; the default fits inside the attach phase.
  * @param request.onReleaseFailed - Told once when the listing's process group could not be confirmed as ended, whatever the listing's own outcome; the owned Node test run journals it.
- * @returns Every file entry Vitest reports, in Vitest's order. A listing that finished is still returned when the only release failure is the bounded wait for
- * its group's end running out (members that exited and are not reaped yet); its folder is then kept and the failure reported.
+ * @returns Every file entry Vitest reports, in Vitest's order, once the listing's process group is confirmed as ended.
  * @throws When Vitest fails, times out, is cancelled or writes no readable list; that reason is kept also when the release fails. When a listing that finished
- * could not be released for another reason than the wait running out (a signal or a probe the system refused), with that refusal as the cause.
+ * could not be released, because a signal or a probe was refused or the group did not end within its wait after SIGTERM and SIGKILL, with that failure as the
+ * cause: a process of the group may still run, so the Node test run is not started and the listing's folder is kept.
  * @example
  * ```ts
  * await listVitestTestFiles({ node, program, workspace: '/repo', filter: 'src/a.test.ts', excludes: [], signal })
@@ -189,12 +188,11 @@ export async function listVitestTestFiles(
         directory,
         reason,
       })
-      // A wait for the group's end that only ran out keeps the listing's own outcome; a signal or a probe the system refused means a member may still run.
-      if (!(failedRelease.error instanceof WaitTimeoutError))
-        refusedRelease = new Error(
-          `Vitest listed the test files, but Codebook could not end the listing's process group ${listingProcessGroup} (${reason}), so a process of that group may still run. The test was not started, and the listing's folder ${directory} is kept. Start the run again.`,
-          { cause: failedRelease.error },
-        )
+      // A refused signal or probe and a group that did not end within its wait alike leave a member that may still run: a listing that finished is refused.
+      refusedRelease = new Error(
+        `Vitest listed the test files, but Codebook could not end the listing's process group ${listingProcessGroup} (${reason}), so a process of that group may still run. The test was not started, and the listing's folder ${directory} is kept. Start the run again.`,
+        { cause: failedRelease.error },
+      )
     }
   }
   // Reached only by a listing that finished: its own failure left through the `finally` above and keeps its reason.

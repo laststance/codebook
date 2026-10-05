@@ -952,7 +952,7 @@ export class RecordingStore {
     )
   }
 
-  /** Coalesces bounded version directories so interrupted reservations share one total capacity. @example await this.identities() */
+  /** Coalesces bounded version directories so interrupted reservations share one total capacity; a folder whose name is no study id is not counted. @example await this.identities() */
   private async identities(): Promise<string[]> {
     const identities = new Set<string>()
     for (const storage of RECORDING_STORAGE_FORMATS) {
@@ -968,7 +968,9 @@ export class RecordingStore {
       for await (const entry of await opendir(directory)) {
         if (!entry.isDirectory())
           throw new Error('Recording library contains a non-directory entry.')
-        identities.add(studyIdSchema.parse(entry.name))
+        const parsedId = studyIdSchema.safeParse(entry.name)
+        // A folder whose name is no study id (a stray `x`) is nobody's recording and is skipped.
+        if (parsedId.success) identities.add(parsedId.data)
       }
     }
     return [...identities]

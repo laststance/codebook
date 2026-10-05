@@ -620,3 +620,47 @@ test('a lock file a killed window prepared but never placed is removed by the ne
   assert.equal(outcome, 'written')
   assert.deepEqual(await readdir(directory), ['writer.lock.pending-of-4343'])
 })
+
+// Value: protects=an ordinary write does not list the whole private storage directory (every study archive, sidecar and recording) for leftovers that exist only after a killed window (Cycle 0045 review PL-3); fails_when=every hold of the storage lock sweeps; why_new=no test counted the sweep's listings; seam=the directory listing of node:fs/promises
+test('ten uncontended writes to the storage list the storage directory for leftovers at most once', async (context) => {
+  // Arrange
+  const directory = await storageDirectory(context)
+  let listingsOfStorageDirectory = 0
+  const readdirBefore = fsPromises.readdir
+  context.mock.method(
+    fsPromises,
+    'readdir',
+    (...input: Parameters<typeof readdirBefore>) => {
+      if (input[0] === directory) listingsOfStorageDirectory += 1
+      return readdirBefore(...input)
+    },
+  )
+  // Act
+  const outcomes: string[] = []
+  for (let write = 0; write < 10; write += 1)
+    outcomes.push(await writeUnderLock(directory, async () => {}))
+  // Assert
+  assert.deepEqual(outcomes, Array(10).fill('written'))
+  assert.equal(listingsOfStorageDirectory, 1)
+})
+
+// Value: protects=the leftover of a killed window is still removed by a window that already swept once, when its write meets a lock in the way; fails_when=the sweep runs only at the first hold of a directory (Cycle 0045 review PL-3); why_new=the sweep was limited in Cycle 0046; seam=the process probe
+test('a write that meets a stale lock after the first write of this window still removes the lock file a killed window prepared and never placed', async (context) => {
+  // Arrange: one write has swept the storage already; then exited process 4242 leaves its lock and exited process 4243 its prepared lock.
+  const directory = await storageDirectory(context)
+  await writeUnderLock(directory, async () => {})
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: 4242, hostname: hostname() }),
+  )
+  await writeFile(
+    join(directory, 'writer.lock.pending-of-4243'),
+    JSON.stringify({ pid: 4243, hostname: hostname() }),
+  )
+  answerProcessProbes(context, [4242, 4243])
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.deepEqual(await readdir(directory), [])
+})

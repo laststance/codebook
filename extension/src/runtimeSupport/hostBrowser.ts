@@ -72,6 +72,8 @@ export class HostBrowser {
   private managedProfileRemoved = false
   private leftProfile?: ProfileLeft
   private viewport?: BrowserViewport
+  /** The sweep of the profile folders a killed editor left, started by a managed {@link launch} without waiting for it and awaited by {@link close}; it never rejects. */
+  private abandonedProfileSweep?: Promise<void>
 
   /**
    * @param profileRoot - The directory in which a managed run creates its profile folder and looks for folders a killed editor left; tests name a directory of their own.
@@ -102,7 +104,7 @@ export class HostBrowser {
     return this.leftProfile
   }
 
-  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch first removes the profile folders a killed editor left ({@link removeAbandonedProfiles}) and marks its own as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
+  /** Starts a real debugger using the selected host route, invoked once during run preparation; a managed launch starts the removal of the profile folders a killed editor left ({@link removeAbandonedProfiles}) without waiting for it, and marks its own folder as this process's. @example await browser.launch({ name: 'codebook run', type: 'editor-browser', request: 'launch' }, signal) */
   async launch(
     configuration: vscode.DebugConfiguration,
     signal: AbortSignal,
@@ -129,12 +131,18 @@ export class HostBrowser {
       )
       signal.throwIfAborted()
       const owner = await currentStorageOwner()
-      // What a killed editor left behind goes before this run adds a folder of its own; the sweep never fails the launch.
-      const abandoned = await removeAbandonedProfiles(this.profileRoot, owner)
-      if (abandoned.length)
-        this.record('browser.abandoned-profiles-removed', {
-          profiles: abandoned,
+      // What a killed editor left behind is removed beside this run's start, which does not wait for it; this run's own folder is never removed by it, because its marker names this running process. The sweep never fails the launch, and close awaits it.
+      this.abandonedProfileSweep ??= removeAbandonedProfiles(
+        this.profileRoot,
+        owner,
+      )
+        .then((abandoned) => {
+          if (abandoned.length)
+            this.record('browser.abandoned-profiles-removed', {
+              profiles: abandoned,
+            })
         })
+        .catch(() => undefined)
       signal.throwIfAborted()
       this.managedProfile = await realpath(
         await mkdtemp(join(this.profileRoot, MANAGED_PROFILE_PREFIX)),
@@ -516,7 +524,7 @@ export class HostBrowser {
     this.record('browser.revealed', { title: browser.tab.label, index })
   }
 
-  /** Releases known handles even if acquisition is unresolved, then removes a managed run's own profile folder; {@link ExperimentRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
+  /** Releases known handles even if acquisition is unresolved, waits for the sweep of abandoned profile folders its launch started, then removes a managed run's own profile folder; {@link ExperimentRun} can retry incomplete teardown, and a folder that stays is no failure of it ({@link profileLeft}). @example await browser.close() */
   async close(): Promise<void> {
     this.closing = true
     const failures = await settleCleanup([
@@ -560,6 +568,11 @@ export class HostBrowser {
             remainingProcesses: 0,
           })
         },
+      },
+      // The sweep a managed launch started outlives no close; it never rejects, so it adds no failure.
+      {
+        description: 'abandoned profile sweep',
+        release: (): Promise<void> | undefined => this.abandonedProfileSweep,
       },
     ])
     if (failures.length)
