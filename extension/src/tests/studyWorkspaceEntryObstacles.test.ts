@@ -555,6 +555,107 @@ test('a Read refused while the reader measured the side bars leaves the primary 
   }
 })
 
+// Value: protects=the learner's side bars after a Read during which the learner made the window wider: the Restore shows the primary side bar the Read hid and leaves the secondary one closed, as before the Read; fails_when=the Restore takes the editor area's growth since the Read for the hidden secondary side bar and opens a secondary side bar (Cursor's Agent pane) the learner had closed; why_new=Cycle 0046 row 30 (PL-22 of Cycle 0045: the width before the Read was compared with the width at its end); seam=the workspace harness's side bar model and its resizeWindow
+test('a Restore after the learner widened the window during a Read shows the side bars as they were before the Read and opens no secondary side bar', async () => {
+  // Arrange: the primary side bar is open and the secondary one closed; the learner reads the explanation enlarged and then widens the window by 600 px.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.resizeWindow(1935)
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: false,
+      hasKeyboard: false,
+    })
+    assert.equal(
+      harness.commands.includes('workbench.action.focusAuxiliaryBar'),
+      false,
+    )
+    assert.equal(harness.reader.inspect().view!.errors.join(' | '), '')
+    assert.equal(harness.maximizedEditorGroup(), false)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's side bars after a Read during which the learner made the window narrower: Close Study Workspace shows both side bars the Read hid; fails_when=the end of the reading finds the editor area no wider than before the Read because the window lost more than the secondary side bar's width, and leaves the secondary side bar (Cursor's Agent pane) hidden; why_new=Cycle 0046 row 30 (PL-22 of Cycle 0045); seam=the workspace harness's side bar model and its resizeWindow
+test('closing the Study workspace after the learner narrowed the window during a Read shows both side bars the Read hid', async () => {
+  // Arrange: both side bars are open; the learner reads the explanation enlarged and then narrows the window by 600 px.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.resizeWindow(735)
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.maximizedEditorGroup(), false)
+    assert.equal(harness.reader.presentationState().state, 'closed')
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's primary side bar when the editor answers the Read's first layout read and refuses the one after the measurement hid that bar: the Restore shows it again; fails_when=the reading keeps no record that its measurement hid the bar, so the Restore, Close and a refused Read show nothing and the file explorer stays away; why_new=Cycle 0046 row 33 (PL-25 of Cycle 0045: the second read's failure left the measurement undefined); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command and failNextCommand on the layout read after it
+test('a Restore after a Read whose layout read failed once the primary side bar was hidden for the measurement shows the primary side bar again', async () => {
+  // Arrange: both side bars are open; the editor answers the Read's first layout read and rejects the one after the primary side bar was hidden.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    const measurement = harness.holdNextCommand('workbench.action.closeSidebar')
+    release = measurement.release
+    const reading = harness.reader.action('read-context')
+    await measurement.started
+    harness.failNextCommand('vscode.getEditorLayout')
+    measurement.release()
+    await reading
+    const duringRead = {
+      ...harness.sideBars(),
+      maximized: harness.maximizedEditorGroup(),
+    }
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert: the reading without a measurement left the secondary side bar as it was; the Restore shows the primary one the measurement hid.
+    assert.deepEqual(duringRead, {
+      primary: false,
+      auxiliary: true,
+      hasKeyboard: false,
+      maximized: true,
+    })
+    assert.deepEqual(harness.sideBars(), {
+      primary: true,
+      auxiliary: true,
+      hasKeyboard: false,
+    })
+    assert.equal(harness.maximizedEditorGroup(), false)
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=Restore leaving the enlarged Study pane while a tab the learner keeps covers the captured source, and saying which tab and what clears it; fails_when=the Restore finds the source not shown and enlarges the Study pane again, so the pane fills the window after every Restore and no tab is named; why_new=Cycle 0045 NF-22 with PC-1.10 (a kept tab that is no text editor is its own case, and the step the refusal names makes the next Restore possible); seam=addOpaqueTab, focusOpaqueTab, the fake editor's maximized group
 test('Restore beside a kept image tab leaves the enlarged Study pane and names the tab that keeps the panes from being arranged', async () => {
   // Arrange: the learner keeps an image open in front of the captured source and read the explanation enlarged.

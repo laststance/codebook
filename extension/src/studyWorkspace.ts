@@ -545,10 +545,14 @@ export class StudyWorkspace {
   private arranging?: Promise<void>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
-  /** What {@link rememberSideBarsBeforeRead} measured before a Read's maximize command hid the side bars, for {@link showSideBarsHiddenByRead}: whether the primary side bar was open, and the editor area's width without it. `undefined` while no reading is pending, and during a reading whose editor area gave no width: {@link maximizeForRead} then hides no side bar. */
+  /** What {@link rememberSideBarsBeforeRead} and {@link rememberAuxiliaryBarAtRead} measured when a Read began, for {@link showSideBarsHiddenByRead}. `undefined` while no reading is pending, and during a reading whose editor area gave no width at all: {@link maximizeForRead} then hides no side bar. */
   private sideBarsBeforeRead?: {
+    /** Whether the primary side bar is shown again when the reading ends: it was open before the Read, or the measurement hid it and the read after that gave no width. */
     primaryVisible: boolean
-    widthWithoutPrimaryPx: number
+    /** The editor area's width without the primary side bar; `undefined` when that read gave none: the reading then hides no other bar and shows only the primary one again. */
+    widthWithoutPrimaryPx?: number
+    /** Whether the secondary side bar was open before the Read, from the editor area the Read's maximization left; `undefined` when that read gave no width, and {@link sideBarShowCommands} measures it when the reading ends. */
+    auxiliaryVisible?: boolean
   }
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
@@ -2593,8 +2597,8 @@ export class StudyWorkspace {
 
   /**
    * Measures which side bars are open before {@link maximizeForRead} maximizes a pane, and hides the primary one for that measurement.
-   * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link sideBarShowCommands} reads it once more when both bars are hidden.
-   * @returns Once {@link sideBarsBeforeRead} holds the measurement, or is left `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement): no bar is hidden for a measurement that cannot be made.
+   * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link rememberAuxiliaryBarAtRead} reads it once more when the maximization has hidden the secondary bar too.
+   * @returns Once {@link sideBarsBeforeRead} holds the measurement; or `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement), and no bar is hidden for a measurement that cannot be made; or, when the read after hiding the primary side bar gave no width, a record without that width that shows the primary side bar again when the reading ends, because the measurement hid it and cannot tell whether it was open.
    * @example
    * ```ts
    * await this.rememberSideBarsBeforeRead() // sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874 } for columns of 363 + 297 beside a side bar of 214
@@ -2609,12 +2613,36 @@ export class StudyWorkspace {
       .executeCommand('workbench.action.closeSidebar')
       .then(undefined, () => undefined)
     const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
-    // A second read that fails leaves the reading without a measurement: what was open before it is not known.
-    if (widthWithoutPrimaryPx === undefined) return
+    // The measurement hid the primary side bar and cannot tell whether it was open: the end of the reading shows it again rather than leave the learner's bar away.
+    if (widthWithoutPrimaryPx === undefined) {
+      this.sideBarsBeforeRead = { primaryVisible: true }
+      return
+    }
     this.sideBarsBeforeRead = {
       primaryVisible: this.hasSideBarGain(widthWithoutPrimaryPx, widthPx),
       widthWithoutPrimaryPx,
     }
+  }
+
+  /**
+   * Measures whether the secondary side bar was open before a Read, right after the Read's maximize command hid it; called by {@link maximizeForRead} once for each reading that hid both bars.
+   * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar.
+   * @returns Once {@link sideBarsBeforeRead} says whether the secondary bar was open; left without that answer when the area gave no width, and {@link sideBarShowCommands} measures it when the reading ends.
+   * @example
+   * ```ts
+   * await this.rememberAuxiliaryBarAtRead() // sideBarsBeforeRead.auxiliaryVisible => true for an area of 1335 that was 874 without the primary side bar
+   * ```
+   */
+  private async rememberAuxiliaryBarAtRead(): Promise<void> {
+    const before = this.sideBarsBeforeRead
+    // Only a reading whose maximization hid both bars has a secondary bar to measure.
+    if (before?.widthWithoutPrimaryPx === undefined) return
+    const maximizedWidthPx = await this.readEditorAreaWidthPx()
+    if (maximizedWidthPx === undefined) return
+    before.auxiliaryVisible = this.hasSideBarGain(
+      maximizedWidthPx,
+      before.widthWithoutPrimaryPx,
+    )
   }
 
   /**
@@ -2638,6 +2666,8 @@ export class StudyWorkspace {
         assertReadFocus()
       }
       await this.maximizeActiveGroupForRead(assertReadFocus)
+      // The secondary bar is measured at the Read itself, before the learner can resize the window.
+      if (startsReading) await this.rememberAuxiliaryBarAtRead()
     } catch (error) {
       // A Read refused before its maximization begins no reading: the side bar hidden for the measurement is shown again, and the next Read measures anew.
       if (startsReading) {
@@ -2651,7 +2681,7 @@ export class StudyWorkspace {
   /**
    * Runs the editor commands that maximize the active group for a Read; called by {@link maximizeForRead} once the side bars were measured or found unmeasurable.
    * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read.
-   * @returns Once the editor answered: both side bars hidden for a measured reading ({@link sideBarsBeforeRead} set), or the side bars untouched after Expand and the maximize toggle.
+   * @returns Once the editor answered: both side bars hidden for a reading whose primary side bar was measured ({@link sideBarsBeforeRead} with its width), or the side bars left as they are after Expand and the maximize toggle.
    * @throws What `assertReadFocus` throws, and a rejection of an editor command.
    * @example
    * ```ts
@@ -2661,8 +2691,8 @@ export class StudyWorkspace {
   private async maximizeActiveGroupForRead(
     assertReadFocus: () => void,
   ): Promise<void> {
-    // A measured reading hides both side bars with the group's maximization.
-    if (this.sideBarsBeforeRead) {
+    // A measured reading hides both side bars with the group's maximization; one whose measurement failed after hiding the primary bar leaves the secondary bar alone.
+    if (this.sideBarsBeforeRead?.widthWithoutPrimaryPx !== undefined) {
       await vscode.commands.executeCommand(
         'workbench.action.maximizeEditorHideSidebar',
       )
@@ -2702,7 +2732,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the editor area grew by a hidden side bar between two reads; asked by {@link rememberSideBarsBeforeRead} and {@link sideBarShowCommands}.
+   * Says whether the editor area grew by a hidden side bar between two reads; asked by {@link rememberSideBarsBeforeRead}, {@link rememberAuxiliaryBarAtRead} and {@link sideBarShowCommands}.
    * @param widerPx - The editor area's width that is expected to be the wider one, `undefined` when it could not be read.
    * @param narrowerPx - The width it is compared with, `undefined` when it could not be read.
    * @returns `true` when the first width exceeds the second by more than {@link HIDDEN_SIDE_BAR_MIN_GAIN_PX}; `false` when it does not, and when either width is unknown.
@@ -2720,18 +2750,32 @@ export class StudyWorkspace {
   }
 
   /**
-   * Measures which side bars a Read hid and lists the editor commands that show them, in the order {@link showSideBarsHiddenByRead} runs them: the secondary bar first, then the primary one.
-   * The secondary bar was open when the editor area is wider now than it was without the primary bar alone. An area that did not grow says nothing while the learner may have opened a bar during the reading, which takes that width away again: {@link sideBarsHiddenAtSecondLook} then hides the primary bar once more and reads the area again, which tells both whether the secondary bar is still hidden and whether the primary one was open.
-   * @param before - What {@link rememberSideBarsBeforeRead} measured.
-   * @returns One command for each bar that was open before the Read and for a primary bar the learner opened during it; an empty list when both were closed. A bar whose state could not be measured is left out.
+   * Lists the editor commands that show the side bars a Read hid, in the order {@link showSideBarsHiddenByRead} runs them: the secondary bar first, then the primary one.
+   * What the Read measured decides without another read: the secondary bar measured at the Read ({@link rememberAuxiliaryBarAtRead}), and the primary bar alone for a reading whose measurement failed after hiding it. Only when the secondary bar could not be measured at the Read is the editor area read now: the secondary bar was open when the area is wider than it was without the primary bar alone. An area that did not grow says nothing while the learner may have opened a bar during the reading, which takes that width away again: {@link sideBarsHiddenAtSecondLook} then hides the primary bar once more and reads the area again, which tells both whether the secondary bar is still hidden and whether the primary one was open.
+   * @param before - What {@link rememberSideBarsBeforeRead} and {@link rememberAuxiliaryBarAtRead} measured.
+   * @returns One command for each bar that was open before the Read and for a primary bar the learner opened during it; an empty list when both were closed. A bar whose state could not be measured is left out, except the primary bar the measurement itself hid.
    * @example
    * ```ts
-   * await this.sideBarShowCommands({ primaryVisible: true, widthWithoutPrimaryPx: 874 }) // => ['workbench.action.focusSideBar'] while the area is 874 px wide
+   * await this.sideBarShowCommands({ primaryVisible: true, widthWithoutPrimaryPx: 874, auxiliaryVisible: false }) // => ['workbench.action.focusSideBar']
+   * await this.sideBarShowCommands({ primaryVisible: true }) // => ['workbench.action.focusSideBar'] after a measurement that failed once it had hidden the primary bar
    * ```
    */
   private async sideBarShowCommands(
     before: NonNullable<StudyWorkspace['sideBarsBeforeRead']>,
   ): Promise<string[]> {
+    const primaryCommands = before.primaryVisible
+      ? ['workbench.action.focusSideBar']
+      : []
+    // A reading whose measurement failed after hiding the primary bar left the secondary bar as it was.
+    if (before.widthWithoutPrimaryPx === undefined) return primaryCommands
+    // Measured at the Read, the secondary bar's state does not depend on the window's width now.
+    if (before.auxiliaryVisible !== undefined)
+      return [
+        ...(before.auxiliaryVisible
+          ? ['workbench.action.focusAuxiliaryBar']
+          : []),
+        ...primaryCommands,
+      ]
     const widthPx = await this.readEditorAreaWidthPx()
     // A wider area says that the secondary bar was open and is still hidden; anything else needs a second look.
     const hidden = this.hasSideBarGain(widthPx, before.widthWithoutPrimaryPx)

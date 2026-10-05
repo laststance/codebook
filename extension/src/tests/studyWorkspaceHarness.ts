@@ -554,6 +554,8 @@ export async function workspaceHarness(
     primary: SIDE_BAR_WINDOW_PX.primary,
     auxiliary: SIDE_BAR_WINDOW_PX.auxiliary,
   }
+  /** The width of the fake window in pixels, which `resizeWindow` changes as a learner who drags the window's edge does. */
+  let windowWidthPx = SIDE_BAR_WINDOW_PX.window
   /** Says that a side bar has the keyboard: the editor's commands that show a side bar also focus it. */
   let keyboardInSideBar = false
   // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
@@ -2245,7 +2247,7 @@ export async function workspaceHarness(
               layout.orientation === 0
             ) {
               const areaPx =
-                  SIDE_BAR_WINDOW_PX.window -
+                  windowWidthPx -
                   (sideBars.primary ? sideBarWidthsPx.primary : 0) -
                   (sideBars.auxiliary ? sideBarWidthsPx.auxiliary : 0),
                 columns: { size: number }[] = layout.groups,
@@ -3333,6 +3335,14 @@ export async function workspaceHarness(
     },
     /** The side bars the fake window shows now, and whether one of them has the keyboard; `undefined` bars without `modelSideBars`. @example harness.sideBars() // => { primary: true, auxiliary: true, hasKeyboard: false } */
     sideBars: () => ({ ...sideBars, hasKeyboard: keyboardInSideBar }),
+    /**
+     * Makes the fake window wider or narrower, as a learner who drags its edge: the side bars keep their widths and the editor area between them takes the difference, which the next layout read of columns reports.
+     * @param widthPx - The window's new width; 1335 px until a test changes it.
+     * @example harness.resizeWindow(1935) // the editor area is 600 px wider
+     */
+    resizeWindow(widthPx: number): void {
+      windowWidthPx = widthPx
+    },
     /**
      * Sets what the fake editor reports as the selected stack item of Run and Debug: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
      * @example
