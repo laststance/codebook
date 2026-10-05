@@ -1913,7 +1913,7 @@ for (const keyboardBeforePalette of ['the terminal', 'the Study pane'] as const)
       assert.deepEqual(
         harness.informationMessages.map((message) => message.message),
         [
-          'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.',
+          'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
         ],
       )
     } finally {
@@ -1962,33 +1962,118 @@ test("Close Study Workspace made with the keyboard in the captured source leaves
   }
 })
 
-// Value: protects=the keyboard of a learner who types in their own file while the Study workspace is closed: Close focuses nothing; fails_when=Close runs a focus command although no pane of Codebook had the keyboard, which can move the keyboard away from where the learner is; why_new=Cycle 0045 cause 12 (f), the counterpart of the cases above; seam=the workspace harness's command log, focusMutableDraft
-test("Close Study Workspace made with the keyboard in the learner's own file runs no focus command", async () => {
-  // Arrange
+// Value: protects=the keyboard of a learner whose own file is the active editor when "Codebook: Close Study Workspace" runs: the active editor group has it once the panes' groups are closed, and the learner is told once in an editor session where it is; fails_when=Close runs its focus command only when a pane or the captured source was active, the editor rebuilds its grid as the closed tabs' groups leave, and the keyboard is on the page body until the learner clicks (Cursor 3.23.12, two of two takes), or the sentence comes at every Close; why_new=Cycle 0046 row 66 (native check (c) of row 1; this replaces the Cycle 0045 test "Close Study Workspace made with the keyboard in the learner's own file runs no focus command", whose rule left that keyboard on the page body); seam=the workspace harness's closeDisposedPanelTabsLater, loseKeyboardWhenGroupCloses, keyboardOnBody, command log and information messages
+test("Close Study Workspace made with the learner's own file active gives the active editor group the keyboard once the panes' groups closed, and says where it is once in an editor session", async () => {
+  // Arrange: the editor closes a disposed pane's tab 20 ms after the disposal, removes the group that tab left empty 57 ms after that, and lets the keyboard fall to the page body when a group goes; the reader is open and the learner's file in the first group is the active editor.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.closeDisposedPanelTabsLater()
+  harness.removeEmptiedGroupsLater()
+  harness.loseKeyboardWhenGroupCloses()
   try {
     await harness.reader.open()
     const learnerFile = harness.focusMutableDraft('actions.ts', 1)
+    const groupsBeforeClose = harness.groups.length
+
+    // Act: Close, and longer than the fake editor takes to remove an emptied group; then the Study workspace is opened and closed once more in the same editor session.
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const afterFirstClose = {
+      groups: harness.groups.length,
+      keyboardOnBody: harness.keyboardOnBody(),
+      lastCommand: harness.commands.at(-1),
+      panels: harness.counts().panels,
+      activeDocument: harness.editor.window.activeTextEditor?.document,
+      sentences: harness.informationMessages.map((message) => message.message),
+    }
+    await harness.reader.open()
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    // Assert
+    assert.equal(groupsBeforeClose, 3)
+    assert.deepEqual(afterFirstClose, {
+      groups: 1,
+      keyboardOnBody: false,
+      lastCommand: 'workbench.action.focusActiveEditorGroup',
+      panels: 0,
+      activeDocument: learnerFile.document,
+      sentences: [
+        'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+      ],
+    })
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(
+      harness.commands.at(-1),
+      'workbench.action.focusActiveEditorGroup',
+    )
+    // The second Close of the session tells nothing more.
+    assert.equal(harness.informationMessages.length, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const situation of [
+  'the work window does not have the focus',
+  'the Study workspace is not open',
+] as const)
+  // Value: protects=a Close that has nothing to settle leaving the keyboard and the learner alone: in a window that is not focused, and when no pane and no captured source was open; fails_when=the wider rule of row 66 focuses the active editor group of a window the learner is not in, or tells its sentence after a Close that closed nothing; why_new=Cycle 0046 row 66 (the bounds of the new rule); seam=the workspace harness's changeWindowFocus, command log and information messages
+  test(`Close Study Workspace made with the learner's own file active runs no focus command and tells nothing when ${situation}`, async () => {
+    // Arrange
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      if (situation === 'the work window does not have the focus')
+        await harness.reader.open()
+      harness.focusMutableDraft('actions.ts', 1)
+      if (situation === 'the work window does not have the focus')
+        harness.changeWindowFocus(false)
+      const commandsBefore = harness.commands.length
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.equal(
+        harness.commands
+          .slice(commandsBefore)
+          .some((command) => /^workbench\.action\.focus/.test(command)),
+        false,
+      )
+      assert.deepEqual(harness.informationMessages, [])
+      assert.equal(harness.reader.presentationState().state, 'closed')
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner who types in Cursor's Agent chat (a tab of another editor part) when "Codebook: Close Study Workspace" runs: it stays in the chat and nothing is told; fails_when=the wider rule of row 66 runs its focus command although the editor names no active text editor and no active pane, and takes the keyboard from the chat; why_new=Cycle 0046 row 66 ("keep what is known": only a state the editor reads as an active text editor or pane is settled); seam=the workspace harness's addSeparateEditorPart, command log and information messages
+test("Close Study Workspace made while Cursor's chat tab has the keyboard leaves the keyboard in the chat and tells nothing", async () => {
+  // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader is open and the learner types in the chat.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  try {
+    await harness.reader.open()
+    chat.focusTab()
     const commandsBefore = harness.commands.length
 
     // Act
     await harness.reader.close()
 
     // Assert
+    assert.equal(chat.focused(), true)
     assert.equal(
       harness.commands
         .slice(commandsBefore)
         .some((command) => /^workbench\.action\.focus/.test(command)),
       false,
     )
-    assert.equal(harness.keyboardOnBody(), false)
-    assert.equal(
-      harness.editor.window.activeTextEditor?.document,
-      learnerFile.document,
-    )
-    // The keyboard did not move, so Close says nothing about it.
     assert.deepEqual(harness.informationMessages, [])
+    assert.equal(harness.reader.presentationState().state, 'closed')
   } finally {
     await harness.close()
   }

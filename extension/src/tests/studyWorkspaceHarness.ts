@@ -44,6 +44,8 @@ const NATIVE_VARIABLES_REFRESH_MS = 400
 const NATIVE_VARIABLES_FIRST_RENDER_MS = 60
 /** How long the fake editor's worker takes to close a disposed panel's tab when no layout read is answered before it runs; shorter than one poll of the reader's wait for that close. */
 const DISPOSED_TAB_CLOSE_DELAY_MS = 20
+/** How long after a disposed pane's tab closed the fake editor removes the group that tab left empty, in the model of `removeEmptiedGroupsLater`: Cursor 3.23.12 removed the captured source's group 57 ms after its tab at "Codebook: Close Study Workspace", and the Study pane's 12 ms after its tab (Cycle 0046 row 66). The longer of the two is modelled: it is longer than one poll of the reader's wait for the panes' tabs, so the group is still there when that wait ends. */
+const EMPTIED_GROUP_CLOSE_DELAY_MS = 57
 /** The fake window of {@link workspaceHarness}'s side bar model, in pixels as Cursor 3.23.12 showed it (Cycle 0045 NF-22, obs15 P4): primary side bar 214, editor area 660, secondary side bar 461. */
 const SIDE_BAR_WINDOW_PX = { window: 1335, primary: 214, auxiliary: 461 }
 /**
@@ -565,6 +567,12 @@ export async function workspaceHarness(
   let keyboardInSideBar = false
   // What the editor reports for Run and Debug: the selected stack item while a debug session is paused, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
   let activeStackItem: unknown, focusEditorOnBreak: boolean | undefined
+  /** The reader's listeners for a change of the selected stack item of Run and Debug; `setActiveStackItem` calls them. */
+  const activeStackItemListeners = new Set<() => void>()
+  /** Whether the fake editor lets the keyboard fall to the page body when it removes an emptied editor group while a text editor has the keyboard; see `loseKeyboardWhenGroupCloses`. */
+  let losesKeyboardWhenGroupCloses = false
+  /** Whether the fake editor removes the group a disposed pane's tab left empty a moment after that tab closed instead of with it; see `removeEmptiedGroupsLater`. */
+  let removesEmptiedGroupsLater = false
   // Every text document the reader showed, with the group and whether it left the keyboard focus where it was.
   const textDocumentShows: {
     name: string
@@ -962,6 +970,13 @@ export async function workspaceHarness(
       .toSorted((left, right) => left.viewColumn - right.viewColumn)
     // The editor keeps its last group even when it is empty.
     if (main.length < 2 || !groups.includes(emptied)) return
+    // Cursor rebuilds its editor grid when a group closes, and the text editor that had the keyboard loses it to the page body.
+    if (
+      losesKeyboardWhenGroupCloses &&
+      !separateEditorPart?.focused &&
+      focusedSourceEditor()
+    )
+      keyboardOnBody = true
     editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
     groups.splice(groups.indexOf(emptied), 1)
     for (const remaining of groups)
@@ -1544,6 +1559,25 @@ export async function workspaceHarness(
               ))
                 removeEmptiedGroup(group)
             })
+          } else if (
+            closeDisposedPanelTabsLater &&
+            removesEmptiedGroupsLater &&
+            emptied.length
+          ) {
+            // The tab's close is reported first; the group it left empty goes a moment later, and every main group that is empty then goes with it, from the last column to the first.
+            replaceGroupObjects()
+            const timer = setTimeout(() => {
+              pendingEditorTimers.delete(timer)
+              const emptyGroups = groups
+                .filter(
+                  (candidate) =>
+                    candidate !== separateEditorPart?.group &&
+                    !candidate.tabs.length,
+                )
+                .toSorted((left, right) => right.viewColumn - left.viewColumn)
+              for (const group of emptyGroups) removeEmptiedGroup(group)
+            }, EMPTIED_GROUP_CLOSE_DELAY_MS)
+            pendingEditorTimers.add(timer)
           } else if (closeDisposedPanelTabsLater && emptied.length) {
             // From the last column to the first, each group looked up again by its column, as in the close of dead panes above.
             const laterEmptiedColumns = emptied
@@ -1658,6 +1692,7 @@ export async function workspaceHarness(
       private readonly lease: {
         panel: ReturnType<typeof panel>
         released(): void
+        tookKeyboardAtPause?(): void
       },
       _observer?: unknown,
       readonly mode = 'live',
@@ -1738,6 +1773,16 @@ export async function workspaceHarness(
       this.historical = true
       this.historicalHtml = html
       this.panel.webview.html = html
+    }
+    /**
+     * Reveals the leased pane with the keyboard and tells the lease's owner, as the real viewport does when its reveal covers the file the debugger focused at a pause.
+     * @param reported - Whether the fake editor reports the pane's focus (the pane's group is the active one and the pane is active); `false` brings the pane to the front without that report, for an editor that keeps naming another group.
+     * @example viewport.takeKeyboardAtPause(true)
+     */
+    takeKeyboardAtPause(reported: boolean): void {
+      assert.equal(this.closed, false)
+      this.panel.reveal(undefined, !reported)
+      this.lease.tookKeyboardAtPause?.()
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
     close(): void {
@@ -2702,6 +2747,14 @@ export async function workspaceHarness(
         get activeStackItem() {
           return activeStackItem
         },
+        onDidChangeActiveStackItem: (listener: () => void) => {
+          activeStackItemListeners.add(listener)
+          return {
+            dispose(): void {
+              activeStackItemListeners.delete(listener)
+            },
+          }
+        },
       },
       workspace: {
         getConfiguration: (section: string) => ({
@@ -2710,7 +2763,10 @@ export async function workspaceHarness(
               ? savedStudyCapacity
               : section === 'debug' && key === 'focusEditorOnBreak'
                 ? focusEditorOnBreak
-                : undefined,
+                : // The fake editor removes an emptied group only in the model of `closeDisposedPanelTabsLater`.
+                  section === 'workbench.editor' && key === 'closeEmptyGroups'
+                  ? closeDisposedPanelTabsLater
+                  : undefined,
         }),
         onDidChangeConfiguration: (
           listener: (event: {
@@ -3421,7 +3477,7 @@ export async function workspaceHarness(
       windowWidthPx = widthPx
     },
     /**
-     * Sets what the fake editor reports as the selected stack item of Run and Debug: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
+     * Sets what the fake editor reports as the selected stack item of Run and Debug and tells the reader's listeners of the change: an item while a debug session is paused (the editor then opened the paused file with the keyboard focus, see `focusMutableDraft`; Cursor's and VS Code's debugger open that file first and select the stack item after it), `undefined` when none is. The second argument is the learner's `debug.focusEditorOnBreak` setting; left out, the editor's default (on) holds.
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
      * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
@@ -3429,6 +3485,48 @@ export async function workspaceHarness(
     setActiveStackItem(item: unknown, focusesEditorOnBreak?: boolean): void {
       activeStackItem = item
       focusEditorOnBreak = focusesEditorOnBreak
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Lets the live run's Application pane take the keyboard from the file the debugger focused at a pause, as its viewport does at the end of a capture when the debugger opened that file in the pane's group: the pane is revealed with the keyboard and the viewport tells the reader through its lease. The reader answers without being awaited, as in the product: a test waits for what it expects.
+     * @param report - `'not reported'` models Cursor beside its chat's tab, which does not report every focus a pane takes there (Cycle 0045, obs15 P2 and R, seen for the first group's focus command and for a shown document): the pane is in front and has the keyboard, the editor goes on naming the chat's group as the active one, and neither a text editor nor a pane is active. Whether Cursor reports a pane revealed with the keyboard at a pause is not recorded; the reader must not depend on it.
+     * @example
+     * harness.setActiveStackItem({ session: { id: 'live-next-server' }, threadId: 1 })
+     * harness.applicationPaneTakesKeyboardAtPause()
+     */
+    applicationPaneTakesKeyboardAtPause(
+      report: 'reported' | 'not reported' = 'reported',
+    ): void {
+      const viewport = viewportInstances.findLast(
+        (candidate) => candidate.mode === 'live',
+      )
+      assert.ok(viewport)
+      if (report === 'not reported') {
+        assert.ok(separateEditorPart)
+        // The keyboard is in the pane; the editor's name for the active group stays the chat's.
+        activeTabGroup = separateEditorPart.group
+        separateEditorPart.focused = false
+        keyboardOnBody = false
+      }
+      viewport.takeKeyboardAtPause(report === 'reported')
+    },
+    /**
+     * Makes the fake editor let the keyboard fall to the page body when it removes an editor group whose last tab closed while a text editor of another group has the keyboard, as Cursor 3.23.12 was seen to after "Codebook: Close Study Workspace" with the learner's own file active (Cycle 0046 row 66: the captured source's group closed, the grid was rebuilt and `document.activeElement` was the page body 20 ms later). Groups are removed only with `closeDisposedPanelTabsLater`.
+     * @example
+     * harness.closeDisposedPanelTabsLater()
+     * harness.loseKeyboardWhenGroupCloses()
+     */
+    loseKeyboardWhenGroupCloses(): void {
+      losesKeyboardWhenGroupCloses = true
+    },
+    /**
+     * Makes the fake editor remove the group a disposed pane's tab left empty {@link EMPTIED_GROUP_CLOSE_DELAY_MS} after that tab closed, instead of in the same turn, as Cursor 3.23.12 was seen to at "Codebook: Close Study Workspace" (Cycle 0046 row 66, `r1c3.tabs.json`: the captured source's group closed 57 ms after its tab, the Study pane's 12 ms after its tab). The tab's close is reported at once. Only the groups of disposed panes are delayed, and only in the model of `closeDisposedPanelTabsLater`.
+     * @example
+     * harness.closeDisposedPanelTabsLater()
+     * harness.removeEmptiedGroupsLater()
+     */
+    removeEmptiedGroupsLater(): void {
+      removesEmptiedGroupsLater = true
     },
     /** Lists every text document the reader showed, in order, with its group and whether the keyboard focus was left where it was. @example harness.textDocumentShows().at(-1) // => { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false } */
     textDocumentShows: () => [...textDocumentShows],
@@ -4419,9 +4517,6 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
-    /** Runs the reader's step for a captured source that took the keyboard from the file the debugger focused at a pause, as each such capture of an editor session does. @example readerSeams(harness).tellSourceTookPausedFocus() */
-    tellSourceTookPausedFocus: (): void =>
-      reader['tellSourceTookPausedFocus'](),
     /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
     publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */

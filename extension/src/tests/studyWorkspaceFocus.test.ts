@@ -1549,7 +1549,7 @@ for (const regained of [
 
 // Value: protects=a finished reader test leaving nothing behind in its fake editor: a tab close the fake editor still owed at the harness's close never runs; fails_when=the fake editor's timer outlives the harness, so up to 20 ms after a test ended it removes tabs and groups and calls the listeners of that test; why_new=Cycle 0045 local review tests-1 #3 (the timers of closeDisposedPanelTabsLater and revealPanelsLater were never cleared); seam=the fake editor's pending timers and its tab and group events
 test("the fake editor of a closed harness runs none of the tab closes it still owed: its tabs stay and no listener is called after the harness's close", async () => {
-  // Arrange: the editor closes a disposed pane's tab 20 ms after the disposal; the learner's file has the keyboard, so the reader's close waits for no tab.
+  // Arrange: the editor closes a disposed pane's tab 20 ms after the disposal; the work window does not have the focus, so the reader's close settles no keyboard and waits for no tab.
   const harness = await workspaceHarness(false)
   harness.useNativeLayout({ orientation: 0, groups: [{}] })
   harness.closeDisposedPanelTabsLater()
@@ -1560,6 +1560,7 @@ test("the fake editor of a closed harness runs none of the tab closes it still o
   }
   await harness.reader.open()
   harness.focusMutableDraft('learner-notes.ts', 2)
+  harness.changeWindowFocus(false)
   harness.editor.window.tabGroups.onDidChangeTabGroups(countAfterClose)
   harness.editor.window.tabGroups.onDidChangeTabs(countAfterClose)
 
