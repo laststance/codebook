@@ -10,7 +10,6 @@ import {
   realpath,
   rm,
   stat,
-  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -33,6 +32,10 @@ import {
 } from '../utils/readProcessStart'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { idleChild } from './utils/idleChild'
 import { loadModule } from './utils/loadModule'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
@@ -1647,42 +1650,36 @@ test(
 )
 
 // Value: protects=the Update button in a checkout whose repository holds a link (or another entry that is no marker file) at the marker's path; fails_when=an entry no marker can be read from counts as "no marker", which is never removed, so every start ends with the file error EEXIST until the learner deletes the entry by hand; why_new=Cycle 0046 row 52: since a start removes nothing where it found no marker, an unreadable entry must be told from an empty path; seam=the clock handed to the claim
-test(
-  'a link at the marker’s path does not refuse every start: once it is older than a write takes it is removed as nobody’s marker, its target stays, and the update runs',
-  {
-    skip:
-      process.platform === 'win32'
-        ? 'creating a symbolic link needs a privilege on Windows'
-        : false,
-  },
-  async () => {
-    // Arrange: a link at the marker's path to a file of the project.
-    const wiki = await createWikiFolder()
-    const target = join(wiki.directory, 'a-file-of-the-project')
-    await writeFile(target, 'kept')
-    await symlink(target, wiki.markerPath)
+test('a link at the marker’s path does not refuse every start: once it is older than a write takes it is removed as nobody’s marker, its target stays, and the update runs', async (context) => {
+  // Arrange: a link at the marker's path to a file of the project.
+  const wiki = await createWikiFolder()
+  const target = join(wiki.directory, 'a-file-of-the-project')
+  await writeFile(target, 'kept')
+  try {
+    // The case runs wherever a link can be created, on Windows too; only a user without that right skips it, with the reason.
+    if (!(await createLinkIfAllowed(target, wiki.markerPath)))
+      return context.skip(LINK_NOT_ALLOWED)
     const linkedAtMs = (await lstat(wiki.markerPath)).mtimeMs
-    try {
-      // Act
-      const start = await outcomeOf(
-        claimWikiUpdateMarker(
-          wiki.outputDirectory,
-          {
-            pid: process.pid,
-            windowId: 'window-a',
-            host: 'vscode',
-            startedAtMs: linkedAtMs,
-          },
-          { now: () => linkedAtMs + 2_000 },
-        ),
-      )
 
-      // Assert
-      assert.equal(start, 'holds the claim')
-      assert.equal(await readFile(target, 'utf8'), 'kept')
-      assert.equal((await lstat(wiki.markerPath)).isFile(), true)
-    } finally {
-      await rm(wiki.directory, { recursive: true, force: true })
-    }
-  },
-)
+    // Act
+    const start = await outcomeOf(
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: linkedAtMs,
+        },
+        { now: () => linkedAtMs + 2_000 },
+      ),
+    )
+
+    // Assert
+    assert.equal(start, 'holds the claim')
+    assert.equal(await readFile(target, 'utf8'), 'kept')
+    assert.equal((await lstat(wiki.markerPath)).isFile(), true)
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})

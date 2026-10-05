@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 import {
@@ -49,17 +50,19 @@ export type ProcessStartInputs = ProcessStartFormInputs & {
   ownStart?: OwnProcessStart
   /** A clock that no correction of the wall clock moves (milliseconds), by which a failed read of this process's own start is read again. */
   now?: () => number
+  /** How long one start query may run before it is ended (milliseconds); {@link PROCESS_START_QUERY_TIMEOUT_MS} unless a caller names its own, as a test does that waits for a real PowerShell that starts cold. */
+  queryTimeoutMs?: number
+  /** The environment the Windows system root is read from (`SystemRoot`), under which PowerShell is started by its full path; `process.env` unless a test names its own. */
+  environment?: { SystemRoot?: string }
 }
 
 /** A reader of a process's start as the storage judgements take one: {@link readProcessStart}, one that adds its caller's cache, or a test's own. */
 export type ProcessStartReader = typeof readProcessStart
 
-/** The bounds of every start query: a query that runs longer or prints more is ended, with a signal no process can ignore. */
-const QUERY_BOUNDS: ProcessStartQueryOptions = {
-  timeout: PROCESS_START_QUERY_TIMEOUT_MS,
-  maxBuffer: PROCESS_START_QUERY_MAX_BYTES,
-  killSignal: 'SIGKILL',
-  windowsHide: true,
+/** Where Windows PowerShell lies under the Windows system root, and its bare name, by which it is started only where that root is unknown. */
+const WINDOWS_POWERSHELL = {
+  underSystemRoot: ['System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'],
+  bareName: 'powershell.exe',
 }
 /** One line of printable ASCII of at most {@link PROCESS_START_PS_TEXT_MAX_LENGTH} characters, as `ps -o lstart=` prints a start in the C locale. */
 const PS_START_LINE = new RegExp(
@@ -73,7 +76,44 @@ const CLOCK_TICKS = /^\d+$/
 /** This process's own start, the only start kept beyond one sweep: it cannot change while the process runs. */
 const ownProcessStart: OwnProcessStart = {}
 
-/** Runs one start query without a shell and closes its input, which neither query reads and which, left open, can keep PowerShell waiting. @example await runQuery('/bin/ps', ['-o', 'lstart=', '-p', '4242'], QUERY_BOUNDS) // => { stdout: 'Mon Oct  5 09:12:33 2026\n', stderr: '' } */
+/**
+ * Gives the bounds of one start query: a query that runs longer or prints more is ended, with a signal no process can ignore; called by {@link macStartOf} and {@link windowsStartOf} for the query they run.
+ * @param inputs - The bound of {@link ProcessStartInputs} a caller may name (`queryTimeoutMs`).
+ * @returns The options of the query: the caller's time bound, or {@link PROCESS_START_QUERY_TIMEOUT_MS}; {@link PROCESS_START_QUERY_MAX_BYTES}; the signal `SIGKILL`; and no console window on Windows.
+ * @example
+ * queryBoundsOf({})                         // => { timeout: 3_000, maxBuffer: 1_024, killSignal: 'SIGKILL', windowsHide: true }
+ * queryBoundsOf({ queryTimeoutMs: 30_000 }) // => { timeout: 30_000, maxBuffer: 1_024, killSignal: 'SIGKILL', windowsHide: true }
+ */
+function queryBoundsOf(
+  inputs: Pick<ProcessStartInputs, 'queryTimeoutMs'>,
+): ProcessStartQueryOptions {
+  return {
+    timeout: inputs.queryTimeoutMs ?? PROCESS_START_QUERY_TIMEOUT_MS,
+    maxBuffer: PROCESS_START_QUERY_MAX_BYTES,
+    killSignal: 'SIGKILL',
+    windowsHide: true,
+  }
+}
+
+/**
+ * Names the program the Windows query starts, by its full path, so that no `powershell.exe` in the process's current directory or earlier in the search path is started in its place; called by {@link windowsStartOf}.
+ * Windows PowerShell lies at `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`. A bare name is looked up in the current directory first and then in the search path.
+ * @param environment - Where the system root is read from; `process.env`, whose names Windows reads without regard to case, unless a test names its own.
+ * @returns The full path under `SystemRoot`; the bare name `powershell.exe` where that variable is absent, empty or no absolute Windows path, since a path that is not absolute would again be looked up from the current directory.
+ * @example
+ * windowsPowerShellPath({ SystemRoot: 'C:\\Windows' }) // => 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+ * windowsPowerShellPath({})                            // => 'powershell.exe'
+ */
+function windowsPowerShellPath(
+  environment: NonNullable<ProcessStartInputs['environment']> = process.env,
+): string {
+  const systemRoot = environment.SystemRoot
+  return systemRoot !== undefined && win32.isAbsolute(systemRoot)
+    ? win32.join(systemRoot, ...WINDOWS_POWERSHELL.underSystemRoot)
+    : WINDOWS_POWERSHELL.bareName
+}
+
+/** Runs one start query without a shell and closes its input, which neither query reads and which, left open, can keep PowerShell waiting. @example await runQuery('/bin/ps', ['-o', 'lstart=', '-p', '4242'], queryBoundsOf({})) // => { stdout: 'Mon Oct  5 09:12:33 2026\n', stderr: '' } */
 const runQuery: NonNullable<ProcessStartInputs['run']> = (
   file,
   queryArguments,
@@ -142,7 +182,7 @@ async function linuxStartOf(
  * Asks `ps` when a process began; the query of {@link START_QUERIES} on macOS.
  * The answer is printed in the C locale and in UTC, because `ps` prints it in the asking process's locale and time zone, and two windows with different ones must read the same text.
  * @param pid - A positive safe integer.
- * @param inputs - The runner of {@link ProcessStartInputs}.
+ * @param inputs - The runner and the time bound of {@link ProcessStartInputs}.
  * @returns `ps:<text>` for one printable line of at most {@link PROCESS_START_PS_TEXT_MAX_LENGTH} characters; `undefined` for any other answer.
  * @throws What the runner rejects with: `ps` ended with an error (no such process), ran too long or printed too much.
  * @example
@@ -155,7 +195,7 @@ async function macStartOf(
   const { stdout } = await (inputs.run ?? runQuery)(
     '/bin/ps',
     ['-o', 'lstart=', '-p', `${pid}`],
-    { ...QUERY_BOUNDS, env: { LC_ALL: 'C', TZ: 'UTC' } },
+    { ...queryBoundsOf(inputs), env: { LC_ALL: 'C', TZ: 'UTC' } },
   )
   const text = stdout.trim()
   return PS_START_LINE.test(text)
@@ -165,8 +205,9 @@ async function macStartOf(
 
 /**
  * Asks PowerShell when a process was created; the query of {@link START_QUERIES} on Windows.
- * @param pid - A positive safe integer; it is the only part of the command that varies.
- * @param inputs - The runner of {@link ProcessStartInputs}.
+ * PowerShell is started by its full path under the system root ({@link windowsPowerShellPath}).
+ * @param pid - A positive safe integer; it is the only part of the arguments that varies.
+ * @param inputs - The runner, the time bound and the environment of {@link ProcessStartInputs}.
  * @returns `win:<text>` for a UTC time in round-trip form; `undefined` for any other answer, for example the localized error text PowerShell prints for a process id that names no process.
  * @throws What the runner rejects with: PowerShell is missing or blocked, ended with an error, ran too long or printed too much.
  * @example
@@ -177,14 +218,14 @@ async function windowsStartOf(
   inputs: ProcessStartInputs,
 ): Promise<string | undefined> {
   const { stdout } = await (inputs.run ?? runQuery)(
-    'powershell.exe',
+    windowsPowerShellPath(inputs.environment),
     [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
       `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
     ],
-    QUERY_BOUNDS,
+    queryBoundsOf(inputs),
   )
   const text = stdout.trim()
   return WINDOWS_UTC_START.test(text)
@@ -203,8 +244,8 @@ const START_QUERIES: Partial<
 /**
  * Asks the system now when a process began; called by {@link readThroughCache} for a start that no kept one answers, and by {@link shareOwnRead}.
  * @param pid - A positive safe integer.
- * @param inputs - The platform, the file read and the runner of {@link ProcessStartInputs}.
- * @returns The start with its form as prefix (`linux@<namespace>:`, `ps:`, `win:`); `undefined` when no process has the id, when the read or the query fails, and on any other platform. Nothing here throws.
+ * @param inputs - The platform, the file read, the runner and the query's time bound of {@link ProcessStartInputs}.
+ * @returns The start with its form as prefix (`linux@<namespace>:`, `ps:`, `win:`); `undefined` when no process has the id, when the read or the query fails or runs longer than its bound, and on any other platform. Nothing here throws.
  * @example
  * await queryProcessStart(4242, {}) // => 'linux@4026531836:16362446'
  */
@@ -306,14 +347,14 @@ async function readThroughCache(
 }
 
 /**
- * Reads when the process with an id began, as a text that is compared for equality only, so that a process id that is in use again is not taken for the process a storage lock, a takeover claim, a connection descriptor or a profile marker recorded; called by {@link currentStorageOwner} for this process and by {@link isRecordedOwnerGone} for a recorded owner.
+ * Reads when the process with an id began, as a text that is compared for equality only, so that a process id that is in use again is not taken for the process a storage lock, a takeover claim, a connection descriptor or a profile marker recorded; called by {@link currentStorageOwner} for this process, by {@link isRecordedOwnerGone} for a recorded owner and by {@link readLiveWikiUpdateMarker} for the owner of a marker it verifies; the sweeps and claims between them hand it on with their caches.
  *
- * Linux reads field 22 of `/proc/<pid>/stat` and names it with the pid namespace it was read in ({@link processStartFormHere}); macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell for the creation time in UTC. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS} and {@link PROCESS_START_QUERY_MAX_BYTES}.
- * A read of `process.pid` answers this process's kept start and asks the system at most once ({@link readOwnProcessStart}).
+ * Linux reads field 22 of `/proc/<pid>/stat` and names it with the pid namespace it was read in ({@link processStartFormHere}); macOS asks `/bin/ps -o lstart=` in the C locale and UTC; Windows asks PowerShell, started by its full path under the system root, for the creation time in UTC. A query is bounded by {@link PROCESS_START_QUERY_TIMEOUT_MS}, or by the time its caller names, and by {@link PROCESS_START_QUERY_MAX_BYTES}.
+ * A read of `process.pid` answers this process's own start, which is kept once the system has answered it and is not asked for again; a read that failed is kept for {@link PROCESS_START_RETRY_AFTER_FAILURE_MS} and then made again, as often as it fails ({@link readOwnProcessStart}).
  * With a `cache`, a kept start may only confirm that the process is the recorded one: it is answered when it equals `expectedStart`. Every other start is read now, so a process id that was given to another process between two looks is never judged by the earlier process's start ({@link readThroughCache}).
  *
  * @param pid - The process id a record names. One that is not a positive safe integer reaches neither a path nor a command line.
- * @param inputs - The platform, the file read, the read of the namespace link, the runner and a caller's cache; the real ones when left out.
+ * @param inputs - The platform, the file read, the read of the namespace link, the runner, the query's time bound, the environment that names the Windows system root and a caller's cache; the real ones when left out.
  * @returns
  * - The start with its form as prefix: `linux@<namespace>:<ticks>` (`linux:<ticks>` when the namespace cannot be read), `ps:<text>`, `win:<UTC time>`
  * - `undefined` when no process has the id, when the read or the query fails, runs too long or answers something that is no start, and on any other platform; nothing here throws

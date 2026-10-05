@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, mkdtemp, rename, rm, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+import type * as ReadWikiWatchStampModule from '../utils/readWikiWatchStamp'
 import { readWikiWatchStamp } from '../utils/readWikiWatchStamp'
 
+import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
+import { loadModule } from './utils/loadModule'
 import { publishedWikiFixture } from './utils/publishedWikiFixture'
 
 /** A file write right after another can land in the same tick of the file system's clock; the pause keeps the two apart. */
@@ -107,5 +111,43 @@ test('the stamp does not grow with the backups the publisher keeps', async () =>
     assert.match(stamp, /^wiki=\d+:[\d.]+:\d+\/\d+:[\d.]+$/)
   } finally {
     await wiki.cleanup()
+  }
+})
+
+// Value: protects=the watch of a Wiki update on an NTFS volume, which looks at the Wiki only when its stamp changed; fails_when=the stamp names the manifest's inode as a JavaScript number, so a manifest the publisher wrote anew with the same size and time under a file id that differs only below the rounding keeps the stamp, and the watch never looks at the publish; why_new=Cycle 0046 row 79: a file id above 2^53 was observed on the development host; seam=node:fs/promises of the loaded stamp reader, whose files have ids above 2^53
+test('the stamp names a file id above 2^53 exactly, so a manifest written anew with the same size and time under an id that differs only where a number rounds changes the stamp', async () => {
+  // Arrange: a Wiki folder with a manifest last written at 2026-09-21T14:13:20Z. The manifest is the first file a status is asked for (id 210824757556437109), the folder the second, the manifest written anew the third.
+  const project = await mkdtemp(join(tmpdir(), 'codebook-wiki-watch-stamp-'))
+  const outputDirectory = join(project, 'wiki')
+  const manifestPath = join(outputDirectory, 'codebook-wiki.json')
+  await mkdir(outputDirectory)
+  await writeFile(manifestPath, '{"a":"12"}')
+  await utimes(manifestPath, 1_790_000_000, 1_790_000_000)
+  await utimes(outputDirectory, 1_790_000_000, 1_790_000_000)
+  const { readWikiWatchStamp: readStampWithLargeIds } = await loadModule<
+    typeof ReadWikiWatchStampModule
+  >(resolve(__dirname, '../utils/readWikiWatchStamp.js'), {
+    'node:fs/promises': fileSystemWithLargeFileIds(),
+  })
+  try {
+    const published = await readStampWithLargeIds(outputDirectory)
+
+    // Act: the publisher swaps in a freshly written manifest (the old one still exists, outside the Wiki folder), and the folder's time is set back, so that only the file id tells the two apart.
+    await rename(manifestPath, join(project, 'previous.json'))
+    await writeFile(manifestPath, '{"b":"34"}')
+    await utimes(manifestPath, 1_790_000_000, 1_790_000_000)
+    await utimes(outputDirectory, 1_790_000_000, 1_790_000_000)
+    const publishedAgain = await readStampWithLargeIds(outputDirectory)
+
+    // Assert
+    assert.deepEqual(
+      [published, publishedAgain],
+      [
+        'wiki=210824757556437109:1790000000000000000:10/1:1790000000000',
+        'wiki=210824757556437111:1790000000000000000:10/1:1790000000000',
+      ],
+    )
+  } finally {
+    await rm(project, { recursive: true, force: true })
   }
 })

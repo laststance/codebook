@@ -3,7 +3,7 @@
 Type: bug-fix cycle\
 Status: implementing\
 Result: pending\
-Delivery: not-applicable\
+Delivery: PR-open (draft pull request #88; nothing is delivered yet)\
 Goal version: 10 (9 until the owner's direction of 2026-10-05 on the target systems)\
 Tracking issue: https://github.com/laststance/codebook/issues/87 \
 Goal issue: https://github.com/laststance/codebook/issues/1\
@@ -97,7 +97,7 @@ Carry-forward rationale for unaffected rows: nothing in the 46 rows changes thei
 
 ## Carried defects
 
-The 46 rows of Issue #87 as filed, with what closes each and the test or observation that proves it, are in [the carried-defects file](0046-carried-defects.md), followed by the defects found while the cycle runs (rows 47 to 77 so far: what the packages found beside their rows, what the engineering review and the design review found, the health gate on the merged tree, and what the native checks found). The cycle closes only when its **Closed** column names the fix and its test, or the evidence, on every row; a defect found while the cycle runs is added there with the next number.
+The 46 rows of Issue #87 as filed, with what closes each and the test or observation that proves it, are in [the carried-defects file](0046-carried-defects.md), followed by the defects found while the cycle runs (rows 47 and later: what the packages found beside their rows, what the engineering review and the design review found, the health gate on the merged tree, what the native checks found and what the local reviews found). The cycle closes only when its **Closed** column names the fix and its test, or the evidence, on every row; a defect found while the cycle runs is added there with the next number.
 
 ## Validation contract
 
@@ -244,7 +244,51 @@ Found in this session, both rows of this cycle:
 
 Cursor's own quit dialog ("Quit Cursor?") was answered Quit through the page, with "Don't ask again" left unticked; A's extension host had been restarted by Cursor itself after the kill. The stand-in's orphaned `sleep` was ended by its pid.
 
-62 of 84 rows are closed.
+62 of 84 rows were closed at that point.
+
+### Local reviews, the packages that fix their findings, and further merges, 2026-10-05 and 2026-10-06
+
+**Closures and runs on GitHub.** Row 27 is closed on its DOM cases and tests: the look in an editor that its package listed needs a window without a Trash, which is a WSL window of an editor for Windows (`vscode.env.remoteName` is `wsl`) and cannot be made with the Linux QA editors; it is the missing coverage this record names. The head `9675fc6` was pushed and passed 25 of 25 checks: the Windows job ran 141 tests (136 pass, 5 skipped with their reasons), among them the Wiki file reader's cases on a system without `O_NOFOLLOW` (a regular file is read, a link is not, a file replaced between the look and the open is not: row 71 holds on Windows); the filter's alias started the job from the pull request (row 40); and the Reader DOM job ran 122 cases of the Study pane and 16 of the Wiki reader (row 70).
+
+**Merges, each verified on the merged tree** (build, full suite, ESLint, Prettier, the three Fallow gates, package and script tests, hook test, both DOM checks):
+
+| Merge | Rows | Full suite | Package and script tests | Study pane DOM | Wiki reader DOM |
+| --- | --- | --- | --- | --- | --- |
+| SPD (`1e14b35`, with two corrections of its DOM script in `1052444`) | 73 and 75 closed; 74 and 81 have their mechanism | 3,330 of 3,330 | 235 of 235 | 135 of 135 | 16 of 16 |
+| SPB, rows 83 and 84 (`0dae479`) | 83, 84 closed | 3,334 of 3,334 | 247 of 247 | 135 of 135 | 19 of 19 |
+| SPC (`d69b917`) and STC (`b87edf6`) | 5 (Cursor), 66, 76 and 77 have their mechanism; native checks owed | 3,371 of 3,371 | 247 of 247 | 135 of 135 | 19 of 19 |
+| MKS (`e104f58`) | 78, 79, 80 closed | 3,408 of 3,408 | 251 of 251 | 135 of 135 | 19 of 19 |
+
+What the merges themselves showed: the Study pane's package had left a pin of its DOM script red (the script stated the presentation's control revision three times), because it ran the product suite and not the script tests; it is corrected and the common brief now names the script tests. The DOM check of one worktree closed the browser session of another's three times, because the session is named by its mode alone (row 122). The 32 package tests failed together twice: both times the checkout changed while they compiled (the coordinator regenerated a document), and the build's own guard said so ("Source inputs changed during compilation. Retry from a stable checkout."); the first time only the titles had been kept (row 124). One package test failed once with a `TypeError` of the package command's cleanup, which was handed a process group id no system gives (row 143).
+
+**Local CodeRabbit CLI** (`coderabbit review --agent --committed --base-commit ae9c1f2`, signed in, without credits; 172 files, under its limit of 300): completed on `da65eb3` with 8 findings, none above minor. They are rows 87 to 92; rows 91 and 92 are closed (a sentence of the README; the state file's counts, now held by a test).
+
+**Delegated review** (`open-code-review-delegate`; the OCR tool selected the files, read-only reviewers read them). At `da65eb3` OCR lists 172 changed files: 89 reviewable, 60 test files and 20 documents that are its default exclusions and were reviewed all the same as material exclusions, and 3 deleted files. First wave, every file of its groups reviewed:
+
+| Group | Files | Critical | High | Medium | Low | Rows |
+| --- | --- | --- | --- | --- | --- | --- |
+| The storage lock and the owner's identity | 31 | 0 | 0 | 3 | 4 | 103 to 108 |
+| The stores and the profile sweep | 18 | 0 | 0 | 6 | 5 | 87, 90, 93 to 100 |
+| The Wiki update marker | 30 | 1 | 0 | 4 | 6 | 109 to 118 |
+| Workflows, pins and documents | 28 | 0 | 0 | 4 | 13 | 119 to 128 |
+| The Wiki reader (range to `0dae479`) | 13 | 0 | 0 | 2 | 9 | 101, 132 to 139 |
+
+The second wave (the configured run and the agent's contract, 37 files; the Study workspace and its pane, 22; the update flow, the file opener and the file identities, 31) runs on the range to `e104f58`, where OCR lists 213 changed files. After every fixer is merged, one more pass reads what changed since each group was read.
+
+**The critical finding, row 109.** A cloned repository can carry `.codebook/wiki.update-run.json.takeover` as a symbolic link. The claim's age sweep lists that path with a call that follows the link and removes entries older than 60 s, recursively since this cycle: the reviewer ran the code against scratch folders, and one claim with its release (one Update press and the end of its run) removed the linked project's `src/`, `docs/` and `package.json`, and with another link a folder outside the project. The delivered 0.2.29.0 removes such entries one file at a time, so it deletes the files of the link's target and leaves its folders. Decision: fixed first, in a commit of its own, by package MKT, together with an audit of every place that lists, reads, removes or renames below the project folder or the Wiki's output folder, the bundled publisher's scripts included.
+
+**Decisions on what the packages and the reviews raised** (the recommended option each time):
+
+- Row 129: the update's request goes to a chat session of its own, so that nothing of the learner's is cancelled, queued behind or removed and the 30 s bound measures the chat alone; where a version of the editor cannot do that, the sentences and the README say what the request does to a busy chat. Package WUB, whose first mechanism for row 82 is held back until this is settled.
+- Row 79's record format: a JSON number while the id is a safe integer and decimal text above 2^53, compared always by its digits, so that a window of 0.2.29.0 on the same storage keeps working. A receipt 0.2.29.0 could have written on NTFS with a rounded id stays invalid and changes nothing: no such receipt exists, because that build never ran in an extension host on Windows.
+- Row 96: the process listing gets its form for Windows now, by the pattern of the process start reader, and the Windows job runs its test.
+- The Study pane's other status regions (inside the closed "Remove by hand", behind a replay in the bottom panel, before the page's first message) stay as they are, each for the reason its fixer gave; the presentation's status line now shows under the closed pane controls while it has text, which the native look judges.
+- Row 84: a content id that collides with an id of the reader's shell is renamed by the renderer; the publisher refuses nothing new and the bundled skill's text is unchanged.
+- Unconfirmed hazards a fixer names are not left as hazards: each is shown by a test and fixed, or decided by a native observation that is written down first (row 140).
+
+**Packages that run now:** MKT (rows 109 to 118), LKB (103 to 108), PRG (86, 87, 90, 93 to 100), CIB (119, 121, 122, 124 to 127 and 143), WUB (82 and 129), and the continuations of SPC (89, 140), SPD (85, 88, 101), STC (130, 131, 141), MKS (142) and the Wiki reader's fixer (102, 132 to 139). The coordinator's own rows are 120 (the CHANGELOG entry, with the delivery), 123 and 128 (the records and the documents of the goal, corrected in the commit that adds this section).
+
+75 of 143 rows are closed (the table counts a row only when its commits are part of this branch).
 
 ## Result and decision
 
@@ -259,14 +303,14 @@ Cursor's own quit dialog ("Quit Cursor?") was answered Quit through the page, wi
 ## Handoff
 
 - Branch `codex/cycle-0046-carried-defects-of-cycle-0045`, from `main` `ae9c1f2`. Private work files of the delivery of Cycle 0045 under the project's gstack state (`c45-work/`: the review ledger `step9-findings.md`, the `/ship` record, the Issue drafts, the documentation audit candidates).
-- Both QA profiles hold candidate 21 of Cycle 0045; VS Code's and Cursor's libraries hold the studies the final round saved; the owned clone `dashboard-wiki` holds its appended comment lines (private, not part of any change). No editor, browser or database of a trial is running.
+- Both QA profiles hold candidate 3 of this cycle (`bcae36c`); VS Code's and Cursor's libraries hold the studies Cycle 0045's final round saved; the owned clone `dashboard-wiki` holds its appended comment lines (private, not part of any change). No editor, browser or database of a trial is running.
 - Owner-only prerequisite that stays open on this host: the Cursor Agent CLI with its sign-in (missing coverage; the Cursor legs of the Wiki update were observed with a labelled stand-in). The local CodeRabbit CLI is signed in.
 
 ## Next action
 
-- Exact next action: merge the six packages that run (SPC, SPD, STC, MKS, WUB and the Wiki reader's rows 83 and 84), each with the full suite, every static gate and both DOM checks on the merged tree; the last documents (the statements of ER-14, the README lines on what a lock records, the notices' quotes after SPC, the CHANGELOG entry); the final candidate in both QA profiles and the native checks (in VS Code rows 1, 3's opposite case with Copilot Chat Auto, 5, 7, 8 with 50, 26, 28, 74, 81 and 82; in Cursor row 1 with row 66's case, row 5 in both chat layouts, rows 26, 28, 74 and 81 and row 4 again; in the browser the reader's rows 61 and 67); then the delivery, in up to three pull requests if its size calls for it. The mandatory entry is made again at each new session, after each context compaction and after a change of a controlling specification (AGENTS.md) and recorded above.
-- Changed files / branch / active processes: this branch holds the records and the merged packages PRF, STA, STB, WUA, SPL, HYA, HLT, LKA (with rows 58 and 65), DOA, MKR, SPA and SPB. Six packages run in private worktrees on branches `c46/spc`, `c46/spd`, `c46/stc`, `c46/mks`, `c46/wub` and `c46/spb2`. No editor, browser or database of a trial is running.
+- Exact next action: merge the packages that run (MKT with the critical row 109 first, LKB, PRG, CIB, WUB and the continuations of SPC, SPD, STC, MKS and the Wiki reader's fixer), each with the full suite, every static gate, the package tests and both DOM checks on the merged tree, and join the Windows job's lists at those merges; turn every finding of the review's second wave into a row and fix it; one more review pass over what changed since each group was read, and the local CodeRabbit CLI again on the final head; the last documents (the CHANGELOG entry of row 120, the README after the last packages, the test timings); the final candidate in both QA profiles and the native checks (in VS Code rows 1, 3's opposite case with Copilot Chat Auto, 5, 7, 8 with 50, 26, 28, 74, 81, 82 and 129; in Cursor row 1 with row 66's case, row 5 in both chat layouts, rows 26, 28, 74 and 81 and row 4 again; in the browser the reader's rows 61 and 67); then the delivery, in up to three pull requests if its size calls for it. The mandatory entry is made again at each new session, after each context compaction and after a change of a controlling specification (AGENTS.md) and recorded above. The main checkout is not changed while a merged tree is verified, because the package tests refuse a checkout that changes under them.
+- Changed files / branch / active processes: this branch holds the records and the merged packages PRF, STA, STB, WUA, SPL, HYA, HLT, LKA, DOA, MKR, SPA, SPB, SPD, SPC, STC and MKS; `origin` is at `9675fc6`. Ten packages run in private worktrees (`c46/mkt`, `c46/lkb`, `c46/prg`, `c46/cib`, `c46/wub`, `c46/spc`, `c46/spd`, `c46/stc`, `c46/mks`, `c46/spb2`). No editor, browser or database of a trial is running.
 - State updated in PROJECT_STATE.md: yes (with this record's commit).
-- Owner rules stated in the required reads: nothing new this cycle.
+- Owner rules stated in the required reads this cycle, four: a pull request's description carries no `@coderabbitai ignore`, and a cycle may be delivered in up to three pull requests (both in DEVELOPMENT.md); the product targets macOS, Windows and Ubuntu (PRODUCT_GOAL.md, goal version 10; IMPLEMENTATION.md and AGENTS.md name the operating system among the proof's fields); PROJECT_STATE.md is overwritten and kept short (DEVELOPMENT.md, held by a test).
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue): none; a bug-fix cycle carries nothing.
 - At most one next candidate and why (after evidence): the next feature cycle, derived from PRODUCT_GOAL, its contracts and the gap audit, after this cycle closes with nothing carried; its frozen natural-request proof is the first candidate.
