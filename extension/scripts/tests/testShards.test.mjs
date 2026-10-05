@@ -255,9 +255,14 @@ test('a part of a split file ends with its selected test and does not wait for a
   )
 
   // Assert
+  // A caller's FORCE_COLOR reaches the child run, which then wraps its summary lines in colour codes; the summary is read without them.
+  const summary = result.output.replace(
+    new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'),
+    '',
+  )
   assert.equal(result.code, 0)
-  assert.match(result.output, /^ℹ tests 1$/m)
-  assert.match(result.output, /^ℹ pass 1$/m)
+  assert.match(summary, /^ℹ tests 1$/m)
+  assert.match(summary, /^ℹ pass 1$/m)
   assert.equal(result.elapsedMs < 30_000, true)
 })
 
