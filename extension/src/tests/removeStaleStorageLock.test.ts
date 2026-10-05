@@ -27,6 +27,32 @@ async function storageDirectory(context: TestContext): Promise<string> {
   return directory
 }
 
+/** This window as both tests name it: a Linux process of the host "workstation" under the kernel boot "boot-1", begun at clock tick 16362446. Its takeover claim records that start, so the start reader must answer it for this process. */
+const THIS_WINDOW = {
+  hostname: 'workstation',
+  boot: { id: 'boot-1' },
+  processStart: 'linux:16362446',
+}
+
+/**
+ * Reads process starts as Linux does, from stat files of the test's own: this process began at clock tick 16362446, and what `/proc/4242/stat` holds the test says at each read.
+ * @param statOfProcess4242 - Gives the text of `/proc/4242/stat`; it runs at every read of that file.
+ * @returns The reader to hand to the takeover. This process's own start is kept in a state of the test's own, not in the module's.
+ * @example
+ * const readStart = linuxStartReader(() => linuxStat(200))
+ */
+function linuxStartReader(statOfProcess4242: () => string): ProcessStartReader {
+  const ownStart = {}
+  return (pid, inputs) =>
+    readProcessStart(pid, {
+      ...inputs,
+      platform: 'linux',
+      ownStart,
+      readFile: async (path) =>
+        path === '/proc/4242/stat' ? statOfProcess4242() : linuxStat(16362446),
+    })
+}
+
 /** The text of `/proc/4242/stat` for a process named "node" that began at the given clock tick. @example linuxStat(200) // => '4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 200 16637952 1813' */
 function linuxStat(startTicks: number): string {
   return `4242 (node) S 1 4242 4242 0 -1 4194304 496 0 0 0 0 0 0 0 20 0 11 0 ${startTicks} 16637952 1813`
@@ -45,21 +71,16 @@ test('a lock that a new window with the same process id placed between the two l
   )
   context.mock.method(process, 'kill', (): true => true)
   let reads = 0
-  const readStart: ProcessStartReader = (pid, inputs) =>
-    readProcessStart(pid, {
-      ...inputs,
-      platform: 'linux',
-      readFile: async () => {
-        reads += 1
-        if (reads > 1) return linuxStat(300)
-        writeFileSync(lockPath, lockOfTheNewWindow)
-        return linuxStat(200)
-      },
-    })
+  const readStart = linuxStartReader(() => {
+    reads += 1
+    if (reads > 1) return linuxStat(300)
+    writeFileSync(lockPath, lockOfTheNewWindow)
+    return linuxStat(200)
+  })
   // Act
   const didHoldTheClaim = await removeStaleStorageLock(
     lockPath,
-    { hostname: 'workstation', boot: { id: 'boot-1' } },
+    THIS_WINDOW,
     readStart,
   )
   const lockAfterTheTakeover = await readFile(lockPath, 'utf8').catch(
@@ -82,16 +103,11 @@ test('a stale lock whose process id another process keeps through both looks of 
     '{"pid":4242,"hostname":"workstation","boot":{"id":"boot-1"},"processStart":"linux:100"}',
   )
   context.mock.method(process, 'kill', (): true => true)
-  const readStart: ProcessStartReader = (pid, inputs) =>
-    readProcessStart(pid, {
-      ...inputs,
-      platform: 'linux',
-      readFile: async () => linuxStat(200),
-    })
+  const readStart = linuxStartReader(() => linuxStat(200))
   // Act
   const didHoldTheClaim = await removeStaleStorageLock(
     lockPath,
-    { hostname: 'workstation', boot: { id: 'boot-1' } },
+    THIS_WINDOW,
     readStart,
   )
   // Assert

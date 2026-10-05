@@ -47,7 +47,7 @@ function startReaderOfProcess4242(onRead: () => void): ProcessStartReader {
 
 // Value: protects=a sweep over what one running window has beside the lock costs one read of its start (one spawned ps or PowerShell on macOS and Windows), not one per leftover; fails_when=the sweep reads the start again for every claim and prepared file (ER-12, decision D7); why_new=the leftovers carry their owner's start since Cycle 0046; seam=the process probe and the file read of the start reader, which counts
 test('a placed claim, a prepared claim and a prepared lock of one running window are judged with one read of its start, and all stay', async (context) => {
-  // Arrange: running process 4242, begun at clock tick 200, holds the takeover claim and is preparing a second claim and a lock.
+  // Arrange: this window is a Linux process begun at tick 16362446. Running process 4242, begun at clock tick 200, holds the takeover claim and is preparing a second claim and a lock.
   const directory = await storageDirectory(context)
   const lockPath = join(directory, 'writer.lock')
   const ofTheRunningWindow =
@@ -71,7 +71,7 @@ test('a placed claim, a prepared claim and a prepared lock of one running window
   // Act
   await removeStaleStorageClaims(
     lockPath,
-    { hostname: 'workstation' },
+    { hostname: 'workstation', processStart: 'linux:16362446' },
     startReaderOfProcess4242(() => {
       startReads += 1
     }),
@@ -90,7 +90,7 @@ test('a placed claim, a prepared claim and a prepared lock of one running window
 
 // Value: protects=a leftover of a killed window is removed in the sweep that has just confirmed a running window with the same process id; fails_when=the start kept for the running window's record is trusted for a record of another start, or a kept start that differs keeps the leftover in place (ER-12: a kept start may only confirm, and gone needs a read); why_new=the sweep keeps starts since Cycle 0046; seam=the process probe and the file read of the start reader
 test('a prepared lock of a killed window is removed in the same sweep that keeps the prepared lock of the running window that has its process id now', async (context) => {
-  // Arrange: a window with process id 4242 began at clock tick 100 and was killed while it prepared a lock; the window that has the id now began at tick 200 and is preparing one.
+  // Arrange: this window is a Linux process begun at tick 16362446. A window with process id 4242 began at clock tick 100 and was killed while it prepared a lock; the window that has the id now began at tick 200 and is preparing one.
   const directory = await storageDirectory(context)
   await writeFile(
     join(directory, 'writer.lock.pending-a-of-running-window'),
@@ -104,7 +104,7 @@ test('a prepared lock of a killed window is removed in the same sweep that keeps
   // Act
   await removeStaleStorageClaims(
     join(directory, 'writer.lock'),
-    { hostname: 'workstation' },
+    { hostname: 'workstation', processStart: 'linux:16362446' },
     startReaderOfProcess4242(() => {}),
   )
   // Assert: in whichever order the directory listed the two, each was judged by its own start.

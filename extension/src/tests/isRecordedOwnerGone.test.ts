@@ -13,7 +13,7 @@ const ID_OF_NO_PROCESS = 2 ** 22 + 1
 
 // Value: protects=a forward clock step never makes a live owner stale on a system without a kernel boot id; fails_when=the boot time still decides for a record that carries its owner's start, so a window that computes its boot 90 s later takes the lock of a live window (Cycle 0046 row 9, PL-1); why_new=the judgement by the process start is new; seam=the injected identities and start reader
 test('a live owner is never gone when the clock reads 90 s later, in a macOS-shaped and a Windows-shaped identity', async () => {
-  // Arrange: this running process holds a lock; since it wrote the lock the clock was set forward by 90 s, so the boot time computed now is 90 s later.
+  // Arrange: this running process holds a lock; since it wrote the lock the clock was set forward by 90 s, so the boot time a second window of the same system computes now is 90 s later.
   const macStart = 'ps:Mon Oct  5 09:12:33 2026',
     windowsStart = 'win:2026-10-05T09:12:33.1234567Z'
   // Act
@@ -29,6 +29,7 @@ test('a live owner is never gone when the clock reads 90 s later, in a macOS-sha
       hostname: 'laptop.local',
       machineId: 'machine-a',
       boot: { startedAtMs: 1_790_000_090_000 },
+      processStart: 'ps:Mon Oct  5 10:30:00 2026',
     },
     async () => macStart,
   )
@@ -44,6 +45,7 @@ test('a live owner is never gone when the clock reads 90 s later, in a macOS-sha
       hostname: 'DESKTOP-A',
       machineId: 'machine-b',
       boot: { startedAtMs: 1_790_000_090_000 },
+      processStart: 'win:2026-10-05T10:30:00.0000000Z',
     },
     async () => windowsStart,
   )
@@ -87,7 +89,7 @@ test('an owner whose pid is used by another process is gone, and so is one whose
       boot: { id: 'boot-1' },
       processStart: 'linux:100',
     },
-    identity,
+    { ...identity, processStart: 'linux:16362446' },
     async (pid) => {
       startsAsked.push(pid)
       return 'linux:200'
@@ -128,7 +130,11 @@ test('an owner whose start cannot be read is not gone, one of an earlier kernel 
       startsAsked.push(name)
       return start
     }
-  const workstation = { hostname: 'workstation', boot: { id: 'boot-2' } }
+  const workstation = {
+    hostname: 'workstation',
+    boot: { id: 'boot-2' },
+    processStart: 'linux:16362446',
+  }
   // Act
   const judgements = {
     startCannotBeRead: await isRecordedOwnerGone(
@@ -197,21 +203,69 @@ test('an owner whose start cannot be read is not gone, one of an earlier kernel 
   assert.deepEqual(startsAsked, ['startCannotBeRead'])
 })
 
-// Value: protects=a live owner whose start was read by another system's query is never called gone: a Windows window and a WSL window can share a host name and a project folder while their process ids are of two spaces, and a later build may read starts in another form; fails_when=any two different texts count as "another process", so the record of a live window is taken for a killed one's whenever a process here happens to have its id; why_new=found while implementing Cycle 0046 rows 2 and 9 (the judgement by the process start is new); seam=the injected start reader
-test('an owner whose start has another system’s form is not gone, although the process that has its id here began at another time', async () => {
-  // Arrange: a record a Windows window wrote, judged where the process with that id is a Linux process.
+// Value: protects=the lock, claim or marker of a live window in the other system of one computer: a Windows window and a WSL window share a host name and can open one project folder, while a process id of one names another process, or none, in the other; fails_when=a record that matches this machine by its host-name digest is probed here whatever system wrote it, so the live owner counts as gone because no process has its id here, and its marker is removed under it (Cycle 0046 row 58); why_new=found while implementing Cycle 0046 rows 2 and 9; seam=the injected identity of a Linux window and the start reader, which must not be asked
+test('an owner whose start has another system’s form is never gone here, although no process has its process id here, or another one has', async () => {
+  // Arrange: two records a Windows window wrote into a project folder, naming its machine by digests alone, judged by a WSL window of the same computer (one host-name digest, another machine id digest). No Linux process has the first record's process id; this test process has the second's.
+  const linuxWindow = {
+    hostname: 'workstation',
+    machineKey: 'f9c8c7ddcf3d5f56',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-linux-kernel' },
+    processStart: 'linux:16362446',
+  }
+  const startsAsked: number[] = []
+  const readStart = async (pid: number): Promise<string> => {
+    startsAsked.push(pid)
+    return 'linux:200'
+  }
+  // Act
+  const isGoneWithoutAProcessHere = await isRecordedOwnerGone(
+    {
+      pid: ID_OF_NO_PROCESS,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: 'd195d36bd79da7df',
+      processStart: 'win:2026-10-05T09:12:33.1234567Z',
+    },
+    linuxWindow,
+    readStart,
+  )
+  const isGoneWithAnotherProcessHere = await isRecordedOwnerGone(
+    {
+      pid: process.pid,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: 'd195d36bd79da7df',
+      processStart: 'win:2026-10-05T09:12:33.1234567Z',
+    },
+    linuxWindow,
+    readStart,
+  )
+  // Assert
+  assert.equal(isGoneWithoutAProcessHere, false)
+  assert.equal(isGoneWithAnotherProcessHere, false)
+  assert.deepEqual(startsAsked, [])
+})
+
+// Value: protects=the takeover of what a killed window of this system left in a project folder: a record that names its machine by digests and its start in this system's form is still judged by its process id; fails_when=every record that matches by a digest counts as one that cannot be probed here, so a killed window's marker or claim is never called gone (Cycle 0046 row 58, the other side of the rule); why_new=the rule of the process space is new; seam=the injected identity of a Linux window
+test('an owner whose start has this system’s form and whose process id names no process is gone', async () => {
+  // Arrange: the same record as a Linux window of this computer wrote it; no process has its process id.
   // Act
   const isGone = await isRecordedOwnerGone(
     {
-      pid: process.pid,
-      hostname: 'workstation',
-      processStart: 'win:2026-10-05T09:12:33.1234567Z',
+      pid: ID_OF_NO_PROCESS,
+      machineKey: '1fb1404a9738d5ed',
+      hostKey: 'd195d36bd79da7df',
+      processStart: 'linux:100',
     },
-    { hostname: 'workstation' },
-    async () => 'linux:16362446',
+    {
+      hostname: 'workstation',
+      machineKey: 'f9c8c7ddcf3d5f56',
+      hostKey: 'd195d36bd79da7df',
+      boot: { id: 'boot-of-the-linux-kernel' },
+      processStart: 'linux:16362446',
+    },
   )
   // Assert
-  assert.equal(isGone, false)
+  assert.equal(isGone, true)
 })
 
 // Value: protects=a record names its owner's start to the reader, which lets a start kept by a sweep confirm it; fails_when=the judgement asks without the recorded start, so a sweep's kept start is never used or, worse, is trusted for a start it does not equal; why_new=the cache rule is new (ER-12); seam=the injected start reader
@@ -221,7 +275,7 @@ test('the judgement hands the recorded start to the reader as the start a kept o
   // Act
   await isRecordedOwnerGone(
     { pid: process.pid, hostname: 'workstation', processStart: 'linux:100' },
-    { hostname: 'workstation' },
+    { hostname: 'workstation', processStart: 'linux:16362446' },
     async (_pid, inputs) => {
       expectedStarts.push(inputs?.expectedStart)
       return 'linux:100'

@@ -292,7 +292,7 @@ test('a marked profile folder of a killed editor whose process id is in use agai
 
 // Value: protects=a sweep over the folders of one running editor costs one read of its start (one spawned ps or PowerShell on macOS and Windows), not one per folder; fails_when=the sweep reads the start again for every marker (ER-12, decision D7); why_new=the marker carries its owner's start since Cycle 0046; seam=the process probe and the file read of the start reader, which counts
 test('three profile folders of one running editor are judged with one read of its start', async (context) => {
-  // Arrange: three marked folders of running process 4242, which began at clock tick 200.
+  // Arrange: this editor is a Linux process begun at tick 16362446; three marked folders of running process 4242, which began at clock tick 200.
   const root = await profileRoot(context)
   for (const name of [
     'codebook-browser-a',
@@ -309,7 +309,7 @@ test('three profile folders of one running editor are judged with one read of it
   // Act
   const removed = await removeAbandonedProfiles(
     root,
-    { hostname: 'workstation' },
+    { hostname: 'workstation', processStart: 'linux:16362446' },
     listProcesses,
     (pid, inputs) =>
       readProcessStart(pid, {

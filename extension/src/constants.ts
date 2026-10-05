@@ -23,6 +23,12 @@ export const PROCESS_START_RETRY_AFTER_FAILURE_MS = 60_000
 export const PROCESS_START_PS_TEXT_MAX_LENGTH = 64
 /** Where the start time (field 22 of `/proc/<pid>/stat`) is among the values that follow the command name's closing parenthesis; the first of them is field 3. */
 export const LINUX_STAT_START_TIME_INDEX = 19
+/** The form of a process start on each system where one can be read, which is the text before its first colon ({@link readProcessStart}): clock ticks on Linux, the text of `ps` on macOS, a UTC time on Windows. Two starts of different forms were read in two spaces of process ids and are never compared ({@link canJudgeOwnerHere}). */
+export const PROCESS_START_FORMS = {
+  linux: 'linux',
+  darwin: 'ps',
+  win32: 'win',
+} as const satisfies Partial<Record<NodeJS.Platform, string>>
 /** How many hex characters of a SHA-256 name a machine in a storage owner record ({@link deriveMachineKeys}). */
 export const MACHINE_KEY_HEX_LENGTH = 16
 /** How long an empty lock file or an empty prepared takeover claim must have stayed empty before it counts as left by a killed window; a running window is in that state for an instant. */

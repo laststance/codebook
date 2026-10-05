@@ -14,6 +14,7 @@ on:
       - .github/workflows/storage-locks-windows.yml
       - .node-version
       - extension/src/runtimeSupport/utils/sha256.ts
+      - extension/src/tests/canJudgeOwnerHere.test.ts
       - extension/src/tests/currentStorageOwner.test.ts
       - extension/src/tests/isFromEarlierBoot.test.ts
       - extension/src/tests/isProcessGone.test.ts
@@ -28,6 +29,7 @@ on:
       - extension/src/tests/utils/idleChild.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
       - extension/src/tests/withStorageLock.test.ts
+      - extension/src/utils/canJudgeOwnerHere.ts
       - extension/src/utils/claimStorageLockTakeover.ts
       - extension/src/utils/currentStorageOwner.ts
       - extension/src/utils/deriveMachineKeys.ts
@@ -52,6 +54,7 @@ on:
       - .github/workflows/storage-locks-windows.yml
       - .node-version
       - extension/src/runtimeSupport/utils/sha256.ts
+      - extension/src/tests/canJudgeOwnerHere.test.ts
       - extension/src/tests/currentStorageOwner.test.ts
       - extension/src/tests/isFromEarlierBoot.test.ts
       - extension/src/tests/isProcessGone.test.ts
@@ -66,6 +69,7 @@ on:
       - extension/src/tests/utils/idleChild.ts
       - extension/src/tests/utils/startOfKilledWindow.ts
       - extension/src/tests/withStorageLock.test.ts
+      - extension/src/utils/canJudgeOwnerHere.ts
       - extension/src/utils/claimStorageLockTakeover.ts
       - extension/src/utils/currentStorageOwner.ts
       - extension/src/utils/deriveMachineKeys.ts
@@ -125,4 +129,4 @@ jobs:
 
       - name: Run the storage lock tests
         working-directory: extension
-        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js
+        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js

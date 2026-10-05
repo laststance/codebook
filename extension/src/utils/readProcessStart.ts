@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 
 import {
   LINUX_STAT_START_TIME_INDEX,
+  PROCESS_START_FORMS,
   PROCESS_START_PS_TEXT_MAX_LENGTH,
   PROCESS_START_QUERY_MAX_BYTES,
   PROCESS_START_QUERY_TIMEOUT_MS,
@@ -107,7 +108,7 @@ function startInLinuxStat(stat: string): string | undefined {
     .trim()
     .split(' ')[LINUX_STAT_START_TIME_INDEX]
   return ticks !== undefined && CLOCK_TICKS.test(ticks)
-    ? `linux:${ticks}`
+    ? `${PROCESS_START_FORMS.linux}:${ticks}`
     : undefined
 }
 
@@ -149,7 +150,9 @@ async function macStartOf(
     { ...QUERY_BOUNDS, env: { LC_ALL: 'C', TZ: 'UTC' } },
   )
   const text = stdout.trim()
-  return PS_START_LINE.test(text) ? `ps:${text}` : undefined
+  return PS_START_LINE.test(text)
+    ? `${PROCESS_START_FORMS.darwin}:${text}`
+    : undefined
 }
 
 /**
@@ -176,7 +179,9 @@ async function windowsStartOf(
     QUERY_BOUNDS,
   )
   const text = stdout.trim()
-  return WINDOWS_UTC_START.test(text) ? `win:${text}` : undefined
+  return WINDOWS_UTC_START.test(text)
+    ? `${PROCESS_START_FORMS.win32}:${text}`
+    : undefined
 }
 
 /** The query of each system on which a process's start can be read; every other system has none. */
