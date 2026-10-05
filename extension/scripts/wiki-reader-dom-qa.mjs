@@ -49,6 +49,23 @@ const DETAIL_PATHS = Array.from(
   (_unused, index) => `pages/reference/changed-by-hand-${index + 1}.html`,
 )
 
+/** The question the check asks in the composer, and what the reader answers it: twelve lines, so the composer reaches its height limit and scrolls, and one cited line. */
+const QUESTION = 'How is a page rendered?'
+const ANSWER = {
+  answer: Array.from(
+    { length: 12 },
+    (_unused, index) => `Step ${index + 1}: one part of the page is rendered.`,
+  ).join('\n'),
+  citations: [
+    {
+      path: 'src/a.ts',
+      line: 1,
+      uri: 'vscode://laststance.codebook/source?root=%2Fsample&path=src%2Fa.ts&line=1&sha256=0f',
+    },
+  ],
+  sourceChanged: false,
+}
+
 const runBrowserCli = promisify(execFile)
 
 /**
@@ -172,7 +189,8 @@ function sampleManifest(projectRoot, sources) {
         contentHtml: outline
           .map(
             (entry) =>
-              `<h2 id="${entry.id}">${entry.label}</h2><p>How this part of a page is rendered.</p>`,
+              // Each paragraph starts with a link, so a link stands at the article's left edge wherever the article is scrolled to.
+              `<h2 id="${entry.id}">${entry.label}</h2><p><a href="#part-1">The first part</a> comes before how this part of a page is rendered.</p>`,
           )
           .join(''),
         sources: [OPEN_TARGET, { path: 'src/a.ts', line: 1 }],
@@ -242,7 +260,7 @@ async function publishSampleWiki() {
   return { projectRoot, outputDirectory, remove }
 }
 
-/** Lays out pages of a served Wiki in real Chrome and measures the right rail, the chapter list and the missing-page line. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. It runs in the browser CLI as text, so it uses only its arguments and what it defines itself. @example await check(page, options, { cases: [], errors: [] }) */
+/** Lays out pages of a served Wiki in real Chrome and measures the right rail, the chapter list, the reading column with its composer and the missing-page line. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers also when a step throws. It runs in the browser CLI as text, so it uses only its arguments and what it defines itself. @example await check(page, options, { cases: [], errors: [] }) */
 async function check(page, options, collected) {
   const { cases } = collected
   const { errors } = collected
@@ -265,16 +283,44 @@ async function check(page, options, collected) {
         'Source changed · Update available',
     )
   }
-  /** Gives one element the keyboard focus the way the Tab key does, so `:focus-visible` holds for it: the script focuses it, Shift+Tab leaves it and Tab comes back. @example await focusWithKeyboard('.open-in-editor a') */
-  const focusWithKeyboard = async (selector) => {
+  /** Scrolls the part that scrolls around a control until half of the control is out of sight at one of its edges, as after the learner scrolled past it. Half and not all of it: the browser brings a control that is partly in sight back to the nearest edge, and one that is out of sight to the middle. @returns How many pixels of the control's height are out of sight then; fewer than half where the scroller's range ends first. @example await scrollHalfOutOfSight('.output a', 'bottom') // => 7.2 */
+  const scrollHalfOutOfSight = (selector, edge) =>
+    page.evaluate(
+      ([shown, side]) => {
+        const element = document.querySelector(shown)
+        let scroller = element.parentElement
+        while (getComputedStyle(scroller).overflowX === 'visible')
+          scroller = scroller.parentElement
+        const clipTop =
+          scroller.getBoundingClientRect().top + scroller.clientTop
+        const clipBottom = clipTop + scroller.clientHeight
+        const before = element.getBoundingClientRect()
+        const middle = (before.top + before.bottom) / 2
+        scroller.scrollTop +=
+          middle - (side === 'bottom' ? clipBottom : clipTop)
+        const box = element.getBoundingClientRect()
+        return (
+          Math.round(
+            Math.max(box.bottom - clipBottom, clipTop - box.top, 0) * 10,
+          ) / 10
+        )
+      },
+      [selector, edge],
+    )
+  /** Gives one element the keyboard focus the way the Tab key does, so `:focus-visible` holds for it: the script focuses it, Shift+Tab leaves it and Tab comes back. With an edge the element is scrolled half out of sight at that edge before the Tab key comes back to it, so the browser scrolls it back as it does for a learner. @returns How many pixels of the element were out of sight before the Tab key reached it; null without an edge. @example await focusWithKeyboard('.open-in-editor a') // => null */
+  const focusWithKeyboard = async (selector, edge) => {
     await page.evaluate(
       (focused) => document.querySelector(focused).focus(),
       selector,
     )
     await page.keyboard.press('Shift+Tab')
+    const outOfSightPx = edge
+      ? await scrollHalfOutOfSight(selector, edge)
+      : null
     await page.keyboard.press('Tab')
+    return outOfSightPx
   }
-  /** Reads where the focus ring of an element lies against the box its nearest scrolling ancestor clips at. The ring reaches the outline's offset plus its width outside the element; a reach of zero is a ring inside it. @example await focusRing('.outline a') // => { isFocusedByKeyboard: true, reachPx: 0, leftInsideClipPx: 0, rightInsideClipPx: 12, … } */
+  /** Reads where the focus ring of an element lies against the box its nearest scrolling ancestor clips at, on all four sides. The ring reaches the outline's offset plus its width outside the element; a reach of zero is a ring inside it. @example await focusRing('.outline a') // => { isFocusedByKeyboard: true, reachPx: 0, leftInsideClipPx: 0, rightInsideClipPx: 12, topInsideClipPx: 40, bottomInsideClipPx: 300, … } */
   const focusRing = (selector) =>
     page.evaluate((focused) => {
       const scrollerOf = (start) => {
@@ -294,8 +340,21 @@ async function check(page, options, collected) {
         Number.parseFloat(style.outlineWidth)
       const scroller = scrollerOf(element)
       const box = element.getBoundingClientRect()
-      const clipLeft =
-        scroller.getBoundingClientRect().left + scroller.clientLeft
+      const scrollerBox = scroller.getBoundingClientRect()
+      const scrollerStyle = getComputedStyle(scroller)
+      const borderOf = (side) =>
+        Number.parseFloat(scrollerStyle[`border${side}Width`])
+      // The scroller clips at its padding box, less a scrollbar that takes room. The rounded layout sizes differ by whole pixels, so their difference is the bar exactly, and the edges keep their fractions.
+      const barAtTheRight =
+        scroller.offsetWidth -
+        scroller.clientWidth -
+        borderOf('Left') -
+        borderOf('Right')
+      const barAtTheBottom =
+        scroller.offsetHeight -
+        scroller.clientHeight -
+        borderOf('Top') -
+        borderOf('Bottom')
       return {
         isFocusedByKeyboard:
           document.activeElement === element &&
@@ -305,44 +364,82 @@ async function check(page, options, collected) {
         outlineStyle: style.outlineStyle,
         scroller: scroller.className || scroller.tagName,
         reachPx,
-        leftInsideClipPx: tenths(box.left - reachPx - clipLeft),
+        leftInsideClipPx: tenths(
+          box.left - reachPx - (scrollerBox.left + borderOf('Left')),
+        ),
         rightInsideClipPx: tenths(
-          clipLeft + scroller.clientWidth - (box.right + reachPx),
+          scrollerBox.right -
+            borderOf('Right') -
+            barAtTheRight -
+            (box.right + reachPx),
+        ),
+        topInsideClipPx: tenths(
+          box.top - reachPx - (scrollerBox.top + borderOf('Top')),
+        ),
+        bottomInsideClipPx: tenths(
+          scrollerBox.bottom -
+            borderOf('Bottom') -
+            barAtTheBottom -
+            (box.bottom + reachPx),
         ),
       }
     }, selector)
-  /** Reads the open control of the right rail: its text, the lines and widths of its label and target, and the widths around it. @example (await measureEntry()).labelLines // => 1 */
+  /** Reads the open control of the right rail and the row around it: the entry's text, its link and what describes the link, the lines and widths of its label, its target and the line number that ends the target, and the widths of the update panel, the outline and the output block. @example (await measureEntry()).labelLines // => 1 */
   const measureEntry = () =>
     page.evaluate(() => {
-      // A range answers one box or more per line of its text, and the boxes of one line share their top.
-      const lineCount = (element) => {
+      const textOf = (node) => {
         const text = document.createRange()
-        text.selectNodeContents(element)
-        return new Set(
-          [...text.getClientRects()].map((box) => Math.round(box.top)),
-        ).size
+        text.selectNodeContents(node)
+        return text
       }
-      const widthOf = (element) =>
-        Math.round(element.getBoundingClientRect().width * 10) / 10
-      const link = document.querySelector('.open-in-editor a')
-      const label = link.querySelector('.open-label')
-      const labelText = document.createRange()
-      labelText.selectNodeContents(label)
+      // A range answers one box or more per line of its text, and the boxes of one line share their top.
+      const lineCount = (text) =>
+        new Set([...text.getClientRects()].map((box) => Math.round(box.top)))
+          .size
+      const tenths = (pixels) => Math.round(pixels * 10) / 10
+      const widthOf = (boxed) => tenths(boxed.getBoundingClientRect().width)
+      const entry = document.querySelector('.open-in-editor')
+      const link = entry.querySelector('a')
+      const target = entry.querySelector('.open-target')
+      // The colon and the line number end the target's last piece of text.
+      const lastPiece = target.lastChild
+      const lineNumber = document.createRange()
+      lineNumber.setStart(lastPiece, lastPiece.data.lastIndexOf(':'))
+      lineNumber.setEnd(lastPiece, lastPiece.data.length)
       const rail = document.querySelector('.right-rail')
+      const output = rail.querySelector('.output')
       const chapters = document.querySelector('.chapters')
       return {
         railDisplay: getComputedStyle(rail).display,
+        entryText: entry.textContent,
         linkText: link.textContent,
-        labelLines: lineCount(label),
-        labelLineWidth: widthOf(labelText),
-        targetLines: lineCount(link.querySelector('.open-target')),
-        targetWidth: widthOf(link.querySelector('.open-target')),
-        controlWidth: widthOf(link),
+        linkDescription:
+          document.getElementById(link.getAttribute('aria-describedby'))
+            ?.textContent ?? null,
+        labelLines: lineCount(textOf(link)),
+        labelLineWidth: widthOf(textOf(link)),
+        targetLines: lineCount(textOf(target)),
+        targetWidth: widthOf(target),
+        lineNumberText: lineNumber.toString(),
+        lineNumberLines: lineCount(lineNumber),
+        controlWidth: widthOf(entry),
         outlineWidth: widthOf(rail.querySelector('nav')),
+        panelWidth: widthOf(
+          document.querySelector('[data-codebook-update-group]'),
+        ),
+        outputWidth: widthOf(output),
+        outputLabelLines: lineCount(textOf(output.querySelector('p'))),
+        changeLocationLines: lineCount(textOf(output.querySelector('a'))),
+        outputRightBeyondRailPx: tenths(
+          output.getBoundingClientRect().right -
+            rail.getBoundingClientRect().right,
+        ),
         railClientWidth: rail.clientWidth,
         railScrollWidth: rail.scrollWidth,
         chaptersClientWidth: chapters.clientWidth,
         chaptersScrollWidth: chapters.scrollWidth,
+        pageClientWidth: document.documentElement.clientWidth,
+        pageScrollWidth: document.documentElement.scrollWidth,
       }
     })
   /** Reads the rail's parts against the rail's own box; the detail's sizes are null while the panel has none. @example (await measureRail()).railHeight // => 177.9 */
@@ -397,6 +494,237 @@ async function check(page, options, collected) {
     doesReadingColumnKeepRoom: measured.readingColumnHeight >= 200,
   })
 
+  /** Reads where the parts of the reading column stand, with the article, the composer and an answer scrolled to their starts and no control focused, so two readings compare. The composer's content box is its box inside its border and its padding. @example (await readingColumnBoxes()).questionField // => [271.2, 601.39, 566.05, 40] */
+  const readingColumnBoxes = () =>
+    page.evaluate(() => {
+      document.activeElement.blur()
+      for (const scrolled of ['.wiki-article', '.composer', '.qa-answer'])
+        document.querySelector(scrolled).scrollTop = 0
+      const hundredths = (pixels) => Math.round(pixels * 100) / 100
+      const boxOf = (selector) => {
+        const box = document.querySelector(selector).getBoundingClientRect()
+        return [box.left, box.top, box.width, box.height].map(hundredths)
+      }
+      const article = document.querySelector('.wiki-article')
+      const composer = document.querySelector('.composer')
+      const composerBox = composer.getBoundingClientRect()
+      const style = getComputedStyle(composer)
+      const padding = ['Left', 'Top', 'Right', 'Bottom'].map((side) =>
+        Number.parseFloat(style[`padding${side}`]),
+      )
+      return {
+        articlePaddingLeft: getComputedStyle(article).paddingLeft,
+        composerPaddingLeft: style.paddingLeft,
+        isComposerScrolling: composer.scrollHeight > composer.clientHeight,
+        boxes: {
+          title: boxOf('.wiki-article h1'),
+          sourceFiles: boxOf('.source-files'),
+          firstParagraph: boxOf('.wiki-article p'),
+          questionField: boxOf('#qa-input'),
+          askCodebook: boxOf('#qa-form button[type=submit]'),
+          answer: boxOf('.qa-answer'),
+          connection: boxOf('.connection'),
+          composerContent: [
+            composerBox.left + composer.clientLeft + padding[0],
+            composerBox.top + composer.clientTop + padding[1],
+            composer.clientWidth - padding[0] - padding[2],
+            composer.clientHeight - padding[1] - padding[3],
+          ].map(hundredths),
+        },
+      }
+    })
+  /** Counts the pixels in which two stills of the same size differ by more than the rounding of an anti-aliased corner (8 of 255 levels in one colour channel; the faintest line of the page, its border colour on its background, differs by 32). The page decodes the stills, so the check needs no image library. @example await pictureDifference(first, second) // => { width: 692, height: 86, otherWidth: 692, otherHeight: 86, differentPixels: 0, largestDifference: 2, isDrawnTheSame: true } */
+  const pictureDifference = (first, second) =>
+    page.evaluate(
+      async (pictures) => {
+        const pixelsOf = async (base64) => {
+          const bytes = Uint8Array.from(atob(base64), (character) =>
+            character.charCodeAt(0),
+          )
+          const bitmap = await createImageBitmap(
+            new Blob([bytes], { type: 'image/png' }),
+          )
+          const context = new OffscreenCanvas(
+            bitmap.width,
+            bitmap.height,
+          ).getContext('2d')
+          context.drawImage(bitmap, 0, 0)
+          return context.getImageData(0, 0, bitmap.width, bitmap.height)
+        }
+        const [one, other] = [
+          await pixelsOf(pictures[0]),
+          await pixelsOf(pictures[1]),
+        ]
+        let differentPixels = 0
+        let largestDifference = 0
+        for (let index = 0; index < one.data.length; index += 4) {
+          const difference = Math.max(
+            Math.abs(one.data[index] - other.data[index]),
+            Math.abs(one.data[index + 1] - other.data[index + 1]),
+            Math.abs(one.data[index + 2] - other.data[index + 2]),
+          )
+          largestDifference = Math.max(largestDifference, difference)
+          if (difference > 8) differentPixels += 1
+        }
+        return {
+          width: one.width,
+          height: one.height,
+          otherWidth: other.width,
+          otherHeight: other.height,
+          differentPixels,
+          largestDifference,
+          // Stills of two sizes share no pixel grid, so only stills of one size can be drawn the same.
+          isDrawnTheSame:
+            one.data.length === other.data.length && differentPixels === 0,
+        }
+      },
+      [first.toString('base64'), second.toString('base64')],
+    )
+  /** Reads the reading column twice, as served and with a style that takes the room for the focus rings back (the paddings, margins, top border and height limit the article and the composer had before they kept that room), and takes two stills each time: the composer with its top border and 12 px around it, and the article from its content edge. The strip of room at the article's left is not in its still: ink the article cut at its edge before (the fringe of a glyph) may show there now. @example (await withAndWithoutRoom('wiki-reading-1200')).composerPicture.differentPixels // => 0 */
+  const withAndWithoutRoom = async (still) => {
+    const asServed = await readingColumnBoxes()
+    const clips = await page.evaluate(() => {
+      const boxOf = (selector) =>
+        document.querySelector(selector).getBoundingClientRect()
+      const column = boxOf('.reading-column')
+      const contentLeft = Math.ceil(boxOf('.wiki-article h1').left)
+      const composerTop = Math.floor(boxOf('.composer').top) - 2
+      return {
+        article: {
+          x: contentLeft,
+          y: Math.floor(column.top),
+          width: Math.ceil(column.right) + 12 - contentLeft,
+          height: composerTop - Math.floor(column.top),
+        },
+        composer: {
+          x: Math.floor(column.left) - 12,
+          y: composerTop,
+          width: Math.ceil(column.width) + 24,
+          height: Math.ceil(column.bottom) + 12 - composerTop,
+        },
+      }
+    })
+    const picturesOf = async (suffix) => ({
+      article: await page.screenshot({
+        clip: clips.article,
+        path: `${options.output}/${still}-article${suffix}.png`,
+      }),
+      composer: await page.screenshot({
+        clip: clips.composer,
+        path: `${options.output}/${still}-composer${suffix}.png`,
+      }),
+    })
+    const picturesAsServed = await picturesOf('')
+    await page.evaluate(() => {
+      const style = document.createElement('style')
+      style.setAttribute('data-check-room-taken-back', '')
+      style.textContent =
+        '.wiki-article{padding-left:0;margin-left:0}.composer{border-image:none;padding:.6rem 0 0;margin:0;max-height:34%}'
+      document.head.append(style)
+    })
+    const withoutRoom = await readingColumnBoxes()
+    const picturesWithoutRoom = await picturesOf('-without-room')
+    await page.evaluate(() =>
+      document.querySelector('[data-check-room-taken-back]').remove(),
+    )
+    return {
+      asServed,
+      withoutRoom,
+      articlePicture: await pictureDifference(
+        picturesAsServed.article,
+        picturesWithoutRoom.article,
+      ),
+      composerPicture: await pictureDifference(
+        picturesAsServed.composer,
+        picturesWithoutRoom.composer,
+      ),
+    }
+  }
+  /** Focuses each named control with the keyboard and reads its ring against the part that scrolls around it. A control named with an edge is first scrolled half out of sight at that edge. @example (await ringsOf([['questionField', '#qa-input']], 'wiki-reading-focus-1200')).questionField.leftInsideClipPx // => 0 */
+  const ringsOf = async (controls, still) => {
+    const rings = {}
+    for (const [name, selector, edge] of controls) {
+      const outOfSightPx = await focusWithKeyboard(selector, edge)
+      rings[name] = { ...(await focusRing(selector)), outOfSightPx }
+      await page.screenshot({
+        path: `${options.output}/${still}-${name}.png`,
+      })
+    }
+    return rings
+  }
+  /** Measures the reading column of the page that is open: the room for the focus rings against a reading without it, at rest and with an answer, and the ring of every control a learner reaches there with the Tab key. The question is typed and asked as a learner asks it, and the reader answers it. @example (await measureReadingColumn('1200')).rings.questionField.leftInsideClipPx // => 0 */
+  const measureReadingColumn = async (width) => {
+    const atRest = await withAndWithoutRoom(`wiki-reading-${width}`)
+    const ringsAtRest = await ringsOf(
+      [
+        ['sourceFiles', '.source-files > summary'],
+        ['articleLink', '.wiki-article p a'],
+        ['articleLinkScrolledToTheBottom', '#part-9 + p a', 'bottom'],
+        ['questionField', '#qa-input'],
+        ['askCodebook', '#qa-form button[type=submit]'],
+        ['connection', '.connection > summary'],
+      ],
+      `wiki-reading-focus-${width}`,
+    )
+    await page.fill('#qa-input', options.question)
+    await page.click('#qa-form button[type=submit]')
+    await page.waitForSelector('.qa-answer a')
+    await page.mouse.move(0, 0)
+    const ringsWithAnAnswer = await ringsOf(
+      [
+        ['answerSummary', '#qa-response > summary'],
+        ['answer', '.qa-answer'],
+        ['answerCitation', '.qa-answer a'],
+        ['connectionScrolledToTheBottom', '.connection > summary', 'bottom'],
+        ['askCodebookScrolledToTheTop', '#qa-form button[type=submit]', 'top'],
+      ],
+      `wiki-reading-focus-${width}`,
+    )
+    const withAnAnswer = await withAndWithoutRoom(
+      `wiki-reading-answer-${width}`,
+    )
+    return {
+      room: { atRest, withAnAnswer },
+      rings: { ...ringsAtRest, ...ringsWithAnAnswer },
+    }
+  }
+  /** The checks of the room for the focus rings: it is there, and every part stands, and at rest is drawn, as without it. A scrollbar of the composer stands 5 px further right with the room, so with an answer the boxes are compared and not the stills. @example roomChecks(measured.room).isComposerDrawnTheSameAtRest // => true */
+  const roomChecks = ({ atRest, withAnAnswer }) => ({
+    doesArticleKeepRoom: atRest.asServed.articlePaddingLeft === '5px',
+    doesComposerKeepRoom: atRest.asServed.composerPaddingLeft === '5px',
+    isArticleRoomTakenBackForTheComparison:
+      atRest.withoutRoom.articlePaddingLeft === '0px',
+    isComposerRoomTakenBackForTheComparison:
+      atRest.withoutRoom.composerPaddingLeft === '0px',
+    doesEveryPartStandTheSameAtRest:
+      JSON.stringify(atRest.asServed.boxes) ===
+      JSON.stringify(atRest.withoutRoom.boxes),
+    isArticleDrawnTheSameAtRest: atRest.articlePicture.isDrawnTheSame,
+    isComposerDrawnTheSameAtRest: atRest.composerPicture.isDrawnTheSame,
+    doesTheAnswerMakeTheComposerScroll:
+      withAnAnswer.asServed.isComposerScrolling,
+    doesTheAnswerMakeTheComposerScrollWithoutRoom:
+      withAnAnswer.withoutRoom.isComposerScrolling,
+    doesEveryPartStandTheSameWithAnAnswer:
+      JSON.stringify(withAnAnswer.asServed.boxes) ===
+      JSON.stringify(withAnAnswer.withoutRoom.boxes),
+  })
+  /** The checks of a set of focus rings: each control has the keyboard focus and no side of its ring lies outside the part that scrolls around it. @example ringChecks({ questionField: ring }).questionFieldRingLeftIsInside // => true */
+  const ringChecks = (rings) =>
+    Object.fromEntries(
+      Object.entries(rings).flatMap(([name, ring]) => [
+        [`${name}IsFocusedByKeyboard`, ring.isFocusedByKeyboard],
+        [`${name}RingLeftIsInside`, ring.leftInsideClipPx >= 0],
+        [`${name}RingRightIsInside`, ring.rightInsideClipPx >= 0],
+        [`${name}RingTopIsInside`, ring.topInsideClipPx >= 0],
+        [`${name}RingBottomIsInside`, ring.bottomInsideClipPx >= 0],
+        // A control that was to be scrolled half out of sight was partly out of sight before the keyboard reached it.
+        ...(ring.outOfSightPx === null
+          ? []
+          : [[`${name}WasPartlyOutOfSight`, ring.outOfSightPx > 0]]),
+      ]),
+    )
+
   const measureEntryInRow = async () => {
     // Arrange: the overview at 720 px, where the right rail is a row (701 to 1000 px) and the entry's target is a long path.
     await openWiki(720, 720)
@@ -407,7 +735,7 @@ async function check(page, options, collected) {
       .screenshot({ path: `${options.output}/wiki-rail-row-720.png` })
     // Assert
     record(
-      'in the Wiki reader at 720 px the open control of the right rail keeps its label on one line, its target wraps under the label without widening the control, and the outline is no narrower than the control and at least 160 px wide',
+      'in the Wiki reader at 720 px the open control of the right rail keeps its label on one line, its target wraps under the label without widening the control and keeps its line number whole, the outline is no narrower than the control and at least 160 px wide, and the output block keeps Change location on one line',
       entry,
       {
         isRow: entry.railDisplay === 'flex',
@@ -416,10 +744,54 @@ async function check(page, options, collected) {
         // Half a pixel of rounding between the label's text and the block around it.
         isTargetNoWiderThanLabel:
           entry.targetWidth <= entry.labelLineWidth + 0.5,
+        isLineNumberWhole:
+          entry.lineNumberText === ':95' && entry.lineNumberLines === 1,
         isOutlineNoNarrowerThanControl:
           entry.outlineWidth >= entry.controlWidth,
         isOutlineWideEnough: entry.outlineWidth >= 160,
+        isOutputLabelOnOneLine: entry.outputLabelLines === 1,
+        isChangeLocationOnOneLine: entry.changeLocationLines === 1,
+        isRowInsideTheRail: entry.outputRightBeyondRailPx <= 0.5,
       },
+    )
+  }
+  const measureNarrowestRow = async () => {
+    // Arrange: the overview at 701 px, the narrowest window whose right rail is a row.
+    await openWiki(701, 720)
+    // Act
+    const entry = await measureEntry()
+    await page
+      .locator('.right-rail')
+      .screenshot({ path: `${options.output}/wiki-rail-row-701.png` })
+    // Assert
+    record(
+      'in the Wiki reader at 701 px, the narrowest window whose right rail is a row, the output block keeps Change location on one line, the outline is at least 160 px wide, the open control keeps its label on one line, and the row ends inside the rail and the page',
+      entry,
+      {
+        isRow: entry.railDisplay === 'flex',
+        isOutputLabelOnOneLine: entry.outputLabelLines === 1,
+        isChangeLocationOnOneLine: entry.changeLocationLines === 1,
+        isOutlineWideEnough: entry.outlineWidth >= 160,
+        isLabelOnOneLine: entry.labelLines === 1,
+        isRowInsideTheRail: entry.outputRightBeyondRailPx <= 0.5,
+        hasPageNoSidewaysScroll: entry.pageScrollWidth <= entry.pageClientWidth,
+      },
+    )
+  }
+  const measureReadingColumnInRow = async () => {
+    // Arrange: the overview at 720 px again, where the article and the composer scroll beside the chapter list. Act: the reading column is read with and without its room for focus rings, each control is focused with the keyboard, and a question is asked in between.
+    await openWiki(720, 720)
+    const measured = await measureReadingColumn('720')
+    // Assert
+    record(
+      'in the Wiki reader at 720 px the room the article and the composer keep for focus rings moves nothing: every part of the reading column stands where it stands without the room, at rest it is drawn the same, and an open answer leaves it so',
+      measured.room,
+      roomChecks(measured.room),
+    )
+    record(
+      'in the Wiki reader at 720 px the keyboard focus ring of every control of the article and the composer is whole, also of one the keyboard scrolled back from the edge: Relevant source files, a link of the article, the question field, Ask Codebook, the answer with its summary and its citation, and the connection line',
+      measured.rings,
+      ringChecks(measured.rings),
     )
   }
   const measureEntryInColumn = async () => {
@@ -432,11 +804,17 @@ async function check(page, options, collected) {
       .screenshot({ path: `${options.output}/wiki-rail-column-1200.png` })
     // Assert
     record(
-      'in the Wiki reader at 1200 px the open control names the file and the line it opens and is no wider than the right rail, and neither the rail nor the chapter list scrolls sideways for an entry that cannot break',
+      'in the Wiki reader at 1200 px the open control names the file and the line it opens under a link that holds the label alone and is described by them, keeps the colon and the line number on one line, and is no wider than the right rail, and neither the rail nor the chapter list scrolls sideways for an entry that cannot break',
       entry,
       {
         isColumn: entry.railDisplay === 'block',
-        doesTextNameTheTarget: entry.linkText === options.expectedEntryText,
+        doesTextNameTheTarget: entry.entryText === options.expectedEntryText,
+        doesLinkHoldTheLabelAlone: entry.linkText === 'Open in VS Code',
+        isLinkDescribedByTheTarget:
+          entry.linkDescription === options.expectedTargetText,
+        isLabelOnOneLine: entry.labelLines === 1,
+        isLineNumberWhole:
+          entry.lineNumberText === ':95' && entry.lineNumberLines === 1,
         isControlInsideRail: entry.controlWidth <= entry.railClientWidth,
         hasRailNoSidewaysScroll: entry.railScrollWidth <= entry.railClientWidth,
         hasChapterListNoSidewaysScroll:
@@ -445,21 +823,78 @@ async function check(page, options, collected) {
     )
   }
   const measureEntryStates = async () => {
-    // Arrange: still 1200 px. Act: the pointer rests on the entry, then the keyboard focuses it, in the light and the dark theme.
+    // Arrange: still 1200 px, the pointer away from the entry.
+    const readEntry = () =>
+      page.evaluate(() => {
+        const style = getComputedStyle(
+          document.querySelector('.open-in-editor'),
+        )
+        return {
+          background: style.backgroundColor,
+          border: style.borderTopColor,
+          filter: style.filter,
+          transition: style.transitionDuration,
+        }
+      })
+    await page.mouse.move(0, 0)
+    const atRest = await readEntry()
+    // Act: the pointer rests on the label, then on the target under it, where a press follows; the click is caught before it opens the editor's address.
     await page.hover('.open-in-editor a')
-    const hovered = await page.evaluate(() => {
-      const style = getComputedStyle(
-        document.querySelector('.open-in-editor a'),
-      )
-      return {
-        background: style.backgroundColor,
-        border: style.borderTopColor,
-        transition: style.transitionDuration,
-      }
+    const underPointerOnLabel = await readEntry()
+    const targetCentre = await page.evaluate(() => {
+      const box = document.querySelector('.open-target').getBoundingClientRect()
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
     })
+    await page.mouse.move(targetCentre.x, targetCentre.y)
+    const underPointerOnTarget = await readEntry()
+    const isLinkUnderPointerOnTarget = await page.evaluate(
+      (point) =>
+        document.elementFromPoint(point.x, point.y) ===
+        document.querySelector('.open-in-editor a'),
+      targetCentre,
+    )
+    await page.evaluate(() => {
+      window.entryClick = { isOnLink: false, address: '' }
+      document.addEventListener(
+        'click',
+        (event) => {
+          event.preventDefault()
+          window.entryClick = {
+            isOnLink:
+              event.target === document.querySelector('.open-in-editor a'),
+            // An element that is no link has no address.
+            address: event.target.getAttribute('href') ?? '',
+          }
+        },
+        { capture: true, once: true },
+      )
+    })
+    await page.mouse.down()
+    const pressedOnTarget = await readEntry()
+    await page.mouse.up()
+    const click = await page.evaluate(() => window.entryClick)
+    // Act: the keyboard focuses the entry's link, in the light and the dark theme.
     await page.mouse.move(0, 0)
     await focusWithKeyboard('.open-in-editor a')
-    const ring = await focusRing('.open-in-editor a')
+    const ring = await page.evaluate(() => {
+      const entry = document.querySelector('.open-in-editor')
+      const link = entry.querySelector('a')
+      const drawn = getComputedStyle(link, '::after')
+      const entryBox = entry.getBoundingClientRect()
+      return {
+        isFocusedByKeyboard:
+          document.activeElement === link && link.matches(':focus-visible'),
+        linkOutlineStyle: getComputedStyle(link).outlineStyle,
+        outlineOffset: drawn.outlineOffset,
+        outlineWidth: drawn.outlineWidth,
+        outlineStyle: drawn.outlineStyle,
+        entryWidth: entryBox.width,
+        entryHeight: entryBox.height,
+        // The ring's box covers the block with its border.
+        ringBoxWiderPx: Number.parseFloat(drawn.width) - entryBox.width,
+        ringBoxHigherPx: Number.parseFloat(drawn.height) - entryBox.height,
+      }
+    })
     await page
       .locator('.right-rail')
       .screenshot({ path: `${options.output}/wiki-entry-focus-light.png` })
@@ -472,17 +907,49 @@ async function check(page, options, collected) {
     await page.evaluate(() => {
       delete document.documentElement.dataset.theme
     })
-    // Assert: the light theme's second panel colour and link colour under the pointer, and a ring that lies inside the block.
+    // Assert: the light theme's border at rest, its second panel colour and link colour under the pointer, a darker block while pressed, and a ring that lies inside the whole block.
     record(
-      'the open control of the right rail answers the pointer with a fill and a link-coloured border, without a transition, and its keyboard focus ring lies inside it',
-      { hovered, ring },
+      'the open control of the right rail answers the pointer on its label and on its target with a fill and a link-coloured border, without a transition, darkens while pressed, follows its link from a press on the target, and its keyboard focus ring lies inside the whole block',
       {
-        isFilledUnderPointer: hovered.background === 'rgb(239, 238, 236)',
-        isBorderedUnderPointer: hovered.border === 'rgb(24, 91, 147)',
-        hasNoTransition: hovered.transition === '0s',
+        atRest,
+        underPointerOnLabel,
+        underPointerOnTarget,
+        isLinkUnderPointerOnTarget,
+        pressedOnTarget,
+        click,
+        ring,
+      },
+      {
+        hasNoFillAtRest: atRest.background === 'rgba(0, 0, 0, 0)',
+        hasBorderAtRest: atRest.border === 'rgb(216, 213, 207)',
+        isFilledUnderPointer:
+          underPointerOnLabel.background === 'rgb(239, 238, 236)',
+        isBorderedUnderPointer:
+          underPointerOnLabel.border === 'rgb(24, 91, 147)',
+        hasNoTransition: underPointerOnLabel.transition === '0s',
+        isFilledUnderPointerOnTarget:
+          underPointerOnTarget.background === 'rgb(239, 238, 236)',
+        isBorderedUnderPointerOnTarget:
+          underPointerOnTarget.border === 'rgb(24, 91, 147)',
+        isLinkUnderPointerOnTarget,
+        isDarkenedWhilePressed: pressedOnTarget.filter === 'brightness(0.9)',
+        isFilledWhilePressed:
+          pressedOnTarget.background === 'rgb(239, 238, 236)',
+        isPressOnTargetAClickOnTheLink: click.isOnLink,
+        doesClickedLinkOpenASource: click.address.startsWith(
+          'vscode://laststance.codebook/source?',
+        ),
+        doesClickedLinkNameTheTarget: click.address.includes(
+          '&path=extension%2Fsrc%2FruntimeSupport%2Futils%2FremoveAbandonedProfiles.ts&line=95&',
+        ),
         isFocusedByKeyboard: ring.isFocusedByKeyboard,
+        hasLinkNoRingOfItsOwn: ring.linkOutlineStyle === 'none',
         isRingOffsetInside: ring.outlineOffset === '-2px',
         isRingTwoPixels: ring.outlineWidth === '2px',
+        isRingSolid: ring.outlineStyle === 'solid',
+        // Half a pixel of rounding between the block and the ring's box.
+        isRingAsWideAsTheBlock: Math.abs(ring.ringBoxWiderPx) <= 0.5,
+        isRingAsHighAsTheBlock: Math.abs(ring.ringBoxHigherPx) <= 0.5,
       },
     )
   }
@@ -511,6 +978,38 @@ async function check(page, options, collected) {
           [`${name}RingRightIsInside`, ring.rightInsideClipPx >= 0],
         ]),
       ),
+    )
+  }
+  const measureRingsAtRailEdges = async () => {
+    // Arrange: still 1200 px, where the outline of forty entries makes the rail scroll. Act: the link at the rail's end and the button at its start are each scrolled half out of sight, and the keyboard focuses them.
+    const rings = await ringsOf(
+      [
+        ['changeLocationScrolledToTheBottom', '.output a', 'bottom'],
+        ['updateButtonScrolledToTheTop', '.wiki-update', 'top'],
+      ],
+      'wiki-focus-1200',
+    )
+    // Assert
+    record(
+      'in the Wiki reader at 1200 px a control of the right rail that the keyboard scrolls back from the upper or the lower edge keeps its whole focus ring: Update LLM Wiki and Change location',
+      rings,
+      ringChecks(rings),
+    )
+  }
+  const measureReadingColumnInColumns = async () => {
+    // Arrange: the overview at 1200 px again, where the article and the composer scroll between the chapter list and the rail. Act: the reading column is read with and without its room for focus rings, each control is focused with the keyboard, and a question is asked in between.
+    await openWiki(1200, 720)
+    const measured = await measureReadingColumn('1200')
+    // Assert
+    record(
+      'in the Wiki reader at 1200 px the room the article and the composer keep for focus rings moves nothing: every part of the reading column stands where it stands without the room, at rest it is drawn the same, and an open answer leaves it so',
+      measured.room,
+      roomChecks(measured.room),
+    )
+    record(
+      'in the Wiki reader at 1200 px the keyboard focus ring of every control of the article and the composer is whole, also of one the keyboard scrolled back from the edge: Relevant source files, a link of the article, the question field, Ask Codebook, the answer with its summary and its citation, and the connection line',
+      measured.rings,
+      ringChecks(measured.rings),
     )
   }
   const measureRailWithRefusal = async () => {
@@ -563,15 +1062,36 @@ async function check(page, options, collected) {
     })
     // Assert
     record(
-      'in the Wiki reader at 960 x 600 an open update detail of twelve files scrolls inside 96 px under the whole sentence of the refused update, and the rail takes less than half of the window',
+      'in the Wiki reader at 960 x 600 an open update detail of twelve files scrolls inside 84 px (14vh) under the whole sentence of the refused update, and the rail is at most 45vh high',
       measured,
       {
         ...railChecks(measured),
-        isRailLessThanHalfTheWindow:
-          measured.rail.height < measured.viewportHeight * 0.5,
-        isDetailAtMost96: measured.detail.height <= 96,
+        isRailAtMost45vh:
+          measured.rail.height <= measured.viewportHeight * 0.45,
+        isDetailAtMost84: measured.detail.height <= 84,
         doesDetailScrollInside:
           measured.detail.scrollHeight > measured.detail.clientHeight,
+      },
+    )
+  }
+  const measureDetailSummaryRingInRow = async () => {
+    // Arrange: still 960 px with the open detail, which scrolls there. Act: the keyboard focuses the detail's summary.
+    await focusWithKeyboard('[data-codebook-update-detail] > summary')
+    const ring = await focusRing('[data-codebook-update-detail] > summary')
+    await page
+      .locator('.right-rail')
+      .screenshot({ path: `${options.output}/wiki-focus-detail-960.png` })
+    // Assert
+    record(
+      'in the Wiki reader at 960 px the keyboard focus ring of the summary of an open update detail lies inside the detail that scrolls',
+      ring,
+      {
+        isFocusedByKeyboard: ring.isFocusedByKeyboard,
+        isDetailTheScroller: ring.scroller === 'DETAILS',
+        isRingLeftInside: ring.leftInsideClipPx >= 0,
+        isRingRightInside: ring.rightInsideClipPx >= 0,
+        isRingTopInside: ring.topInsideClipPx >= 0,
+        isRingBottomInside: ring.bottomInsideClipPx >= 0,
       },
     )
   }
@@ -617,11 +1137,15 @@ async function check(page, options, collected) {
         outlineMinWidth: outline.minWidth,
         detailMaxHeight: styleOf('[data-codebook-update-detail]').maxHeight,
         entryMarginBottom: styleOf('.open-in-editor').marginBottom,
+        outputMinWidth: styleOf('.right-rail .output').minWidth,
+        composerMaxHeight: styleOf('.composer').maxHeight,
+        composerPaddingBottom: styleOf('.composer').paddingBottom,
+        composerMarginBottom: styleOf('.composer').marginBottom,
       }
     })
     // Assert
     record(
-      'in the Wiki reader at 640 px the single column keeps its rail as before: no cap on the rail, the outline or an open detail, and the open control has its margin',
+      'in the Wiki reader at 640 px the single column keeps its rail and its composer as before: no cap on the rail, the outline or an open detail, the open control has its margin, the output block may shrink, and the composer has no height limit and its own bottom padding',
       column,
       {
         isBlock: column.railDisplay === 'block',
@@ -632,6 +1156,10 @@ async function check(page, options, collected) {
         hasOutlineNoMinimumWidth: column.outlineMinWidth === '0px',
         hasDetailNoCap: column.detailMaxHeight === 'none',
         hasEntryItsMargin: column.entryMarginBottom === '16px',
+        hasOutputNoMinimumWidth: column.outputMinWidth === '0px',
+        hasComposerNoHeightLimit: column.composerMaxHeight === 'none',
+        hasComposerItsBottomPadding: column.composerPaddingBottom === '9.6px',
+        hasComposerNoBottomMargin: column.composerMarginBottom === '0px',
       },
     )
   }
@@ -710,14 +1238,19 @@ async function check(page, options, collected) {
       },
     )
   }
-  // Each step leaves the page as the next one needs it: the 1200 px steps share one load, and so do the 960 px steps.
+  // Each step leaves the page as the next one needs it: the three 1200 px steps of the rail share one load, and so do the 960 px steps; a step of the reading column loads the page itself, because it asks a question.
   for (const step of [
     measureEntryInRow,
+    measureNarrowestRow,
+    measureReadingColumnInRow,
     measureEntryInColumn,
     measureEntryStates,
     measureRingsInColumns,
+    measureRingsAtRailEdges,
+    measureReadingColumnInColumns,
     measureRailWithRefusal,
     measureRailWithOpenDetail,
+    measureDetailSummaryRingInRow,
     measureOutlineRingInRow,
     measureSingleColumn,
     measureMissingPage,
@@ -738,7 +1271,8 @@ try {
   reader = await startDeepWikiReader(
     wiki.outputDirectory,
     wiki.projectRoot,
-    async () => ({ handoff: 'unused' }),
+    // The reader answers the one question the check asks in the composer.
+    async () => ANSWER,
     'vscode',
   )
   // The flow reaches `run-code` as one function in a file it loads itself, written by {@link readerDomFlowText}: a step that throws then ends as one failed case after the cases that passed.
@@ -750,6 +1284,8 @@ try {
       url: new URL('.', reader.url).href,
       output,
       expectedEntryText: `Open in VS Code ${OPEN_TARGET.path}:${OPEN_TARGET.line}`,
+      expectedTargetText: `${OPEN_TARGET.path}:${OPEN_TARGET.line}`,
+      question: QUESTION,
       refusal: REFUSAL,
       detailPaths: DETAIL_PATHS,
     }),
