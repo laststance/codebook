@@ -111,6 +111,19 @@ async function check(page, options, collected) {
         )
         .join(','),
     )
+  /** Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure. */
+  const toggleByKeyboard = async (disclosureId, key = 'Enter') => {
+    await page.evaluate((id) => {
+      window.disclosureToggled = new Promise((resolve) =>
+        document
+          .getElementById(id)
+          .addEventListener('toggle', () => resolve(), { once: true }),
+      )
+    }, disclosureId)
+    await page.locator(`#${disclosureId} > summary`).focus()
+    await page.keyboard.press(key)
+    await page.evaluate(() => window.disclosureToggled)
+  }
   const inspect = () =>
     page.evaluate(() => ({
       text: document.body.innerText,
@@ -1531,6 +1544,18 @@ async function check(page, options, collected) {
           applicationCovered: true,
         },
       }
+      /** Reads the transport's second status region, which announces the remedy for a covered application: its role, its text and whether it is rendered (`checkVisibility` is false when it or an ancestor is `display:none`), so its first text changes a region that already exists. */
+      const coveredRemedy = () =>
+        page.evaluate(() => {
+          const region = document.getElementById('application-covered-remedy')
+          return {
+            role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+            text: region.textContent,
+            isRendered: region.checkVisibility(),
+          }
+        })
+      await publish(learning)
+      const remedyBeforeCovered = await coveredRemedy()
       // Act
       await publish(coveredLearning)
       const whileCovered = await page.evaluate(() => {
@@ -1540,11 +1565,13 @@ async function check(page, options, collected) {
             : null
         return {
           line: shownText('loading'),
+          lineRole: document.getElementById('loading').getAttribute('role'),
           selectedShown:
             document.getElementById('selected').getClientRects().length > 0,
           transportStatus: shownText('recording-status'),
         }
       })
+      const remedyWhileCovered = await coveredRemedy()
       await publish(learning)
       const afterReturnToFront = await page.evaluate(() => ({
         lineShown:
@@ -1552,19 +1579,62 @@ async function check(page, options, collected) {
         transportStatus:
           document.getElementById('recording-status').textContent,
       }))
+      const remedyAfterReturnToFront = await coveredRemedy()
       // Assert
       cases.push({
         name: 'while another tab covers the recorded application the Learning summary says so and names the remedy, not that the observation is loading',
-        actual: { whileCovered, afterReturnToFront },
+        actual: {
+          remedyBeforeCovered,
+          whileCovered,
+          remedyWhileCovered,
+          afterReturnToFront,
+          remedyAfterReturnToFront,
+        },
         passed:
           whileCovered.line ===
             'Recorded application is covered by another tab. Bring the Recorded application tab to the front to show this moment again.' &&
+          // The visible line is no live region: "Loading the selected observation…" must not be announced at every seek.
+          whileCovered.lineRole === null &&
           whileCovered.selectedShown &&
           whileCovered.transportStatus ===
             'Paused · finalized · Not recorded at this moment · Recorded application is covered by another tab' &&
           !afterReturnToFront.lineShown &&
           afterReturnToFront.transportStatus ===
-            'Paused · finalized · Not recorded at this moment',
+            'Paused · finalized · Not recorded at this moment' &&
+          // The remedy is announced from a status region that is rendered and empty before the cover begins.
+          remedyBeforeCovered.role === 'status/polite' &&
+          remedyBeforeCovered.text === '' &&
+          remedyBeforeCovered.isRendered &&
+          remedyWhileCovered.text ===
+            'Bring the Recorded application tab to the front to show this moment again.' &&
+          remedyWhileCovered.isRendered &&
+          remedyAfterReturnToFront.text === '',
+      })
+
+      // Act: the covered recording fails (row 26, DR-3).
+      await publish({
+        ...coveredLearning,
+        recording: {
+          ...coveredLearning.recording,
+          readiness: 'failed',
+          reason: 'Recorded source unavailable',
+        },
+      })
+      const coveredAndFailed = {
+        line: await page.locator('#loading').textContent(),
+        lineShown: await page.locator('#loading').isVisible(),
+        remedy: (await coveredRemedy()).text,
+      }
+      await publish(learning)
+      // Assert
+      cases.push({
+        name: 'a covered recorded application whose replay failed shows that the recorded context is unavailable and announces no remedy',
+        actual: coveredAndFailed,
+        passed:
+          coveredAndFailed.lineShown &&
+          coveredAndFailed.line ===
+            'Recorded context unavailable. Reload after resolving the reported problem.' &&
+          coveredAndFailed.remedy === '',
       })
 
       // Arrange: a recorded stop declared on line 73 that the debugger bound on line 75 (SD-16, DR-28).
@@ -1744,17 +1814,29 @@ async function check(page, options, collected) {
           hintFontSize: style('playback-hint').fontSize,
         }
       })
+      // The Node test history offers the same button under its own hint.
+      await publish({
+        ...withoutValues,
+        nodeHistoryPosition: { ...nodeStop, nativeValuesUninspected: true },
+      })
+      const nodeShowVariablesHeight = await page
+        .locator('#node-history-show-variables')
+        .evaluate((control) =>
+          Math.round(control.getBoundingClientRect().height),
+        )
+      await publish(withoutValues)
       // Assert
       cases.push({
-        name: "Show Variables in the replay footer is as tall as the transport buttons and set in the hint's text size",
-        actual: footerButton,
+        name: 'Show Variables in the replay footer keeps the pane’s 44 px height and 16 px text, and Play keeps the transport’s 32 px rule',
+        actual: { ...footerButton, nodeShowVariablesHeight },
         passed:
-          footerButton.showVariablesHeight === 32 &&
-          footerButton.showVariablesMinHeight === '32px' &&
+          footerButton.showVariablesHeight === 44 &&
+          footerButton.showVariablesMinHeight === '44px' &&
+          footerButton.showVariablesFontSize === '16px' &&
           footerButton.playMinHeight === '32px' &&
           footerButton.playHeight === 34 &&
-          footerButton.showVariablesFontSize === '12px' &&
-          footerButton.hintFontSize === '12px',
+          footerButton.hintFontSize === '12px' &&
+          nodeShowVariablesHeight === 44,
       })
 
       // Act: the same moment with and without the hint, in a side bar at two widths (T-3, ER-18).
@@ -1795,6 +1877,260 @@ async function check(page, options, collected) {
           sideBarTops[300].before === sideBarTops[300].withHint &&
           sideBarTops[300].hintShown &&
           !sideBarTops[300].footerScrolls,
+      })
+
+      /** Says for each named part of the replay transport whether its whole box lies inside the transport's visible box. */
+      const insideTransport = (selectors) =>
+        page.evaluate((parts) => {
+          const box = document
+            .getElementById('recording-transport')
+            .getBoundingClientRect()
+          return Object.fromEntries(
+            parts.map((selector) => {
+              const part = document
+                .querySelector(selector)
+                .getBoundingClientRect()
+              return [
+                selector,
+                part.height > 0 &&
+                  part.top >= box.top &&
+                  part.bottom <= box.bottom,
+              ]
+            }),
+          )
+        }, selectors)
+
+      // Arrange: the moment whose values are not loaded, in a side bar at two widths (row 26, DR-1).
+      const footerWithDetails = {},
+        allPartsInside = {
+          '#playback-toggle': true,
+          '#playhead': true,
+          '#playback-options > summary': true,
+          '[data-action="reload-recording"]': true,
+        }
+      for (const width of [300, 600]) {
+        await page.setViewportSize({ width, height: 720 })
+        await publish(withoutValues)
+        // Act: the learner opens Playback details by keyboard, and closes them again.
+        await toggleByKeyboard('playback-options')
+        const opened = await page
+          .locator('#recording-transport')
+          .evaluate((footer) => ({
+            height: Math.round(footer.getBoundingClientRect().height),
+            maxHeight: getComputedStyle(footer).maxHeight,
+            focusedSummaryOf: document.activeElement.parentElement.id,
+          }))
+        const partsInside = await insideTransport([
+          '#playback-toggle',
+          '#playhead',
+          '#playback-options > summary',
+          '[data-action="reload-recording"]',
+        ])
+        await toggleByKeyboard('playback-options')
+        footerWithDetails[width] = {
+          ...opened,
+          partsInside,
+          scrollsAfterClosing: await page
+            .locator('#recording-transport')
+            .evaluate((footer) => footer.scrollHeight > footer.clientHeight),
+          maxHeightAfterClosing: await page
+            .locator('#recording-transport')
+            .evaluate((footer) => getComputedStyle(footer).maxHeight),
+        }
+      }
+      // Assert: 40vh of 720 px is 288 px; the closed footer keeps its 60vh (432 px).
+      cases.push({
+        name: 'with the values hint shown, opening Playback details in the Learning summary keeps the transport within 40% of a 720 px pane with Play, the playhead, the summary and Reload saved recording in view, and closing them leaves a footer that does not scroll',
+        actual: footerWithDetails,
+        passed:
+          footerWithDetails[300].height <= 288 &&
+          footerWithDetails[300].maxHeight === '288px' &&
+          footerWithDetails[300].focusedSummaryOf === 'playback-options' &&
+          JSON.stringify(footerWithDetails[300].partsInside) ===
+            JSON.stringify(allPartsInside) &&
+          !footerWithDetails[300].scrollsAfterClosing &&
+          footerWithDetails[300].maxHeightAfterClosing === '432px' &&
+          footerWithDetails[600].height <= 288 &&
+          footerWithDetails[600].maxHeight === '288px' &&
+          footerWithDetails[600].focusedSummaryOf === 'playback-options' &&
+          JSON.stringify(footerWithDetails[600].partsInside) ===
+            JSON.stringify(allPartsInside) &&
+          !footerWithDetails[600].scrollsAfterClosing &&
+          footerWithDetails[600].maxHeightAfterClosing === '432px',
+      })
+
+      // Arrange: a short side bar whose replay failed with a diagnostic of 12 lines (row 26, DR-1).
+      await page.setViewportSize({ width: 960, height: 600 })
+      const failedWithDiagnostic = {
+        ...withValues,
+        recording: {
+          ...replay.recording,
+          readiness: 'failed',
+          reason: Array.from(
+            { length: 12 },
+            (_, line) => `Recorded source unavailable (line ${line + 1})`,
+          ).join('\n'),
+        },
+      }
+      await publish(failedWithDiagnostic)
+      // Act: the learner opens Playback details and then Recording error details by keyboard.
+      await toggleByKeyboard('playback-options')
+      await toggleByKeyboard('playback-diagnostics', 'Space')
+      const shortSideBar = await page.evaluate(() => {
+        const transport = document.getElementById('recording-transport'),
+          box = transport.getBoundingClientRect(),
+          diagnosticText = document.getElementById(
+            'playback-diagnostic',
+          ).firstChild,
+          firstLine = document.createRange()
+        firstLine.setStart(diagnosticText, 0)
+        firstLine.setEnd(diagnosticText, diagnosticText.data.indexOf('\n'))
+        const firstLineBox = firstLine.getBoundingClientRect()
+        return {
+          transportHeight: Math.round(box.height),
+          paneAboveTransport: Math.round(box.top),
+          scrollsInside: transport.scrollHeight > transport.clientHeight,
+          firstDiagnosticLine: firstLine.toString(),
+          firstDiagnosticLineInside:
+            firstLineBox.height > 0 &&
+            firstLineBox.top >= box.top &&
+            firstLineBox.bottom <= box.bottom,
+          focusedSummaryOf: document.activeElement.parentElement.id,
+        }
+      })
+      const errorDetailsInside = await insideTransport([
+        '#playback-diagnostics > summary',
+      ])
+      await page.screenshot({
+        path: `${options.output}/replay-recovery-short-side-bar.png`,
+      })
+      // Assert: 40% of 600 px is 240 px, so 360 px of the pane stay above the transport.
+      cases.push({
+        name: 'in a 960 x 600 Learning summary a failed replay with Playback details and Recording error details open leaves 60% of the pane above the transport, which scrolls inside itself and shows the opened error details',
+        actual: { ...shortSideBar, errorDetailsInside },
+        passed:
+          shortSideBar.transportHeight <= 240 &&
+          shortSideBar.paneAboveTransport >= 360 &&
+          shortSideBar.scrollsInside &&
+          errorDetailsInside['#playback-diagnostics > summary'] &&
+          shortSideBar.firstDiagnosticLine ===
+            'Recorded source unavailable (line 1)' &&
+          shortSideBar.firstDiagnosticLineInside &&
+          shortSideBar.focusedSummaryOf === 'playback-diagnostics',
+      })
+
+      // Act: both disclosures of the transport are measured as targets, and their label against the status beside it (row 62).
+      const disclosureTargets = await page.evaluate(() => {
+        const summaryHeight = (id) =>
+            Math.round(
+              document.querySelector(`#${id} > summary`).getBoundingClientRect()
+                .height,
+            ),
+          // The top of an element's first line of text.
+          textTop = (element) => {
+            const text = document.createRange()
+            text.selectNodeContents(element)
+            return Math.round(text.getClientRects()[0].top)
+          }
+        return {
+          playbackDetails: summaryHeight('playback-options'),
+          recordingErrorDetails: summaryHeight('playback-diagnostics'),
+          summaryMinHeight: getComputedStyle(
+            document.querySelector('#playback-options > summary'),
+          ).minHeight,
+          labelTop: textTop(
+            document.querySelector('#playback-options > summary'),
+          ),
+          statusTop: textTop(document.getElementById('recording-status')),
+          marker: getComputedStyle(
+            document.querySelector('#playback-options > summary'),
+          ).display,
+        }
+      })
+      // Assert
+      cases.push({
+        name: 'Playback details and Recording error details are targets 44 px high like the other controls of the pane, with their label on the line of the transport’s status',
+        actual: disclosureTargets,
+        passed:
+          disclosureTargets.playbackDetails === 44 &&
+          disclosureTargets.recordingErrorDetails === 44 &&
+          disclosureTargets.summaryMinHeight === '44px' &&
+          disclosureTargets.labelTop === disclosureTargets.statusTop &&
+          // The summary keeps its disclosure triangle.
+          disclosureTargets.marker === 'list-item',
+      })
+      // The details are closed again: a learner's footer starts without them.
+      await page.locator('#playback-options').evaluate((details) => {
+        details.open = false
+        document.getElementById('playback-diagnostics').open = false
+      })
+      await page.setViewportSize({ width: 600, height: 800 })
+
+      // Arrange: a replay with nothing to report: no error, no hint, no removal, no saved study, no layout notice (row 63, ND-5).
+      await publish(withValues)
+      // The pane and layout controls are a disclosure the Recording tab closes; its status is read while they are open.
+      await page.locator('#reader-options').evaluate((details) => {
+        details.open = true
+      })
+      // Act: every status region that can be empty is read before it has text.
+      const emptyStatusRegions = await page.evaluate(() =>
+        [
+          'errors',
+          'presentation-status',
+          'recording-save-state',
+          'playback-hint',
+          'application-covered-remedy',
+          'node-history-hint',
+          'delete-study-status',
+        ].map((id) => {
+          const region = document.getElementById(id),
+            // False when the region or an ancestor is `display:none`, or a closed disclosure holds it.
+            isRendered = region.checkVisibility()
+          // What the region adds to the height of its parent: none when the parent is as tall without it.
+          const parentHeight = () =>
+              region.parentElement.getBoundingClientRect().height,
+            withRegion = parentHeight()
+          region.style.display = 'none'
+          const withoutRegion = parentHeight()
+          region.style.display = ''
+          return {
+            id,
+            role: region.getAttribute('role'),
+            text: region.textContent,
+            isRendered,
+            height: region.getBoundingClientRect().height,
+            roomTaken: withRegion - withoutRegion,
+          }
+        }),
+      )
+      await page.locator('#reader-options').evaluate((details) => {
+        details.open = false
+      })
+      // Assert
+      cases.push({
+        name: 'each status region of the Study pane is in the page before it has text, rendered and taking no room, so its first text is a change of a region that exists',
+        actual: emptyStatusRegions,
+        passed:
+          JSON.stringify(emptyStatusRegions) ===
+          JSON.stringify(
+            [
+              ['errors', 0],
+              ['presentation-status', 0],
+              ['recording-save-state', 0],
+              ['playback-hint', 0],
+              // Hidden from sight in the summary by a 1 px clip; the bottom panel shows it as a line.
+              ['application-covered-remedy', 1],
+              ['node-history-hint', 0],
+              ['delete-study-status', 0],
+            ].map(([id, height]) => ({
+              id,
+              role: 'status',
+              text: '',
+              isRendered: true,
+              height,
+              roomTaken: 0,
+            })),
+          ),
       })
 
       // Arrange: a press on the replay thumb that moves nothing fires neither input nor change (SD-17).
@@ -2148,6 +2484,124 @@ async function check(page, options, collected) {
         actual: { panelTopsBefore, panelTopsWithHint, panelHintBelowControls },
         passed: panelTopsBefore === panelTopsWithHint && panelHintBelowControls,
       })
+      // Act: the hint and its button are measured against the panel, which is 180 px high here.
+      const panelHint = await page.evaluate(() => {
+        const hint = document
+            .getElementById('playback-hint')
+            .getBoundingClientRect(),
+          control = document
+            .getElementById('playback-show-variables')
+            .getBoundingClientRect()
+        return {
+          panelHeight: window.innerHeight,
+          buttonHeight: Math.round(control.height),
+          buttonBottom: Math.round(control.bottom),
+          hintBottom: Math.round(hint.bottom),
+          buttonRightOfHint: control.left >= hint.right,
+          buttonBesideHint:
+            control.top < hint.bottom && control.bottom > hint.top,
+        }
+      })
+      await page.screenshot({
+        path: `${options.output}/bottom-panel-values-hint.png`,
+      })
+      // Assert
+      cases.push({
+        name: 'in a bottom panel 180 px high the values hint and its 44 px Show Variables button stand side by side under the controls, both inside the panel',
+        actual: panelHint,
+        passed:
+          panelHint.panelHeight === 180 &&
+          panelHint.buttonHeight === 44 &&
+          panelHint.buttonBottom <= 180 &&
+          panelHint.hintBottom <= 180 &&
+          panelHint.buttonRightOfHint &&
+          panelHint.buttonBesideHint,
+      })
+
+      // Arrange: the bottom panel alone shows the replay (the summary is collapsed), and its transport has no line above the moment (rows 26 and 60, DR-3, ND-2).
+      await publish(panelReplay)
+      /** Reads the bottom panel's remedy line: its text, whether it is rendered and takes room, where it stands and how tall the transport is with it. */
+      const panelRemedy = () =>
+        page.evaluate(() => {
+          const region = document.getElementById('application-covered-remedy'),
+            box = region.getBoundingClientRect(),
+            style = getComputedStyle(region)
+          return {
+            role: `${region.getAttribute('role')}/${region.getAttribute('aria-live')}`,
+            text: region.textContent,
+            display: style.display,
+            fontSize: style.fontSize,
+            isMuted: region.classList.contains('muted'),
+            height: Math.round(box.height),
+            width: Math.round(box.width),
+            belowStatus:
+              box.top >=
+              document
+                .getElementById('recording-status')
+                .getBoundingClientRect().bottom,
+            insideViewport: box.top >= 0 && box.bottom <= window.innerHeight,
+            status: document.getElementById('recording-status').textContent,
+            transportHeight: Math.round(
+              document
+                .getElementById('recording-transport')
+                .getBoundingClientRect().height,
+            ),
+          }
+        })
+      const panelBeforeCovered = await panelRemedy()
+      // Act: another tab comes in front of the recorded application, and leaves again.
+      await publish({
+        ...panelReplay,
+        recording: { ...panelReplay.recording, applicationCovered: true },
+      })
+      const panelWhileCovered = await panelRemedy()
+      await page.screenshot({
+        path: `${options.output}/bottom-panel-covered-remedy.png`,
+      })
+      await publish(panelReplay)
+      const panelAfterReturnToFront = await panelRemedy()
+      // Assert
+      cases.push({
+        name: 'in the bottom panel a covered recorded application is named in the transport’s status and the remedy is a visible 12 px line under it, in a status region that is rendered and takes no room before',
+        actual: {
+          panelBeforeCovered,
+          panelWhileCovered,
+          panelAfterReturnToFront,
+        },
+        passed:
+          panelBeforeCovered.role === 'status/polite' &&
+          panelBeforeCovered.text === '' &&
+          panelBeforeCovered.display !== 'none' &&
+          panelBeforeCovered.height === 0 &&
+          panelWhileCovered.status ===
+            'Paused · finalized · Recorded application is covered by another tab' &&
+          panelWhileCovered.text ===
+            'Bring the Recorded application tab to the front to show this moment again.' &&
+          panelWhileCovered.height === 18 &&
+          panelWhileCovered.width > 400 &&
+          panelWhileCovered.fontSize === '12px' &&
+          panelWhileCovered.isMuted &&
+          panelWhileCovered.belowStatus &&
+          panelWhileCovered.insideViewport &&
+          panelWhileCovered.transportHeight ===
+            panelBeforeCovered.transportHeight + 18 &&
+          panelAfterReturnToFront.text === '' &&
+          panelAfterReturnToFront.transportHeight ===
+            panelBeforeCovered.transportHeight,
+      })
+
+      // Act: the learner opens Playback details in the bottom panel, whose transport starts at the panel's top and is not a scroller (row 26, DR-1).
+      await page.locator('#playback-options > summary').click()
+      const panelTransportBound = await page
+        .locator('#recording-transport')
+        .evaluate((transport) => getComputedStyle(transport).maxHeight)
+      await page.locator('#playback-options > summary').click()
+      // Assert
+      cases.push({
+        name: 'in the bottom panel the transport is not bounded while Playback details are open',
+        actual: panelTransportBound,
+        passed: panelTransportBound === 'none',
+      })
     }
   }
   // Saved studies: the delete control, its reasons, an entry that cannot be opened, the outcome line and focus.
@@ -2262,11 +2716,36 @@ async function check(page, options, collected) {
         repairNote: shownText('study-repairable'),
         newerNote: shownText('study-newer'),
         repairVisible: visible('repair-study'),
-        // The files a window without a Trash lists for removal by hand; null while the list is hidden.
-        files: visible('study-files')
-          ? [...document.querySelectorAll('#study-files-list li')].map(
-              (item) => item.textContent,
-            )
+        // The "Remove by hand" disclosure of a window without a Trash; null while it is hidden. What a closed disclosure holds is not rendered, which `checkVisibility` tells and a client rectangle does not.
+        removeByHand: visible('study-files')
+          ? {
+              open: document.getElementById('study-files').open,
+              summary: document.querySelector('#study-files > summary')
+                .textContent,
+              note: document
+                .getElementById('study-files-note')
+                .checkVisibility()
+                ? document.getElementById('study-files-note').textContent
+                : null,
+              noteIsError: document
+                .getElementById('study-files-note')
+                .classList.contains('error'),
+              // The paths the learner can see, in order.
+              files: [...document.querySelectorAll('#study-files-list li')]
+                .filter((item) => item.checkVisibility())
+                .map((item) => item.textContent),
+              copyVisible: document
+                .getElementById('copy-study-files')
+                .checkVisibility(),
+              retryVisible: document
+                .querySelector('#study-files [data-action="retry"]')
+                .checkVisibility(),
+              copyStatus: document.getElementById('copy-study-files-status')
+                .textContent,
+              copyStatusIsError: document
+                .getElementById('copy-study-files-status')
+                .classList.contains('error'),
+            }
           : null,
         status: status.textContent,
         statusIsError: status.classList.contains('error'),
@@ -2875,6 +3354,19 @@ async function check(page, options, collected) {
       repairDescribedBy: document
         .getElementById('repair-study')
         .getAttribute('aria-describedby'),
+      // Repair is the primary action of the row: filled like Play, while Delete saved study… keeps the standard button.
+      repairIsPrimary: document
+        .getElementById('repair-study')
+        .classList.contains('primary'),
+      repairBackground: getComputedStyle(
+        document.getElementById('repair-study'),
+      ).backgroundColor,
+      playBackground: getComputedStyle(
+        document.getElementById('playback-toggle'),
+      ).backgroundColor,
+      deleteBackground: getComputedStyle(
+        document.getElementById('delete-study'),
+      ).backgroundColor,
     }
   })
   await page
@@ -2916,6 +3408,9 @@ async function check(page, options, collected) {
       repairLayout.repairBeforeDelete &&
       repairLayout.sameRow &&
       repairLayout.repairDescribedBy === 'study-repairable' &&
+      repairLayout.repairIsPrimary &&
+      repairLayout.repairBackground === repairLayout.playBackground &&
+      repairLayout.repairBackground !== repairLayout.deleteBackground &&
       afterRepairPress.retries === repairableChosen.retries + 1 &&
       afterRepairPress.focus === 'repair-study' &&
       // The button left with its note: the keyboard focus is on the list, not on the document body (PC-3.10).
@@ -3104,26 +3599,29 @@ async function check(page, options, collected) {
       afterLaterRefusal.status === 'Stop the run before deleting its study.',
   })
 
-  // Arrange: a window without a Trash (a WSL remote window); the host names a study's files only in its answer to a delete request (RT-7, DR-14).
+  // Arrange: a window without a Trash (a WSL remote window); the host names a study's files only in its answer to a delete request (RT-7, DR-14), which the pane sends when the learner opens Remove by hand (row 27, DR-5).
   const withoutTrash = { removalWithoutTrash: true },
-    withoutTrashSentence =
-      "This window has no Trash, so Codebook cannot delete a saved study here. Remove this study's files by hand (listed below), then press Retry storage / refresh.",
+    listedSentence =
+      'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.',
     studyFiles = [
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/recordings/window_run-shown01',
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.json',
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-shown01.study.v4.meta.json',
+      '/home/learner/.config/Code/User/globalStorage/laststance.codebook/agent/window/run-shown01',
     ],
     otherStudyFile =
       '/home/learner/.config/Code/User/workspaceStorage/0123/laststance.codebook/studies/window_run-other02.study.v4.json'
   await library([otherStudy], undefined, withoutTrash)
   const withoutTrashNothingChosen = await removalControl()
-  // Act: the host shows a study; the pane asks once for its files, and the host answers.
+  // Act: the host shows a study, which asks for nothing; the learner opens Remove by hand by keyboard, and the host answers.
   await library([shownStudy, otherStudy], shownStudy.id, withoutTrash)
+  const studyChosen = await removalControl()
+  await toggleByKeyboard('study-files')
   const askedForFiles = await removalControl()
   const filesAnswer = await answering({
     status: 'refused',
     studyId: shownStudy.id,
-    text: withoutTrashSentence,
+    text: listedSentence,
     files: studyFiles,
   })
   await library([shownStudy, otherStudy], shownStudy.id, {
@@ -3139,12 +3637,12 @@ async function check(page, options, collected) {
   })
   const filesListed = await removalControl()
   // Another pane asked for the other study's files: the removal state answers that request, and the host keeps both lists by study.
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  const bothListed = {
     ...withoutTrash,
     studyRemoval: {
       status: 'refused',
       studyId: otherStudy.id,
-      text: withoutTrashSentence,
+      text: listedSentence,
       files: [otherStudyFile],
       request: 1,
     },
@@ -3152,59 +3650,470 @@ async function check(page, options, collected) {
       [shownStudy.id]: studyFiles,
       [otherStudy.id]: [otherStudyFile],
     },
-  })
+  }
+  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
   const besideAnotherPanesAnswer = await removalControl()
+  const removeByHandSummary = await page
+    .locator('#study-files > summary')
+    .evaluate((summary) => ({
+      height: Math.round(summary.getBoundingClientRect().height),
+      focused: document.activeElement === summary,
+    }))
   await page
     .locator('#saved-studies')
     .screenshot({ path: `${options.output}/saved-studies-without-trash.png` })
-  await page.getByRole('button', { name: 'Copy path', exact: true }).click()
-  await page.locator('#study-files [data-action="retry"]').click()
-  const afterCopyAndRetry = await removalControl()
-  const retryBesideFiles = await page
-    .locator('#study-files [data-action="retry"]')
-    .evaluate((control) => ({
-      label: control.textContent,
-      visible: control.getClientRects().length > 0,
-    }))
+  // The learner chooses the other study: the disclosure leaves while that study opens, and is offered closed once the host shows it.
+  await page.selectOption('#studies', otherStudy.id)
+  const whileOtherOpens = await removalControl()
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  const otherChosen = await removalControl()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-remove-by-hand.png` })
   // Assert
   cases.push({
-    name: "in a window without a Trash, Saved studies names the chosen study's files, offers Copy path and shows no delete button",
+    name: 'in a window without a Trash, Saved studies lists the chosen study’s files after Remove by hand is opened, offers Copy paths and shows no delete button',
     actual: {
       withoutTrashNothingChosen,
+      studyChosen,
       askedForFiles,
       filesListed,
       besideAnotherPanesAnswer,
-      afterCopyAndRetry,
-      retryBesideFiles,
+      removeByHandSummary,
+      whileOtherOpens,
+      otherChosen,
     },
     passed:
+      // (1) With no study chosen the reason says what choosing one and opening the disclosure gives.
       !withoutTrashNothingChosen.buttonVisible &&
       withoutTrashNothingChosen.reason ===
-        'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study to list its files for removal by hand.' &&
-      withoutTrashNothingChosen.files === null &&
+        'This window has no Trash, so Codebook cannot delete a saved study here. Choose a saved study, then open Remove by hand to list its files.' &&
+      withoutTrashNothingChosen.removeByHand === null &&
       withoutTrashNothingChosen.deletes.length ===
         afterLaterRefusal.deletes.length &&
-      // One numbered request for the shown study's files, sent by the pane itself.
+      // (2) A chosen study asks the host for nothing and shows the closed disclosure, with no sentence under the hidden delete button.
+      studyChosen.deletes.length === afterLaterRefusal.deletes.length &&
+      !studyChosen.buttonVisible &&
+      studyChosen.reason === null &&
+      studyChosen.status === '' &&
+      studyChosen.removeByHand.open === false &&
+      studyChosen.removeByHand.summary === 'Remove by hand' &&
+      studyChosen.removeByHand.files.length === 0 &&
+      // (3) Opening it sends one numbered request for the shown study's files and says that they are being listed.
       askedForFiles.deletes.length === afterLaterRefusal.deletes.length + 1 &&
       askedForFiles.deletes.at(-1)[0] === shownStudy.id &&
       Number.isInteger(askedForFiles.removalRequests?.at(-1)) &&
+      askedForFiles.removeByHand.open &&
+      askedForFiles.removeByHand.note === "Listing this study's files…" &&
+      askedForFiles.removeByHand.files.length === 0 &&
+      !askedForFiles.removeByHand.copyVisible &&
+      !askedForFiles.removeByHand.retryVisible &&
+      // (4) The host's answer is shown inside the disclosure only, in order, with both buttons.
       !filesListed.buttonVisible &&
       filesListed.reason === null &&
-      filesListed.status === withoutTrashSentence &&
+      filesListed.status === '' &&
       !filesListed.statusIsError &&
-      JSON.stringify(filesListed.files) === JSON.stringify(studyFiles) &&
+      filesListed.removeByHand.note === listedSentence &&
+      !filesListed.removeByHand.noteIsError &&
+      JSON.stringify(filesListed.removeByHand.files) ===
+        JSON.stringify(studyFiles) &&
+      filesListed.removeByHand.copyVisible &&
+      filesListed.removeByHand.retryVisible &&
       // A later Study message with the answer asks nothing again.
       filesListed.deletes.length === askedForFiles.deletes.length &&
       // The answer to another pane's request leaves this pane's list as it is, and this pane asks nothing again.
-      JSON.stringify(besideAnotherPanesAnswer.files) ===
+      JSON.stringify(besideAnotherPanesAnswer.removeByHand.files) ===
         JSON.stringify(studyFiles) &&
       besideAnotherPanesAnswer.deletes.length ===
         askedForFiles.deletes.length &&
-      JSON.stringify(afterCopyAndRetry.copies) ===
+      // The summary is a 44 px target and keeps the focus while the files arrive.
+      removeByHandSummary.height === 44 &&
+      removeByHandSummary.focused &&
+      // (5) Another study closes the disclosure and asks for nothing, although the host already lists that study's files.
+      whileOtherOpens.removeByHand === null &&
+      otherChosen.chosen === otherStudy.id &&
+      otherChosen.removeByHand.open === false &&
+      otherChosen.removeByHand.files.length === 0 &&
+      otherChosen.deletes.length === askedForFiles.deletes.length,
+  })
+
+  // Arrange: the same window with the shown study's four files listed and Remove by hand open (row 27, DR-6).
+  const copyButton = page.getByRole('button', {
+    name: 'Copy paths',
+    exact: true,
+  })
+  /** Posts the host's answer to Copy paths into the pane, as the host does to the pane that asked. */
+  const answerCopy = (answer) =>
+    publish({ type: 'study-files-copied', ...answer })
+  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
+  await toggleByKeyboard('study-files')
+  const copyStatusWhileEmpty = await page
+    .locator('#copy-study-files-status')
+    .evaluate((line) => ({
+      role: `${line.getAttribute('role')}/${line.getAttribute('aria-live')}`,
+      display: getComputedStyle(line).display,
+      height: line.getBoundingClientRect().height,
+    }))
+  // Act: the learner presses Copy paths by keyboard, and the host answers once the clipboard took the four paths.
+  await copyButton.focus()
+  await page.keyboard.press('Enter')
+  const afterFirstPress = await removalControl()
+  // An answer for another study than the one whose files are listed changes nothing.
+  await answerCopy({ studyId: otherStudy.id, status: 'copied', count: 1 })
+  const afterForeignAnswer = await removalControl()
+  await answerCopy({ studyId: shownStudy.id, status: 'copied', count: 4 })
+  const afterFirstAnswer = await removalControl()
+  // A second press empties the line before the host answers again.
+  await page.keyboard.press('Enter')
+  const afterSecondPress = await removalControl()
+  await answerCopy({ studyId: shownStudy.id, status: 'copied', count: 4 })
+  const afterSecondAnswer = await removalControl()
+  // The clipboard refuses a third copy.
+  await page.keyboard.press('Enter')
+  await answerCopy({ studyId: shownStudy.id, status: 'failed' })
+  const afterRefusedCopy = await removalControl()
+  // The learner closes the disclosure and opens it again.
+  await toggleByKeyboard('study-files')
+  await toggleByKeyboard('study-files')
+  const afterReopening = await removalControl()
+  // The other study has one listed file.
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  await toggleByKeyboard('study-files')
+  await copyButton.focus()
+  await page.keyboard.press('Enter')
+  await answerCopy({ studyId: otherStudy.id, status: 'copied', count: 1 })
+  const afterCopyOfOne = await removalControl()
+  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
+  await toggleByKeyboard('study-files')
+  const afterAnotherStudy = await removalControl()
+  // Assert
+  cases.push({
+    name: 'Copy paths confirms with the number of paths the host copied, again after a second press, says when the clipboard took nothing, and the line is cleared when the disclosure closes or another study is chosen',
+    actual: {
+      copyStatusWhileEmpty,
+      afterFirstPress,
+      afterForeignAnswer,
+      afterFirstAnswer,
+      afterSecondPress,
+      afterSecondAnswer,
+      afterRefusedCopy,
+      afterReopening,
+      afterCopyOfOne,
+      afterAnotherStudy,
+    },
+    passed:
+      (await copyButton.count()) === 1 &&
+      // The confirmation line is a status region that is rendered while empty and takes no room.
+      copyStatusWhileEmpty.role === 'status/polite' &&
+      copyStatusWhileEmpty.display !== 'none' &&
+      copyStatusWhileEmpty.height === 0 &&
+      JSON.stringify(afterFirstPress.copies) ===
         JSON.stringify([shownStudy.id]) &&
-      afterCopyAndRetry.retries === filesListed.retries + 1 &&
-      retryBesideFiles.label === 'Retry storage / refresh' &&
-      retryBesideFiles.visible,
+      afterFirstPress.removeByHand.copyStatus === '' &&
+      afterForeignAnswer.removeByHand.copyStatus === '' &&
+      afterFirstAnswer.removeByHand.copyStatus === 'Copied 4 paths.' &&
+      !afterFirstAnswer.removeByHand.copyStatusIsError &&
+      afterFirstAnswer.focus === 'copy-study-files' &&
+      afterSecondPress.removeByHand.copyStatus === '' &&
+      afterSecondAnswer.removeByHand.copyStatus === 'Copied 4 paths.' &&
+      afterRefusedCopy.removeByHand.copyStatus ===
+        'Could not copy the paths. Select them in the list above and copy them by hand.' &&
+      afterRefusedCopy.removeByHand.copyStatusIsError &&
+      afterRefusedCopy.focus === 'copy-study-files' &&
+      afterReopening.removeByHand.open &&
+      afterReopening.removeByHand.copyStatus === '' &&
+      !afterReopening.removeByHand.copyStatusIsError &&
+      // The files were listed before: opening again asks the host for nothing.
+      afterReopening.deletes.length === otherChosen.deletes.length &&
+      afterCopyOfOne.removeByHand.copyStatus === 'Copied 1 path.' &&
+      afterAnotherStudy.removeByHand.copyStatus === '' &&
+      JSON.stringify(afterAnotherStudy.copies) ===
+        JSON.stringify([
+          shownStudy.id,
+          shownStudy.id,
+          shownStudy.id,
+          otherStudy.id,
+        ]),
+  })
+
+  // Arrange: a study none of whose files is left, and one whose files the host refuses to list (row 27, DR-5).
+  const thirdStudy = savedStudy('window_run-third09'),
+    emptiedStudy = savedStudy('window_run-empty10'),
+    threeStudies = [shownStudy, thirdStudy, emptiedStudy]
+  await library(threeStudies, emptiedStudy.id, withoutTrash)
+  await toggleByKeyboard('study-files')
+  // Act: the host answers with a list that holds no file.
+  await library(threeStudies, emptiedStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: emptiedStudy.id,
+      text: listedSentence,
+      files: [],
+    }),
+    studyFiles: { [emptiedStudy.id]: [] },
+  })
+  const noFileLeft = await removalControl()
+  // Act: the host refuses the request for the third study's files, because a recording began to open meanwhile.
+  const refusalSentence =
+    "Choose Overview or Live to leave Recording before removing this study's files by hand."
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  await toggleByKeyboard('study-files')
+  const beforeRefusal = await removalControl()
+  const refusedFiles = {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: refusalSentence,
+    }),
+  }
+  await library(threeStudies, thirdStudy.id, refusedFiles)
+  const filesRefused = await removalControl()
+  // A later Study message that still carries the refusal asks nothing again.
+  await library(threeStudies, thirdStudy.id, { ...refusedFiles, busy: true })
+  const afterRefusalStayed = await removalControl()
+  // The learner closes the disclosure and opens it again: that asks the host once more, and this time it lists the files.
+  await toggleByKeyboard('study-files')
+  await toggleByKeyboard('study-files')
+  const askedAgain = await removalControl()
+  await library(threeStudies, thirdStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { [thirdStudy.id]: [otherStudyFile] },
+  })
+  const listedAfterAskingAgain = await removalControl()
+  // Assert
+  cases.push({
+    name: 'Remove by hand says when no file of the study is left and shows a refusal of the host as an error, each with Retry storage / refresh only; opening it again asks the host again',
+    actual: {
+      noFileLeft,
+      beforeRefusal,
+      filesRefused,
+      afterRefusalStayed,
+      askedAgain,
+      listedAfterAskingAgain,
+    },
+    passed:
+      noFileLeft.removeByHand.note ===
+        'No file of this study is left. Press Retry storage / refresh to update the list.' &&
+      !noFileLeft.removeByHand.noteIsError &&
+      noFileLeft.removeByHand.files.length === 0 &&
+      !noFileLeft.removeByHand.copyVisible &&
+      noFileLeft.removeByHand.retryVisible &&
+      noFileLeft.status === '' &&
+      beforeRefusal.removeByHand.note === "Listing this study's files…" &&
+      filesRefused.removeByHand.note === refusalSentence &&
+      filesRefused.removeByHand.noteIsError &&
+      filesRefused.removeByHand.files.length === 0 &&
+      !filesRefused.removeByHand.copyVisible &&
+      filesRefused.removeByHand.retryVisible &&
+      // The refusal stands inside the disclosure only: nothing is written above the summary the learner pressed.
+      filesRefused.status === '' &&
+      afterRefusalStayed.deletes.length === filesRefused.deletes.length &&
+      askedAgain.deletes.length === filesRefused.deletes.length + 1 &&
+      askedAgain.deletes.at(-1)[0] === thirdStudy.id &&
+      askedAgain.removeByHand.note === "Listing this study's files…" &&
+      !askedAgain.removeByHand.noteIsError &&
+      !askedAgain.removeByHand.retryVisible &&
+      listedAfterAskingAgain.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAfterAskingAgain.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      listedAfterAskingAgain.removeByHand.copyVisible,
+  })
+
+  // Arrange: the listed files of the third study, with the keyboard focus on a control inside Remove by hand (PC-3.10 for the disclosure).
+  const thirdListed = {
+    ...withoutTrash,
+    studyFiles: {
+      [thirdStudy.id]: [otherStudyFile],
+      [shownStudy.id]: studyFiles,
+    },
+  }
+  await library(threeStudies, thirdStudy.id, thirdListed)
+  await copyButton.focus()
+  // Act: another pane makes the host show another study, so the disclosure closes under the focused button.
+  await library(threeStudies, shownStudy.id, thirdListed)
+  const focusAfterClosing = await page.evaluate(() => ({
+    summaryOf: document.activeElement.parentElement?.id,
+    tag: document.activeElement.tagName,
+  }))
+  // Act: the learner removed the files by hand and presses Retry storage / refresh inside the disclosure; the study leaves the list.
+  await toggleByKeyboard('study-files')
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  const retriesAfterPress = (await removalControl()).retries
+  await library([thirdStudy, emptiedStudy], undefined, withoutTrash)
+  const afterStudyLeft = await removalControl()
+  // Assert
+  cases.push({
+    name: 'when Remove by hand closes or leaves under the focused control, the keyboard focus stays in Saved studies: on its summary while it is offered, on the list after Retry storage / refresh took the study away',
+    actual: { focusAfterClosing, retriesAfterPress, afterStudyLeft },
+    passed:
+      focusAfterClosing.tag === 'SUMMARY' &&
+      focusAfterClosing.summaryOf === 'study-files' &&
+      retriesAfterPress === listedAfterAskingAgain.retries + 1 &&
+      afterStudyLeft.removeByHand === null &&
+      afterStudyLeft.chosen === '' &&
+      afterStudyLeft.focus === 'studies',
+  })
+
+  // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).
+  const deletesBeforeReasons = (await removalControl()).deletes.length
+  /** Reads the reason shown under the list and whether Remove by hand is offered beside it. */
+  const reasonWithoutTrash = async () => {
+    const shown = await removalControl()
+    return {
+      reason: shown.reason,
+      removeByHandOffered: shown.removeByHand !== null,
+      buttonVisible: shown.buttonVisible,
+    }
+  }
+  // Act
+  await library([shownStudy, nodeHistory], nodeHistory.id, {
+    ...withoutTrash,
+    unstoppedStudyId: nodeHistory.id,
+    ...replaying,
+  })
+  const nodeWithoutTrash = await reasonWithoutTrash()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    unstoppedStudyId: shownStudy.id,
+    ...replaying,
+  })
+  const liveWithoutTrash = await reasonWithoutTrash()
+  await library([shownStudy, otherStudy], shownStudy.id, {
+    ...withoutTrash,
+    ...replaying,
+  })
+  const recordingWithoutTrash = await reasonWithoutTrash()
+  await library([shownStudy, newerStudy], shownStudy.id, withoutTrash)
+  await page.selectOption('#studies', newerStudy.id)
+  const newerWithoutTrash = await reasonWithoutTrash()
+  const newerNoteWithoutTrash = (await removalControl()).newerNote
+  const shownReasons = [
+    nodeWithoutTrash,
+    liveWithoutTrash,
+    recordingWithoutTrash,
+    newerWithoutTrash,
+  ]
+  // Assert
+  cases.push({
+    name: 'in a window without a Trash each reason under Saved studies speaks of removing the study’s files by hand, none of deleting, and Remove by hand is not offered beside a reason',
+    actual: {
+      nodeWithoutTrash,
+      liveWithoutTrash,
+      recordingWithoutTrash,
+      newerWithoutTrash,
+      newerNoteWithoutTrash,
+    },
+    passed:
+      nodeWithoutTrash.reason ===
+        'Codebook cannot list the files of a Node test history for removal by hand yet.' &&
+      liveWithoutTrash.reason ===
+        "Stop the run before removing its study's files by hand." &&
+      recordingWithoutTrash.reason ===
+        "Choose Overview or Live to leave Recording before removing this study's files by hand." &&
+      newerWithoutTrash.reason ===
+        'This study was saved by a newer Codebook and is kept as it is. Update the extension to list its files for removal by hand.' &&
+      newerNoteWithoutTrash === newerSentence &&
+      shownReasons.every(
+        (shown) =>
+          !shown.reason.includes('delet') &&
+          !shown.removeByHandOffered &&
+          !shown.buttonVisible,
+      ) &&
+      (await removalControl()).deletes.length === deletesBeforeReasons,
+  })
+
+  // Arrange: an entry that cannot be opened and one whose checkpoint can be repaired, in a window with a Trash and in one without (row 27, DR-4 and DR-7).
+  /** Reads the shown note, what it describes and how the row under it is filled, for the entry chosen in the list. */
+  const noteAndRow = async () => {
+    const shown = await removalControl()
+    const row = await page.evaluate(() => {
+      const background = (id) =>
+        getComputedStyle(document.getElementById(id)).backgroundColor
+      return {
+        repairDescribedBy: document
+          .getElementById('repair-study')
+          .getAttribute('aria-describedby'),
+        repairIsPrimary: document
+          .getElementById('repair-study')
+          .classList.contains('primary'),
+        repairBackground: background('repair-study'),
+        playBackground: background('playback-toggle'),
+        deleteBackground: background('delete-study'),
+      }
+    })
+    return {
+      note: shown.note,
+      repairNote: shown.repairNote,
+      listDescribedBy: shown.listDescribedBy,
+      repairVisible: shown.repairVisible,
+      deleteVisible: shown.buttonVisible,
+      removeByHandOffered: shown.removeByHand !== null,
+      ...row,
+    }
+  }
+  const unopenableAndRepairable = [shownStudy, repairableStudy, legacyStudy]
+  // Act
+  await library(unopenableAndRepairable, shownStudy.id)
+  await page.selectOption('#studies', legacyStudy.id)
+  const unopenableWithTrash = await noteAndRow()
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairableWithTrash = await noteAndRow()
+  await library(unopenableAndRepairable, shownStudy.id, withoutTrash)
+  await page.selectOption('#studies', legacyStudy.id)
+  const unopenableWithoutTrash = await noteAndRow()
+  await page.selectOption('#studies', repairableStudy.id)
+  const repairableWithoutTrash = await noteAndRow()
+  await page
+    .locator('#saved-studies')
+    .screenshot({ path: `${options.output}/saved-studies-repair-no-trash.png` })
+  // Assert
+  cases.push({
+    name: 'the note of a saved study that cannot be opened or can be repaired names what a window with a Trash and one without can still do, and describes the list and Repair saved study, which is the filled button',
+    actual: {
+      unopenableWithTrash,
+      repairableWithTrash,
+      unopenableWithoutTrash,
+      repairableWithoutTrash,
+    },
+    passed:
+      unopenableWithTrash.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      unopenableWithTrash.listDescribedBy === 'study-unopenable' &&
+      repairableWithTrash.repairNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Repair it, or delete the study." &&
+      repairableWithTrash.listDescribedBy === 'study-repairable' &&
+      repairableWithTrash.repairDescribedBy === 'study-repairable' &&
+      repairableWithTrash.repairVisible &&
+      repairableWithTrash.deleteVisible &&
+      unopenableWithoutTrash.note ===
+        'This saved study cannot be opened. This window has no Trash, so it can only be removed by hand.' &&
+      unopenableWithoutTrash.listDescribedBy === 'study-unopenable' &&
+      unopenableWithoutTrash.removeByHandOffered &&
+      !unopenableWithoutTrash.deleteVisible &&
+      repairableWithoutTrash.repairNote ===
+        "This saved study's catalog checkpoint is missing or out of date. Repair it, or remove its files by hand." &&
+      repairableWithoutTrash.listDescribedBy === 'study-repairable' &&
+      repairableWithoutTrash.repairDescribedBy === 'study-repairable' &&
+      // Without a Trash the row holds Repair alone, and the manual removal stays offered under it.
+      repairableWithoutTrash.repairVisible &&
+      !repairableWithoutTrash.deleteVisible &&
+      repairableWithoutTrash.removeByHandOffered &&
+      // Repair is the filled button like Play; Delete saved study… stays the standard one.
+      [repairableWithTrash, repairableWithoutTrash].every(
+        (shown) =>
+          shown.repairIsPrimary &&
+          shown.repairBackground === shown.playBackground &&
+          shown.repairBackground !== shown.deleteBackground,
+      ),
   })
 
   // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
