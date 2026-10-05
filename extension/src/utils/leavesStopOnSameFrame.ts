@@ -1,10 +1,10 @@
-import type { RecordingFrame } from '../recordingSchemas'
+import type { projectRecording } from './projectRecording'
 
 /** The two facts of a projected moment ({@link projectRecording}) that decide whether its image can stay: its recorded frame and its stop. */
-interface RecordedMoment {
-  frame?: Pick<RecordingFrame, 'hash'>
-  observation?: unknown
-}
+type RecordedMoment = Pick<
+  ReturnType<typeof projectRecording>,
+  'frame' | 'observation'
+>
 
 /**
  * Compares the recorded frames of two moments for {@link leavesStopOnSameFrame}.
