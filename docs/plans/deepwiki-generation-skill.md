@@ -21,6 +21,8 @@ Keep the common bundled `/codebook` entry thin. Delegate Wiki generation to deta
 7. **Check quality before publishing output.** Check chapter coverage, navigation/anchors, actual cited files/locations, diagram causality, Q&A grounding and source identity. Preserve manual/unrelated files. Publish a coherent result and keep the last usable site on failure.
 8. **Update intentionally.** A chat request or approved browser button starts the same skill. Inspect source additions/changes/deletions/renames, refresh the affected documentation/citations/Q&A source context and remove obsolete owned output. Show freshness and completion; do not recursively ingest generated files or silently erase manual edits.
 
+Temporary scripts of a Wiki run (delivered with skill 1.0.42): code with loops, regular expressions, HTML quotes or template literals is written as a script into the project's hidden `.codebook/scratch/` folder and run with its interpreter named, read-only scans included; the agent removes the folder once the Wiki is published. The folder lies inside the workspace, so the editor asks for no approval of a path outside it, and the Wiki does not index it. A temporary script is never written into project source or outside the workspace.
+
 The skill must derive content from each repository. It must not embed target-specific model answers, prepared stopping locations or final-acceptance expectations. Example documentation templates can define structure, not fabricate facts.
 
 ## Required verification

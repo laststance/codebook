@@ -5,12 +5,18 @@ import { test } from 'node:test'
 
 import {
   API_VERSION,
+  MAX_EXPLANATIONS,
   MAX_SESSIONS,
+  MS_PER_SECOND,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
+  SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
+  STUDY_CLOSE_KEYBOARD_MESSAGE,
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_OFFER,
+  WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { savedLaterNote } from '../utils/savedLaterNote'
@@ -149,25 +155,118 @@ test('the packaged README says that a focused tab that is no text editor is admi
 })
 
 // Cycle 0045 (P1-F1): red while the README named API 1.5 as the current one in two places and did not say what API 1.6 added.
-test('the packaged README names the API version the server reports and says what API 1.6 added', async () => {
+// Cycle 0046 (rows 44 and 54): red while the README named API 1.6 as the current one, its summary of 1.6 left out numberedText on the source answers, and it said those answers still carry text.
+test('the packaged README names API 1.7 as the version the server reports, says that 1.7 took text out of the source answers and what API 1.6 added', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const current = heldSentences(readme, [
-    '## Shared presentations (API 1.6)',
-    "The interface arrived with API 1.5, and API 1.6 changed nothing in it: 1.6 added fields to a configured run's resources and an answer option to its continuation (see [Run one configured repository action](#run-one-configured-repository-action)).",
-    'with **MCP API 1.6** (`codebook_status` reports the installed build).',
+    '## Shared presentations (API 1.7)',
+    "The interface arrived with API 1.5, and API 1.6 and 1.7 changed nothing in it: 1.6 added fields to a configured run's resources, an answer option to its continuation and `numberedText` to the source answers, and 1.7 removed `text` from those source answers (see [Run one configured repository action](#run-one-configured-repository-action)).",
+    'with **MCP API 1.7** (`codebook_status` reports the installed build).',
+    "API 1.7 changed two answers: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text`, because the two copies doubled every source answer. An MCP `resources/read` of a cited source's URI still answers its exact text. No request states an API version, so a client written for API 1.6 gets these answers too: where it read `text`, it reads `numberedText` (each line after its one-based number and a tab, the lines joined by a line feed).",
     'API 1.6 added, without changing the meaning of an existing field: `declaredSource`, the position you declared (`requestedSource` is its older name); `armed`, the place Codebook requested the breakpoint at when that differs; `place`, one sentence that names the line a stop paused on when the debugger bound it on another line than you declared; and `answer: "next"` in the run resource\'s `continueArguments`, with which a continuation answers with the next state (the next observation, the observed result or the failure).',
+    "API 1.6 also added `numberedText` to the answer of `codebook_source` and to the answer of `codebook_read_resource` for a book's cited source: the source's lines, each after its one-based number and a tab.",
+    "Each result contains the path, the SHA-256 of the file's full bytes, a line count and `numberedText`: the source's lines, each after its one-based number and a tab. The lines are answered once; since API 1.7 the result has no `text` beside them.",
+    "A book's cited source read through `codebook_read_resource` answers `numberedText` in place of its text as well; an MCP `resources/read` of that source's URI answers the exact text.",
   ])
-  const namesOlderApiAsCurrent = /\(API 1\.5\)|\*\*MCP API 1\.5\*\*/.test(
+  const namesOlderApiAsCurrent = /\(API 1\.[56]\)|\*\*MCP API 1\.[56]\*\*/.test(
     readme,
+  )
+  const saysSourceAnswerHoldsText = [
+    'Each result contains exact UTF-8 text',
+    'the same lines as `text`',
+    'answers its `numberedText` too',
+  ].filter((phrase) => readme.includes(phrase))
+
+  // Assert
+  assert.equal(API_VERSION, '1.7')
+  assert.deepEqual(current, [true, true, true, true, true, true, true, true])
+  assert.equal(namesOlderApiAsCurrent, false)
+  assert.deepEqual(saysSourceAnswerHoldsText, [])
+})
+
+// Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; seam=none
+test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, and that a folder without a Wiki names no kept site', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "VS Code: the request went to the chat. Codebook waits up to 30 seconds for the chat's first answer (its reply, a file it reads, a terminal it opens or a command it runs there) and then watches the output folder for up to 15 minutes.",
+    'In VS Code a chat that gives no first answer within 30 seconds ends the update with `The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`',
+    'The last usable site is kept, and the sentence says so; in a folder that has no Wiki yet it says to generate one first and names no kept site.',
+  ])
+  const retired = [
+    'VS Code: the request is in the chat and Codebook watches the output folder for up to 15 minutes.',
+    'The run ended without a new site. The last usable site is kept.',
+  ].filter((sentence) => readme.includes(sentence))
+
+  // Assert: the README names the bound the editor enforces.
+  assert.deepEqual(delivered, [true, true, true])
+  assert.deepEqual(retired, [])
+  assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND, 30)
+})
+
+// Value: protects=a client author reading the same limit of explanations the service enforces and an agent reads in its refusal; fails_when=the README counts "explanation intents" again, or names another number than the budget; why_new=Cycle 0046 row 56: row 25 reworded the refusal to "explanation budget (32 keys)" and the README kept the old words; seam=none
+test('the packaged README states the run’s explanation budget of 32 keys and what a spent budget refuses', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const statesBudget = readme.includes(
+    'an explanation budget of 32 keys/run (a key Codebook already accepted answers its receipt again, and a new key is refused once the budget is spent), 8,192 characters and up to 10 distinct captured paths;',
   )
 
   // Assert
-  assert.equal(API_VERSION, '1.6')
-  assert.deepEqual(current, [true, true, true, true])
-  assert.equal(namesOlderApiAsCurrent, false)
+  assert.equal(statesBudget, true)
+  assert.equal(readme.includes('32 explanation intents/run'), false)
+  assert.equal(MAX_EXPLANATIONS, 32)
+})
+
+// Value: protects=a learner and a client author finding in the README three things only the CHANGELOG named: the rail's entry that opens a page's source, the Update anyway button and the save-learning-summary step; fails_when=the README loses one of them, or states another bound than the product keeps; why_new=Cycle 0046 row 45 (Cycle 0045, documentation audit DA-2); seam=none
+test('the packaged README names the rail entry Open in VS Code or Open in Cursor, the Update anyway button and the save-learning-summary step of a run resource', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "Under the outline in the right rail every page has the entry **Open in VS Code**, or **Open in Cursor** when Cursor serves the page. It opens the page's first cited source at its cited line in that editor and names that file and line under its label.",
+    'A page opened from disk keeps the entry as it was published: **Open in VS Code**, which opens VS Code, and for a site published by 0.2.29.0 without the file and line.',
+    '| Update failed, and the sentence names **Update anyway**',
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until.',
+    "Wait until that time, or, if that chat was stopped, press **Update anyway** in the editor's notification. It starts the update past what that notification named; anything that appeared since is named in a new notification. Another window's running update offers no **Update anyway**: wait for it to finish.",
+    "While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists `save-learning-summary` in `nextActions` and gives the step as `saveLearningSummary`: call `codebook_explain` on a committed snapshot of the run with a new key and a complete `learningSummary` whose final step is observed and cites the run resource's `terminalReference`. Once the run's 32 explanation keys are spent the action is no longer listed, and `saveLearningSummary` says that the saved study will have no learning summary.",
+  ])
+
+  // Assert: the README holds each sentence, and the product keeps the bounds they name.
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  assert.equal(WIKI_UPDATE_WATCH_TIMEOUT_MS, 900_000)
+  assert.equal(MAX_EXPLANATIONS, 32)
+})
+
+// Value: protects=a learner who reads one of the two keyboard notices finding in the README when Codebook shows it; fails_when=the README loses a notice, or quotes another sentence than the reader shows; why_new=Cycle 0046, found by package DOA: rows 1 and 5 added the two notices and no document named them; seam=none
+test('the packaged README quotes the notice of Close Study Workspace about the keyboard and the notice of a captured source that took the keyboard at a pause, as the reader shows them', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    '**Codebook: Close Study Workspace** run while a Codebook pane or the captured source is the active editor gives the active editor group the keyboard, and Codebook says so: `Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.` A close made while your own file is the active editor shows nothing.',
+    'In VS Code, the first time in an editor session that the captured source takes the place of the file the debugger opened at a pause, Codebook says where the keyboard is: `Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.` Cursor shows no such sentence.',
+  ])
+
+  // Assert: the README holds both, and the reader shows the sentences it quotes.
+  assert.deepEqual(delivered, [true, true])
+  assert.equal(
+    STUDY_CLOSE_KEYBOARD_MESSAGE,
+    'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.',
+  )
+  assert.equal(
+    SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
+    'Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+  )
 })
 
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.
