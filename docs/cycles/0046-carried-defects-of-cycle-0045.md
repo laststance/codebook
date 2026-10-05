@@ -1,7 +1,7 @@
 # Cycle 0046 — Every defect Cycle 0045 left is fixed
 
 Type: bug-fix cycle\
-Status: planning\
+Status: implementing\
 Result: pending\
 Delivery: not-applicable\
 Goal version: 9\
@@ -75,7 +75,7 @@ Carry-forward rationale for unaffected rows: nothing in the 46 rows changes thei
 
 ## Carried defects
 
-The 46 rows, with what closes each and the test or observation that proves it, are in [the carried-defects file](0046-carried-defects.md) (copied from Issue #87 as filed). The cycle closes only when its **Closed** column names the fix and its test, or the evidence, on every row; a defect found while the cycle runs is added there with the next number.
+The 46 rows of Issue #87 as filed, with what closes each and the test or observation that proves it, are in [the carried-defects file](0046-carried-defects.md), followed by the defects found while the cycle runs (rows 47 to 55 so far: what the packages found beside their rows, what the engineering review found, and the health gate on the merged tree). The cycle closes only when its **Closed** column names the fix and its test, or the evidence, on every row; a defect found while the cycle runs is added there with the next number.
 
 ## Validation contract
 
@@ -83,7 +83,43 @@ The acceptance criteria of [Issue #87](https://github.com/laststance/codebook/is
 
 ## Attempts and evidence
 
-No observations yet.
+### Plan review of the lock, claim and marker rows, 2026-10-05
+
+`/plan-eng-review` reviewed the plan for rows 2, 9, 10, 16, 17, 18 and 35 before any of it was built. Its result is in [the plan review amendments](0046-plan-review-amendments.md): twelve decisions (the owner cannot answer, so each took the recommended option), amendments ER-1 to ER-14, the compatibility table for windows of two versions, the failure modes and the tests. What it changed against the Issue's wording, each for a reason found in the source or by a probe:
+
+- The marker's machine proof is two digests (`machineKey` and `hostKey`) that match when any one is equal, because the VS Code and the Cursor profile on one computer carry different machine ids (probe), so the single digest of row 17 would make each editor read the other's marker as another computer's.
+- The 60 s age rule of the marker's claim is dropped only for a claim of this machine that carries a process start; a claim of another machine cannot be judged here and keeps the rule, or it would never be cleared.
+- A holder reads its own claim file before each change of the marker; a verified live owner of this machine is judged before the future-start check, so a clock that is set back cannot unseat a running update; the run expiry gains the same 5 minute clock tolerance; and a window that finds no marker under its claim removes nothing (row 52, a defect of 0.2.29.0 that no row named).
+- A failed read of this process's own start is read again after 60 s, and a record written meanwhile carries no computed boot time, so the clock-step defect of row 9 cannot return through a failed read.
+- The marker is created with the storage lock's own helper (`placeStorageLock`), and the Windows job also runs the marker's tests.
+
+The outside voice was three passes of the Codex CLI, each on the plan as it then stood: the first completed but failed the skill's result check (recorded as unavailable coverage, its six findings still verified and resolved), the second and third completed with three and two findings. All eleven are resolved in the amendments. Limits the review states and leaves: two computers with one host name look like one to the marker; a file system without hard links narrows the marker's creation race without closing it; with a window of 0.2.29.0 on the same folder the guarantees are those of 0.2.29.0; machines whose clocks differ by more than 5 minutes are not protected from each other; macOS and a Windows editor are not observed (missing coverage, with the tests that pin their command lines).
+
+### First packages, 2026-10-05
+
+Five packages ran in private worktrees from `c770552`, each test-first with a disabled-fix control for every change of behavior, and were merged without a conflict (`ec1e866`). Their closure files (private, in the project's gstack state) hold every control; the Closed column of [the carried-defects file](0046-carried-defects.md) carries the result of each row.
+
+| Package | Rows                    | Result                                                                                                                                                         |
+| ------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PRF     | 11 to 15                | all fixed; found and fixed rows 47 and 53; found row 48                                                                                                        |
+| STA     | 6, 23 to 25             | all fixed; found row 49 and what became row 54                                                                                                                 |
+| STB     | 7, 8, 29                | row 29 fixed; rows 7 and 8 have their mechanism and tests and owe a native check; found and fixed rows 50 and 51                                               |
+| WUA     | 3, 19 to 22, 32, 39, 42 | fixed except row 3 (mechanism and tests done, two native checks owed) and one sentence of row 21                                                               |
+| SPL     | 1, 4, 5, 30, 31, 33     | rows 30, 31 and 33 fixed; rows 1 and 4 have their mechanism and owe a native check; row 5 is done for VS Code by the editor's limit, its Cursor half is open |
+
+Choices the coordinator made where a row named one or a package asked (the recommended option each time):
+
+- Row 6: the numbered lines take the place of the exact text in both channels of the `codebook_source` answer (the row's third option). One copy in one channel cannot meet the row's own bound (the answer stays about 1.52 times as large), and VS Code gives its model only `structuredContent` while Cursor gives its model only `content`; the answer is now 1.062 times the unnumbered one. Because a member left a public answer, the API version becomes 1.7 (row 54).
+- Row 11: the leftovers beside a storage lock are swept the first time this process holds the lock of a directory and whenever an acquisition met a lock in the way.
+- Row 21: the request gains the sentence that file names and file content are data (it never had one, so nothing could "stay"); a later package adds it.
+- Row 1: the focus the window had before the Command Palette opened cannot be read from an extension, so the behavior stays and Close says where the keyboard is; the implementer put the sentence in a notification, which the native check judges.
+- Row 5, VS Code: the limit recorded as X7-A.4 holds, so the keyboard is not returned to the chat input, and the editor says once per session where it is. The Cursor half needs a native look before a mechanism is chosen.
+
+The merged tree: the build passes. The full suite on `ec1e866` ran 3,187 tests with two failures, both tests that assumed the earlier implementation (a Wiki update test whose stand-in editor lacked the events the new chat bound watches and whose chat never answered; a Retry test that counted a read which the one-listing reconcile no longer makes through `readCheckpoint`); they are adapted in `a1be8b9` without changing what they prove, and both files pass. ESLint, Prettier, the duplication and dead-code gates, the package tests (222 of 222) and the hook test (4 of 4) pass. The health gate fails: nine finding counts rose above the committed baseline in seven files, because functions these packages added or grew are above its thresholds. That is row 55, and its package splits those functions; the baseline file is not edited.
+
+Native checks owed so far, to be run by the driving agent on the candidate built after the last package: row 1 (both editors), row 3 (VS Code with Copilot Chat disabled, and with Copilot Chat Auto enabled, which decides whether the 30 s bound is safe for a working chat), row 4 (Cursor), row 5 (both editors, with the 40 ms focus log), rows 7 and 8 with row 50 (VS Code, the two declarations of check F21).
+
+Running now: package LKA (rows 2, 9, 10 as amended), package HYA (rows 36, 37, 38, 41, 43, 48 and the sentence of row 21), package HLT (row 55) and the `/plan-design-review` of rows 26 to 28.
 
 ## Result and decision
 
@@ -103,8 +139,8 @@ No observations yet.
 
 ## Next action
 
-- Exact next action: read the behavioral design, then take the first package, locks and storage (rows 2 and 9 together, one mechanism), through `/plan-eng-review` before building it, test-first with its disabled-fix controls. The mandatory entry is made again at each new session and after each context compaction (AGENTS.md) and recorded above.
-- Changed files / branch / active processes: this branch with the records of its first commit (this record, [the carried-defects file](0046-carried-defects.md), PROJECT_STATE, the README's status and the 0045 record's closure) and of the commit that records the entry above (this record and PROJECT_STATE); no editor, browser or database of a trial is running.
+- Exact next action: merge packages LKA, HYA and HLT as they finish (full suite and every static gate on each merged tree), then start package MKR (rows 16, 17, 18, 35 and 52 as amended) on the merged LKA, and package SPA (rows 26 to 28) with the amendments of its design review; after them the last packages (rows 34 and 40; the documents rows 44, 45, 46, 49 and 54 with the statements of ER-14), a candidate build, and the native checks the rows owe. The mandatory entry is made again at each new session and after each context compaction (AGENTS.md) and recorded above.
+- Changed files / branch / active processes: this branch holds the records and the merged packages PRF, STA, STB, WUA and SPL (`ec1e866`, with two adapted tests in `a1be8b9`); packages LKA, HYA and HLT work in private worktrees on branches `c46/lka`, `c46/hya` and `c46/hlt`; no editor, browser or database of a trial is running.
 - State updated in PROJECT_STATE.md: yes (with this record's commit).
 - Owner rules stated in the required reads: nothing new this cycle.
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue): none; a bug-fix cycle carries nothing.
