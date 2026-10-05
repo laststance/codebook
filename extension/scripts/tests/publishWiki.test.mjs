@@ -1251,6 +1251,187 @@ test('the rail entry of a published page is a link that holds the label alone an
   }
 })
 
+// Value: protects=a published page whose own content carries an id the reader uses itself (the agent authors a section's id, and "qa-form" or "article-title" are plain names for a section); fails_when=the page is published with that id on two elements, so the reader's script binds the heading instead of its form, the question field loses its label, the answer stays hidden or the rail entry is described by the heading, or the heading is renamed without its outline entry or a link to it, which then leads to the reader's element; why_new=Cycle 0046 row 84; seam=none
+for (const [id, elementsInThePublishedPage] of [
+  ['theme-toggle', 1],
+  ['article-title', 1],
+  ['qa-form', 1],
+  ['qa-input', 1],
+  ['qa-response', 1],
+  ['codebook-open-target', 1],
+  // The reader gives these three ids to elements it adds to a served page, so a published page holds none of them.
+  ['codebook-update-status', 0],
+  ['shortcut-title', 0],
+  ['shortcut-tooltip', 0],
+])
+  test(`a heading that carries the reader’s id ${id} is published under the id page-${id}, with its outline entry and the links to it from its own page and from another page, so the page holds the reader’s id on the reader’s element alone`, async () => {
+    // Arrange: the overview's heading carries the id, its outline names it, and a link of the overview and a link of a second page lead to it.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-ids-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="${id}">Source flow</h2><p><a href="#${id}">To the start of this section</a></p>`
+      manifest.pages[0].outline = [{ id, label: 'Source flow' }]
+      manifest.pages.push({
+        path: 'pages/details.html',
+        title: 'Details',
+        section: 'Guide & concepts',
+        contentHtml: `<h2 id="more">More</h2><p><a href="../index.html#${id}">The source flow</a></p>`,
+        sources: [{ path: 'source.ts', line: 1 }],
+        outline: [{ id: 'more', label: 'More' }],
+      })
+
+      // Act
+      const pages = await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+
+      // Assert
+      const overview = pages.get('index.html')
+      assert.deepEqual(
+        {
+          elementsWithTheReadersId: overview.split(` id="${id}"`).length - 1,
+          isHeadingRenamed: overview.includes(
+            `<h2 id="page-${id}">Source flow</h2>`,
+          ),
+          doesOutlineReachTheHeading: overview.includes(
+            `<ul class="outline"><li><a href="#page-${id}">Source flow</a></li></ul>`,
+          ),
+          doesLinkOfThePageReachTheHeading: overview.includes(
+            `<a href="#page-${id}">To the start of this section</a>`,
+          ),
+          doesLinkOfAnotherPageReachTheHeading: pages
+            .get('pages/details.html')
+            .includes(`<a href="../index.html#page-${id}">The source flow</a>`),
+        },
+        {
+          elementsWithTheReadersId: elementsInThePublishedPage,
+          isHeadingRenamed: true,
+          doesOutlineReachTheHeading: true,
+          doesLinkOfThePageReachTheHeading: true,
+          doesLinkOfAnotherPageReachTheHeading: true,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the content of a page around a renamed id; fails_when=the new id is one the page carries already, or an id list of the page (aria-labelledby) keeps the old id, or a link to a page with a space in its path is missed, or the text of a code example that only mentions the id, a link out of the Wiki or an id the reader does not use is changed; why_new=Cycle 0046 row 84; seam=none
+test('a renamed content id takes a name the page does not carry, its id lists and the links to it follow, and a code example, a link out of the Wiki and every other id stay as authored', async () => {
+  // Arrange: the overview carries qa-form on a heading and page-qa-form on a paragraph; a page with a space in its path carries theme-toggle without quotes.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-ids-around-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="qa-form">The form</h2><p id=\'page-qa-form\'>Its fields.</p>' +
+      '<section aria-labelledby="qa-form  flow"><h3 id="flow">Flow</h3>' +
+      '<a href="#qa-form">Up</a> <a href="pages/my%20page.html#theme-toggle">The theme</a> ' +
+      '<a href="https://example.com/index.html#qa-form">Elsewhere</a>' +
+      '<pre><code>&lt;form id="qa-form"&gt;</code></pre></section>'
+    manifest.pages[0].outline = [
+      { id: 'qa-form', label: 'The form' },
+      { id: 'flow', label: 'Flow' },
+    ]
+    manifest.pages.push({
+      path: 'pages/my page.html',
+      title: 'Theme',
+      section: 'Guide & concepts',
+      contentHtml:
+        '<h2 ID=theme-toggle>The theme</h2><p><a href="../index.html#qa-form">The form</a></p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [],
+    })
+
+    // Act
+    const pages = await renderWikiPages(manifest, {
+      projectRoot: root,
+      outputDirectory: join(root, '.codebook/wiki'),
+    })
+
+    // Assert: the article of each page after its relevant-source disclosure, and the overview's outline.
+    const contentOf = (path) =>
+      /<\/details>(.*)<\/article>/.exec(pages.get(path))?.[1]
+    assert.equal(
+      contentOf('index.html'),
+      '<h2 id="page-qa-form-2">The form</h2><p id=\'page-qa-form\'>Its fields.</p>' +
+        '<section aria-labelledby="page-qa-form-2  flow"><h3 id="flow">Flow</h3>' +
+        '<a href="#page-qa-form-2">Up</a> <a href="pages/my%20page.html#page-theme-toggle">The theme</a> ' +
+        '<a href="https://example.com/index.html#qa-form">Elsewhere</a>' +
+        '<pre><code>&lt;form id="qa-form"&gt;</code></pre></section>',
+    )
+    assert.equal(
+      contentOf('pages/my page.html'),
+      '<h2 ID=page-theme-toggle>The theme</h2><p><a href="../index.html#page-qa-form-2">The form</a></p>',
+    )
+    assert.ok(
+      pages
+        .get('index.html')
+        .includes(
+          '<ul class="outline"><li><a href="#page-qa-form-2">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
+        ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the list of ids the publisher keeps a page's content apart from; fails_when=the shell's template or one of the reader's page scripts gives an element an id the publisher does not know, so a page whose content carries that id is published with it twice; why_new=Cycle 0046 row 84; seam=none
+test('the publisher keeps a page’s content apart from every id the shell’s template and the reader’s page scripts give an element', async () => {
+  // Arrange: the shell, the publisher, and the sources of the reader that run in a served page or add to it.
+  const textOf = (path) =>
+    readFile(new URL(`../../${path}`, import.meta.url), 'utf8')
+  const shell = await textOf('skills/codebook/reader-shell.html')
+  const renderer = await textOf('skills/codebook/render-wiki.mjs')
+  const constants = await textOf('src/constants.ts')
+  const statusScript = await textOf('src/utils/installWikiUpdateStatus.ts')
+  const helpScript = await textOf('src/utils/installShortcutHelp.ts')
+  const questionScript = await textOf('src/deepWikiReader.ts')
+
+  // Act: the ids of the template (the publisher reads them from it), the ids the reader's scripts assign, and the ids the publisher names for them.
+  const idsOfTheTemplate = [...shell.matchAll(/\sid="([^"]+)"/g)].map(
+    ([, id]) => id,
+  )
+  const idsOfTheScripts = {
+    entryTarget: /WIKI_OPEN_TARGET_ELEMENT_ID = '([^']+)'/.exec(constants)?.[1],
+    statusRegion: /let id = '([^']+)'/.exec(statusScript)?.[1],
+    keyboardHelp: [...helpScript.matchAll(/\.id = '([^']+)'/g)].map(
+      ([, id]) => id,
+    ),
+    // The script of the question form looks its elements up and gives none an id.
+    questionForm: [...questionScript.matchAll(/\.id = /g)].length,
+  }
+  const idsThePublisherNames = /const READER_ELEMENT_IDS = \[([^\]]+)\]/
+    .exec(renderer)?.[1]
+    .split(', ')
+    .map((quoted) => quoted.slice(1, -1))
+
+  // Assert
+  assert.deepEqual(idsOfTheTemplate, [
+    'theme-toggle',
+    'article-title',
+    'qa-form',
+    'qa-input',
+    'qa-response',
+  ])
+  assert.deepEqual(idsOfTheScripts, {
+    entryTarget: 'codebook-open-target',
+    statusRegion: 'codebook-update-status',
+    keyboardHelp: ['shortcut-title', 'shortcut-tooltip'],
+    questionForm: 0,
+  })
+  assert.deepEqual(idsThePublisherNames, [
+    'codebook-open-target',
+    'codebook-update-status',
+    'shortcut-title',
+    'shortcut-tooltip',
+  ])
+})
+
 test('a page opened from disk shows the freshness label, the update button and an offline note as one group', async () => {
   // Arrange
   const root = await realpath(

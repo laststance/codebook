@@ -2016,6 +2016,64 @@ test('a served page of any age keeps room for the focus ring at the sides of the
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
 })
 
+// Value: protects=the update link's description on a page whose own content carries the status region's id (a page published before the publisher kept the ids of a page's content apart from the reader's); fails_when=the status region takes its id although a heading of the article carries it, so the id stands twice and the running update link is described by that heading instead of by the sentence that says what the update does; why_new=Cycle 0046 row 84; seam=none
+test('on a page whose article carries the status region’s id the region takes an id of its own, and the update link of a running update is described by the region', async () => {
+  // Arrange: a heading of the article has the id codebook-update-status, and one more the first free id after it.
+  const script = await readServedWikiScript()
+
+  // Act: the page is loaded while an update runs.
+  const page = await openFakeWikiPage(
+    script,
+    'current-shell',
+    { updateStatus: runningInVsCode },
+    {
+      articleHeadingIds: ['codebook-update-status', 'codebook-update-status-2'],
+    },
+  )
+  const pageWithoutTheHeadings = await openFakeWikiPage(
+    script,
+    'current-shell',
+    { updateStatus: runningInVsCode },
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      regionId: page.find('[data-codebook-update-status]')?.id,
+      linkDescribedBy: page
+        .find('.wiki-update')
+        ?.getAttribute('aria-describedby'),
+      regionIdWithoutTheHeadings: pageWithoutTheHeadings.find(
+        '[data-codebook-update-status]',
+      )?.id,
+    },
+    {
+      regionId: 'codebook-update-status-3',
+      linkDescribedBy: 'codebook-update-status-3',
+      regionIdWithoutTheHeadings: 'codebook-update-status',
+    },
+  )
+})
+
+// Value: protects=keyboard focus on the answer of a question on a served page of any age (a site published before the shell had the rule draws the browser's own ring there); fails_when=the page script stops injecting the answer's ring rule; why_new=Cycle 0046 row 83; seam=none
+test('a served page of any age gives the answer of a question the reader’s own focus ring, 2 px in the link colour and 3 px outside it', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes(
+      '.qa-answer:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:3px}',
+    ),
+    'the page lacks the rule .qa-answer:focus-visible{outline:2px solid var(--link,LinkText);outline-offset:3px}',
+  )
+})
+
 // Value: protects=the chapter list and the outline of a served page of any age, where they are columns that scroll; fails_when=a chapter title or an outline entry that cannot break (an identifier) is wider than its column on a site published before the shell wrapped it, so the column gets a sideways scrollbar; why_new=Cycle 0046 package SPB, found while measuring row 28 at 1200 px on a site published by 0.2.29.0; seam=none
 test('a served page of any age wraps a chapter title and an outline entry that cannot break inside their column', async () => {
   // Arrange

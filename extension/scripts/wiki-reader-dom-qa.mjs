@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFile,
+  readFile,
   mkdir,
   mkdtemp,
   realpath,
@@ -65,6 +66,23 @@ const ANSWER = {
   ],
   sourceChanged: false,
 }
+
+/** The ids the reader gives its own elements in a served page: those of the shell's template, the target of the rail's entry, the region of the update status, and the heading and the tooltip of the keyboard help. Two sample pages carry each of them on a heading of their article. */
+const READER_IDS = [
+  'theme-toggle',
+  'article-title',
+  'qa-form',
+  'qa-input',
+  'qa-response',
+  'codebook-open-target',
+  'codebook-update-status',
+  'shortcut-title',
+  'shortcut-tooltip',
+]
+/** The two sample pages whose headings carry the reader's ids: one as this publisher prints it, and one put back after the publish into the shape a publisher before this build printed, with the ids twice and the rail's entry as its link alone. */
+const READER_IDS_PAGE = 'pages/reader-ids.html'
+const READER_IDS_PAGE_PUBLISHED_BEFORE =
+  'pages/reader-ids-published-before.html'
 
 const runBrowserCli = promisify(execFile)
 
@@ -204,6 +222,21 @@ function sampleManifest(projectRoot, sources) {
         sources: [{ path: 'src/a.ts', line: 1 }],
         outline: [],
       })),
+      // Each heading of these two pages carries an id of the reader, is named by the outline and is the target of a link of its page.
+      ...[
+        [READER_IDS_PAGE, 'Reader ids'],
+        [READER_IDS_PAGE_PUBLISHED_BEFORE, 'Reader ids, published before'],
+      ].map(([path, title]) => ({
+        path,
+        title,
+        section: 'Guide',
+        contentHtml: READER_IDS.map(
+          (id) =>
+            `<h2 id="${id}">Section ${id}</h2><p><a href="#${id}">The start of this section</a></p>`,
+        ).join(''),
+        sources: [{ path: 'src/a.ts', line: 1 }],
+        outline: READER_IDS.map((id) => ({ id, label: `Section ${id}` })),
+      })),
     ],
     assets: [],
     excludedPaths: [],
@@ -249,6 +282,21 @@ async function publishSampleWiki() {
       JSON.stringify(sampleManifest(projectRoot, sources)),
     )
     await publishWiki({ projectRoot, outputDirectory, stageDirectory: stage })
+    // One page goes back into the shape of a page published before this build: its headings carry the reader's ids themselves, and its rail entry is its link alone, as 0.2.29.0 printed it.
+    const publishedBefore = join(
+      outputDirectory,
+      READER_IDS_PAGE_PUBLISHED_BEFORE,
+    )
+    await writeFile(
+      publishedBefore,
+      (await readFile(publishedBefore, 'utf8'))
+        .replaceAll('"page-', '"')
+        .replaceAll('#page-', '#')
+        .replace(
+          / aria-describedby="codebook-open-target">Open in VS Code<\/a> <span class="open-target" id="codebook-open-target">.*?<\/span><\/p>/,
+          '>Open in VS Code</a></p>',
+        ),
+    )
     await appendFile(
       join(projectRoot, 'src/a.ts'),
       '// changed after the publish\n',
@@ -362,6 +410,7 @@ async function check(page, options, collected) {
         outlineOffset: style.outlineOffset,
         outlineWidth: style.outlineWidth,
         outlineStyle: style.outlineStyle,
+        outlineColor: style.outlineColor,
         scroller: scroller.className || scroller.tagName,
         reachPx,
         leftInsideClipPx: tenths(
@@ -1012,6 +1061,31 @@ async function check(page, options, collected) {
       ringChecks(measured.rings),
     )
   }
+  const measureAnswerRing = async () => {
+    // Arrange: still 1200 px with the answer of the question open. Act: the keyboard focuses the answer, which is a region of its own in the tab order.
+    await focusWithKeyboard('.qa-answer')
+    const ring = await focusRing('.qa-answer')
+    await page.screenshot({
+      path: `${options.output}/wiki-focus-answer-1200.png`,
+    })
+    // Assert: the ring of every other control of the page, in the light theme's link colour, and no side of it outside the composer.
+    record(
+      'in the Wiki reader at 1200 px the answer of a question has the reader’s own keyboard focus ring, 2 px in the link colour and 3 px outside it, whole inside the composer that scrolls',
+      ring,
+      {
+        isFocusedByKeyboard: ring.isFocusedByKeyboard,
+        isRingSolid: ring.outlineStyle === 'solid',
+        isRingTwoPixels: ring.outlineWidth === '2px',
+        isRingThreePixelsOutside: ring.outlineOffset === '3px',
+        isRingInTheLinkColour: ring.outlineColor === 'rgb(24, 91, 147)',
+        isComposerTheScroller: ring.scroller === 'composer',
+        isRingLeftInside: ring.leftInsideClipPx >= 0,
+        isRingRightInside: ring.rightInsideClipPx >= 0,
+        isRingTopInside: ring.topInsideClipPx >= 0,
+        isRingBottomInside: ring.bottomInsideClipPx >= 0,
+      },
+    )
+  }
   const measureRailWithRefusal = async () => {
     // Arrange: the overview at 960 x 600. Act: the sentence of a refused update is written into the panel as the page script writes one.
     await openWiki(960, 600)
@@ -1238,6 +1312,142 @@ async function check(page, options, collected) {
       },
     )
   }
+  /** Uses one of the two pages whose headings carry the reader's ids as a learner does (an outline entry, the theme button, a question) and reads what the reader's own elements are then: how often each id stands in the page, where the outline entry led, whether the answer shows, what labels the question field, what describes the rail entry's link, and the ids the reader gave its status region and its entry's target. @example (await useReaderOn('pages/reader-ids.html')).idCounts['qa-form'] // => 1 */
+  const useReaderOn = async (pagePath) => {
+    await page.setViewportSize({ width: 1200, height: 720 })
+    await page.goto(`${options.url}${pagePath}`)
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-codebook-freshness]').textContent ===
+        'Source changed · Update available',
+    )
+    await page.click('.outline a:text-is("Section qa-form")')
+    const afterTheOutlineEntry = await page.evaluate(() => {
+      const target = document.querySelector(':target')
+      return {
+        fragment: location.hash,
+        targetTag: target ? target.tagName : null,
+        targetText: target ? target.textContent : null,
+      }
+    })
+    await page.click('button#theme-toggle')
+    const themeAfterTheButton = await page.evaluate(
+      () => document.documentElement.dataset.theme ?? null,
+    )
+    await page.click('button#theme-toggle')
+    await page.fill('.composer textarea', options.question)
+    await page.click('.composer button[type=submit]')
+    // The answer's citation is in the page once the reader answered; a page that lost its form to a heading is read as it stands after two seconds.
+    await page
+      .waitForSelector('.qa-answer a', { state: 'attached', timeout: 2_000 })
+      .catch(() => null)
+    const read = await page.evaluate((readerIds) => {
+      const countOf = (id) => document.querySelectorAll(`[id="${id}"]`).length
+      const textOf = (element) => (element ? element.textContent : null)
+      const idOf = (element) => (element ? element.id : null)
+      const answer = document.querySelector('.qa-answer')
+      const field = document.querySelector('.composer textarea')
+      const entry = document.querySelector('.open-in-editor')
+      const target = entry.querySelector('.open-target')
+      const described = document.getElementById(
+        entry.querySelector('a').getAttribute('aria-describedby'),
+      )
+      const status = document.querySelector('[data-codebook-update-status]')
+      const helpTitle = document.getElementById(
+        document
+          .querySelector('dialog.shortcut-dialog')
+          .getAttribute('aria-labelledby'),
+      )
+      return {
+        idCounts: Object.fromEntries(readerIds.map((id) => [id, countOf(id)])),
+        headingIds: [...document.querySelectorAll('.wiki-article h2')].map(
+          (heading) => heading.id,
+        ),
+        outlineAddresses: [...document.querySelectorAll('.outline a')].map(
+          (link) => link.getAttribute('href'),
+        ),
+        isAnswerShown: answer.getClientRects().length > 0,
+        answerStart: answer.textContent.slice(0, 16),
+        // The label that names the field, or the words the reader gave the field itself.
+        fieldLabel: field.labels.length
+          ? field.labels[0].textContent
+          : field.getAttribute('aria-label'),
+        entryTargetId: idOf(target),
+        entryDescription: textOf(described),
+        isEntryDescribedByItsTarget: target !== null && described === target,
+        statusRegionId: status.id,
+        statusRegionIdCount: countOf(status.id),
+        helpTitle: textOf(helpTitle),
+        address: location.pathname.split('/').at(-1) + location.search,
+      }
+    }, options.readerIds)
+    await page.screenshot({
+      path: `${options.output}/wiki-${pagePath.split('/').at(-1).replace('.html', '')}.png`,
+    })
+    return { afterTheOutlineEntry, themeAfterTheButton, ...read }
+  }
+  /** The checks both pages with the reader's ids share: the outline entry leads to its heading, the theme button, the question form and the rail entry are the reader's own and work. @example readerChecks(used).isAnswerShown // => true */
+  const readerChecks = (used) => ({
+    doesOutlineEntryLeadToAHeading:
+      used.afterTheOutlineEntry.targetTag === 'H2',
+    doesOutlineEntryLeadToItsHeading:
+      used.afterTheOutlineEntry.targetText === 'Section qa-form',
+    doesThemeButtonSwitchTheTheme: used.themeAfterTheButton === 'dark',
+    isAnswerShown: used.isAnswerShown,
+    isAnswerTheReaders: used.answerStart === 'Step 1: one part',
+    isQuestionFieldLabelled: used.fieldLabel === 'Ask about this repository',
+    isEntryDescribedByItsTarget: used.isEntryDescribedByItsTarget,
+    doesEntryDescriptionNameTheSource: used.entryDescription === 'src/a.ts:1',
+    isStatusRegionIdOnce: used.statusRegionIdCount === 1,
+  })
+  const usePageWithReaderIds = async () => {
+    // Arrange: a page of the sample Wiki whose nine headings were authored with the reader's own ids, as this publisher printed it. Act: an outline entry, the theme button and a question are used as a learner uses them.
+    const used = await useReaderOn(options.readerIdsPage)
+    // Assert
+    record(
+      'on a page whose headings were authored with the reader’s own ids every such id stands once in the served page, the headings, their outline entries and the links to them carry page- before the id, and the outline, the theme button, the question form with its label and its answer, the rail entry and the keyboard help work',
+      used,
+      {
+        ...readerChecks(used),
+        doesEveryReaderIdStandOnce: Object.values(used.idCounts).every(
+          (count) => count === 1,
+        ),
+        areHeadingsRenamed:
+          JSON.stringify(used.headingIds) ===
+          JSON.stringify(options.readerIds.map((id) => `page-${id}`)),
+        doOutlineEntriesNameTheRenamedIds:
+          JSON.stringify(used.outlineAddresses) ===
+          JSON.stringify(options.readerIds.map((id) => `#page-${id}`)),
+        doesOutlineEntryNameTheRenamedId:
+          used.afterTheOutlineEntry.fragment === '#page-qa-form',
+        doesStatusRegionKeepItsId:
+          used.statusRegionId === 'codebook-update-status',
+        doesEntryTargetKeepItsId: used.entryTargetId === 'codebook-open-target',
+        isKeyboardHelpNamedByItsOwnTitle:
+          used.helpTitle === 'Keyboard shortcuts',
+        doesQuestionStayOnThePage: used.address === 'reader-ids.html',
+      },
+    )
+  }
+  const usePagePublishedWithReaderIdsTwice = async () => {
+    // Arrange: the same page as a publisher before this build printed it: each of the reader's ids also on a heading, and the rail's entry as its link alone. Act: the same use.
+    const used = await useReaderOn(options.readerIdsPagePublishedBefore)
+    // Assert: the reader finds its own elements all the same. The keyboard help's title is recorded and not asserted: its dialog is named by id and stands after the article.
+    record(
+      'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, and the status region and the rail entry’s target get ids of their own',
+      used,
+      {
+        ...readerChecks(used),
+        doesPageCarryTheFormsIdTwice: used.idCounts['qa-form'] === 2,
+        doesStatusRegionTakeAFreeId:
+          used.statusRegionId === 'codebook-update-status-2',
+        doesEntryTargetTakeAFreeId:
+          used.entryTargetId === 'codebook-open-target-2',
+        doesQuestionStayOnThePage:
+          used.address === 'reader-ids-published-before.html',
+      },
+    )
+  }
   // Each step leaves the page as the next one needs it: the three 1200 px steps of the rail share one load, and so do the 960 px steps; a step of the reading column loads the page itself, because it asks a question.
   for (const step of [
     measureEntryInRow,
@@ -1248,12 +1458,15 @@ async function check(page, options, collected) {
     measureRingsInColumns,
     measureRingsAtRailEdges,
     measureReadingColumnInColumns,
+    measureAnswerRing,
     measureRailWithRefusal,
     measureRailWithOpenDetail,
     measureDetailSummaryRingInRow,
     measureOutlineRingInRow,
     measureSingleColumn,
     measureMissingPage,
+    usePageWithReaderIds,
+    usePagePublishedWithReaderIdsTwice,
   ])
     await step()
 }
@@ -1288,6 +1501,9 @@ try {
       question: QUESTION,
       refusal: REFUSAL,
       detailPaths: DETAIL_PATHS,
+      readerIds: READER_IDS,
+      readerIdsPage: READER_IDS_PAGE,
+      readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
     }),
   )
   await command(['open', 'about:blank'], 'open')

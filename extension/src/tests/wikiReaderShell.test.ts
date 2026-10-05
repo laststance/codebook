@@ -414,6 +414,24 @@ test('the target added to an entry of 0.2.29.0 breaks after each slash and befor
   ])
 })
 
+// Value: protects=the rail entry of a Wiki published by 0.2.29.0 on a page whose own content carries the id the reader gives the entry's target; fails_when=the reader adds the target under an id an element of the page already carries, so the id stands twice and the entry's link is described by a heading of the article instead of by the file and line it opens; why_new=Cycle 0046 row 84; seam=none
+test('the target added to an entry of 0.2.29.0 takes an id of its own on a page whose article already carries the target’s id', () => {
+  // Arrange: a page of 0.2.29.0 whose article has a heading with the id codebook-open-target and one with the first free id after it, in single quotes and without quotes.
+  const page =
+    "<h2 id='codebook-open-target'>Targets</h2><h2 ID=codebook-open-target-2>More</h2>" +
+    '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=0f">Open in VS Code</a></p>'
+
+  // Act
+  const served = rebindDeepWikiEditorLinks(page, 'vscode')
+
+  // Assert: the link names the added target, and no id of the page stands twice.
+  assert.equal(
+    served,
+    "<h2 id='codebook-open-target'>Targets</h2><h2 ID=codebook-open-target-2>More</h2>" +
+      '<p class="open-in-editor"><a href="vscode://laststance.codebook/source?root=%2Frepo&amp;path=src%2Fa.ts&amp;line=12&amp;sha256=0f" aria-describedby="codebook-open-target-3">Open in VS Code</a> <span class="open-target" id="codebook-open-target-3">src/<wbr>a.ts<wbr>:12</span></p>',
+  )
+})
+
 test('the open control is printed only where the publisher puts a page’s first citation, never as a fixed link of the shell', async () => {
   // Arrange / Act
   const shell = await readShell()
@@ -541,6 +559,25 @@ test('the published page keeps room for the focus ring at the sides of the artic
       '.composer{max-height:none;position:static;background:var(--bg);padding-bottom:.6rem;margin-bottom:0}',
     ),
     'the single column lacks the rule of the composer',
+  )
+})
+
+// Value: protects=keyboard focus on the answer of a question in the Wiki reader's composer, which is a focusable region and none of the elements the shell's ring rule names; fails_when=the answer loses its own ring rule, so the browser draws its default ring around it, in another colour and width than every other ring of the page; why_new=Cycle 0046 row 83 (the measured case and the still are in the Wiki reader DOM check); seam=none
+test('the published page gives the answer of a question the reader’s own focus ring, 2 px in the link colour and 3 px outside it', async () => {
+  // Arrange / Act
+  const shell = await readShell()
+
+  // Assert: the same ring as the rule of links, buttons, summaries and the question field draws.
+  for (const rule of [
+    'a:focus-visible,button:focus-visible,summary:focus-visible,textarea:focus-visible{outline:2px solid var(--link);outline-offset:3px}',
+    '.qa-answer:focus-visible{outline:2px solid var(--link);outline-offset:3px}',
+  ])
+    assert.ok(shell.includes(rule), `the shell lacks the rule ${rule}`)
+  assert.ok(
+    shell.includes(
+      '<div class="qa-answer" role="status" aria-live="polite" tabindex="0"></div>',
+    ),
+    'the answer is no longer a region the keyboard reaches',
   )
 })
 

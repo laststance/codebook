@@ -268,6 +268,8 @@ export type FakeWikiPageLoad = {
   search?: string
   /** Whether the window's `load` event has already passed when the page script runs, as on a page whose script was added late; a page script normally runs before it, which is the case when omitted. */
   isLoadedBeforeTheScript?: boolean
+  /** The ids of headings the article's own content carries, in their order; none when omitted. A page published before the publisher kept such ids apart from the reader's may carry an id of the reader there. */
+  articleHeadingIds?: string[]
 }
 
 /** A loaded fake page: its elements, its reader and the test's hands on time and input. */
@@ -412,6 +414,9 @@ export async function openFakeWikiPage(
     new PageElement('main', { class: 'reading-column' }, [
       new PageElement('article', { class: 'wiki-article' }, [
         new PageElement('h1', { id: 'article-title' }, ['Overview']),
+        ...(load.articleHeadingIds ?? []).map(
+          (id) => new PageElement('h2', { id }, [`Section ${id}`]),
+        ),
       ]),
     ]),
     ...buildRail(layout),
