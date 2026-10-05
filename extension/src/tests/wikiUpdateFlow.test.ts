@@ -17,7 +17,9 @@ import { test } from 'node:test'
 
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
 import type { WikiUpdateStatus } from '../utils/wikiUpdateRun'
+import { WikiUpdateTimeoutError } from '../utils/wikiUpdateTimeoutError'
 
+import { createManualClock } from './utils/createManualClock'
 import {
   openWikiUpdateWindow,
   type CancellableProgress,
@@ -582,9 +584,9 @@ test('a Cursor update that runs past its bound ends as timed out, the state VS C
   const wiki = await openWikiWindow({
     cursor: true,
     cursorAgent: async () => {
-      const timedOut = new Error('Cursor Agent timed out updating the Wiki.')
-      timedOut.name = 'WikiUpdateTimedOut'
-      throw timedOut
+      throw new WikiUpdateTimeoutError(
+        'Cursor Agent timed out updating the Wiki.',
+      )
     },
   })
   try {
@@ -724,7 +726,8 @@ test('the update command and the browser link pressed while the first start is s
   }
 })
 
-test('updating before any Wiki exists says to generate one first instead of showing a file error', async () => {
+// Value: protects=the page's status after a press in a folder without a Wiki; fails_when=the "no Wiki" refusal only shows the editor's notice and records nothing, so the page keeps showing idle or an older result while the editor says to generate the Wiki first; why_new=Cycle 0045 pre-landing review PL-14 (row 22 of Cycle 0046); seam=none
+test('updating before any Wiki exists says to generate one first instead of showing a file error, and the page shows the same sentence as a refused start that kept no site', async () => {
   // Arrange
   const wiki = await openWikiWindow()
   await rm(wiki.outputDirectory, { recursive: true })
@@ -736,7 +739,18 @@ test('updating before any Wiki exists says to generate one first instead of show
     assert.deepEqual(wiki.errors, [
       'Codebook found no LLM Wiki in .codebook/wiki. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
     ])
-    assert.equal(wiki.status().state, 'idle')
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.deepEqual(
+      status.state === 'failed'
+        ? [status.reason, status.isCodebookSentence, status.site]
+        : [],
+      [
+        'Codebook found no LLM Wiki in .codebook/wiki. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.',
+        true,
+        'missing',
+      ],
+    )
     assert.deepEqual(wiki.chatRequests, [])
   } finally {
     await wiki.close()
@@ -1274,7 +1288,7 @@ test('a Cursor update during which another repository was opened ends as failed 
   }
 })
 
-test('a chat that never opens ends the update as failed at its bound, and the next press can start', async () => {
+test('a chat command that never returns ends the update as failed at its bound with the sentence of a chat that did not answer, and the next press can start', async () => {
   // Arrange
   const wiki = await openWikiWindow({
     constants: { WIKI_CHAT_OPEN_TIMEOUT_MS: 100 },
@@ -1297,11 +1311,216 @@ test('a chat that never opens ends the update as failed at its bound, and the ne
     assert.equal(afterFirstPress.state, 'failed')
     assert.equal(
       afterFirstPress.state === 'failed' ? afterFirstPress.reason : '',
-      'The editor chat did not open within 0.1 seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.',
+      'The editor chat did not answer within 0.1 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
     )
     assert.equal(wiki.status().state, 'running')
   } finally {
     chatThatNeverOpens.release()
+    await wiki.close()
+  }
+})
+
+/** A manual clock for the wait for the chat's first answer: its sleep ends at the clock's time or at the abort, and `advance` moves it. */
+function manualAnswerClock(): {
+  clock: ReturnType<typeof createManualClock>
+  sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
+} {
+  const clock = createManualClock()
+  return {
+    clock,
+    sleep: (delayMs, signal): Promise<void> =>
+      new Promise<void>((resolveSleep) => {
+        const timer = clock.setTimeout(resolveSleep, delayMs)
+        signal.addEventListener(
+          'abort',
+          () => {
+            clock.clearTimeout(timer)
+            resolveSleep()
+          },
+          { once: true },
+        )
+      }),
+  }
+}
+
+/** Waits until the window handed its request to the chat, so the answer's bound runs from then on. */
+async function waitForChatRequest(chatRequests: unknown[]): Promise<void> {
+  const deadline = Date.now() + 6_000
+  while (chatRequests.length === 0 && Date.now() < deadline)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+}
+
+// Value: protects=the end of a VS Code update whose chat cannot answer (Copilot Chat disabled for the launch); fails_when=the bound ends when the chat command returns, so a command that returns at once while the chat never answers leaves the update watching for 15 minutes; why_new=Cycle 0045 native check F33 (row 3 of Cycle 0046); seam=the sleep of the wait for the chat's answer, on a manual clock
+test('a chat that takes the request and never answers ends the update after 30 seconds, on the page and as an error notice, with the sentence that it did not answer', async () => {
+  // Arrange: the chat takes the request at once, and no reply and no tool call ever come.
+  const { clock, sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: () => new Promise(() => {}),
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act
+    clock.advance(29_999)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    const stateBeforeTheBound = wiki.status().state
+    clock.advance(1)
+    await press
+
+    // Assert
+    assert.equal(stateBeforeTheBound, 'running')
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.equal(wiki.errors.length, 1)
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The editor chat did not answer within 30 seconds, so the update was not started\\. Check that Copilot Chat is enabled and signed in, then retry\\. The last usable site is kept\\.$`,
+      ),
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat that replies 20 seconds after it took the request is watched for its publish and not refused at 30 seconds', async () => {
+  // Arrange: the chat's reply comes 20 seconds after the request was handed to it.
+  const { clock, sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: () =>
+      new Promise((resolveReply) => {
+        clock.setTimeout(() => resolveReply({}), 20_000)
+      }),
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act
+    clock.advance(20_000)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    clock.advance(10_000)
+    await press
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.errors, [])
+    assert.deepEqual(wiki.progressTitles, [
+      'Watching for the LLM Wiki update from the editor chat (Cancel stops watching, not the chat)',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat that reads a file for the request before it replies is watched for its publish', async () => {
+  // Arrange: the chat's reply never comes back to the command, as for a chat that works without asking for a confirmation.
+  const { clock, sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: () => new Promise(() => {}),
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: five seconds later the chat opens the manifest, then the bound passes.
+    clock.advance(5_000)
+    wiki.openDocument(wiki.manifestPath)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    clock.advance(25_000)
+    await press
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat that runs a command for the request before it replies is watched for its publish', async () => {
+  // Arrange
+  const { clock, sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: () => new Promise(() => {}),
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: ten seconds later the chat starts a command in the terminal, then the bound passes.
+    clock.advance(10_000)
+    wiki.runTerminalCommand()
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    clock.advance(20_000)
+    await press
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat that opens a terminal for the request before it replies is watched for its publish', async () => {
+  // Arrange
+  const { clock, sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: () => new Promise(() => {}),
+    chatAnswerClock: { sleep },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act: fifteen seconds later the chat opens a terminal for its first command, then the bound passes.
+    clock.advance(15_000)
+    wiki.openTerminal()
+    await new Promise((resolveWait) => setImmediate(resolveWait))
+    clock.advance(15_000)
+    await press
+
+    // Assert
+    assert.equal(wiki.status().state, 'running')
+    assert.deepEqual(wiki.errors, [])
+  } finally {
+    await wiki.close()
+  }
+})
+
+test('a chat whose reply reports an error ends the update at once with the sentence that it did not answer', async () => {
+  // Arrange: the chat answers the request with an error and nothing else.
+  const { sleep } = manualAnswerClock()
+  const wiki = await openWikiWindow({
+    chatReply: async () => ({
+      errorDetails: { message: 'Sorry, your request failed.' },
+    }),
+    chatAnswerClock: { sleep },
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
+  } finally {
     await wiki.close()
   }
 })

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { once } from 'node:events'
 import {
   chmod,
   mkdir,
@@ -72,8 +71,11 @@ import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
+import {
+  isAcknowledgedWikiLeftover,
+  type WikiLeftover,
+} from './utils/isAcknowledgedWikiLeftover'
 import { isWikiManifestOf } from './utils/isWikiManifestOf'
-import { isWikiUpdateTimeout } from './utils/isWikiUpdateTimeout'
 import { joinInFlight } from './utils/joinInFlight'
 import { listWikiCandidates } from './utils/listWikiCandidates'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
@@ -100,6 +102,7 @@ import {
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
 import { thrownMessage } from './utils/thrownMessage'
+import { waitForWikiChatAnswer } from './utils/waitForWikiChatAnswer'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
@@ -109,6 +112,7 @@ import {
   type WikiUpdateHost,
   type WikiUpdateOutput,
 } from './utils/wikiUpdateRun'
+import { WikiUpdateTimeoutError } from './utils/wikiUpdateTimeoutError'
 
 let stopExtension: (() => Promise<void>) | undefined
 
@@ -920,7 +924,7 @@ export function activate(
     }
     await finishWikiUpdate(run, {
       cancelled: run.controller.signal.aborted,
-      timedOut: isWikiUpdateTimeout(agentError),
+      timedOut: agentError instanceof WikiUpdateTimeoutError,
       // A refused candidate is the learner's file in the way, not a failed agent.
       blockingPaths: await probeWikiCandidates(run).catch(() => []),
       failure: didAgentFail ? thrownMessage(agentError) : undefined,
@@ -942,24 +946,24 @@ export function activate(
   /**
    * Makes every check of an update's start in one order and records the refusal when one fails, so no agent is asked for a run that cannot succeed.
    *
-   * The order: what makes the publisher refuse (an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides; and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
+   * The order: what makes the publisher refuse (an unfinished publish, a link or special file, a manifest that cannot be read or was edited, an edited or missing page); no Wiki at all; a manifest of another checkout; a Wiki that is already current; another window's running update, which nothing overrides; an earlier chat's leftover, which "Update anyway" overrides only for the leftovers its refusal named; and last the marker that reserves the Wiki for this run. When a publish lands while the checks run, they are made once more, so the token, the manifest and the freshness come from one generation.
    *
    * @param projectRoot - Canonical opened project.
    * @param wikiOutput - Resolved Wiki folder and its label.
    * @param host - Editor host that was asked.
-   * @param isLeftoverIgnored - Whether the learner chose "Update anyway": an earlier chat's candidate and a stopped watch's reservation do not refuse the start.
+   * @param acknowledgedLeftovers - The leftovers the refusal named when the learner chose "Update anyway" on it; empty for an ordinary press. Only a leftover equal to one of them ({@link isAcknowledgedWikiLeftover}) lets the start go on; a leftover that appeared since refuses it again with a notice of its own.
    * @returns
    * - The start may go ahead: what the run begins with; the Wiki's marker is claimed for it
    * - The start was refused or nothing needs updating: undefined, after the state was recorded and the learner told
    * @throws What a check threw (a manifest of another checkout, a file system error); the caller records it as a failed start.
    * @example
-   * const start = await checkWikiUpdateStart('/repo', { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, 'vscode', false)
+   * const start = await checkWikiUpdateStart('/repo', { outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' }, 'vscode', [])
    */
   const checkWikiUpdateStart = async (
     projectRoot: string,
     wikiOutput: WikiUpdateOutput,
     host: WikiUpdateHost,
-    isLeftoverIgnored: boolean,
+    acknowledgedLeftovers: readonly WikiLeftover[],
   ): Promise<WikiUpdateStart | undefined> => {
     const { outputDirectory } = wikiOutput
     /** Records a refusal in a sentence Codebook wrote and tells the learner; `onUpdateAnyway` offers the override. */
@@ -972,12 +976,12 @@ export function activate(
       showWikiUpdateNotice(onUpdateAnyway)
       return undefined
     }
-    /** Starts the update again with the leftover ignored, when the learner presses "Update anyway". */
-    const updateAnyway = (): void => {
+    /** Starts the update again when the learner presses "Update anyway", with only the leftovers the refusal named ignored. */
+    const updateAnyway = (leftovers: WikiLeftover[]): void => {
       // The refused attempt may still be unwinding when the button is pressed; the override is a start of its own, after it.
       Promise.resolve(wikiUpdate)
         .catch(() => undefined)
-        .then(() => updateDeepWiki(UPDATE_ANYWAY_ACTION))
+        .then(() => updateDeepWiki(leftovers))
         .catch((error: unknown) => {
           void showNotice(
             'error',
@@ -1004,10 +1008,15 @@ export function activate(
       const tokenAtStart = await readWikiPublishToken(outputDirectory)
       // Without a manifest there is nothing to update; the learner needs the generate step, not a file-system error.
       if (tokenAtStart === undefined) {
-        void showNotice(
-          'error',
-          `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`,
-        )
+        const noWiki = `Codebook found no LLM Wiki in ${wikiOutput.outputLabel}. Ask the editor chat "/codebook Generate the LLM Wiki for this project", then update it.`
+        // The page records the refusal like any other; there is no site to keep, so neither says one was kept.
+        wikiUpdateRun.refuseStart(host, wikiOutput, {
+          kind: 'failed',
+          reason: noWiki,
+          isCodebookSentence: true,
+          site: 'missing',
+        })
+        void showNotice('error', noWiki)
         return undefined
       }
       const publicationAtStart =
@@ -1016,17 +1025,12 @@ export function activate(
       await assertWikiOwner(projectRoot, outputDirectory)
       const before = await inspectPublishedWiki(projectRoot, outputDirectory)
       if (before?.freshness.status === 'current') {
+        const { freshness, ...published } = before
         wikiUpdateRun.alreadyCurrent(
           wikiOutput,
-          {
-            identity: before.identity,
-            ...(before.revision === undefined
-              ? {}
-              : { revision: before.revision }),
-            index: before.index,
-          },
+          published,
           // In a folder without Git "current" covers the indexed sources only, and the learner is told.
-          Boolean(before.freshness.addedFilesUnchecked),
+          Boolean(freshness.addedFilesUnchecked),
         )
         showWikiUpdateNotice()
         return undefined
@@ -1036,47 +1040,57 @@ export function activate(
         outputDirectory,
         wikiWindowId,
       )
-      if (otherWindow) {
-        const { watchEndedAtMs } = otherWindow
-        // A run that is active in another window refuses the start, and nothing overrides it.
-        if (watchEndedAtMs === undefined)
-          return refuse(describeOtherWindow(otherWindow))
-        // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on.
-        if (
-          !isLeftoverIgnored &&
-          Date.now() < watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+      // A run that is active in another window refuses the start, and nothing overrides it.
+      if (otherWindow && otherWindow.watchEndedAtMs === undefined)
+        return refuse(describeOtherWindow(otherWindow))
+      const nowMs = Date.now()
+      // Every leftover in the way now, each with the sentence that names it; "Update anyway" is bound to all of them.
+      const leftovers: Array<{ leftover: WikiLeftover; reason: string }> = []
+      // Another window stopped watching its chat, which may still publish until the watch bound; like this window's own stopped watch, the learner may go on.
+      if (
+        otherWindow?.watchEndedAtMs !== undefined &&
+        nowMs < otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+      )
+        leftovers.push({
+          leftover: {
+            kind: 'reservation',
+            windowId: otherWindow.windowId,
+            startedAtMs: otherWindow.startedAtMs,
+          },
+          reason: `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(otherWindow.watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(otherWindow.watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+        })
+      // The record of another output says nothing about this one's candidates.
+      const lastRun =
+        lastWikiRun?.outputDirectory === outputDirectory
+          ? lastWikiRun
+          : undefined
+      const activeCandidate = selectActiveWikiCandidate(
+        await listWikiCandidates(outputDirectory),
+        { nowMs, activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS, lastRun },
+      )
+      if (activeCandidate)
+        leftovers.push({
+          leftover: { kind: 'candidate', name: activeCandidate.name },
+          reason: `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+        })
+      // A watch that stopped before the chat staged anything left no candidate, yet the chat may still work.
+      if (
+        lastRun?.mayAgentStillWork &&
+        nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
+      )
+        leftovers.push({
+          leftover: { kind: 'last-run', endedAtMs: lastRun.endedAtMs },
+          reason: `The VS Code chat this window asked at ${formatClockTime(lastRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(lastRun.endedAtMs, {})} and waits for it until ${formatClockTime(lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
+        })
+      // A press of "Update anyway" passes only the leftovers its refusal named; one that appeared since is named in a new refusal.
+      const unacknowledged = leftovers.find(
+        ({ leftover }) =>
+          !isAcknowledgedWikiLeftover(leftover, acknowledgedLeftovers),
+      )
+      if (unacknowledged)
+        return refuse(unacknowledged.reason, () =>
+          updateAnyway(leftovers.map(({ leftover }) => leftover)),
         )
-          return refuse(
-            `The VS Code chat another editor window asked at ${formatClockTime(otherWindow.startedAtMs, {})} may still be updating this Wiki; that window stopped watching it at ${formatClockTime(watchEndedAtMs, {})} and Codebook waits for it until ${formatClockTime(watchEndedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-            updateAnyway,
-          )
-      }
-      if (!isLeftoverIgnored) {
-        const nowMs = Date.now()
-        // The record of another output says nothing about this one's candidates.
-        const lastRun =
-          lastWikiRun?.outputDirectory === outputDirectory
-            ? lastWikiRun
-            : undefined
-        const activeCandidate = selectActiveWikiCandidate(
-          await listWikiCandidates(outputDirectory),
-          { nowMs, activeWithinMs: WIKI_UPDATE_WATCH_TIMEOUT_MS, lastRun },
-        )
-        if (activeCandidate)
-          return refuse(
-            `An earlier chat or another editor window appears to be updating this Wiki (candidate ${activeCandidate.name}, written ${formatClockTime(activeCandidate.writtenAtMs, {})}). Codebook waits for it until ${formatClockTime(activeCandidate.writtenAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-            updateAnyway,
-          )
-        // A watch that stopped before the chat staged anything left no candidate, yet the chat may still work.
-        if (
-          lastRun?.mayAgentStillWork &&
-          nowMs < lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS
-        )
-          return refuse(
-            `The VS Code chat this window asked at ${formatClockTime(lastRun.startedAtMs, {})} may still be updating this Wiki; Codebook stopped watching it at ${formatClockTime(lastRun.endedAtMs, {})} and waits for it until ${formatClockTime(lastRun.endedAtMs + WIKI_UPDATE_WATCH_TIMEOUT_MS, {})}. If that chat was stopped, choose Update anyway in the editor’s notification.`,
-            updateAnyway,
-          )
-      }
       // A publish that landed while the checks ran made them about two generations: check the new one.
       if ((await readWikiPublishToken(outputDirectory)) !== tokenAtStart) {
         if (isLastAttempt)
@@ -1109,9 +1123,9 @@ export function activate(
     }
     return undefined
   }
-  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param override - Given when the learner pressed "Update anyway" on a refusal that named an earlier chat's leftover; another window's running update still refuses the start. @example await updateDeepWiki() */
+  /** Starts a project-bound skill update from the browser or command, coalescing repeated clicks. @param acknowledgedLeftovers - Given when the learner pressed "Update anyway": the leftovers the refusal named, which alone are ignored; another window's running update and a leftover that appeared since still refuse the start. @example await updateDeepWiki() */
   const updateDeepWiki = async (
-    override?: typeof UPDATE_ANYWAY_ACTION,
+    acknowledgedLeftovers: readonly WikiLeftover[] = [],
   ): Promise<void> => {
     if (wikiUpdate) {
       // In Cursor the first call lasts the whole run, so a second command arrives here and must be told, as one from the browser link is.
@@ -1134,7 +1148,7 @@ export function activate(
           projectRoot,
           wikiOutput,
           host,
-          override === UPDATE_ANYWAY_ACTION,
+          acknowledgedLeftovers,
         )
       } catch (error) {
         // The page waits for this start; a check that threw must reach it as a failed start with the reason, not as silence.
@@ -1191,7 +1205,7 @@ export function activate(
         uncoveredPaths: run.uncoveredAtStart,
       })
       if (!isCursorHost) {
-        // While the chat opens, the closing window finds this run, aborts it and waits until its end was recorded and its marker removed.
+        // Until the chat answers, the closing window finds this run, aborts it and waits until its end was recorded and its marker removed.
         let reportOpeningEnded = (): void => {}
         const opening = {
           controller: run.controller,
@@ -1200,41 +1214,58 @@ export function activate(
           }),
         }
         activeWikiRun = opening
+        // The first tool call the chat makes for the request without asking: a file it reads (the request names the manifest and the skill), a terminal it opens or a command it runs there.
+        const toolCallWatches: vscode.Disposable[] = []
+        const toolCall = new Promise<void>((reportToolCall) => {
+          toolCallWatches.push(
+            vscode.workspace.onDidOpenTextDocument((document) => {
+              if (document.uri.scheme === 'file') reportToolCall()
+            }),
+            vscode.window.onDidOpenTerminal(() => {
+              reportToolCall()
+            }),
+            vscode.window.onDidStartTerminalShellExecution(() => {
+              reportToolCall()
+            }),
+          )
+        })
         try {
-          let didChatOpen: boolean
-          try {
-            // The command can stay pending (no chat provider answers); the run must not stay "running" with it.
-            didChatOpen = await settledWithin(
-              Promise.race([
-                vscode.commands.executeCommand('workbench.action.chat.open', {
-                  query,
-                  isPartialQuery: false,
-                }),
-                once(run.controller.signal, 'abort'),
-              ]),
-              WIKI_CHAT_OPEN_TIMEOUT_MS,
-            )
-          } catch (error) {
-            // Both sentences of a chat that did not open end with the next step, so the page shows them whole.
+          // The bound starts when the request is handed over and ends at the chat's first answer, not when the command returns: a chat that cannot answer still takes the request.
+          const answer = await waitForWikiChatAnswer({
+            // With `blockOnResponse` the command settles when the chat's response completes or waits for a confirmation; a command that throws at once is a failed one too.
+            reply: Promise.resolve().then(() =>
+              vscode.commands.executeCommand('workbench.action.chat.open', {
+                query,
+                isPartialQuery: false,
+                blockOnResponse: true,
+              }),
+            ),
+            toolCall,
+            signal: run.controller.signal,
+            timeoutMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
+          })
+          if (answer.outcome === 'failed') {
+            // Both sentences of a chat that did not answer end with the next step, so the page shows them whole.
             await finishWikiUpdate(run, {
-              failure: describeWikiChatOpenFailure(thrownMessage(error)),
+              failure: describeWikiChatOpenFailure(thrownMessage(answer.error)),
               isFailureCodebookSentence: true,
             })
             return
           }
-          if (!didChatOpen) {
+          if (answer.outcome === 'unanswered') {
             await finishWikiUpdate(run, {
-              failure: `The editor chat did not open within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds. Check that GitHub Copilot Chat is installed and enabled, then press Update LLM Wiki again.`,
+              failure: `The editor chat did not answer within ${WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND} seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`,
               isFailureCodebookSentence: true,
             })
             return
           }
-          // The chat can take long to open. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
+          // The chat can take long to answer. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
           if (isExtensionStopping || run.controller.signal.aborted) {
             await finishWikiUpdate(run, { cancelled: true })
             return
           }
         } finally {
+          for (const watch of toolCallWatches) watch.dispose()
           if (activeWikiRun === opening) activeWikiRun = undefined
           reportOpeningEnded()
         }

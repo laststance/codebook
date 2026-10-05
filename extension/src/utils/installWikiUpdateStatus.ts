@@ -42,6 +42,8 @@ export type WikiUpdatePageSettings = {
   msPerMinute: number
   /** The chat request of the publisher's recovery, handed to the embedded sentence writer like the minute length. */
   recoveryRequest: string
+  /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, handed to the embedded sentence writer like the recovery request, so the running line says what the editor says. */
+  outsideOutputApprovalsNote: string
 }
 
 /**
@@ -70,6 +72,7 @@ export type WikiUpdatePageSettings = {
  *   reasonLimitChars: 160,
  *   msPerMinute: 60_000,
  *   recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project',
+ *   outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
  * })
  * ```
  */
@@ -474,6 +477,7 @@ export function installWikiUpdateStatus(
       reasonLimitChars: settings.reasonLimitChars,
       msPerMinute: settings.msPerMinute,
       recoveryRequest: settings.recoveryRequest,
+      outsideOutputApprovalsNote: settings.outsideOutputApprovalsNote,
       // The page shows the freshness label above the update line.
       freshnessLabelPlace: 'above',
       // The host names both publications, so the browser's clock decides nothing.
@@ -686,13 +690,25 @@ export function installWikiUpdateStatus(
     show()
     scheduleNextLook()
   })
+  // The look the last return to the page started and the event that started it, while that look is under way.
+  let returnLook:
+    { event: 'visibilitychange' | 'focus'; done: Promise<void> } | undefined
+  /** Looks once when the learner comes back to the page; called by the tab's `visibilitychange` and the window's `focus`, which a browser fires together for one return to the tab. The other event of the same return, arriving while the first one's look is under way, joins that look instead of asking the reader again; the same event again is a new return. @param event - The event that reports the return. @example lookOnReturn('focus') // asks the reader, unless the look of this return's visibilitychange is still under way */
+  const lookOnReturn = (event: 'visibilitychange' | 'focus'): void => {
+    if (returnLook && returnLook.event !== event) return
+    const started = { event, done: look(true) }
+    returnLook = started
+    void started.done.finally(() => {
+      if (returnLook === started) returnLook = undefined
+    })
+  }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) window.clearTimeout(pollTimer)
-    else void look(true)
+    else lookOnReturn('visibilitychange')
   })
   // A window beside the editor never becomes hidden; focus is when the learner comes back to it.
   window.addEventListener('focus', () => {
-    void look(true)
+    lookOnReturn('focus')
   })
   void look(true)
 }

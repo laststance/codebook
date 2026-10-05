@@ -1,7 +1,10 @@
 import { constants } from 'node:fs'
 import { open, type FileHandle } from 'node:fs/promises'
 
-import { WIKI_METADATA_FILE_LIMIT_BYTES } from '../constants'
+import {
+  WIKI_METADATA_FILE_LIMIT_BYTES,
+  WIKI_METADATA_READ_CHUNK_BYTES,
+} from '../constants'
 
 /** A manifest or receipt of a Wiki folder as one read saw it. */
 export type WikiRegularFile = {
@@ -13,15 +16,49 @@ export type WikiRegularFile = {
 }
 
 /**
+ * Reads an open file from its start to its end, and never more than one byte past the limit; called by {@link readWikiRegularFile} after the size at `stat` was within the limit, because the file can grow while it is read.
+ * @param file - The open regular file.
+ * @param sizeAtStat - Its size when it was opened; the first read asks for that and one byte more.
+ * @param limitBytes - The largest size the caller accepts.
+ * @returns The bytes of the whole file, at most `limitBytes` of them.
+ * @throws A `RangeError` when the byte past the limit arrives: the file grew after its `stat`.
+ * @example
+ * await readUpToLimit(file, 12, 64) // => <Buffer of 12 bytes>; rejects when the file grew past 64 bytes meanwhile
+ */
+async function readUpToLimit(
+  file: FileHandle,
+  sizeAtStat: number,
+  limitBytes: number,
+): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  let readBytes = 0
+  // One byte past the limit is the most that is ever read.
+  while (readBytes <= limitBytes) {
+    // The first read takes the whole file as it was at its stat; what arrived since is read in further chunks.
+    const chunk = Buffer.allocUnsafe(
+      Math.min(
+        Math.max(sizeAtStat + 1 - readBytes, WIKI_METADATA_READ_CHUNK_BYTES),
+        limitBytes + 1 - readBytes,
+      ),
+    )
+    const { bytesRead } = await file.read(chunk, 0, chunk.length, readBytes)
+    if (bytesRead === 0) return Buffer.concat(chunks)
+    chunks.push(chunk.subarray(0, bytesRead))
+    readBytes += bytesRead
+  }
+  throw new RangeError('The file grew past the limit while it was read.')
+}
+
+/**
  * Reads a manifest or a publication receipt of a Wiki or candidate folder only when it is a regular file of bounded size, without following a link and without waiting on a pipe.
  *
- * Why: these files are read before an update's timeout and cancel exist; a link to a named pipe would hold that read forever and a link to an endless device would fill memory. The publisher refuses such entries too.
+ * Why: these files are read before an update's timeout and cancel exist; a link to a named pipe would hold that read forever and a link to an endless device would fill memory. The publisher refuses such entries too. The size is checked at `stat` and again while reading, so a file that grows meanwhile is not read past the limit.
  * Trigger: {@link readWikiPublishToken}, {@link readWikiPublicationIdentity}, {@link listWikiCandidates}, {@link readWikiOwnedPaths} and {@link findWikiUpdateStartBlock} read every Wiki metadata file through it.
  *
  * @param path - Absolute path of the manifest or receipt.
  * @returns
  * - A regular file of at most {@link WIKI_METADATA_FILE_LIMIT_BYTES}: its bytes, inode and modification time, all from one open file
- * - A missing file, a link, a pipe, a device, a folder, a larger file or one that cannot be read: undefined
+ * - A missing file, a link, a pipe, a device, a folder, a larger file, one that grew past the limit while it was read, or one that cannot be read: undefined
  *
  * @example
  * ```ts
@@ -43,7 +80,12 @@ export async function readWikiRegularFile(
     if (!fileStat.isFile() || fileStat.size > WIKI_METADATA_FILE_LIMIT_BYTES)
       return undefined
     return {
-      bytes: await file.readFile(),
+      // A file that grew past the limit after its stat rejects here and is refused below.
+      bytes: await readUpToLimit(
+        file,
+        fileStat.size,
+        WIKI_METADATA_FILE_LIMIT_BYTES,
+      ),
       inode: fileStat.ino,
       modifiedAtMs: fileStat.mtimeMs,
     }

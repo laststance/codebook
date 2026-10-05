@@ -16,6 +16,8 @@ const wording = {
   msPerMinute: 60_000,
   recoveryRequest:
     '/codebook Recover the unfinished LLM Wiki publish for this project',
+  outsideOutputApprovalsNote:
+    'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
   freshnessLabelPlace: 'above',
 }
 

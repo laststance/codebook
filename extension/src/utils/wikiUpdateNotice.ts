@@ -1,5 +1,6 @@
 import {
   MS_PER_MINUTE,
+  WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
   WIKI_UPDATE_RECOVERY_REQUEST,
   WIKI_UPDATE_SHOWN_PATH_LIMIT,
 } from '../constants'
@@ -95,6 +96,7 @@ export function wikiUpdateNotice(
     reasonLimitChars: Number.POSITIVE_INFINITY,
     msPerMinute: MS_PER_MINUTE,
     recoveryRequest: WIKI_UPDATE_RECOVERY_REQUEST,
+    outsideOutputApprovalsNote: WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE,
     // The editor shows no freshness label; the page's is in the browser reader.
     freshnessLabelPlace: 'in the browser reader',
   })

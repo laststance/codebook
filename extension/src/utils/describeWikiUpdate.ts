@@ -26,6 +26,8 @@ export type WikiUpdateWording = {
   msPerMinute: number
   /** The chat request that makes the editor agent run the publisher's recovery, as the learner pastes it ({@link WIKI_UPDATE_RECOVERY_REQUEST}); the function is embedded into the page and cannot import the constant. */
   recoveryRequest: string
+  /** Why VS Code's chat asks to approve each step of an update whose output lies outside the project, as the editor's confirmation and progress title say it ({@link WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}); the function is embedded into the page and cannot import the constant. */
+  outsideOutputApprovalsNote: string
   /** Where the reader finds the freshness label, as the end of "check the freshness label …": `above` on the page, `in the browser reader` in an editor notification. */
   freshnessLabelPlace: string
   /** Whether the reading page was served from another publication than the one on disk now; omitted by the editor, which never offers a reload. */
@@ -45,7 +47,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * Trigger: the reader page calls it with each `api/update-status` answer; the editor calls it when a run ends.
  *
  * @param status - Update run state from the extension.
- * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, where the freshness label is and whether the reading page is older than the site.
+ * @param wording - Time format, the bounds of the sentence, the minute length, the recovery request, the note on approvals outside the project, where the freshness label is and whether the reading page is older than the site.
  * @returns
  * - Idle: undefined (nothing to show)
  * - A state this version does not know: "Update status unknown.", with the output line only when that state names an output; none of its other fields is read
@@ -55,7 +57,7 @@ type WikiUpdateStatusOf<State extends WikiUpdateStatus['state']> = Extract<
  * ```ts
  * describeWikiUpdate(
  *   { state: 'cancelled', host: 'cursor', finishedAt: '2026-10-03T12:10:00.000Z', site: 'kept', outputDirectory: '/repo/.codebook/wiki', outputLabel: '.codebook/wiki' },
- *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', freshnessLabelPlace: 'above' },
+ *   { formatTime: () => '21:10', pathLimit: 3, reasonLimitChars: 200, msPerMinute: 60_000, recoveryRequest: '/codebook Recover the unfinished LLM Wiki publish for this project', outsideOutputApprovalsNote: 'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.', freshnessLabelPlace: 'above' },
  * )
  * // => { lead: 'Update cancelled', rest: ' at 21:10. Cursor Agent was stopped. The last usable site is kept.', detail: [], output: 'Output: .codebook/wiki', offerReload: false }
  * ```
@@ -150,7 +152,7 @@ export function describeWikiUpdate(
         '. This site stays readable.' +
         // The chat asks for each step outside the workspace; the learner should know why and how to avoid it.
         (running.isOutputOutsideProject
-          ? ' This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
+          ? ' ' + wording.outsideOutputApprovalsNote
           : ''),
     )
   /**

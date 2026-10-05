@@ -188,11 +188,15 @@ test('an update that finds the Wiki already current records that and starts no r
   const run = new WikiUpdateRun(fixedClock)
 
   // Act
-  run.alreadyCurrent(output, {
-    identity: 'a1b2c3d4e5f6+0f9e8d7c',
-    revision: 'a1b2c3d4e5f6',
-    index: '0f9e8d7c',
-  })
+  run.alreadyCurrent(
+    output,
+    {
+      identity: 'a1b2c3d4e5f6+0f9e8d7c',
+      revision: 'a1b2c3d4e5f6',
+      index: '0f9e8d7c',
+    },
+    false,
+  )
 
   // Assert
   assert.deepEqual(run.status(), {
@@ -236,7 +240,11 @@ test('an already-current note never replaces a run that is active', () => {
   run.begin('vscode', output, 900_000, false)
 
   // Act
-  run.alreadyCurrent(output)
+  run.alreadyCurrent(
+    output,
+    { identity: 'a1b2c3d4e5f6+0f9e8d7c', index: '0f9e8d7c' },
+    false,
+  )
 
   // Assert
   assert.equal(run.status().state, 'running')

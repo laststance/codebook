@@ -477,6 +477,8 @@ export const WIKI_PUBLISH_BACKUP_INFIX = '.previous-'
 export const WIKI_PUBLISH_STAGE_INFIX = '.stage-'
 /** Largest manifest or publication receipt of a Wiki folder the update flow reads; a manifest carries every page's text, so the bound is generous, and it only keeps a link to an endless device from filling memory. */
 export const WIKI_METADATA_FILE_LIMIT_BYTES = 67_108_864
+/** How many bytes one further read of a Wiki manifest, receipt or marker asks for when the file grew after its size was checked; the first read takes the size it had then. */
+export const WIKI_METADATA_READ_CHUNK_BYTES = 65_536
 /** How many indexed sources a freshness check hashes at the same time. */
 export const WIKI_FRESHNESS_HASH_CONCURRENCY = 16
 /** How long a watched Wiki update lets a newly published manifest stay unreadable before it ends as a publish Codebook cannot read; a manifest that is still being written becomes readable well within it. */
@@ -496,7 +498,7 @@ export const WIKI_UPDATE_MARKER_CLAIM_RETRY_DELAY_MS = 25
 export const WIKI_UPDATE_MARKER_CLAIM_EXPIRY_MS = 60_000
 /** How recently the publisher's journal must have been written for the start check to take it for a publish in progress and look once more before it reports an unfinished publish. */
 export const WIKI_PUBLISH_JOURNAL_FRESH_MS = 10_000
-/** How long a VS Code Wiki update waits for the editor's chat command to return before the run ends as failed. */
+/** How long a VS Code Wiki update waits, from handing its request to the editor's chat, for the chat's first answer (a reply, or a tool call it makes for the request) before the run ends as failed. */
 export const WIKI_CHAT_OPEN_TIMEOUT_MS = 30_000
 /** How many characters of the error VS Code's chat command threw the failure sentence of a Wiki update quotes; the sentence is shown whole with its next step, so the editor's text inside it is bounded. */
 export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
@@ -504,11 +506,9 @@ export const WIKI_CHAT_OPEN_CAUSE_LIMIT_CHARS = 120
 export const MS_PER_SECOND = 1_000
 /** Key of the workspace state that keeps how this window's last Wiki update ended, so a reloaded window still knows its own leftover candidate. */
 export const WIKI_UPDATE_LAST_RUN_STATE_KEY = 'codebook.wikiUpdateLastRun'
-/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and (as the same words in {@link describeWikiUpdate}) the running line. */
+/** What a VS Code Wiki update says when its output folder lies outside the opened project: in the confirmation, the progress title and, handed to {@link describeWikiUpdate} as `outsideOutputApprovalsNote`, the running line of the page. */
 export const WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE =
   'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.'
-/** `name` of the error a Cursor Wiki update rejects with at its bound, so the caller records `timed-out` instead of `failed`. */
-export const WIKI_UPDATE_TIMED_OUT_ERROR_NAME = 'WikiUpdateTimedOut'
 /** Milliseconds in one minute, for naming a bound in minutes in the update request. */
 export const MS_PER_MINUTE = 60_000
 /** Longest a VS Code Wiki update is watched for a published manifest before it ends as timed out. */
@@ -519,6 +519,8 @@ export const WIKI_UPDATE_WATCH_POLL_MS = 2_000
 export const WIKI_UPDATE_STATUS_POLL_MS = 2_000
 /** How many conflict paths an update sentence names before "and N more". */
 export const WIKI_UPDATE_SHOWN_PATH_LIMIT = 3
+/** How many characters of one repository file name the Wiki update request quotes; a cloned repository chooses its names, so a long one is cut instead of filling the request. */
+export const WIKI_UPDATE_PROMPT_PATH_LIMIT_CHARS = 200
 /** How many characters of a reason an agent, the CLI or a thrown error supplied an update sentence shows before the full text moves to its disclosure, and how many of a freshness reason the label shows; the Wiki's rail is 170 to 210 px wide and "On this page" sits below. A sentence Codebook writes itself ends with its next step and stays whole. */
 export const WIKI_UPDATE_REASON_LIMIT_CHARS = 160
 /** How long after a press of Update LLM Wiki the reader page keeps asking quickly for the run the learner still has to confirm in the editor. */
