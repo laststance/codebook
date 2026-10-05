@@ -1,13 +1,11 @@
 import {
+  isGeneratedPositionBefore,
+  type GeneratedPosition,
+} from './isGeneratedPositionBefore'
+import {
   walkSourceMapSegments,
   type SourceMapSegment,
 } from './walkSourceMapSegments'
-
-/** A zero-based position in generated code, named as the debugger protocol names a location's line and column. */
-interface GeneratedPosition {
-  lineNumber: number
-  columnNumber: number
-}
 
 /**
  * Finds the generated range that holds every place a source map puts on one original line, so `Debugger.getPossibleBreakpoints` is asked for that line's break locations instead of a whole module's; {@link createBundleVerifier} calls it for a sealed map.
@@ -38,12 +36,12 @@ export function sourceMapGeneratedRange(
     openSpanLine: number | undefined
   /** Moves the range's end forward to the end of the open span. */
   const closeSpan = (spanEnd: GeneratedPosition): void => {
-    if (!end || isBefore(end, spanEnd)) end = spanEnd
+    if (!end || isGeneratedPositionBefore(end, spanEnd)) end = spanEnd
     openSpanLine = undefined
   }
   /** Moves the range's start back to one of the line's mappings and opens that mapping's span. */
   const openSpan = (position: GeneratedPosition): void => {
-    if (!start || isBefore(position, start)) start = position
+    if (!start || isGeneratedPositionBefore(position, start)) start = position
     openSpanLine = position.lineNumber
   }
   const complete = walkSourceMapSegments(
@@ -101,14 +99,5 @@ function isMappingOfLine(
 ): boolean {
   return (
     original?.sourceIndex === selectedSourceIndex && original.line + 1 === line
-  )
-}
-
-/** Tells {@link sourceMapGeneratedRange} whether one generated position lies before another. @example isBefore({ lineNumber: 0, columnNumber: 9 }, { lineNumber: 1, columnNumber: 0 }) // true */
-function isBefore(left: GeneratedPosition, right: GeneratedPosition): boolean {
-  return (
-    left.lineNumber < right.lineNumber ||
-    (left.lineNumber === right.lineNumber &&
-      left.columnNumber < right.columnNumber)
   )
 }
