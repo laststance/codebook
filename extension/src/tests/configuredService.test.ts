@@ -1157,6 +1157,23 @@ test('no help resource names a path under extension/, the tutorial is named by t
   assert.doesNotMatch(texts[4] ?? '', /API 1\.2:/)
 })
 
+// Value: protects=an agent that reads the Study help for the step the run resource points it to finding the names the resource uses, save-learning-summary and saveLearningSummary, and what a spent budget means; fails_when=the last step of the help's sequence no longer names them, or names another number than the run's explanation budget; why_new=Cycle 0046 row 45: the run resource sends the agent to this step ("The last step of the sequence in codebook://help/studies describes it"), and the step did not name the action (Cycle 0045, documentation audit DA-2); seam=none
+test('the Study help names save-learning-summary and saveLearningSummary in the last step of its sequence, and what the run resource says once the 32 explanation keys are spent', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  // Act
+  const help = await readResource(service, 'codebook://help/studies')
+  // Assert
+  assert.ok('text' in help)
+  const { sequence } = z
+    .object({ sequence: z.array(z.string()) })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    sequence.at(-1),
+    "Read the terminal state and stop result. If terminalReference is present, save a new complete learningSummary through codebook_explain with an observed final-result step citing that exact terminalReference and a new explanation key. While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists save-learning-summary in nextActions and gives this step as saveLearningSummary; once the run's 32 explanation keys are spent it no longer lists the action, and saveLearningSummary says that the saved study will have no learning summary. Preserve earlier unknown-at-pause claims as historical uncertainty. Separate runtime/capture evidence from saved learning history and personal understanding.",
+  )
+})
+
 // Cycle 0044 (0041-DOC1): red while only the CHANGELOG said that an after condition already true before input is refused, and the README left the per-phase fix to the help.
 test('configured help and the extension README tell an agent that an after condition already true before the click is refused, and how to fix a condition of each phase', async (context) => {
   // Arrange

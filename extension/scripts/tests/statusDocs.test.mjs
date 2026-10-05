@@ -148,3 +148,73 @@ test("the test execution guide names the package job's own work without a count 
   assert.equal(namesWork, true)
   assert.deepEqual(countedTests, [])
 })
+
+// Value: protects=a maintainer who sees a red coverage step reading in the guide that it cannot fail the job and where a lasting failure shows; fails_when=the guide no longer states the rule, or the workflow's upload step can fail the job again while the guide says it cannot; why_new=Cycle 0046 row 45: only the CHANGELOG said that the upload is not a gate (Cycle 0045, documentation audit DA-2); seam=none
+test('the test execution guide says that a failed coverage upload does not fail a Test job, as the Test workflow has it', async () => {
+  // Arrange
+  const guide = await readDocument('docs/qa/test-execution.md')
+  const workflow = await readDocument('.github/workflows/test.yml')
+
+  // Act
+  const statesRule = guide.includes(
+    '- **A failed coverage upload does not fail a Test job.** The step "Upload coverage to Codecov" has `continue-on-error: true`: coverage is a report, and the tests before it have already decided the job.',
+  )
+  const namesWarning = guide.includes(
+    'The step after it prints the warning "Coverage upload failed" when the upload failed, so a lasting failure (an expired token, for example) stays visible in the run.',
+  )
+  const uploadStep =
+    /- name: Upload coverage to Codecov\n((?: {8}.*\n)+)/.exec(workflow)?.[1] ??
+    ''
+
+  // Assert
+  assert.equal(statesRule, true)
+  assert.equal(namesWarning, true)
+  assert.equal(uploadStep.includes('        continue-on-error: true\n'), true)
+  assert.equal(
+    workflow.includes('::warning title=Coverage upload failed::'),
+    true,
+  )
+})
+
+// Value: protects=an author of the generation skill reading in its plan where a Wiki run's temporary scripts go, which the editor's approvals depend on; fails_when=the plan no longer names the folder, or the bundled skill names another folder than the plan; why_new=Cycle 0046 row 45: the rule of skill 1.0.42 stood in the skill and the CHANGELOG only (documentation audit DA-2); seam=none
+test("the generation skill's plan names the workspace folder of a Wiki run's temporary scripts, as the bundled skill does", async () => {
+  // Arrange
+  const plan = await readDocument('docs/plans/deepwiki-generation-skill.md')
+  const skill = await readDocument('extension/skills/codebook/SKILL.md')
+
+  // Act
+  const statesRule = plan.includes(
+    "Temporary scripts of a Wiki run (delivered with skill 1.0.42): code with loops, regular expressions, HTML quotes or template literals is written as a script into the project's hidden `.codebook/scratch/` folder and run with its interpreter named, read-only scans included; the agent removes the folder once the Wiki is published.",
+  )
+  const forbidsOtherPlaces = plan.includes(
+    'A temporary script is never written into project source or outside the workspace.',
+  )
+
+  // Assert
+  assert.equal(statesRule, true)
+  assert.equal(forbidsOtherPlaces, true)
+  assert.equal(
+    skill.includes(
+      "write a temporary script into the project's hidden `.codebook/scratch/` folder",
+    ),
+    true,
+  )
+})
+
+// Value: protects=a reader of the Wiki contract finding the rail's entry that opens a page's source, which only the CHANGELOG named; fails_when=the contract no longer names the entry, or the publisher prints another label than the contract names; why_new=Cycle 0046 row 45 (documentation audit DA-2); seam=none
+test('the LLM Wiki contract names the rail entry that opens the first cited source of a page, with the label the publisher prints', async () => {
+  // Arrange
+  const contract = await readDocument('docs/specs/llm-wiki.md')
+  const publisher = await readDocument(
+    'extension/skills/codebook/render-wiki.mjs',
+  )
+
+  // Act
+  const namesEntry = contract.includes(
+    "Delivered reference, no further requirement: besides the inline citations, every page's right rail has the entry **Open in VS Code** (**Open in Cursor** when Cursor's reader serves the page), which opens the page's first cited source at its cited line and names that file and line under its label.",
+  )
+
+  // Assert
+  assert.equal(namesEntry, true)
+  assert.equal(publisher.includes('Open in VS Code'), true)
+})

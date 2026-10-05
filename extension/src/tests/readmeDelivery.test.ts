@@ -14,6 +14,7 @@ import {
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_OFFER,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_UPDATE_WATCH_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { savedLaterNote } from '../utils/savedLaterNote'
@@ -219,6 +220,27 @@ test('the packaged README states the run’s explanation budget of 32 keys and w
   // Assert
   assert.equal(statesBudget, true)
   assert.equal(readme.includes('32 explanation intents/run'), false)
+  assert.equal(MAX_EXPLANATIONS, 32)
+})
+
+// Value: protects=a learner and a client author finding in the README three things only the CHANGELOG named: the rail's entry that opens a page's source, the Update anyway button and the save-learning-summary step; fails_when=the README loses one of them, or states another bound than the product keeps; why_new=Cycle 0046 row 45 (Cycle 0045, documentation audit DA-2); seam=none
+test('the packaged README names the rail entry Open in VS Code or Open in Cursor, the Update anyway button and the save-learning-summary step of a run resource', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "Under the outline in the right rail every page has the entry **Open in VS Code**, or **Open in Cursor** when Cursor serves the page. It opens the page's first cited source at its cited line in that editor and names that file and line under its label.",
+    'A page opened from disk keeps the entry as it was published: **Open in VS Code**, which opens VS Code, and for a site published by 0.2.29.0 without the file and line.',
+    '| Update failed, and the sentence names **Update anyway**',
+    'An earlier chat may still be updating this Wiki, so no agent was asked: the VS Code chat of this window or of another window after its watch stopped, or a candidate folder written within the last 15 minutes. The sentence names the time Codebook waits until.',
+    "Wait until that time, or, if that chat was stopped, press **Update anyway** in the editor's notification. It starts the update past what that notification named; anything that appeared since is named in a new notification. Another window's running update offers no **Update anyway**: wait for it to finish.",
+    "While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists `save-learning-summary` in `nextActions` and gives the step as `saveLearningSummary`: call `codebook_explain` on a committed snapshot of the run with a new key and a complete `learningSummary` whose final step is observed and cites the run resource's `terminalReference`. Once the run's 32 explanation keys are spent the action is no longer listed, and `saveLearningSummary` says that the saved study will have no learning summary.",
+  ])
+
+  // Assert: the README holds each sentence, and the product keeps the bounds they name.
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  assert.equal(WIKI_UPDATE_WATCH_TIMEOUT_MS, 900_000)
   assert.equal(MAX_EXPLANATIONS, 32)
 })
 

@@ -21,6 +21,7 @@ import {
   SOURCE_LIMIT_BYTES,
   NODE_TEST_PROFILE,
   ACTIVE_TIMEOUT_MS,
+  MAX_EXPLANATIONS,
   MILLISECONDS_PER_SECOND,
   NUMBERED_SOURCE_LINES_HELP,
   SELF_DECLARED_BINDING_HELP,
@@ -233,7 +234,7 @@ export async function readResource(
         'Read the returned manifestUri once ready; it freezes source hashes and expected actions/stops.',
         'Send only the action named in nextActions, with a stable key unique to that action.',
         'For each current pause, read its returned inspectionUri and sourceUri. Read all content pages through nextUri before parsing the JSON. Call codebook_explain with that snapshot, its exact TypeScript source hash and only present captured value paths. Wait for its committed explanationUri, then copy the current continueArguments. Chat prose alone is not saved in Study. Include learningSummary for saved question, processing summary and sequence steps; classify each relationship as observed, source-derived or unknown. Bind source steps to exact same-run snapshot/source references.',
-        'Read the terminal state and stop result. If terminalReference is present, save a new complete learningSummary through codebook_explain with an observed final-result step citing that exact terminalReference and a new explanation key. Preserve earlier unknown-at-pause claims as historical uncertainty. Separate runtime/capture evidence from saved learning history and personal understanding.',
+        `Read the terminal state and stop result. If terminalReference is present, save a new complete learningSummary through codebook_explain with an observed final-result step citing that exact terminalReference and a new explanation key. While no explanation of a stopped run with a demonstrated result carries a learning summary, the run resource lists save-learning-summary in nextActions and gives this step as saveLearningSummary; once the run's ${MAX_EXPLANATIONS} explanation keys are spent it no longer lists the action, and saveLearningSummary says that the saved study will have no learning summary. Preserve earlier unknown-at-pause claims as historical uncertainty. Separate runtime/capture evidence from saved learning history and personal understanding.`,
       ],
       recording: {
         discovery:
