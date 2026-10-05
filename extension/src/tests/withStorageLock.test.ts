@@ -812,6 +812,25 @@ test('a prepared takeover claim and a prepared lock of a killed window whose pro
   ])
 })
 
+// Value: protects=the learner's writes when a lock file records a process id no system can have (a damaged or copied file); fails_when=the id counts as a process that may still run, because the system's probe refuses the number itself, so every write is refused with "Learning storage is locked ..." until the file is removed by hand (Cycle 0046 row 180); why_new=every lock test named an id a system can have; seam=none (the system's own probe)
+test('a storage lock of this machine that names the process id 4294967295, which no system can have, is taken over by the next write', async (context) => {
+  // Arrange
+  const directory = await storageDirectory(context)
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: 4_294_967_295, hostname: hostname() }),
+  )
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
 // Value: protects=the learner's next write after an editor window was killed and its WSL distribution alone was restarted (`wsl --terminate` while the WSL virtual machine keeps running): the lock the killed window left is taken over, as in 0.2.29.0; fails_when=a storage lock that names another pid namespace of this kernel boot is never judged, so every write is refused with "Learning storage is locked ..." until the file is removed by hand or the virtual machine restarts (a regression of row 65); why_new=row 65 named the pid namespace in the form; seam=the process probe. Linux only: no other system has pid namespaces, and a Linux start is never judged on another system.
 test(
   'a storage lock a killed window left in another pid namespace of this kernel boot is taken over by the next write',
