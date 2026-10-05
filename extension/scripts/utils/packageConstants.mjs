@@ -7,6 +7,10 @@ export const PACKAGE_COMMAND_TIMEOUT_MS = 180_000
 export const PACKAGE_COMMAND_OUTPUT_BYTES = 8 * 1024 * 1024
 export const PACKAGE_COMMAND_EXIT_TIMEOUT_MS = 5_000
 export const PACKAGE_COMMAND_EXIT_POLL_MS = 25
+/** How many paths one clause of the sentence of a checkout that changed during a package build names before "and N more" ({@link assertStableCheckout}). */
+export const CHECKOUT_CHANGE_SHOWN_PATH_LIMIT = 5
+/** How many characters of one path that sentence quotes; a repository chooses its file names, so a longer one is cut. */
+export const CHECKOUT_CHANGE_PATH_LIMIT_CHARS = 120
 /** The smallest process group id the package command signals. `kill(-1)` addresses every process the user may signal and not group 1, and `kill(-0)` the caller's own group, so neither 0 nor 1 names a group that can be stopped as one. */
 export const SIGNALLED_PROCESS_GROUP_ID_MIN = 2
 /** The largest id a process or a process group can have: the largest value of the system's `pid_t`, a signed 32-bit integer on Linux and macOS, which is also the largest `process.kill` takes. The systems' own limits lie below it (at most 4,194,304 on Linux, 99,998 on macOS) and would have to be read per system; `ps` prints a group id it could not read as 4294967295, which is above this bound. */
