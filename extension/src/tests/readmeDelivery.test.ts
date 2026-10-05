@@ -5,12 +5,15 @@ import { test } from 'node:test'
 
 import {
   API_VERSION,
+  MAX_EXPLANATIONS,
   MAX_SESSIONS,
+  MS_PER_SECOND,
   READER_CLOSE_STORAGE_TIMEOUT_MS,
   RECORDING_WINDOW_FOCUS_WAIT_MS,
   SUMMARY_DISPLACED_OFFER,
   SUMMARY_PLACEMENT_ACTION,
   SUMMARY_PLACEMENT_OFFER,
+  WIKI_CHAT_OPEN_TIMEOUT_MS,
 } from '../constants'
 import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { savedLaterNote } from '../utils/savedLaterNote'
@@ -179,6 +182,44 @@ test('the packaged README names API 1.7 as the version the server reports, says 
   assert.deepEqual(current, [true, true, true, true, true, true, true, true])
   assert.equal(namesOlderApiAsCurrent, false)
   assert.deepEqual(saysSourceAnswerHoldsText, [])
+})
+
+// Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; seam=none
+test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, and that a folder without a Wiki names no kept site', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "VS Code: the request went to the chat. Codebook waits up to 30 seconds for the chat's first answer (its reply, a file it reads, a terminal it opens or a command it runs there) and then watches the output folder for up to 15 minutes.",
+    'In VS Code a chat that gives no first answer within 30 seconds ends the update with `The editor chat did not answer within 30 seconds, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`',
+    'The last usable site is kept, and the sentence says so; in a folder that has no Wiki yet it says to generate one first and names no kept site.',
+  ])
+  const retired = [
+    'VS Code: the request is in the chat and Codebook watches the output folder for up to 15 minutes.',
+    'The run ended without a new site. The last usable site is kept.',
+  ].filter((sentence) => readme.includes(sentence))
+
+  // Assert: the README names the bound the editor enforces.
+  assert.deepEqual(delivered, [true, true, true])
+  assert.deepEqual(retired, [])
+  assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS / MS_PER_SECOND, 30)
+})
+
+// Value: protects=a client author reading the same limit of explanations the service enforces and an agent reads in its refusal; fails_when=the README counts "explanation intents" again, or names another number than the budget; why_new=Cycle 0046 row 56: row 25 reworded the refusal to "explanation budget (32 keys)" and the README kept the old words; seam=none
+test('the packaged README states the run’s explanation budget of 32 keys and what a spent budget refuses', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const statesBudget = readme.includes(
+    'an explanation budget of 32 keys/run (a key Codebook already accepted answers its receipt again, and a new key is refused once the budget is spent), 8,192 characters and up to 10 distinct captured paths;',
+  )
+
+  // Assert
+  assert.equal(statesBudget, true)
+  assert.equal(readme.includes('32 explanation intents/run'), false)
+  assert.equal(MAX_EXPLANATIONS, 32)
 })
 
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.

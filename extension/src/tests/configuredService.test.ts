@@ -869,6 +869,7 @@ test('configured help tells an agent that only the next stop is armed and where 
 })
 
 // Cycle 0045 (SM-16, DX-7, ER-9): red while the help counted the rule from the declared line ("no line between the two has a mapped position"), called the column a request and said a slid browser stop fails while it is armed.
+// Cycle 0046 (row 56): red while the help said that every mapped line between the requested and the bound line refuses the binding, although since rows 8 and 50 the debugger's break locations decide once it has listed them.
 test('configured help states the binding rule from the line the stop is requested on', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
@@ -881,7 +882,7 @@ test('configured help states the binding rule from the line the stop is requeste
     .parse(JSON.parse(help.text))
   assert.equal(
     sourceBinding.includes(
-      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one), and uses it like a moved column: the inspection's source names the bound line, so cite and explain source. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it.",
+      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one). When a mapped line lies between them, Codebook asks the debugger for the module's break locations and counts only a line that has one: a mapped line the debugger cannot pause on, such as a function head or its parameters, is passed over, also for a binding first known at a pause, and the journal records breakpoint.rule-from-break-locations with the lines that have a break location (and breakpoint.requested-again-after-break-locations when a server registration is requested again for it). When the debugger cannot list break locations, the mapped lines decide. Codebook uses an accepted binding like a moved column: the inspection's source names the bound line, so cite and explain source. Let the citation cover every line of the statement the stop is in, so that a moved binding stays inside it.",
     ),
     true,
   )
@@ -914,12 +915,13 @@ test('configured help says that any column declared on a blank line is taken as 
 })
 
 // Cycle 0045 (SM-17): red while the README kept the rule counted from the declared line and said nothing about the second request.
+// Cycle 0046 (row 56): red while the README kept the rule of mapped lines alone, without the debugger's break locations.
 test('the extension README states the binding rule from the requested line, as the help does', async () => {
   // Arrange
   const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
   // Act
   const statesRule = readme.includes(
-      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one), and uses it like a moved column: `source` names the bound line.",
+      "The binding rule is counted from the line the breakpoint is requested on: the declared line, or the first mapped line after a declared line without a mapped position. When the debugger cannot pause on the requested line it binds the first place after it. Codebook accepts that binding when it lies on a later line within the stop's citation and no line between the requested line and the bound line has a mapped position (a comment the generated module kept is not one). When a mapped line lies between them, Codebook asks the debugger for the module's break locations and counts only a line that has one: a mapped line the debugger cannot pause on, such as a function head or its parameters, is passed over, also for a binding first known at a pause, and the run's journal records `breakpoint.rule-from-break-locations` with the lines that have a break location (and `breakpoint.requested-again-after-break-locations` when a server registration is requested again for it). When the debugger cannot list break locations, the mapped lines decide. Codebook uses an accepted binding like a moved column: `source` names the bound line.",
     ),
     statesSecondRequest = readme.includes(
       "The line is the declaration and the column is a preference: Codebook accepts the debugger's verified binding anywhere on that line and reports the bound position as `source` beside `requestedSource` in the observation's inspection resource. Declare the column where the statement begins. When the debugger binds a stop on a later line although the line the breakpoint was requested on has a break location, Codebook requests the breakpoint once more, at that line's break location before the requested column; the stop fails while it is armed only when that second request is bound on a later line again or the line has no break location before the requested column. A binding that is first known at a pause (a server stop whose registration was still pending when it was armed) is not refused for this: the stop is accepted where it paused, and its inspection's `place` names the column that can pause on the requested line.",
@@ -1024,6 +1026,7 @@ test('configured help tells an agent that a run waits for the debugger’s own p
 })
 
 // Cycle 0045 (B-L5): red while the help said the journal records every pause and every resume, which is false past the cap, and named two of the four resume entries.
+// Cycle 0046 (row 56): red while the list had no entry for a page pause at a server stop's breakpoint, which the run resumes itself since row 7.
 test('the configured help names every journal entry of a pause and its resume and says that pauses away from a stop are journaled up to the limit', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
@@ -1036,11 +1039,37 @@ test('the configured help names every journal entry of a pause and its resume an
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[4]?.includes(
-      " The journal records a pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts): a declared stop's pause always, and of the pauses away from a stop the first 100 the runtime makes for its own instrumentation and the first 100 others of a run; the rest are counted in cdp.adapter-pauses-not-journaled when the run ends. A resume is recorded with pausedForMs under one of four names: cdp.resumed (a declared stop's pause; an instrumentation pause or a pause from before the action, when its observation was journaled), cdp.adapter-pause-retired (a pause the debugger made for itself and resumed in time, when its observation was journaled), cdp.browser-adapter-pause-retired (the same for a browser pause in a run that declares no browser stop) and cdp.unannounced-pause-resumed-late (a pause no stop announced that was resumed too late, which ends the run). Stop/seal and wait for current history/recording receipts.",
+      " The journal records a pause as cdp.pause-observed (url, line, column, functionName, hitBreakpoints, stopIndex, continuation receipts): a declared stop's pause always, and of the pauses away from a stop the first 100 the runtime makes for its own instrumentation and the first 100 others of a run; the rest are counted in cdp.adapter-pauses-not-journaled when the run ends. A resume is recorded with pausedForMs under one of four names: cdp.resumed (a declared stop's pause; an instrumentation pause or a pause from before the action, when its observation was journaled), cdp.adapter-pause-retired (a pause the debugger made for itself and resumed in time, when its observation was journaled), cdp.browser-adapter-pause-retired (the same for a browser pause in a run that declares no browser stop) and cdp.unannounced-pause-resumed-late (a pause no stop announced that was resumed too late, which ends the run). A page pause at a server stop's breakpoint that Codebook resumes itself is recorded before that as dap.server-breakpoint-browser-stop-resumed (declared, hitBreakpointIds, inputDispatched). Stop/seal and wait for current history/recording receipts.",
     ),
     true,
   )
   assert.doesNotMatch(help.text, /records every pause|every resume/)
+})
+
+// Value: protects=an agent that declares a server stop in a "use server" module knowing that the page's pause at that breakpoint is Codebook's to resume, not a reason to change the declaration; fails_when=the help or the README no longer says that Codebook resumes that page pause, or names another journal entry for it than the run writes; why_new=Cycle 0046 row 56: row 7 made the run resume that pause, and only the source said so; seam=none
+test('the configured help and the README say that Codebook resumes a page pause at a server stop’s breakpoint in the page’s stub of a "use server" module', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const readme = await readFile(join(__dirname, '../../README.md'), 'utf8')
+  // Act
+  const help = await readResource(service, 'codebook://help/repository-browser')
+  // Assert
+  assert.ok('text' in help)
+  const { additionalStops } = z
+    .object({ additionalStops: z.string() })
+    .parse(JSON.parse(help.text))
+  assert.equal(
+    additionalStops.includes(
+      'Server stops use the owned Next worker and sealed action-browser modules; pending breakpoint registration is not a verified pause. The editor sets a server stop\'s breakpoint in the page too; when the page pauses there, in its stub of a "use server" module, Codebook resumes the page itself and goes on waiting for the stop in the server. Codebook arms only the next expected stop:',
+    ),
+    true,
+  )
+  assert.equal(
+    readme.includes(
+      'One announced pause is expected: the editor sets a server stop\'s breakpoint in the page too, and when the page pauses there, in its stub of a `"use server"` module, Codebook resumes the page itself (`dap.server-breakpoint-browser-stop-resumed` in the run\'s journal) and goes on waiting for the stop in the server.',
+    ),
+    true,
+  )
 })
 
 // Cycle 0045 (B-L5, DX-19): red while "100", "3 seconds", "1 second" were typed in the help beside their constants; the help is loaded over other constants, so a number that is typed stays what it was.
