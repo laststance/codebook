@@ -242,6 +242,8 @@ function studyClient(
   let transportFocusOwed:
     | { leaving: HTMLElement; preferred: readonly string[]; section: string }
     | undefined
+  // The control at which this pane's keyboard stands, read as each message of the host arrives: the control that holds the focus, and still that control after the page disabled it or took it out under the focus, which hands the browser's focus to the document body. A holder that left is owed a place for its focus; it is paid like the transport's, when the message is handled if this document has the focus, else at its next focus event.
+  let focusHolder: HTMLElement | undefined
   let inputRevision = 0
   let poseTransaction:
     | {
@@ -1537,6 +1539,124 @@ function studyClient(
     usableTransportControl(owed)?.focus({ preventScroll: true })
   }
   window.addEventListener('focus', payTransportFocus)
+  // The bottom panel's pane shows the replay transport and the moments only.
+  const isBottomPanel = document.body.classList.contains('moments-only')
+  /**
+   * Lists the disclosures around a control, the nearest first; read by {@link disclosureSummaryAround}.
+   * @param control - The control; a summary's own disclosure is the first of the list.
+   * @returns The disclosures, empty for a control in none and for one that was taken out of the page.
+   * @example disclosuresAround(button('read-app')!).map((disclosure) => disclosure.id) // => ['reader-options']
+   */
+  const disclosuresAround = (control: Element): HTMLDetailsElement[] => {
+    const around: HTMLDetailsElement[] = []
+    for (
+      let disclosure = control.closest('details');
+      disclosure;
+      disclosure = disclosure.parentElement?.closest('details') ?? null
+    )
+      around.push(disclosure)
+    return around
+  }
+  /**
+   * Finds the summary a lost focus goes to first: the one of the nearest disclosure around the control that left which is still shown. Read by {@link focusTargetFor}.
+   * A disclosure that closed under the focus, and a control that left inside an open one, both keep the focus beside the place the learner was at.
+   * @param leaving - The control that left while it held the focus.
+   * @returns
+   * - A disclosure around the control still shows its summary: that summary (never the control itself)
+   * - Otherwise: `undefined`
+   * @example disclosureSummaryAround(button('read-app')!)?.textContent // => 'Study view and pane controls'
+   */
+  const disclosureSummaryAround = (leaving: Element): HTMLElement | undefined =>
+    disclosuresAround(leaving)
+      .map((disclosure) =>
+        disclosure.querySelector<HTMLElement>(':scope > summary'),
+      )
+      .find(
+        (summary): summary is HTMLElement =>
+          summary !== null && summary !== leaving && summary.checkVisibility(),
+      )
+  /**
+   * Gives the control of the pane that stays and takes a lost focus when no disclosure around the control that left is shown; read by {@link focusTargetFor}.
+   * @param leaving - The control that left while it held the focus.
+   * @returns
+   * - In the Study pane: the selected content tab
+   * - In the bottom panel's pane, which has no content tabs: Play or the next transport control that can be used while the transport is shown, else the first control the pane shows
+   * @example stayingControl(button('stop')!)?.id // => 'live-tab'
+   */
+  const stayingControl = (leaving: HTMLElement): HTMLElement | undefined => {
+    if (isBottomPanel)
+      return usableTransportControl({
+        leaving,
+        preferred: options.replayTransportFocus,
+        section: 'study-content',
+      })
+    return (
+      document.querySelector<HTMLElement>('[role=tab][aria-selected=true]') ??
+      undefined
+    )
+  }
+  /**
+   * Gives the control that holds the keyboard focus now; read by {@link readFocusHolder}.
+   * @returns The focused element, or `undefined` while the focus stands on the document body.
+   * @example focusedControl()?.id // => 'playback-toggle'
+   */
+  const focusedControl = (): HTMLElement | undefined => {
+    const active = document.activeElement
+    return active instanceof HTMLElement && active !== document.body
+      ? active
+      : undefined
+  }
+  /**
+   * Gives the holder of the focus that stays the holder although the document body has the focus: one the page took the focus from, by disabling it or by taking it out. Read by {@link readFocusHolder}.
+   * A control that is shown and enabled lost the focus by the learner's doing and is no holder any more.
+   * @returns The holder {@link focusHolder} names when it is disabled or no longer shown, else `undefined`.
+   * @example keptFocusHolder()?.dataset.action // => 'stop' while Stop is disabled for a pending request
+   */
+  const keptFocusHolder = (): HTMLElement | undefined =>
+    focusHolder &&
+    (focusHolder.matches(':disabled') || !focusHolder.checkVisibility())
+      ? focusHolder
+      : undefined
+  /**
+   * Reads at which control the keyboard stands, before a message of the host changes the page; called by the listener that is added ahead of the one that handles the message.
+   * @example readFocusHolder()
+   */
+  const readFocusHolder = (): void => {
+    focusHolder = focusedControl() ?? keptFocusHolder()
+  }
+  /**
+   * Says whether the pane may place the focus for a holder now: this document has the focus, and the focus stands on the document body or on the holder itself. Read by {@link settleFocus}.
+   * A pane the learner left takes no focus back, and a learner who put the focus on another control keeps it.
+   * @param holder - The control at which the keyboard stood.
+   * @example isFocusOpenFor(button('stop')!) // => true after the run stopped under a focused Stop
+   */
+  const isFocusOpenFor = (holder: HTMLElement): boolean =>
+    document.hasFocus() &&
+    (document.activeElement === document.body ||
+      document.activeElement === holder)
+  /**
+   * Gives the control that takes the focus of a holder; read by {@link settleFocus}.
+   * @param holder - The control at which the keyboard stood.
+   * @returns
+   * - The holder left the page: the summary of the nearest disclosure around it that is still shown, else {@link stayingControl}
+   * - The holder is shown: `undefined`, its focus is its own
+   * @example focusTargetFor(button('stop')!)?.id // => 'live-tab' once the live strip has left
+   */
+  const focusTargetFor = (holder: HTMLElement): HTMLElement | undefined =>
+    holder.checkVisibility()
+      ? undefined
+      : (disclosureSummaryAround(holder) ?? stayingControl(holder))
+  /**
+   * Gives the focus of a control that left the page a control that stays, so it does not rest on the document body. Called after every message of the host, by a listener added after the one that handles the message, and at this document's focus event.
+   * A part with a rule of its own (the Show Variables buttons, Saved studies) has moved its focus before, and that focus is kept.
+   * @example settleFocus()
+   */
+  const settleFocus = (): void => {
+    const holder = focusHolder
+    if (!holder || !isFocusOpenFor(holder)) return
+    focusTargetFor(holder)?.focus({ preventScroll: true })
+  }
+  window.addEventListener('focus', settleFocus)
   /** Says whether the transport's status describes a shown moment, which is when it carries the covered label: not while the replay failed, nor while a requested moment is pending. Read by {@link coveredAnnouncement}. @example showsMomentStatus(recording) // => false for a failed replay */
   const showsMomentStatus = (
     recording: NonNullable<StudyViewMessage['recording']>,
@@ -1560,8 +1680,6 @@ function studyClient(
     recording.applicationCovered && !isLoading && showsMomentStatus(recording)
       ? options.applicationCovered.announcement
       : ''
-  // The bottom panel's pane shows the replay transport and the moments only.
-  const isBottomPanel = document.body.classList.contains('moments-only')
   /**
    * Gives what a presentation that is neither being saved nor changing has to report; read by {@link presentationStatus}.
    * @param presentation - The presentation of the current Study message.
@@ -1671,6 +1789,8 @@ function studyClient(
     }
   }
   window.addEventListener('resize', offerClampedTitles)
+  // Listeners of one event run in the order they were added: this one reads the focus before the message changes the page.
+  window.addEventListener('message', readFocusHolder)
   window.addEventListener('message', (event) => {
     const message:
       | StudyViewMessage
@@ -2792,6 +2912,8 @@ function studyClient(
         : {}),
     })
   })
+  // Added after the listener that handles the message, so every part of the page is in its state for the message.
+  window.addEventListener('message', settleFocus)
   /** Tells the host whether this document holds the keyboard focus, which the host cannot ask a webview view; called at the window's focus and blur events and once at load. The host reads the Learning summary's last report when that view is hidden. @example reportFocus(true) */
   const reportFocus = (focused: boolean): void =>
     api.postMessage({ type: 'pane-focus', focused })
