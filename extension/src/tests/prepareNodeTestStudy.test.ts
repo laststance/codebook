@@ -183,3 +183,28 @@ test('an additional Node test stop must select its own exact citation anchor', a
     { code: 'INVALID_CONFIGURATION' },
   )
 })
+
+// Value: protects=a Node test run that reaches preparation on a node id its revision lacks naming that revision's nodes; fails_when=the Node test profile keeps the old sentence that names no node; why_new=only the repository profile's preparation is tested; seam=none
+test('a Node test start on a node id its selected revision does not have is refused before source acquisition, naming the revision’s nodes', async (context) => {
+  // Arrange: revision 1 of the book "interface" has the one node "theme".
+  const { books, sources, configuration, control } =
+    await nodeStudyHarness(context)
+  let acquisitions = 0
+  sources.prepare = async () => {
+    acquisitions++
+    throw new Error('Source acquisition should not start.')
+  }
+  // Act
+  const preparation = prepareNodeTestStudy(
+    { ...configuration, book: { ...configuration.book, nodeId: 'mode' } },
+    books,
+    control,
+  )
+  // Assert
+  await assert.rejects(preparation, {
+    code: 'BOOK_UNAVAILABLE',
+    message:
+      'configuration.book.nodeId mode does not exist in revision 1 of book interface, which has the node: theme. Use it, or publish your own document under its own book id and start on that revision.',
+  })
+  assert.equal(acquisitions, 0)
+})

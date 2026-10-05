@@ -2957,6 +2957,45 @@ test('a start on a node id its selected revision does not have is refused in the
   assert.equal(runtimes.length, 0)
 })
 
+// Value: protects=the codebook_start contract that a start on a revision the book lacks is refused in its own answer; fails_when=it is accepted and only its run fails, or the store's words are lost; why_new=no test starts on a missing revision; seam=none
+test('a start on a revision its book does not have is refused in the answer of codebook_start with the store’s sentence, and no run begins', async (context) => {
+  // Arrange: the book "interface" has revision 1 only.
+  const { service, configuration, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+
+  // Act
+  const refused = await client.callTool({
+    name: 'codebook_start',
+    arguments: {
+      instanceId: service.instanceId,
+      profile: 'repository-browser',
+      key: 'unpublished-revision',
+      configuration: {
+        ...configuration,
+        book: { ...configuration.book, revision: 7 },
+      },
+    },
+  })
+
+  // Assert
+  assert.equal(refused.isError, true)
+  assert.deepEqual(
+    z
+      .object({
+        error: z.object({ code: z.string(), message: z.string() }),
+      })
+      .parse(refused.structuredContent).error,
+    {
+      code: 'BOOK_UNAVAILABLE',
+      message:
+        'Book interface revision 7 is unavailable; no other revision was selected.',
+    },
+  )
+  assert.equal(service.records.size, 0)
+  assert.equal(runtimes.length, 0)
+})
+
 // Value: protects=an agent whose start names a stored book the store cannot read learning it from the start's own answer, with the cause; fails_when=the answer is "The study operation failed." without the store's words, or the run is accepted and fails later; why_new=Cycle 0045 review of N14d-16 (LOW: which failures of the book read refuse a start); seam=none
 test('a start on a stored book the store cannot read is refused in the answer of codebook_start with the store’s sentence and the read’s cause', async (context) => {
   // Arrange: the stored book "interface" is replaced by bytes that are not JSON.
@@ -2998,6 +3037,43 @@ test('a start on a stored book the store cannot read is refused in the answer of
   assert.equal(error.cause.startsWith('SyntaxError: '), true)
   assert.equal(service.records.size, 0)
   assert.equal(runtimes.length, 0)
+})
+
+// Value: protects=an agent that lost a start's answer recovering its original receipt with the identical start; fails_when=the start-time book check also runs for a repeated accepted key and refuses it; why_new=no test repeats a start through codebook_start; seam=none
+test('repeating an accepted start through codebook_start answers its original receipt although its stored book can no longer be read', async (context) => {
+  // Arrange: a start on the stored book "interface" is accepted, and the book's file is then replaced by bytes that are not JSON.
+  const { service, configuration, library, runtimes } =
+      await configuredServiceHarness(context),
+    client = await connectMcpClient(context, service)
+  const startArguments = {
+    instanceId: service.instanceId,
+    profile: 'repository-browser',
+    key: 'lost-answer',
+    configuration,
+  }
+  const accepted = await client.callTool({
+    name: 'codebook_start',
+    arguments: startArguments,
+  })
+  await service.record(
+    z.object({ data: receiptSchema }).parse(accepted.structuredContent).data,
+  ).preparation
+  await writeFile(
+    join(library.directory, 'interface.book.v2.json'),
+    '{ not json',
+  )
+
+  // Act
+  const repeated = await client.callTool({
+    name: 'codebook_start',
+    arguments: startArguments,
+  })
+
+  // Assert
+  assert.equal(repeated.isError, undefined, JSON.stringify(repeated.content))
+  assert.deepEqual(repeated.structuredContent, accepted.structuredContent)
+  assert.equal(service.records.size, 1)
+  assert.equal(runtimes.length, 1)
 })
 
 // Value: protects=a start whose book read fails with an error that is not the store's own refusal keeping the run that names the cause; fails_when=the start answers "The study operation failed." and the cause is lost from the run; why_new=Cycle 0045 review of N14d-16 (LOW); seam=the harness's book store, whose read is replaced by one that fails with a plain error
