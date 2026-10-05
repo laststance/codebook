@@ -1431,6 +1431,30 @@ test('a page served by Codebook says it is checking freshness until the first an
   assert.equal(label?.textContent, 'Wiki source current')
 })
 
+// Value: protects=the reader's work on each return to a Wiki tab; fails_when=the tab's visibilitychange and the window's focus of one return each start a look, so every return asks for the update state twice; why_new=Cycle 0045 pre-landing review PL-11 (row 19 of Cycle 0046); seam=the fake page's held answer of the first look
+test('a return to the tab that shows it and focuses its window asks the reader for the update state once', async () => {
+  // Arrange: the tab was hidden for a minute; the answer of the return's first look is still on its way when the second event arrives.
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'current-shell',
+  )
+  const statusReads = (): number =>
+    page.reader.requests.filter((request) => request === 'api/update-status')
+      .length
+  await page.setTabHidden(true)
+  await page.advance(60_000)
+  const readsBeforeTheReturn = statusReads()
+  page.holdNext('api/update-status')
+
+  // Act: the browser fires both events of the one return.
+  await page.setTabHidden(false)
+  await page.focusWindow()
+  await page.release('api/update-status')
+
+  // Assert
+  assert.equal(statusReads() - readsBeforeTheReturn, 1)
+})
+
 test('a second return to the page within the interval asks for the update state but not for freshness again', async () => {
   // Arrange
   const page = await openFakeWikiPage(
