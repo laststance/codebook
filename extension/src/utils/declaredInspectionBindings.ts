@@ -1,12 +1,40 @@
+/** How much one character changes the depth of a destructuring pattern: an opening bracket goes one deeper, a closing one back out. */
+const PATTERN_DEPTH_STEP: Readonly<Record<string, number>> = {
+  '{': 1,
+  '[': 1,
+  '}': -1,
+  ']': -1,
+}
+
+/**
+ * Cuts a type annotation off a destructuring head, so `{ user }: Session` binds `user` and not `Session`; called by {@link declaredNames} for a head that begins with a pattern.
+ * @param head - A trimmed declaration head that begins with `{` or `[`.
+ * @returns The head up to the bracket that closes its first pattern, or the head itself when that bracket never closes (a default value ended the head inside the pattern).
+ * @example
+ * withoutTypeAnnotation('{ user }: Session') // => '{ user }'
+ * withoutTypeAnnotation('{ a: { b } }: Props') // => '{ a: { b } }'
+ */
+function withoutTypeAnnotation(head: string): string {
+  let depth = 0
+  // The pattern ends at the first character that brings the depth back to zero.
+  const closingIndex = head.split('').findIndex((character) => {
+    depth += PATTERN_DEPTH_STEP[character] ?? 0
+    return depth === 0
+  })
+  return closingIndex === -1 ? head : head.slice(0, closingIndex + 1)
+}
+
 /** Lists the names one declaration head binds: a plain name, or the targets of an object or array pattern. @example declaredNames('{ user, id: userId }') // ['user', 'userId'] */
 function declaredNames(head: string): string[] {
-  return head
+  const trimmed = head.trim()
+  const isPattern = /^[{[]/.test(trimmed)
+  return (isPattern ? withoutTypeAnnotation(trimmed) : trimmed)
     .split(/[{}[\],]/)
     .map((piece) => {
       const element = piece.trim().replace(/^\.\.\./, '')
       // In a pattern `key: name` binds the name; a plain declaration's `name: Type` binds the part before the colon.
       const [first = '', second] = element.split(':').map((part) => part.trim())
-      return /^[{[]/.test(head.trim()) && second !== undefined ? second : first
+      return isPattern && second !== undefined ? second : first
     })
     .filter((name) => /^[A-Za-z_$][\w$]*$/.test(name))
 }
