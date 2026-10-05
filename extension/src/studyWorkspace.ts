@@ -6155,8 +6155,7 @@ export class StudyWorkspace {
           await Promise.all([
             this.shownRecordingSelectionSaved,
             // A position save that was still queued must not write the playback file of a study that went to the Trash.
-            this.isRemovedStudy(bundle.studyId) ||
-            this.movingStudyId() === bundle.studyId
+            this.isStudyLeavingLibrary(bundle.studyId)
               ? Promise.resolve()
               : this.recordings!.savePreference({
                   version: 1,
@@ -13236,11 +13235,20 @@ export class StudyWorkspace {
     if (
       !studyId ||
       this.selection.studyId !== studyId ||
-      this.isRemovedStudy(studyId) ||
-      this.movingStudyId() === studyId
+      this.isStudyLeavingLibrary(studyId)
     )
       return
     this.shownRecordingSelectionSaved = this.saveSelection()
+  }
+
+  /**
+   * Says whether a study is moving to the Trash or was moved there by this window, so a queued write about it is dropped; the playback controller's position save and {@link saveShownRecordingSelection} ask it.
+   * @param studyId - The study the queued write names.
+   * @returns `true` while a confirmed removal moves its files or after {@link isRemovedStudy} reports it removed, otherwise `false`.
+   * @example if (this.isStudyLeavingLibrary(bundle.studyId)) return
+   */
+  private isStudyLeavingLibrary(studyId: string): boolean {
+    return this.isRemovedStudy(studyId) || this.movingStudyId() === studyId
   }
 
   /** Retires only a replay-loading mode warning once the controller confirms its first position; playback changes call it. @example this.clearReadyReplayWarning() */
