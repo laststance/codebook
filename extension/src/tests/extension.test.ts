@@ -875,13 +875,17 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
             commands.set(name, action)
             return { dispose(): void {} }
           },
+          // The chat answers the request at once: the command settles with a completed response's result.
           executeCommand: async (name: string, options: unknown) => {
             submissions.push({ name, options })
+            return {}
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          // The update watches for the chat's first tool call; this chat makes none.
+          onDidOpenTextDocument: () => ({ dispose(): void {} }),
         },
         window: {
           registerUriHandler: (handler: {
@@ -907,6 +911,8 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
             notices.push(message)
             return Promise.resolve(undefined)
           },
+          onDidOpenTerminal: () => ({ dispose(): void {} }),
+          onDidStartTerminalShellExecution: () => ({ dispose(): void {} }),
         },
       },
       './environment': { requireWorkspace: () => projectRoot },
