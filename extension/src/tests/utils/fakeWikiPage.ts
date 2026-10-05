@@ -55,6 +55,8 @@ class PageElement {
   hidden = false
   /** How often the content of this element was written, so a test can tell a repeated announcement from one. */
   contentWriteCount = 0
+  /** How often an attribute of this element was set or removed, so a test can tell a repeated write from one; a browser's observers see every `setAttribute`, also with the value the attribute already has. */
+  attributeWriteCount = 0
   /** How often script moved focus here. */
   focusCount = 0
 
@@ -110,10 +112,12 @@ class PageElement {
     return this.attributes.get(name) ?? null
   }
   setAttribute(name: string, value: string): void {
+    this.attributeWriteCount += 1
     this.attributes.set(name, String(value))
   }
   removeAttribute(name: string): void {
-    this.attributes.delete(name)
+    // Removing an attribute the element does not have changes nothing, as in a browser.
+    if (this.attributes.delete(name)) this.attributeWriteCount += 1
   }
   hasAttribute(name: string): boolean {
     return this.attributes.has(name)

@@ -871,6 +871,25 @@ test('thirty looks at an unchanged run write the status line once', async () => 
   assert.equal(status?.contentWriteCount, writesAfterTheFirstLook)
 })
 
+test('thirty looks at an unchanged run write the update button’s attributes once', async () => {
+  // Arrange
+  const page = await openFakeWikiPage(
+    await readServedWikiScript(),
+    'published-before-the-group',
+    { updateStatus: runningInVsCode, freshness: 'changed' },
+  )
+  const link = page.find('.wiki-update')
+  const writesAfterTheFirstLook = link?.attributeWriteCount
+
+  // Act
+  await page.advance(60_000)
+
+  // Assert
+  assert.equal(link?.attributeWriteCount, writesAfterTheFirstLook)
+  assert.equal(link?.getAttribute('aria-disabled'), 'true')
+  assert.equal(link?.getAttribute('aria-describedby'), 'codebook-update-status')
+})
+
 test('a site published before the group existed is regrouped as freshness label, button, status line', async () => {
   // Arrange
   const script = await readServedWikiScript()

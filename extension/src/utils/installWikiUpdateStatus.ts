@@ -580,14 +580,22 @@ export function installWikiUpdateStatus(
   /** Chooses the text of the update link; asked by {@link showUpdateLink} before it compares the link's text. @param isRunning - Whether a run is active. @returns "Updating…" while a run is active, otherwise the label the page was published with. @example updateLinkText(false) // => 'Update LLM Wiki' */
   const updateLinkText = (isRunning: boolean): string =>
     isRunning ? 'Updating…' : updateLinkLabel
-  /** Holds the update link back while a run is active; it stays a focusable link, and its label and the status line say why. Called by {@link show} on every look and press. @param isRunning - Whether the sentence on the page is that of a run in progress. @returns Nothing; a page without the link is left alone. @example showUpdateLink(true) // the link reads "Updating…" and is `aria-disabled` */
+  /** Sets an attribute only when its value differs, so an unchanged look writes nothing: a browser's observers see every `setAttribute`, also one that sets the value the attribute already has. Called by {@link showUpdateLink} on every look while a run is active. @param element - The element to write. @param name - The attribute's name. @param value - The value it must have. @returns Nothing. @example setAttributeIfChanged(link, 'aria-disabled', 'true') // writes once; the second call changes nothing */
+  const setAttributeIfChanged = (
+    element: HTMLElement,
+    name: string,
+    value: string,
+  ): void => {
+    if (element.getAttribute(name) !== value) element.setAttribute(name, value)
+  }
+  /** Holds the update link back while a run is active; it stays a focusable link, and its label and the status line say why. Called by {@link show} on every look and press; it writes an attribute only when its value changes. @param isRunning - Whether the sentence on the page is that of a run in progress. @returns Nothing; a page without the link is left alone. @example showUpdateLink(true) // the link reads "Updating…" and is `aria-disabled` */
   const showUpdateLink = (isRunning: boolean): void => {
     if (!updateLink) return
     const label = updateLinkText(isRunning)
     if (updateLink.textContent !== label) updateLink.textContent = label
     if (isRunning) {
-      updateLink.setAttribute('aria-disabled', 'true')
-      updateLink.setAttribute('aria-describedby', statusRegion.id)
+      setAttributeIfChanged(updateLink, 'aria-disabled', 'true')
+      setAttributeIfChanged(updateLink, 'aria-describedby', statusRegion.id)
       return
     }
     updateLink.removeAttribute('aria-disabled')
