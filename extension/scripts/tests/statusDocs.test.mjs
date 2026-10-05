@@ -249,6 +249,12 @@ test('the test execution guide says that a checkout changed while the package te
   // Arrange
   const guide = await readDocument('docs/qa/test-execution.md')
   const build = await readDocument('extension/scripts/utils/buildPackage.mjs')
+  const guard = await readDocument(
+    'extension/scripts/utils/assertStableCheckout.mjs',
+  )
+  const constants = await readDocument(
+    'extension/scripts/utils/packageConstants.mjs',
+  )
   const commandRunner = await readDocument(
     'extension/scripts/utils/runPackageCommand.mjs',
   )
@@ -256,7 +262,7 @@ test('the test execution guide says that a checkout changed while the package te
     'extension/scripts/tests/package.test.mjs',
   )
 
-  // Act: the guide's paragraph, the guard's sentence in the build, and how often the test file builds for its tests.
+  // Act: the guide's paragraph, where the build asks the guard, how many paths the guard names, and how often the test file builds for its tests.
   const paragraph =
     guide
       .split('\n\n')
@@ -265,6 +271,11 @@ test('the test execution guide says that a checkout changed while the package te
           'The checkout must also stay as it is while the package tests run.',
         ),
       ) ?? ''
+  const guardCalls = build.match(/await assertStableCheckout\([^)]*\)/g)
+  const shownPathLimit =
+    /^export const CHECKOUT_CHANGE_SHOWN_PATH_LIMIT = (\d+)$/m.exec(
+      constants,
+    )?.[1]
   const sharedBuilds = packageTests.match(
     /^ {2}receipt = await buildPackage\(repository, artifact\)$/gm,
   )
@@ -272,20 +283,23 @@ test('the test execution guide says that a checkout changed while the package te
   // Assert
   assert.equal(
     paragraph,
-    "The checkout must also stay as it is while the package tests run. `extension/scripts/tests/package.test.mjs` builds one VSIX in a hook that every test of the file shares, and that build reads the checkout's identity before and after its compilation: the revision, whether Git reports any change (a tracked file that differs or an untracked file that is not ignored, anywhere in the repository) and the hashes of the package's sources. When the two readings differ, for example because a document was regenerated or a commit was made while the compiler ran, the build is refused with `Source inputs changed during compilation. Retry from a stable checkout.` (`Source inputs changed during packaging. Retry from a stable checkout.` when the change came after the compiler had ended) and every test of the file fails with that one message. The list of failed titles does not show it: read the first failure. It is no defect of the package: leave the checkout untouched until the run has ended, then run it again. A command of the build that fails (`Package command failed: pnpm (<code>)`) or runs longer than three minutes (`Package command exceeded its time limit.`) fails every test of the file in the same way, with its own sentence.",
+    'The checkout must also stay as it is while the package tests run. `extension/scripts/tests/package.test.mjs` builds one VSIX in a hook that every test of the file shares, and that build reads the checkout\'s identity before and after its compilation: the revision, whether Git reports any change (a tracked file that differs or an untracked file that is not ignored, anywhere in the repository) and the hashes of the package\'s sources. When the two readings differ, for example because a document was regenerated or a commit was made while the compiler ran, the build is refused with one sentence that names what changed, for example `The checkout changed during compilation: Git reported no change before and reports changes now ("PROJECT_STATE.md"). Retry from a stable checkout.` (`during packaging` when the change came after the compiler had ended; a new revision is named as `the revision went from <before> to <now>` and changed bytes of a source as `the package\'s sources changed ("<path>")`; at most five paths are named), and every test of the file fails with that one message. The list of failed titles does not show it: read the first failure. It is no defect of the package: leave the checkout untouched until the run has ended, then run it again. A command of the build that fails (`Package command failed: pnpm (<code>)`) or runs longer than three minutes (`Package command exceeded its time limit.`) fails every test of the file in the same way, with its own sentence.',
   )
-  assert.equal(
-    build.includes(
-      "'Source inputs changed during compilation. Retry from a stable checkout.',",
-    ),
-    true,
+  // The guide's example is put together from the guard's own words, and the build asks the guard after both of its phases.
+  assert.deepEqual(
+    [
+      "`The checkout changed during ${phase}: ${changes.join('; ')}. Retry from a stable checkout.`",
+      '`Git reported no change before and reports changes now (${namedPaths(paths)})`',
+      '`the revision went from ${before.revision} to ${now.revision}`',
+      "`the package's sources changed (${namedPaths([...new Set(changedPaths)].toSorted())})`",
+    ].filter((words) => !guard.includes(words)),
+    [],
   )
-  assert.equal(
-    build.includes(
-      "'Source inputs changed during packaging. Retry from a stable checkout.',",
-    ),
-    true,
-  )
+  assert.equal(shownPathLimit, '5')
+  assert.deepEqual(guardCalls, [
+    "await assertStableCheckout(repository, before, directory, 'compilation')",
+    "await assertStableCheckout(repository, before, directory, 'packaging')",
+  ])
   assert.equal(
     commandRunner.includes(
       '`Package command failed: ${executable} (${signal ?? code})`',
