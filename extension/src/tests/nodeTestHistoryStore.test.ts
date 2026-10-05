@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mock, test } from 'node:test'
@@ -498,6 +506,46 @@ test('a new Node test is refused when saved studies and histories reach the conf
       [first.studyId],
     )
     assert.equal((await store.read(first.studyId)).status, 'partial')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=starting a Node test in a history directory that holds an entry nobody's history owns; fails_when=every entry of the directory is counted against the saved study limit, so a stray file or folder that no list shows makes a store with room refuse the start as full; why_new=Cycle 0046 package HYA, found while working F1 (row 57); seam=none
+test('a stray file and a stray folder in the Node history directory take no place of the saved study limit, and a store that holds the limit still refuses a new test', async () => {
+  // Arrange: a limit of one history, and a history directory that holds a stray file and a stray folder.
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-stray-'),
+  )
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(directory, workspaceKey, () => 1)
+  const historyDirectory = join(directory, NODE_TEST_HISTORY_DIRECTORY)
+  await mkdir(join(historyDirectory, 'notes'), { recursive: true })
+  await writeFile(join(historyDirectory, '.DS_Store'), '')
+  const first = nodeTestHistoryHeader(workspaceKey),
+    second = nodeTestHistoryHeader(workspaceKey)
+  try {
+    // Act: the first test starts beside the stray entries; the second meets a store that holds its one history.
+    const writer = await store.start(first)
+    await writer.finish('partial', 'The learner stopped this run.')
+    const secondStart = await store.start(second).then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      secondStart,
+      'Error: Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
+    )
+    assert.deepEqual(
+      (await store.list()).map((entry) => entry.studyId),
+      [first.studyId],
+    )
+    assert.deepEqual(
+      (await readdir(historyDirectory)).sort(),
+      ['.DS_Store', first.studyId, 'notes'].sort(),
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

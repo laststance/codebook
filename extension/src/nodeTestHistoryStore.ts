@@ -49,6 +49,8 @@ const LEARNING_DECISION_FILE = 'learning-decision.json'
 const LEARNING_MATERIAL_FILE = 'learning-material.json'
 const HEADER_LIMIT_BYTES = 8_388_608
 const REASON_LIMIT_CHARS = 1_024
+/** The name of a history's folder: its study id. Any other entry of the history directory (a `.DS_Store`, a stray folder) is nobody's history. */
+const HISTORY_IDENTITY = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/
 
 /** Appends bounded, workspace-bound Node execution evidence before test input and seals it after owned cleanup. @example const writer = await store.start(header); await writer.appendStop(stop); await writer.finish('complete') */
 export class NodeTestHistoryStore {
@@ -69,7 +71,13 @@ export class NodeTestHistoryStore {
     this.directory = join(learningDirectory, NODE_TEST_HISTORY_DIRECTORY)
   }
 
-  /** Reserves a private history before the owned test process can start. @example const writer = await store.start(header) */
+  /**
+   * Reserves a private history before the owned test process can start; called by {@link StudyService} when it admits a Node test run.
+   * @param input - The history's header without its version; its study id names the history's folder.
+   * @returns The writer of the reserved history.
+   * @throws When the header belongs to another workspace or exceeds its storage limit, and when the saved studies and the histories together reach the saved study limit. Only entries named like a study id count as histories: a stray entry of the history directory, which no list shows, takes no place of the limit.
+   * @example const writer = await store.start(header)
+   */
   async start(
     input: Omit<NodeTestHistoryHeader, 'version'>,
   ): Promise<NodeTestHistoryWriter> {
@@ -81,8 +89,11 @@ export class NodeTestHistoryStore {
       mode: PRIVATE_DIRECTORY_MODE,
     })
     await chmod(this.directory, PRIVATE_DIRECTORY_MODE)
-    const entries = await readdir(this.directory)
-    if (entries.length + (await this.savedArtifactCount()) >= this.capacity())
+    // Only a name a history can have is counted, as the list shows only those.
+    const histories = (await readdir(this.directory)).filter((name) =>
+      HISTORY_IDENTITY.test(name),
+    )
+    if (histories.length + (await this.savedArtifactCount()) >= this.capacity())
       throw new Error(
         'Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.',
       )
@@ -517,7 +528,7 @@ export class NodeTestHistoryStore {
   }
 
   private path(studyId: string): string {
-    if (!/^[0-9a-f-]{36}_[0-9a-f-]{36}$/.test(studyId))
+    if (!HISTORY_IDENTITY.test(studyId))
       throw new Error('Invalid Node history identity.')
     return join(this.directory, studyId)
   }
