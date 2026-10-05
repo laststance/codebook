@@ -481,6 +481,18 @@ export class OwnedRepositoryBreakpoint {
   }
 
   /**
+   * Reads the id a session's adapter gave the owned breakpoint, also where its owner refuses the place, so a `stopped` event that names that id is told to belong to this breakpoint; {@link ConfiguredBrowserRun} asks it for the browser session, to which the editor sends a server stop's breakpoint too.
+   * Like {@link movedTo} it never throws.
+   * @param session - The debug session whose adapter acknowledged the breakpoint.
+   * @returns The adapter's id of the owned breakpoint, or `undefined` while that session's latest registration is unanswered or was refused.
+   * @example
+   * owned.acknowledgedId(browserSession) // => 12
+   */
+  acknowledgedId(session: vscode.DebugSession): number | undefined {
+    return this.registrations.get(session.id)?.receipt?.breakpointId
+  }
+
+  /**
    * Reads current ACK authority synchronously at the final input boundary; {@link registered} also polls it during setup.
    * @param session - The debug session whose adapter acknowledges the breakpoint.
    * @returns A copy of the adapter's current receipt, or `undefined` while the latest registration request is unanswered.
@@ -693,9 +705,29 @@ export class OwnedRepositoryBreakpoint {
       registration.refusedAt = verifiedAt
       return
     }
+    this.standAt(registration, receipt, verifiedAt, moved)
+  }
+
+  /**
+   * Makes the acknowledged breakpoint stand at a verified place: the refused place is cleared and the receipt rebuilt, so a place of an earlier reply never outlives the adapter's news; called by {@link takeBreakpointNews} and {@link retakeRefusedPlace}.
+   * @param registration - The session's registration.
+   * @param receipt - The receipt as it stood; its ids are kept.
+   * @param verifiedAt - Where the adapter verified the breakpoint.
+   * @param moved - `{ movedTo }` when that place is on another line than requested, `{}` otherwise ({@link verifiedPlaces}).
+   * @example
+   * this.standAt(registration, receipt, { line: 35, column: 5 }, { movedTo: { line: 35, column: 5 } })
+   */
+  private standAt(
+    registration: {
+      receipt?: RegistrationReceipt
+      refusedAt?: VerifiedPlace
+    } & VerifiedRegistration,
+    receipt: RegistrationReceipt,
+    verifiedAt: VerifiedPlace,
+    moved: { movedTo?: VerifiedPlace },
+  ): void {
     registration.refusedAt = undefined
     registration.verifiedAt = verifiedAt
-    // The receipt is rebuilt so a place of an earlier reply never outlives the adapter's news.
     registration.receipt = {
       sessionId: receipt.sessionId,
       requestSequence: receipt.requestSequence,
@@ -703,6 +735,37 @@ export class OwnedRepositoryBreakpoint {
       status: 'bound',
       ...moved,
     }
+  }
+
+  /**
+   * Judges the place the adapter's latest news put the acknowledged breakpoint at once more, after its owner's rule changed; {@link ConfiguredBrowserRun} calls it when the debugger's own break locations accept a place the source map alone refused ({@link ConfiguredBrowserRun.registeredStop}).
+   * Only news can be judged again: a registration reply that was refused keeps its failure, because the reply's breakpoint was never taken as the owned one, and its owner requests the breakpoint again instead.
+   * @param session - The debug session whose adapter sent the news.
+   * @returns `true` when the session's acknowledged breakpoint had a refused place that the owner's rule now accepts, and the receipt stands there; `false` otherwise, and nothing changes.
+   * @example
+   * owned.retakeRefusedPlace(session) // => true for news at 32:11 that the rebuilt rule accepts
+   */
+  retakeRefusedPlace(session: vscode.DebugSession): boolean {
+    const acknowledged = this.acknowledgedRegistration(session),
+      refusedAt = acknowledged?.registration.refusedAt
+    // Nothing was refused by news, or the owner's rule still refuses the place.
+    if (
+      !acknowledged ||
+      !refusedAt ||
+      !this.acknowledgesPosition({ verified: true, ...refusedAt })
+    )
+      return false
+    const { verifiedAt, ...moved } = this.verifiedPlaces({
+      verified: true,
+      ...refusedAt,
+    })
+    this.standAt(
+      acknowledged.registration,
+      acknowledged.receipt,
+      verifiedAt ?? refusedAt,
+      moved,
+    )
+    return true
   }
 
   /** Waits for the chosen adapter's ACK without claiming that a lazy module has loaded; runtime preparation calls this before input. @example (await owned.registered(session, signal)).status // 'pending' */
