@@ -2,12 +2,13 @@ name: Storage locks (Windows)
 
 # The storage lock is taken over with a hard link, a directory rename onto an existing directory, a process probe and a
 # query for the start of a process (PowerShell on Windows), which Windows answers differently from Linux; the Test
-# workflow runs on Linux only. The marker of a Wiki update is created, claimed and judged with the same calls. This job
-# runs the lock and marker test files on Windows whenever a file those tests load, or the Node release they run on,
-# changes. The two constants files are left out of the filter although
-# extension/src/constants.ts holds the lock's times, its path and its file modes: they change with most pull requests.
-# A change there, to the lockfile or to the build that emits the tests is seen by the weekly run instead, within a week
-# of reaching main.
+# workflow runs on Linux only. The marker of a Wiki update is created, claimed and judged with the same calls, and it is
+# read by the reader of Wiki metadata files, which Windows gives no open flag to refuse a link with: there the reader
+# looks at the path first and reads only the file it looked at. This job runs the lock, marker and reader test files on
+# Windows whenever a file those tests load, or the Node release they run on, changes. The two constants files are left
+# out of the filter although extension/src/constants.ts holds the lock's times, its path and its file modes: they change
+# with most pull requests. A change there, to the lockfile or to the build that emits the tests is seen by the weekly
+# run instead, within a week of reaching main.
 on:
   push:
     branches: [main]
@@ -28,6 +29,7 @@ on:
       - extension/src/tests/readLiveWikiUpdateMarker.test.ts
       - extension/src/tests/readProcessStart.test.ts
       - extension/src/tests/readRecordedOwner.test.ts
+      - extension/src/tests/readWikiRegularFile.test.ts
       - extension/src/tests/removeStaleStorageClaims.test.ts
       - extension/src/tests/removeStaleStorageLock.test.ts
       - extension/src/tests/utils/answerKernelBootId.ts
@@ -78,6 +80,7 @@ on:
       - extension/src/tests/readLiveWikiUpdateMarker.test.ts
       - extension/src/tests/readProcessStart.test.ts
       - extension/src/tests/readRecordedOwner.test.ts
+      - extension/src/tests/readWikiRegularFile.test.ts
       - extension/src/tests/removeStaleStorageClaims.test.ts
       - extension/src/tests/removeStaleStorageLock.test.ts
       - extension/src/tests/utils/answerKernelBootId.ts
@@ -150,4 +153,4 @@ jobs:
 
       - name: Run the storage lock tests
         working-directory: extension
-        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js
+        run: node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js

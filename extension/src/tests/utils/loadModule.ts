@@ -6,7 +6,7 @@ import { runInNewContext } from 'node:vm'
 /** The real `clearTimeout`, kept from before any test fakes timers, so a loaded module can still cancel a timer it armed before the clock was faked. */
 const realClearTimeout = clearTimeout
 
-/** Injects only editor effects into compiled boundary modules while preserving actual Node/SDK code. @example await loadModule<typeof environmentModule>(path, {vscode: stub}) */
+/** Injects only editor effects into compiled boundary modules while preserving actual Node/SDK code. @example await loadModule<typeof import('../../environment')>(path, {vscode: stub}) */
 export async function loadModule<Module>(
   path: string,
   dependencies: Record<string, unknown>,

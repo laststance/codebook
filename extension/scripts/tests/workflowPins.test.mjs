@@ -13,6 +13,8 @@ import { dirname, join, posix } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import ts from 'typescript'
+
 import { runCommandsOf } from './utils/runCommandsOf.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -106,24 +108,58 @@ function pathFiltersOf(workflow) {
 }
 
 /**
+ * Takes the comments out of a TypeScript source and leaves every other character where it was, so {@link loadedPathsOf} does not read an import that a comment or a docstring only quotes as a load.
+ *
+ * The TypeScript parser says where the comments are: they stand in the space before a token (a docstring before the first token of its declaration), so two slashes inside a string, a template or a regular expression start no comment. A comment's characters become spaces and its line breaks stay.
+ *
+ * @param source - The source's text.
+ * @returns The text with the same length and the same lines, without its line comments, block comments and docstrings.
+ * @example
+ * withoutComments("import './setup' // import './old'\n") // => "import './setup'                  \n"
+ */
+function withoutComments(source) {
+  const file = ts.createSourceFile(
+    'source.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS,
+  )
+  const characters = source.split('')
+  const blankBefore = (node) => {
+    const parts = node.getChildren(file)
+    if (parts.length > 0) return parts.forEach(blankBefore)
+    // Before a token, from the end of the one before it, stand only white space and comments.
+    const tokenStart = node.getStart(file)
+    for (let index = node.pos; index < tokenStart; index += 1)
+      if (characters[index] !== '\n') characters[index] = ' '
+  }
+  blankBefore(file)
+  return characters.join('')
+}
+
+/**
  * Lists the files a TypeScript source loads by a relative path, in every form the extension's sources and tests use, so the closure of a test file leaves none of them out.
  *
  * The forms: `from '…'` (also of `import type` and of `export`), a side-effect `import '…'`, `import('…')`, `require('…')`, and a compiled module named from `__dirname` (`loadModule(resolve(__dirname, '../x.js'), …)`, `join(__dirname, 'utils', 'x.js')`). A `__dirname` path that is no `.js` module (a document, a manifest, a folder) is data the test reads and is not listed. A package or a Node module is not part of a path filter.
  *
+ * A comment is not read ({@link withoutComments}): an import that a docstring's example quotes loads nothing, and would widen a path filter unseen. A string is read like code, because a test can hand a process its script as text; a quoted import there widens the filter, or fails the pin by name when it names no file.
+ *
  * @param source - The source's text.
  * @returns The paths as written, relative to the source's folder: the specifiers first, then the compiled modules.
  * @example
- * loadedPathsOf("import './setup'\nconst lock = require('../utils/lock')\n") // => ['./setup', '../utils/lock']
+ * loadedPathsOf("import './setup'\nconst lock = require('../utils/lock') // not require('../utils/old')\n") // => ['./setup', '../utils/lock']
  */
 function loadedPathsOf(source) {
+  const code = withoutComments(source)
   const relativePath = `['"](\\.{1,2}/[^'"]+)['"]`
   const specifiers = [
     new RegExp(`\\bfrom\\s*${relativePath}`, 'g'),
     new RegExp(`\\bimport\\s*${relativePath}`, 'g'),
     new RegExp(`\\b(?:import|require)\\(\\s*${relativePath}`, 'g'),
-  ].flatMap((form) => [...source.matchAll(form)].map((match) => match[1]))
+  ].flatMap((form) => [...code.matchAll(form)].map((match) => match[1]))
   const compiledModules = [
-    ...source.matchAll(
+    ...code.matchAll(
       /\b(?:resolve|join)\(\s*__dirname((?:\s*,\s*['"][^'"]+['"])+)\s*,?\s*\)/g,
     ),
   ]
@@ -331,6 +367,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
     'extension/src/tests/processStartFormHere.test.ts',
     'extension/src/tests/namesMachineInClear.test.ts',
+    'extension/src/tests/readWikiRegularFile.test.ts',
   ])
   const actionReferences = workflow
     .split('\n')
@@ -338,7 +375,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     .filter((line) => line.startsWith('uses: '))
   const settings = workflow.split('\n').map((line) => line.trim())
 
-  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the sixteen test files
+  // Assert: both triggers have one filter, the workflow itself, the Node release and every source the seventeen test files
   // load; only the two constants files, which most pull requests change, are left out.
   assert.deepEqual(pushFilter, [
     '.github/workflows/storage-locks-windows.yml',
@@ -357,6 +394,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/readLiveWikiUpdateMarker.test.ts',
     'extension/src/tests/readProcessStart.test.ts',
     'extension/src/tests/readRecordedOwner.test.ts',
+    'extension/src/tests/readWikiRegularFile.test.ts',
     'extension/src/tests/removeStaleStorageClaims.test.ts',
     'extension/src/tests/removeStaleStorageLock.test.ts',
     'extension/src/tests/utils/answerKernelBootId.ts',
@@ -408,7 +446,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
   assert.deepEqual(runCommandsOf(workflow), [
     'git config --global core.autocrlf false',
     'node scripts/build-fast.mjs',
-    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js',
+    'node --test dist/tests/withStorageLock.test.js dist/tests/isProcessGone.test.js dist/tests/currentStorageOwner.test.js dist/tests/isFromEarlierBoot.test.js dist/tests/isSameStorageMachine.test.js dist/tests/readBootIdentity.test.js dist/tests/readProcessStart.test.js dist/tests/isRecordedOwnerGone.test.js dist/tests/readRecordedOwner.test.js dist/tests/removeStaleStorageLock.test.js dist/tests/removeStaleStorageClaims.test.js dist/tests/canJudgeOwnerHere.test.js dist/tests/claimWikiUpdateMarker.test.js dist/tests/readLiveWikiUpdateMarker.test.js dist/tests/processStartFormHere.test.js dist/tests/namesMachineInClear.test.js dist/tests/readWikiRegularFile.test.js',
   ])
   assert.deepEqual(actionReferences, [
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
@@ -565,6 +603,48 @@ test('a loaded path that names no source file fails the pin with the file that l
       message:
         "src/tests/lock.test.ts loads '../utils/probe', which names no source file (looked for src/utils/probe.ts, src/utils/probe/index.ts).",
     })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Cycle 0046 row 72: the closure matched its patterns on the whole text, so the example in the docstring of a test helper, which quotes `import('../../environment')`, made the Windows job's path filter the whole runtime (156 files).
+test('a module that a comment or a docstring of a test file only quotes is not among the sources the test file loads, while a load on the same line as a comment or after two slashes in a string still is', async () => {
+  // Arrange: a test file that loads two modules and quotes six further ones, which do not exist, in a line comment, a block comment, a docstring and a comment a build keeps.
+  const root = await mkdtemp(join(tmpdir(), 'codebook-workflow-pins-'))
+  try {
+    await mkdir(join(root, 'src/tests'), { recursive: true })
+    await mkdir(join(root, 'src/utils'), { recursive: true })
+    await writeFile(
+      join(root, 'src/tests/lock.test.ts'),
+      [
+        "/*! Before a build this file read: import './quotedInAKeptComment' */",
+        "// import './quotedInALineComment'",
+        "import { owner } from '../utils/owner' // was: from '../utils/quotedAfterCode'",
+        "/* const lock = require('../utils/quotedInABlockComment') */",
+        '/**',
+        ' * Loads a module with stand-ins.',
+        " * @example await loadModule<typeof import('../utils/quotedInADocstring')>(resolve(__dirname, '../utils/quotedFromDirname.js'), {})",
+        ' */',
+        'function loadModule() {}',
+        "const address = 'http://localhost//wiki'; const probe = require('../utils/probe')",
+      ].join('\n'),
+    )
+    await writeFile(join(root, 'src/utils/owner.ts'), '')
+    await writeFile(join(root, 'src/utils/probe.ts'), '')
+
+    // Act
+    const loadedSources = await sourcesLoadedBy(
+      ['src/tests/lock.test.ts'],
+      root,
+    )
+
+    // Assert: the two modules the code loads; a quoted module would fail the walk, because it names no file.
+    assert.deepEqual(loadedSources, [
+      'src/tests/lock.test.ts',
+      'src/utils/owner.ts',
+      'src/utils/probe.ts',
+    ])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
