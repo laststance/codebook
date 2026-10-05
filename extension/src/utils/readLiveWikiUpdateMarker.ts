@@ -168,11 +168,11 @@ async function isVerifiedLiveOwner(
 
 /**
  * Says whether the process a marker names no longer exists; called by {@link mayMarkerOwnerRun} for a marker that is neither verified nor ahead of the clock.
- * A marker of this build names its machine by pseudonyms and is judged like every owner record ({@link isRecordedOwnerGone}): one of another machine, or of another system of this computer, is never gone here and counts until it expires. A marker of 0.2.29.0 names no machine, and its process id is probed here, as that build does.
+ * A marker of this build names its machine by pseudonyms and is judged like every owner record ({@link isRecordedOwnerGone}): one of another machine, of another system or pid namespace of this computer, of a Linux window whose pid namespace could not be read, or of a window whose own process start could not be read (its marker records none) is never gone by its process id here and counts until it expires; the last is gone only when it was recorded under another kernel boot id. A marker of 0.2.29.0 names no machine, and its process id is probed here, as that build does.
  * Limit: two computers with one host name look like one, so a process id of the other is probed here.
  * @param marker - The marker beside the Wiki.
  * @param judgement - The identity of this process and the reader of process starts.
- * @returns `true` for an owner of this machine whose process id names no process, whose process began at another time than recorded, or that was recorded under another kernel boot; `false` while the owner may run, also one this user may not signal.
+ * @returns `true` for an owner of this machine that recorded its process start and whose process id names no process or whose process began at another time than recorded, and for one recorded under another kernel boot; `false` while the owner may run, also one this user may not signal.
  * @example
  * await isMarkerOwnerGone({ pid: 2 ** 22 + 1, windowId: '3f6c', host: 'vscode', startedAtMs: 0 }, judgement) // => true where no such process exists
  */

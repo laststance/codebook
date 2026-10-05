@@ -47,11 +47,12 @@ import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /** Answers the start of this test process as the fixed window {@link AS_THIS_WINDOW} records it; the start of any other process cannot be read. */
 const readStartOfThisWindow: ProcessStartReader = async (pid) =>
-  pid === process.pid ? 'linux:16362446' : undefined
+  pid === process.pid ? 'linux@4026531836:16362446' : undefined
 
 /**
- * A window with a fixed identity, for the tests that state a marker or a claim file byte for byte: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor with the machine id "machine-a" (digest f9c8c7ddcf3d5f56), under the kernel boot "boot-1", begun at clock tick 16362446.
+ * A window with a fixed identity, for the tests that state a marker or a claim file byte for byte: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor with the machine id "machine-a" (digest f9c8c7ddcf3d5f56), under the kernel boot "boot-1", in the pid namespace 4026531836, begun at clock tick 16362446.
  * Every window of such a test is this test process, so the start reader answers that start for its process id.
+ * Every Linux start of this file names that namespace: a marker or a claim of a project folder whose start names none is not judged by its process id, and the time rules alone would decide it.
  */
 const AS_THIS_WINDOW = {
   identity: {
@@ -60,7 +61,7 @@ const AS_THIS_WINDOW = {
     machineKey: 'f9c8c7ddcf3d5f56',
     hostKey: 'd195d36bd79da7df',
     boot: { id: 'boot-1' },
-    processStart: 'linux:16362446',
+    processStart: 'linux@4026531836:16362446',
   },
   readStart: readStartOfThisWindow,
 }
@@ -70,7 +71,7 @@ const OWNER_OF_THIS_WINDOW = {
   machineKey: 'f9c8c7ddcf3d5f56',
   hostKey: 'd195d36bd79da7df',
   boot: { id: 'boot-1' },
-  processStart: 'linux:16362446',
+  processStart: 'linux@4026531836:16362446',
 }
 
 /** A window on another machine that works on the same project folder (a shared folder): the host "laptop", with digests of its own. Its process has this test process's id in its own space of process ids. */
@@ -80,7 +81,7 @@ const AS_WINDOW_OF_ANOTHER_MACHINE = {
     machineKey: '1fb1404a9738d5ed',
     hostKey: '5f0c1a8d2e3b4a69',
     boot: { id: 'boot-of-the-laptop' },
-    processStart: 'linux:777',
+    processStart: 'linux@4026531836:777',
   },
   readStart: readStartOfTheLaptopWindow,
 }
@@ -89,7 +90,7 @@ const AS_WINDOW_OF_ANOTHER_MACHINE = {
 async function readStartOfTheLaptopWindow(
   pid: number,
 ): Promise<string | undefined> {
-  return pid === process.pid ? 'linux:777' : undefined
+  return pid === process.pid ? 'linux@4026531836:777' : undefined
 }
 
 /** A point that one window of a test waits at until another window has passed it. @example const markerRemoved = gate(); await markerRemoved.passed */
@@ -169,7 +170,7 @@ test('a reservation that cannot be written leaves the run’s marker, and the en
       markerAfterTheFailedWrite,
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
@@ -205,13 +206,13 @@ test('the marker file a second window may be reading is not rewritten when it be
       await readFile(openedByAReader, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
     assert.equal(
       await readFile(wiki.markerPath, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446","watchEndedAtMs":1790000060000}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446","watchEndedAtMs":1790000060000}',
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'opened-by-a-reader',
@@ -521,7 +522,7 @@ test('a claim on the marker that a killed window left a moment ago does not keep
     JSON.stringify({
       pid: process.pid,
       ...OWNER_OF_THIS_WINDOW,
-      processStart: 'linux:1',
+      processStart: 'linux@4026531836:1',
     }),
   )
   try {
@@ -670,7 +671,7 @@ test('a second window never finds a marker file without content while the first 
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-1' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     })
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
@@ -735,7 +736,7 @@ test('on a file system without hard links the marker is still created with its w
       await readFile(wiki.markerPath, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"cursor","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"cursor","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
@@ -889,7 +890,7 @@ test('a window that finds no marker under its claim removes nothing: the marker 
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-1' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     })
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
@@ -949,13 +950,13 @@ test('the claim on the marker, a file in the learner’s project folder, names i
     assert.deepEqual(claimFilesWhileTheClaimIsHeld, [
       '{"pid":' +
         process.pid +
-        ',"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     ])
     assert.equal(
       await readFile(wiki.markerPath, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -1070,7 +1071,7 @@ test('a claim on the marker that a window of another machine left more than 60 s
       pid: process.pid,
       machineKey: '1fb1404a9738d5ed',
       hostKey: '5f0c1a8d2e3b4a69',
-      processStart: 'linux:777',
+      processStart: 'linux@4026531836:777',
     }),
   )
   const claimedAt = new Date(1_790_000_000_000)
@@ -1172,7 +1173,7 @@ test('a window that was suspended under its claim at the end of its run, while a
         machineKey: '1fb1404a9738d5ed',
         hostKey: '5f0c1a8d2e3b4a69',
         boot: { id: 'boot-of-the-laptop' },
-        processStart: 'linux:777',
+        processStart: 'linux@4026531836:777',
       },
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
@@ -1525,7 +1526,7 @@ test('the prepared marker file a killed window of another machine left beside th
       startedAtMs: 1_790_000_000_000,
       machineKey: '1fb1404a9738d5ed',
       hostKey: '5f0c1a8d2e3b4a69',
-      processStart: 'linux:777',
+      processStart: 'linux@4026531836:777',
     }),
   )
   const preparedAt = new Date(1_790_000_000_000)
