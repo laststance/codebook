@@ -123,6 +123,28 @@ const SAVE_LEARNING_SUMMARY_ADVICE =
 /** What the run resource tells an agent in place of {@link SAVE_LEARNING_SUMMARY_ADVICE} once the run's explanation keys are spent, because {@link StudyService.explain} refuses every new key then; the refusal of a new key begins with the same budget statement. */
 const EXPLANATION_BUDGET_SPENT_ADVICE = `The run's explanation budget (${MAX_EXPLANATIONS} keys) is spent; the saved study will have no learning summary.`
 
+/**
+ * Chooses what the run resource says under `saveLearningSummary`, for {@link StudyService.state} each time the resource is read.
+ * @param lacksLearningSummary - Whether the released run reached its demonstrated result and no saved explanation carries a learning summary.
+ * @param explanationBudgetSpent - Whether {@link StudyService.explain} accepts no new key for the run.
+ * @returns
+ * - `undefined` for a run that lacks no learning summary
+ * - {@link SAVE_LEARNING_SUMMARY_ADVICE} while explain still accepts a new key
+ * - {@link EXPLANATION_BUDGET_SPENT_ADVICE} once it does not
+ * @example
+ * learningSummaryAdvice(true, false) // => SAVE_LEARNING_SUMMARY_ADVICE
+ * learningSummaryAdvice(false, true) // => undefined
+ */
+function learningSummaryAdvice(
+  lacksLearningSummary: boolean,
+  explanationBudgetSpent: boolean,
+): string | undefined {
+  if (!lacksLearningSummary) return undefined
+  return explanationBudgetSpent
+    ? EXPLANATION_BUDGET_SPENT_ADVICE
+    : SAVE_LEARNING_SUMMARY_ADVICE
+}
+
 /** What the run resource tells an agent beside a browser profile folder that the run's cleanup could not remove: the run is released, and nobody is asked to delete anything. */
 const BROWSER_PROFILE_LEFT_ADVICE =
   'The run is released and its outcome is unchanged; only the folder of its own browser profile could not be removed. Do nothing: Codebook removes the folder at the start of a later run, after this editor window was closed or reloaded.'
@@ -2174,11 +2196,10 @@ export class StudyService {
     return {
       ...material,
       // Present while the run lacks a learning summary: the step to save one while explain still accepts a new key, the spent budget once it does not; gone once an explanation with a learning summary is saved.
-      saveLearningSummary: lacksLearningSummary
-        ? explanationBudgetSpent
-          ? EXPLANATION_BUDGET_SPENT_ADVICE
-          : SAVE_LEARNING_SUMMARY_ADVICE
-        : undefined,
+      saveLearningSummary: learningSummaryAdvice(
+        lacksLearningSummary,
+        explanationBudgetSpent,
+      ),
       observedAt:
         observedAtMs === undefined
           ? undefined
