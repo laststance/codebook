@@ -208,6 +208,12 @@ export const UNMAXIMIZE_FOCUS_SETTLE_MS = 300
  */
 export const STUDY_CLOSE_KEYBOARD_MESSAGE =
   'Study workspace closed. A Codebook pane or the captured source was the active editor, so the keyboard is in the active editor group now. If you were typing in the terminal or a view before the Command Palette, click it to type there again: the editor does not tell Codebook where the keyboard was.'
+/**
+ * What the reader tells the learner, once in an editor session, when the captured source took the keyboard from the file the editor's debugger had opened at a pause (`debug.focusEditorOnBreak`), in an editor whose chat is a side view (VS Code). There the extension API reads the same whether the keyboard was in that file or in the chat input (Cycle 0045 X7-A.4), so Codebook cannot give it back to the chat and says where it is instead. Cursor names its chat's state and gets no such sentence.
+ * @example void showPlainNotice(vscode.window, 'information', SOURCE_TOOK_PAUSED_FOCUS_MESSAGE)
+ */
+export const SOURCE_TOOK_PAUSED_FOCUS_MESSAGE =
+  'Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.'
 /** Workspace-state key recording that Cursor's learner took the Move View step for the Learning summary (the offer's button or the summary's title action), so the offer after a shown summary is not made again. An offer that was only shown stores nothing: Cursor removes an unanswered notification by itself, and the offer returns in the next editor session. */
 export const SUMMARY_PLACEMENT_ANSWERED_KEY =
   'codebook.summaryPlacementAnswered.v1'

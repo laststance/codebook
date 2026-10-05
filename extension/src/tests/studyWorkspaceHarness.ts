@@ -4381,6 +4381,9 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Runs the reader's step for a captured source that took the keyboard from the file the debugger focused at a pause, as each such capture of an editor session does. @example readerSeams(harness).tellSourceTookPausedFocus() */
+    tellSourceTookPausedFocus: (): void =>
+      reader['tellSourceTookPausedFocus'](),
     /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
     publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */

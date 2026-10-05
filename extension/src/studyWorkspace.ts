@@ -41,6 +41,7 @@ import {
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
   SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
   SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
+  SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
   STUDY_CLOSE_KEYBOARD_MESSAGE,
   STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
   STUDY_EDITOR_GROUP_COUNT,
@@ -523,6 +524,8 @@ export class StudyWorkspace {
   private readonly summaryPlacementOffersMade =
     new Set<SummaryPlacementOccasion>()
   private liveEntryRunId?: string
+  /** Whether {@link tellSourceTookPausedFocus} showed its sentence in this editor session; it is shown once. */
+  private pausedFocusNoticeShown = false
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
   private leaseId?: string
@@ -8111,16 +8114,18 @@ export class StudyWorkspace {
           Boolean(placement),
         )
         if (this.closing || lifetime !== this.lifetime) return
+        // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
+        const takesPausedFocus =
+          preserveFocus &&
+          this.replacesEditorFocusedByPause(targetColumn, document.uri)
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
-          // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
-          preserveFocus:
-            preserveFocus &&
-            !this.replacesEditorFocusedByPause(targetColumn, document.uri),
+          preserveFocus: preserveFocus && !takesPausedFocus,
           preview: false,
           selection: new vscode.Range(position, position),
         })
         if (this.closing || lifetime !== this.lifetime) return
+        if (takesPausedFocus) this.tellSourceTookPausedFocus()
         if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
@@ -8424,6 +8429,22 @@ export class StudyWorkspace {
     return (
       this.isFocusedGroupShowingOtherText(column, source) &&
       this.hasEditorFocusedOnBreak(column)
+    )
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the captured source took the keyboard from the file the debugger opened at a pause; called by the source's reveal right after it did ({@link replacesEditorFocusedByPause}).
+   * In VS Code the chat is a side view and the extension API reads the same whether the keyboard was in the paused file or in the chat input, so the keyboard cannot be given back to the chat without taking it from a learner who works in a file; the sentence says where it is and what to do. Cursor names its chat's state, and the source takes no focus from its chat there.
+   * @returns Once the notification is shown, or at once in Cursor and after the first time.
+   * @example if (takesPausedFocus) this.tellSourceTookPausedFocus()
+   */
+  private tellSourceTookPausedFocus(): void {
+    if (this.isCursorHost() || this.pausedFocusNoticeShown) return
+    this.pausedFocusNoticeShown = true
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
     )
   }
 
