@@ -1994,6 +1994,23 @@ test('a served page of any age draws the focus ring of a chapter link and of an 
     assert.ok(styles.includes(rule), `the page lacks the rule ${rule}`)
 })
 
+// Value: protects=the chapter list and the outline of a served page of any age, where they are columns that scroll; fails_when=a chapter title or an outline entry that cannot break (an identifier) is wider than its column on a site published before the shell wrapped it, so the column gets a sideways scrollbar; why_new=Cycle 0046 package SPB, found while measuring row 28 at 1200 px on a site published by 0.2.29.0; seam=none
+test('a served page of any age wraps a chapter title and an outline entry that cannot break inside their column', async () => {
+  // Arrange
+  const script = await readServedWikiScript()
+
+  // Act
+  const styles = (
+    await openFakeWikiPage(script, 'published-before-the-group')
+  ).injectedStyles()
+
+  // Assert
+  assert.ok(
+    styles.includes('.chapters a,.outline a{overflow-wrap:anywhere}'),
+    'the page lacks the rule .chapters a,.outline a{overflow-wrap:anywhere}',
+  )
+})
+
 test('the overview opened in place of a missing page says which page is missing', async () => {
   // Arrange
   const script = await readServedWikiScript()

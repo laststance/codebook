@@ -112,6 +112,8 @@ export function installWikiUpdateStatus(
     // The chapter list and the outline scroll, so the focus ring of their full-width links lies inside the link; the rail keeps room at its left for the ring of the link that changes the output location.
     '.chapters a:focus-visible,.right-rail nav a:focus-visible{outline-offset:-2px}',
     '.right-rail{padding-left:5px;margin-left:-5px}',
+    // A chapter title or an outline entry that cannot break (an identifier) wraps inside its column instead of giving the column a sideways scrollbar.
+    '.chapters a,.outline a{overflow-wrap:anywhere}',
     // Where the rail is a row below the article (701 to 1000 px) the rail itself has no cap and no scrollbar: the outline and an open detail scroll inside their own bounds, and the update panel keeps a wide column and its own height, so its sentence is never cut. The target adds no width to its entry.
     '@media(min-width:701px) and (max-width:1000px){.right-rail{max-height:none;overflow:visible}.right-rail nav{flex:1 1 10rem;min-width:10rem;max-height:10rem;overflow:auto;overflow-wrap:anywhere}[data-codebook-update-detail][open]{max-height:6rem;overflow:auto}[data-codebook-update-group]{flex:0 1 28rem;min-width:0;align-self:flex-start}.right-rail .open-target{width:0;min-width:100%}}',
     // A held-back link stays a link: muted and dashed, so it also reads as unavailable in forced colours.
