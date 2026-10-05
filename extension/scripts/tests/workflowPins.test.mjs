@@ -421,6 +421,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/tests/utils/createLinkIfAllowed.ts',
     'extension/src/tests/utils/fileSystemWithLargeFileIds.ts',
     'extension/src/tests/utils/idleChild.ts',
+    'extension/src/tests/utils/isFileIdExactAsANumber.ts',
     'extension/src/tests/utils/loadModule.ts',
     'extension/src/tests/utils/loadOpenWithoutFollowing.ts',
     'extension/src/tests/utils/startOfKilledWindow.ts',
