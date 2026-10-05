@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -18,6 +19,7 @@ import { hostname, tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type * as takeoverModule from '../utils/claimStorageLockTakeover'
 import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -2183,6 +2185,94 @@ test('a file at the claim folder’s path does not keep the claim from being tak
     assert.deepEqual(
       { besideTheWikiAfterTheFirstRun, nextStart },
       { besideTheWikiAfterTheFirstRun: ['wiki'], nextStart: 'holds the claim' },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=every later update of a window whose claim file on the marker could not be removed once (on Windows a file another program holds open, a scanner or an indexer); fails_when=the release swallows the failed removal, and the claim, which names a running process of this machine, has no age rule and an owner that is never gone, so the window's later runs leave their markers and every start on a marker in the way fails (row 113); why_new=Cycle 0046 row 113: the trigger cannot be produced on Linux; seam=the file system's removal of the claim file, which fails once, and the answers of the claim's releases
+test('a window whose claim on the marker could not be removed at the end of one run says so, and its next run removes that claim first and ends without leaving its marker', async () => {
+  // Arrange: a window whose first removal of a claim file fails, as for a file another program holds open.
+  const wiki = await createWikiFolder()
+  const claimFolder = `${wiki.markerPath}.takeover${sep}`
+  let failedRemovals = 0
+  const takeoverWithOneFailedRemoval = await loadModule<typeof takeoverModule>(
+    resolve(__dirname, '../utils/claimStorageLockTakeover.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        unlink: async (path: string) => {
+          if (path.startsWith(claimFolder) && failedRemovals === 0) {
+            failedRemovals += 1
+            throw Object.assign(
+              new Error('EPERM: operation not permitted, unlink'),
+              { code: 'EPERM' },
+            )
+          }
+          await unlink(path)
+        },
+      },
+    },
+  )
+  const answersOfTheReleases: boolean[] = []
+  const { claimWikiUpdateMarker: claimInThatWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './claimStorageLockTakeover': {
+      claimStorageLockTakeover: async (
+        ...claimInputs: Parameters<
+          typeof takeoverModule.claimStorageLockTakeover
+        >
+      ) => {
+        const claim =
+          await takeoverWithOneFailedRemoval.claimStorageLockTakeover(
+            ...claimInputs,
+          )
+        // The claim as it is, with the answer of its release noted.
+        return (
+          claim && {
+            ...claim,
+            release: async () => {
+              const isReleased = await claim.release()
+              answersOfTheReleases.push(isReleased)
+              return isReleased
+            },
+          }
+        )
+      },
+    },
+    'node:timers/promises': { setTimeout: async () => undefined },
+  })
+  /** One update of the window from its start to its end; answers what lies beside the Wiki afterwards. */
+  const besideTheWikiAfterARun = async (): Promise<string[]> => {
+    const claim = await claimInThatWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    await claim.release()
+    return (await readdir(wiki.directory)).toSorted()
+  }
+  try {
+    // Act
+    const afterTheFirstRun = await besideTheWikiAfterARun()
+    const afterTheSecondRun = await besideTheWikiAfterARun()
+
+    // Assert: the first run removed its marker under the claim it could not remove afterwards; the second run removed that claim and its own.
+    assert.deepEqual(
+      { afterTheFirstRun, afterTheSecondRun, answersOfTheReleases },
+      {
+        afterTheFirstRun: ['wiki', 'wiki.update-run.json.takeover'],
+        afterTheSecondRun: ['wiki'],
+        answersOfTheReleases: [false, true],
+      },
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
