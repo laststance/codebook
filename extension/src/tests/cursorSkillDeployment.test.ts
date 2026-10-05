@@ -36,6 +36,10 @@ import {
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
+import {
+  FILE_ID_NOT_EXACT_AS_A_NUMBER,
+  isFileIdExactAsANumber,
+} from './utils/isFileIdExactAsANumber'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 
@@ -1321,6 +1325,8 @@ test('the receipt of a Cursor skill whose file id a number holds exactly records
   )
 
   // Assert
+  if (!(await isFileIdExactAsANumber(paths.targetPath)))
+    return context.skip(FILE_ID_NOT_EXACT_AS_A_NUMBER)
   const skill = await lstat(paths.targetPath)
   assert.deepEqual(
     {

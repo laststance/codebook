@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { constants as flagsOfThisSystem } from 'node:fs'
+import { constants as flagsOfThisSystem, type StatOptions } from 'node:fs'
 import * as fileSystem from 'node:fs/promises'
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -18,7 +19,10 @@ import { basename, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { promisify } from 'node:util'
 
-import type { NoFollowOpenConstants } from '../utils/openWithoutFollowing'
+import type {
+  NoFollowOpenAccess,
+  NoFollowOpenConstants,
+} from '../utils/openWithoutFollowing'
 import type * as CatalogModule from '../utils/refreshCursorMcpCatalog'
 import { systemErrorCode } from '../utils/systemErrorCode'
 
@@ -27,32 +31,41 @@ import {
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
 import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
+import {
+  FILE_ID_NOT_EXACT_AS_A_NUMBER,
+  isFileIdExactAsANumber,
+} from './utils/isFileIdExactAsANumber'
 import { loadModule } from './utils/loadModule'
 import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 
 /** The open flags of a system whose open cannot refuse a link: Windows defines neither `O_NOFOLLOW` nor `O_NONBLOCK`. */
 const OPEN_FLAGS_WITHOUT_NOFOLLOW = { O_RDONLY: flagsOfThisSystem.O_RDONLY }
 
+/**
+ * What a Windows editor's file system does differently for the catalog, handed to {@link loadCatalog}: the open cannot refuse a link (no `O_NOFOLLOW`), and a file's times are set only through a file that was opened with write access.
+ */
+const AS_ON_WINDOWS = {
+  openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+  timesNeedWriteAccess: true,
+}
+
 /** The config Codebook creates for a first-time Cursor user, and its SHA-256. */
 const EMPTY_CONFIG = '{"mcpServers":{}}\n'
 const EMPTY_CONFIG_SHA256 =
   'e93fc8db2b1bd77107fe6c758bca9545fa864cf7cce8ab93a7b2b93a1d566a7b'
-
-/** Why a test of an ordinary file id was skipped: the file system gave this test's file an id above 2^53, which the tests of large ids cover. */
-const FILE_ID_NOT_EXACT_AS_A_NUMBER =
-  'this file system gave the config a file id above 2^53, which a number does not hold exactly: the cases of large file ids cover it'
 
 /** 2020-01-01T00:00:00Z in epoch milliseconds: the time a test gives a file that nothing may touch. */
 const UNTOUCHED_AT_MS = 1_577_836_800_000
 
 /**
  * Loads the Cursor MCP catalog with stand-ins: the open flags its opener gets (a test takes `O_NOFOLLOW` away, and the catalog opens as in a Windows editor), and the file system of the catalog and of its opener.
- * @param standIns - `openConstants`: the flags of every open of the catalog. `fileSystem`: `node:fs/promises` of the catalog and of its opener.
+ * @param standIns - `openConstants`: the flags of every open of the catalog. `fileSystem`: `node:fs/promises` of the catalog and of its opener. `timesNeedWriteAccess`: a file that was not opened with write access refuses to set its times, as on Windows.
  * @returns The loaded module.
  */
 async function loadCatalog(standIns: {
   openConstants?: NoFollowOpenConstants
   fileSystem?: object
+  timesNeedWriteAccess?: boolean
 }): Promise<typeof CatalogModule> {
   return loadModule<typeof CatalogModule>(
     resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
@@ -125,9 +138,7 @@ test('a Cursor MCP config that is a link is not refreshed through the link where
   )
   if (!(await createLinkIfAllowed(learnersFile, folders.configPath)))
     return context.skip(LINK_NOT_ALLOWED)
-  const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
-  })
+  const catalog = await loadCatalog(AS_ON_WINDOWS)
 
   // Act
   const refresh = await outcomeOf(
@@ -155,9 +166,7 @@ test('a Cursor MCP config that is a link is not refreshed through the link where
 test('an ownership record of the Cursor MCP catalog that is a link is not read where the system’s open cannot refuse a link, and the config it would retire stays', async (context) => {
   // Arrange: Codebook's own config and receipt, then the receipt moved away and a link put in its place.
   const folders = await catalogFolders(context)
-  const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
-  })
+  const catalog = await loadCatalog(AS_ON_WINDOWS)
   await catalog.refreshCursorMcpCatalog(
     folders.storageRoot,
     folders.cursorDirectory,
@@ -182,7 +191,10 @@ test('an ownership record of the Cursor MCP catalog that is a link is not read w
       removal,
       config: await readFile(folders.configPath, 'utf8'),
     },
-    { removal: 'refused with ELOOP', config: EMPTY_CONFIG },
+    {
+      removal: `refused: Codebook will not read a Cursor MCP catalog ownership record through a link: ${receiptPath}. Remove the link, then run Codebook: Set Up AI Chat again.`,
+      config: EMPTY_CONFIG,
+    },
   )
 })
 
@@ -190,9 +202,7 @@ test('an ownership record of the Cursor MCP catalog that is a link is not read w
 test('a link at the Cursor MCP config path is not counted as the config Codebook owns where the system’s open cannot refuse a link, also when it points to that very file: removal preserves it', async (context) => {
   // Arrange: Codebook's own config is moved away and a link to it takes its path.
   const folders = await catalogFolders(context)
-  const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
-  })
+  const catalog = await loadCatalog(AS_ON_WINDOWS)
   await catalog.refreshCursorMcpCatalog(
     folders.storageRoot,
     folders.cursorDirectory,
@@ -231,9 +241,7 @@ test('a link at the Cursor MCP config path is not counted as the config Codebook
 test('a folder at the Cursor MCP config path is not counted as the config Codebook owns where the system’s open cannot refuse a link: removal preserves it, as with the system’s flags', async (context) => {
   // Arrange: Codebook's own config is replaced by a folder.
   const folders = await catalogFolders(context)
-  const catalogAsOnWindows = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
-  })
+  const catalogAsOnWindows = await loadCatalog(AS_ON_WINDOWS)
   const catalogOfThisSystem = await loadCatalog({})
   await catalogAsOnWindows.refreshCursorMcpCatalog(
     folders.storageRoot,
@@ -288,7 +296,7 @@ test('a link that takes the Cursor MCP config path while Codebook publishes its 
   if (!(await createLinkIfAllowed(learnersFile, preparedLinkPath)))
     return context.skip(LINK_NOT_ALLOWED)
   const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    ...AS_ON_WINDOWS,
     fileSystem: {
       ...fileSystem,
       link: async (existingPath: string, newPath: string) => {
@@ -313,7 +321,8 @@ test('a link that takes the Cursor MCP config path while Codebook publishes its 
       learnersFileLastWrittenAtMs: (await lstat(learnersFile)).mtimeMs,
     },
     {
-      refresh: 'refused with ELOOP',
+      refresh:
+        'refused: Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.',
       learnersFileLastWrittenAtMs: UNTOUCHED_AT_MS,
     },
   )
@@ -331,7 +340,7 @@ test('a link that replaces the Cursor MCP config right after Codebook published 
   if (!(await createLinkIfAllowed(learnersFile, preparedLinkPath)))
     return context.skip(LINK_NOT_ALLOWED)
   const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    ...AS_ON_WINDOWS,
     fileSystem: {
       ...fileSystem,
       unlink: async (path: string) => {
@@ -357,7 +366,8 @@ test('a link that replaces the Cursor MCP config right after Codebook published 
       learnersFileLastWrittenAtMs: (await lstat(learnersFile)).mtimeMs,
     },
     {
-      refresh: 'refused with ELOOP',
+      refresh:
+        'refused: Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.',
       learnersFileLastWrittenAtMs: UNTOUCHED_AT_MS,
     },
   )
@@ -367,9 +377,7 @@ test('a link that replaces the Cursor MCP config right after Codebook published 
 test('the Cursor MCP catalog is created, refreshed and retired through its regular files where the system’s open cannot refuse a link, as on Windows', async (context) => {
   // Arrange
   const folders = await catalogFolders(context)
-  const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
-  })
+  const catalog = await loadCatalog(AS_ON_WINDOWS)
 
   // Act: the first refresh creates the config, the second finds it, the removal retires it.
   const firstGeneration = await catalog.refreshCursorMcpCatalog(
@@ -415,7 +423,7 @@ test('a config another window publishes first is refreshed as that window’s fi
   const folders = await catalogFolders(context)
   const configOfTheOtherWindow = '{"mcpServers":{"other":{}}}\n'
   const catalog = await loadCatalog({
-    openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    ...AS_ON_WINDOWS,
     fileSystem: {
       ...fileSystem,
       link: async (existingPath: string, newPath: string) => {
@@ -610,10 +618,7 @@ test('the receipt of a Cursor MCP config whose file id a number holds exactly re
   )
 
   // Assert
-  if (
-    (await lstat(folders.configPath, { bigint: true })).ino >
-    Number.MAX_SAFE_INTEGER
-  )
+  if (!(await isFileIdExactAsANumber(folders.configPath)))
     return context.skip(FILE_ID_NOT_EXACT_AS_A_NUMBER)
   const config = await lstat(folders.configPath)
   assert.deepEqual(
@@ -633,10 +638,7 @@ test('a receipt that 0.2.29.0 wrote, with device and inode as numbers, is still 
   const folders = await catalogFolders(context)
   await mkdir(folders.recordDirectory, { recursive: true })
   await writeFile(folders.configPath, EMPTY_CONFIG)
-  if (
-    (await lstat(folders.configPath, { bigint: true })).ino >
-    Number.MAX_SAFE_INTEGER
-  )
+  if (!(await isFileIdExactAsANumber(folders.configPath)))
     return context.skip(FILE_ID_NOT_EXACT_AS_A_NUMBER)
   const config = await lstat(folders.configPath)
   await writeFile(
@@ -665,5 +667,428 @@ test('a receipt that 0.2.29.0 wrote, with device and inode as numbers, is still 
   assert.deepEqual(
     { removal, config: await outcomeOf(lstat(folders.configPath)) },
     { removal: 'answered removed', config: 'refused with ENOENT' },
+  )
+})
+
+// Value: protects=every Cursor chat setup and every start of the Codebook server in a Windows editor, which refresh the Cursor MCP config; fails_when=the config is opened for reading and its times are set through that file, which Windows refuses for a file without write access, so the refresh ends with "EPERM: operation not permitted, futime"; why_new=Cycle 0046 row 144: the first run of the catalog's tests on Windows (run 37321685601) showed it; seam=the opener of the loaded catalog, whose files refuse to set their times unless they were opened with write access
+test('the Cursor MCP config is refreshed where a file’s times are set only through a file opened with write access, as on Windows: its time moves on and its bytes stay', async (context) => {
+  // Arrange: a learner's config, last written on 2020-01-01.
+  const folders = await catalogFolders(context)
+  const configOfTheLearner = '{"mcpServers":{"existing":{"command":"tool"}}}\n'
+  await writeFile(folders.configPath, configOfTheLearner)
+  await utimes(
+    folders.configPath,
+    UNTOUCHED_AT_MS / 1_000,
+    UNTOUCHED_AT_MS / 1_000,
+  )
+  const catalog = await loadCatalog(AS_ON_WINDOWS)
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert: no generation, because the config is the learner's.
+  assert.deepEqual(
+    {
+      refresh,
+      config: await readFile(folders.configPath, 'utf8'),
+      configWasTouched:
+        (await lstat(folders.configPath)).mtimeMs > UNTOUCHED_AT_MS,
+    },
+    {
+      refresh: 'answered undefined',
+      config: configOfTheLearner,
+      configWasTouched: true,
+    },
+  )
+})
+
+// Value: protects=a config the learner made read-only, in a Windows editor; fails_when=the refresh ends with a bare file error, or changes the file's mode or bytes to get its way; why_new=Cycle 0046 row 144: where times need write access, a read-only file cannot be opened for them, and the learner must read why and what to do; seam=the opener of the loaded catalog, whose files refuse to set their times unless they were opened with write access
+test(
+  'a read-only Cursor MCP config is not refreshed where a file’s times are set only through a file opened with write access: the refresh says that this user may not change the file, and the file stays as it is',
+  {
+    skip:
+      process.getuid?.() === 0
+        ? 'this user is root, whom no file mode keeps from writing'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a learner's config that only allows reading, last written on 2020-01-01.
+    const folders = await catalogFolders(context)
+    const configOfTheLearner =
+      '{"mcpServers":{"existing":{"command":"tool"}}}\n'
+    await writeFile(folders.configPath, configOfTheLearner)
+    await utimes(
+      folders.configPath,
+      UNTOUCHED_AT_MS / 1_000,
+      UNTOUCHED_AT_MS / 1_000,
+    )
+    await chmod(folders.configPath, 0o444)
+    const catalog = await loadCatalog(AS_ON_WINDOWS)
+    try {
+      // Act
+      const refresh = await outcomeOf(
+        catalog.refreshCursorMcpCatalog(
+          folders.storageRoot,
+          folders.cursorDirectory,
+        ),
+      )
+
+      // Assert
+      const config = await lstat(folders.configPath)
+      assert.deepEqual(
+        {
+          refresh,
+          config: await readFile(folders.configPath, 'utf8'),
+          configLastWrittenAtMs: config.mtimeMs,
+          ownerMayWrite: (config.mode & 0o200) !== 0,
+        },
+        {
+          refresh:
+            'refused: Cursor MCP config cannot be refreshed because this user may not change it (the file may be read-only or belong to another user); Codebook left it unchanged. Allow writing to this file, then run Codebook: Set Up AI Chat again.',
+          config: configOfTheLearner,
+          configLastWrittenAtMs: UNTOUCHED_AT_MS,
+          ownerMayWrite: false,
+        },
+      )
+    } finally {
+      // The folder is removed at the test's end; a read-only file would keep it on Windows.
+      await chmod(folders.configPath, 0o644)
+    }
+  },
+)
+
+// Value: protects=the file that takes the config's path while Codebook refreshes the config, in a Windows editor; fails_when=the file opened for the times is not compared with the file that was read, so another file's time is set although Codebook never looked at it; why_new=Cycle 0046 row 144: where times need write access the config is opened a second time, and the two must be one file; seam=the opener of the loaded catalog, whose files refuse to set their times unless they were opened with write access, and before whose open with write access another file takes the config's path
+test('a file that takes the Cursor MCP config’s path between its read and the setting of its time is not touched: the refresh says that the config changed', async (context) => {
+  // Arrange: a learner's config, and another file, last written on 2020-01-01, that is moved over it right before the config is opened for its times.
+  const folders = await catalogFolders(context)
+  await writeFile(folders.configPath, '{"mcpServers":{"existing":{}}}\n')
+  const otherPath = join(folders.cursorDirectory, 'another.json')
+  await writeFile(otherPath, '{"mcpServers":{"another":{}}}\n')
+  await utimes(otherPath, UNTOUCHED_AT_MS / 1_000, UNTOUCHED_AT_MS / 1_000)
+  const openerAsOnWindows = await loadOpenWithoutFollowing(AS_ON_WINDOWS)
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      './openWithoutFollowing': {
+        openWithoutFollowing: async (
+          path: string,
+          flagsOfTheSystem?: NoFollowOpenConstants,
+          access?: NoFollowOpenAccess,
+        ): Promise<fileSystem.FileHandle> => {
+          if (access === 'read-write') await rename(otherPath, path)
+          return openerAsOnWindows.openWithoutFollowing(
+            path,
+            flagsOfTheSystem,
+            access,
+          )
+        },
+      },
+    },
+    // The catalog tells a missing file by `instanceof Error`; the file system's errors belong to this realm.
+    { Error },
+  )
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert: the file that took the path keeps its bytes and its time.
+  assert.deepEqual(
+    {
+      refresh,
+      fileAtTheConfigPath: await readFile(folders.configPath, 'utf8'),
+      itsLastWriteAtMs: (await lstat(folders.configPath)).mtimeMs,
+    },
+    {
+      refresh:
+        'refused: Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.',
+      fileAtTheConfigPath: '{"mcpServers":{"another":{}}}\n',
+      itsLastWriteAtMs: UNTOUCHED_AT_MS,
+    },
+  )
+})
+
+// Value: protects=a read-only config of this user on Linux and macOS, which the refresh has always touched through the file it opened for reading; fails_when=the config is opened with write access on every system, so a read-only config is refused where the system would have set its times; why_new=Cycle 0046 row 144: the way of Windows is taken only where the system refuses the times, never by the system's name; seam=the opener of the loaded catalog, which notes the access each open of the config asked for
+test(
+  'where the system sets a file’s times through a file opened for reading, a read-only Cursor MCP config of this user is refreshed and is never opened with write access',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Windows sets a file’s times only through a file opened with write access, and refuses that open for a read-only file: the case above is its way'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a learner's config that only allows reading, last written on 2020-01-01.
+    const folders = await catalogFolders(context)
+    const configOfTheLearner =
+      '{"mcpServers":{"existing":{"command":"tool"}}}\n'
+    await writeFile(folders.configPath, configOfTheLearner)
+    await utimes(
+      folders.configPath,
+      UNTOUCHED_AT_MS / 1_000,
+      UNTOUCHED_AT_MS / 1_000,
+    )
+    await chmod(folders.configPath, 0o444)
+    const openerOfThisSystem = await loadOpenWithoutFollowing({})
+    const accessesAskedForTheConfig: string[] = []
+    const catalog = await loadModule<typeof CatalogModule>(
+      resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+      {
+        './openWithoutFollowing': {
+          openWithoutFollowing: async (
+            path: string,
+            flagsOfTheSystem?: NoFollowOpenConstants,
+            access: NoFollowOpenAccess = 'read',
+          ): Promise<fileSystem.FileHandle> => {
+            if (path === folders.configPath)
+              accessesAskedForTheConfig.push(access)
+            return openerOfThisSystem.openWithoutFollowing(
+              path,
+              flagsOfTheSystem,
+              access,
+            )
+          },
+        },
+      },
+      // The catalog tells a missing file by `instanceof Error`; the file system's errors belong to this realm.
+      { Error },
+    )
+
+    // Act
+    const refresh = await outcomeOf(
+      catalog.refreshCursorMcpCatalog(
+        folders.storageRoot,
+        folders.cursorDirectory,
+      ),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        refresh,
+        accessesAskedForTheConfig,
+        config: await readFile(folders.configPath, 'utf8'),
+        configWasTouched:
+          (await lstat(folders.configPath)).mtimeMs > UNTOUCHED_AT_MS,
+      },
+      {
+        refresh: 'answered undefined',
+        accessesAskedForTheConfig: ['read'],
+        config: configOfTheLearner,
+        configWasTouched: true,
+      },
+    )
+  },
+)
+
+/**
+ * Builds a `node:fs/promises` whose `lstat` answers the real look at one path and then lets another file take that path, once: the moment between the look and the open on a system whose open cannot refuse a link.
+ * @param swappedPath - The path that is looked at.
+ * @param otherPath - The file that is moved over it right after the look.
+ * @returns The module, for the catalog's opener.
+ */
+function fileSystemWhosePathIsReplacedAfterTheLook(
+  swappedPath: string,
+  otherPath: string,
+): object {
+  let isReplaced = false
+  return {
+    ...fileSystem,
+    lstat: async (path: string, options?: StatOptions) => {
+      const lookBeforeTheReplacement = await fileSystem.lstat(path, options)
+      if (path === swappedPath && !isReplaced) {
+        isReplaced = true
+        await rename(otherPath, swappedPath)
+      }
+      return lookBeforeTheReplacement
+    },
+  }
+}
+
+// Value: protects=the sentence a learner reads in a Windows editor for a folder at ~/.cursor/mcp.json; fails_when=the refusal of the look, which keeps a folder from being opened where the open cannot refuse a link, is answered as "a redirected or inaccessible file", which names a link that is not there; why_new=Cycle 0046 row 152 (the config's open); seam=the open flags of the opener the loaded catalog opens through
+test('a folder at the Cursor MCP config path is refused by the refresh as no regular file, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
+  // Arrange
+  const folders = await catalogFolders(context)
+  await mkdir(folders.configPath)
+  const catalogAsOnWindows = await loadCatalog(AS_ON_WINDOWS)
+  const catalogOfThisSystem = await loadCatalog({})
+
+  // Act
+  const refreshes = {
+    withTheFlagsOfThisSystem: await outcomeOf(
+      catalogOfThisSystem.refreshCursorMcpCatalog(
+        folders.storageRoot,
+        folders.cursorDirectory,
+      ),
+    ),
+    whereTheOpenCannotRefuseALink: await outcomeOf(
+      catalogAsOnWindows.refreshCursorMcpCatalog(
+        folders.storageRoot,
+        folders.cursorDirectory,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(refreshes, {
+    withTheFlagsOfThisSystem:
+      'refused: Cursor MCP config is not a regular file; Codebook left its settings unchanged.',
+    whereTheOpenCannotRefuseALink:
+      'refused: Cursor MCP config is not a regular file; Codebook left its settings unchanged.',
+  })
+})
+
+// Value: protects=the sentence a learner reads in a Windows editor when another program (Cursor itself writes this file) rewrites ~/.cursor/mcp.json at the moment Codebook opens it, and the file that program wrote; fails_when=the replaced config is answered as "a redirected or inaccessible file", or the file that took the path is touched although Codebook never looked at it; why_new=Cycle 0046 row 152 (the config's open); seam=the open flags and node:fs/promises lstat of the opener the loaded catalog opens through, after whose look another file takes the config's path
+test('a Cursor MCP config that another file replaces between the look at it and its open is not refreshed where the system’s open cannot refuse a link: the refresh says that the config changed', async (context) => {
+  // Arrange: a learner's config, and another file, last written on 2020-01-01, that is moved over it right after the look.
+  const folders = await catalogFolders(context)
+  await writeFile(folders.configPath, '{"mcpServers":{"existing":{}}}\n')
+  const otherPath = join(folders.cursorDirectory, 'another.json')
+  await writeFile(otherPath, '{"mcpServers":{"another":{}}}\n')
+  await utimes(otherPath, UNTOUCHED_AT_MS / 1_000, UNTOUCHED_AT_MS / 1_000)
+  const catalog = await loadCatalog({
+    ...AS_ON_WINDOWS,
+    fileSystem: fileSystemWhosePathIsReplacedAfterTheLook(
+      folders.configPath,
+      otherPath,
+    ),
+  })
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refresh,
+      fileAtTheConfigPath: await readFile(folders.configPath, 'utf8'),
+      itsLastWriteAtMs: (await lstat(folders.configPath)).mtimeMs,
+    },
+    {
+      refresh:
+        'refused: Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.',
+      fileAtTheConfigPath: '{"mcpServers":{"another":{}}}\n',
+      itsLastWriteAtMs: UNTOUCHED_AT_MS,
+    },
+  )
+})
+
+// Value: protects=the sentence for a folder at the path of one of the catalog's private records, in a Windows editor as elsewhere; fails_when=the refusal of the look reaches the learner as the opener's own text ("Not a regular file: …") instead of the sentence of an invalid record that the status gives where the folder is opened; why_new=Cycle 0046 row 152 (the records' open); seam=the open flags of the opener the loaded catalog opens through
+test('a folder at the path of the Cursor MCP catalog’s ownership receipt is answered as an invalid record, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
+  // Arrange
+  const folders = await catalogFolders(context)
+  await mkdir(join(folders.recordDirectory, 'receipt.json'), {
+    recursive: true,
+  })
+  const catalogAsOnWindows = await loadCatalog(AS_ON_WINDOWS)
+  const catalogOfThisSystem = await loadCatalog({})
+
+  // Act
+  const removals = {
+    withTheFlagsOfThisSystem: await outcomeOf(
+      catalogOfThisSystem.removeOwnedCursorMcpCatalog(
+        folders.storageRoot,
+        folders.cursorDirectory,
+      ),
+    ),
+    whereTheOpenCannotRefuseALink: await outcomeOf(
+      catalogAsOnWindows.removeOwnedCursorMcpCatalog(
+        folders.storageRoot,
+        folders.cursorDirectory,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(removals, {
+    withTheFlagsOfThisSystem:
+      'refused: Cursor MCP catalog ownership record is invalid.',
+    whereTheOpenCannotRefuseALink:
+      'refused: Cursor MCP catalog ownership record is invalid.',
+  })
+})
+
+// Value: protects=the sentence for a private record that is replaced at the moment Codebook opens it, in a Windows editor, and the config that record would retire; fails_when=the refusal reaches the learner as the opener's own text, or the file that took the record's path is read as the record; why_new=Cycle 0046 row 152 (the records' open); seam=the open flags and node:fs/promises lstat of the opener the loaded catalog opens through, after whose look another file takes the receipt's path
+test('an ownership receipt of the Cursor MCP catalog that another file replaces between the look at it and its open is not read where the system’s open cannot refuse a link: the removal says that the record was replaced, and the config stays', async (context) => {
+  // Arrange: Codebook's own config and receipt, and a copy of the receipt that is moved over it right after the look.
+  const folders = await catalogFolders(context)
+  await (
+    await loadCatalog(AS_ON_WINDOWS)
+  ).refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const receiptPath = join(folders.recordDirectory, 'receipt.json')
+  const copyPath = join(folders.cursorDirectory, 'a-copy-of-the-receipt.json')
+  await writeFile(copyPath, await readFile(receiptPath))
+  const catalog = await loadCatalog({
+    ...AS_ON_WINDOWS,
+    fileSystem: fileSystemWhosePathIsReplacedAfterTheLook(
+      receiptPath,
+      copyPath,
+    ),
+  })
+
+  // Act
+  const removal = await outcomeOf(
+    catalog.removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { removal, config: await readFile(folders.configPath, 'utf8') },
+    {
+      removal: `refused: A Cursor MCP catalog ownership record was replaced while Codebook opened it, so it was not read: ${receiptPath}. Run Codebook: Set Up AI Chat again.`,
+      config: EMPTY_CONFIG,
+    },
+  )
+})
+
+// Value: protects=the answer "preserved" of a removal in a Windows editor when another program rewrites ~/.cursor/mcp.json at the moment Codebook checks whether the config is its own; fails_when=the ownership check lets the opener's refusal of a replaced file out as an error, although its answer for another file is that the file is not the owned one; why_new=Cycle 0046 row 152 (the ownership check's open); seam=the open flags and node:fs/promises lstat of the opener the loaded catalog opens through, after whose look another file takes the config's path
+test('a Cursor MCP config that another file replaces between the look at it and its open is not counted as the config Codebook owns where the system’s open cannot refuse a link: removal preserves the file that took the path', async (context) => {
+  // Arrange: Codebook's own config, and a file with the same bytes that is moved over it right after the ownership check looked.
+  const folders = await catalogFolders(context)
+  await (
+    await loadCatalog(AS_ON_WINDOWS)
+  ).refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const otherPath = join(folders.cursorDirectory, 'another.json')
+  await writeFile(otherPath, EMPTY_CONFIG)
+  const catalog = await loadCatalog({
+    ...AS_ON_WINDOWS,
+    fileSystem: fileSystemWhosePathIsReplacedAfterTheLook(
+      folders.configPath,
+      otherPath,
+    ),
+  })
+
+  // Act
+  const removal = await outcomeOf(
+    catalog.removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      fileAtTheConfigPath: await readFile(folders.configPath, 'utf8'),
+    },
+    { removal: 'answered preserved', fileAtTheConfigPath: EMPTY_CONFIG },
   )
 })

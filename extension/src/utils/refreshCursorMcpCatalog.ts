@@ -69,14 +69,46 @@ async function regularDirectory(path: string): Promise<void> {
     )
 }
 
-/** Reads a bounded private journal without following a replaced record path ({@link openWithoutFollowing}: a link is refused on every system, also where the open has no flag for it). @example await privateJson('/private/receipt.json') */
+/** What the learner reads for an ownership record that is no regular file of bounded size. */
+const RECORD_INVALID_SENTENCE =
+  'Cursor MCP catalog ownership record is invalid.'
+
+/** What the learner reads for a record path that {@link openWithoutFollowing} did not open, by the code of its refusal; each sentence names the path, which lies in Codebook's own storage. A pipe, a device or a folder reads as it does where the open lets it through and its status refuses it. */
+const RECORD_REFUSAL_SENTENCES: ReadonlyMap<string, (path: string) => string> =
+  new Map([
+    [
+      'ELOOP',
+      (path: string) =>
+        `Codebook will not read a Cursor MCP catalog ownership record through a link: ${path}. Remove the link, then run Codebook: Set Up AI Chat again.`,
+    ],
+    ['ENOTREG', () => RECORD_INVALID_SENTENCE],
+    [
+      'EREPLACED',
+      (path: string) =>
+        `A Cursor MCP catalog ownership record was replaced while Codebook opened it, so it was not read: ${path}. Run Codebook: Set Up AI Chat again.`,
+    ],
+  ])
+
+/**
+ * Turns a refusal to open an ownership record into the sentence that fits it, for {@link privateJson}.
+ * @param error - What {@link openWithoutFollowing} threw.
+ * @param path - The record's path.
+ * @returns An error with the sentence of a link, of what is no regular file or of a replaced file ({@link RECORD_REFUSAL_SENTENCES}), with the refusal as its cause; every other failure itself.
+ * @example throw refusalOfRecordOpen(error, '/private/cursor-mcp-catalog/receipt.json')
+ */
+function refusalOfRecordOpen(error: unknown, path: string): unknown {
+  const sentence = RECORD_REFUSAL_SENTENCES.get(systemErrorCode(error))
+  return sentence ? new Error(sentence(path), { cause: error }) : error
+}
+
+/** Reads a bounded private journal without following a replaced record path ({@link openWithoutFollowing}: a link is refused on every system, also where the open has no flag for it). @returns The parsed record, or undefined when the path holds nothing. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened ({@link refusalOfRecordOpen}). @example await privateJson('/private/receipt.json') */
 async function privateJson(path: string): Promise<unknown | undefined> {
   let handle
   try {
     handle = await openWithoutFollowing(path)
   } catch (error) {
     if (isMissing(error)) return undefined
-    throw error
+    throw refusalOfRecordOpen(error, path)
   }
   try {
     const status = await handle.stat()
@@ -84,7 +116,7 @@ async function privateJson(path: string): Promise<unknown | undefined> {
       !status.isFile() ||
       status.size > CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES
     )
-      throw new Error('Cursor MCP catalog ownership record is invalid.')
+      throw new Error(RECORD_INVALID_SENTENCE)
     return JSON.parse(await handle.readFile('utf8'))
   } finally {
     await handle.close()
@@ -135,11 +167,12 @@ function parseReceipt(value: unknown, targetPath: string): CatalogReceipt {
   }
 }
 
-/** The error codes of a path that holds no file a receipt can own: nothing (`ENOENT`), a link (`ELOOP`), or a pipe, a device or a folder that {@link openWithoutFollowing} refuses before the open where the system has no flag for a link (`ENOTREG`). */
+/** The error codes of a path that holds no file a receipt can own: nothing (`ENOENT`), a link (`ELOOP`), and, where the system has no flag for a link and {@link openWithoutFollowing} looks at the path first, a pipe, a device or a folder (`ENOTREG`) or another file that took the path between the look and the open (`EREPLACED`). */
 const NOT_AN_OWNED_FILE_CODES: ReadonlySet<string> = new Set([
   'ENOENT',
   'ELOOP',
   'ENOTREG',
+  'EREPLACED',
 ])
 
 /**
@@ -181,7 +214,7 @@ async function isOwnedOpenFile(
   return holdsOwnedBytes(handle, before, owner)
 }
 
-/** Matches the inode number and the bytes through one no-follow handle ({@link openWithoutFollowing}, {@link isOwnedOpenFile}) before recovery or removal, tolerating volume device renumbering. @returns `true` for the file the receipt names; `false` for a path that holds nothing, a link or no regular file, and for another or a changed file. @example await ownedFile('/home/user/.cursor/mcp.json', receipt) */
+/** Matches the inode number and the bytes through one no-follow handle ({@link openWithoutFollowing}, {@link isOwnedOpenFile}) before recovery or removal, tolerating volume device renumbering. @returns `true` for the file the receipt names; `false` for a path that holds nothing, a link or no regular file, and for another or a changed file, also one that took the path while it was opened. @example await ownedFile('/home/user/.cursor/mcp.json', receipt) */
 async function ownedFile(
   path: string,
   owner: CatalogReceipt,
@@ -197,6 +230,148 @@ async function ownedFile(
     return await isOwnedOpenFile(handle, owner)
   } finally {
     await handle.close()
+  }
+}
+
+/** The error codes with which a system refuses a change to a file this user may not write: Windows sets a file's times only through a handle that was opened with write access and answers `EPERM` for another, and an open for writing of a read-only file is refused with `EPERM` there and with `EACCES` elsewhere. */
+const WRITE_REFUSED_CODES: ReadonlySet<string> = new Set(['EPERM', 'EACCES'])
+
+/** The error codes of a config path that no longer holds the regular file the refresh opened: nothing, a link, a pipe, a device or a folder, or another file that took the path ({@link openWithoutFollowing}). */
+const CONFIG_GONE_CODES: ReadonlySet<string> = new Set([
+  'ENOENT',
+  'ELOOP',
+  'ENOTREG',
+  'EISDIR',
+  'EREPLACED',
+])
+
+/** What the learner reads when the config's time cannot be set because this user may not write the file. */
+const CONFIG_NOT_WRITABLE_SENTENCE =
+  'Cursor MCP config cannot be refreshed because this user may not change it (the file may be read-only or belong to another user); Codebook left it unchanged. Allow writing to this file, then run Codebook: Set Up AI Chat again.'
+
+/** What the learner reads when the config path came to hold another entry while the refresh opened the config, or between its read and the setting of its time. */
+const CONFIG_CHANGED_SENTENCE =
+  'Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.'
+
+/** What the learner reads for a config path that holds a pipe, a device or a folder. */
+const CONFIG_NOT_REGULAR_SENTENCE =
+  'Cursor MCP config is not a regular file; Codebook left its settings unchanged.'
+
+/** What the learner reads for a config path that holds a link, or that cannot be opened for another reason than a missing file. */
+const CONFIG_REDIRECTED_SENTENCE =
+  'Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.'
+
+/** The sentence for a config that {@link openWithoutFollowing} refused where it looks at the path first, by the code of its refusal; every other failure of the open reads {@link CONFIG_REDIRECTED_SENTENCE}. */
+const CONFIG_OPEN_SENTENCES: ReadonlyMap<string, string> = new Map([
+  ['ENOTREG', CONFIG_NOT_REGULAR_SENTENCE],
+  ['EREPLACED', CONFIG_CHANGED_SENTENCE],
+])
+
+/**
+ * Opens the Cursor MCP config for a refresh without following a link, and turns a refusal into the sentence that fits it; called by {@link refreshCursorMcpCatalog} for each of its three opens of the config.
+ * @param targetPath - The config's path.
+ * @returns The open file; with `O_NOFOLLOW` it can still be a pipe, a device or a folder, which the refresh refuses by its status with {@link CONFIG_NOT_REGULAR_SENTENCE}.
+ * @throws The file system's error for a path that holds nothing (`ENOENT`: the refresh creates the config then); otherwise an error with the sentence of a pipe, a device or a folder, of a config another file replaced while it was opened, or of a link or an inaccessible file, with the failure as its cause.
+ * @example const handle = await openConfigForRefresh('/home/user/.cursor/mcp.json')
+ */
+async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
+  try {
+    return await openWithoutFollowing(targetPath)
+  } catch (error) {
+    if (isMissing(error)) throw error
+    throw new Error(
+      CONFIG_OPEN_SENTENCES.get(systemErrorCode(error)) ??
+        CONFIG_REDIRECTED_SENTENCE,
+      { cause: error },
+    )
+  }
+}
+
+/**
+ * Turns a failure to open or change the config for its times into the sentence that fits it, for {@link openConfigForItsTimes} and {@link setTimesThroughWritableFile}.
+ * @param error - What the open or the change threw.
+ * @returns An error with {@link CONFIG_NOT_WRITABLE_SENTENCE} for a file this user may not write, one with {@link CONFIG_CHANGED_SENTENCE} for a path that no longer holds the file, each with the failure as its cause; every other failure itself.
+ * @example throw refusalOfConfigTimes(Object.assign(new Error('EPERM'), { code: 'EPERM' }))
+ */
+function refusalOfConfigTimes(error: unknown): unknown {
+  const code = systemErrorCode(error)
+  if (WRITE_REFUSED_CODES.has(code))
+    return new Error(CONFIG_NOT_WRITABLE_SENTENCE, { cause: error })
+  return CONFIG_GONE_CODES.has(code)
+    ? new Error(CONFIG_CHANGED_SENTENCE, { cause: error })
+    : error
+}
+
+/**
+ * Opens the config a second time, with write access and without following a link, for {@link setTimesThroughWritableFile}. The open neither creates nor truncates a file.
+ * @param targetPath - The config's path.
+ * @returns The open file.
+ * @throws With the sentence that fits ({@link refusalOfConfigTimes}) when this user may not write the file or the path no longer holds it.
+ * @example const writable = await openConfigForItsTimes('/home/user/.cursor/mcp.json')
+ */
+async function openConfigForItsTimes(targetPath: string): Promise<FileHandle> {
+  try {
+    return await openWithoutFollowing(targetPath, undefined, 'read-write')
+  } catch (error) {
+    throw refusalOfConfigTimes(error)
+  }
+}
+
+/**
+ * Sets the config's times through a second file opened with write access, and only when that file is the one the refresh opened and read; called by {@link setTimesOfOpenConfig} where the system refuses the times through the file opened for reading (Windows).
+ * @param opened - The status, with exact numbers, of the file the refresh opened for reading.
+ * @param targetPath - The config's path.
+ * @param accessedAt - The access time to keep.
+ * @param modifiedAt - The new modification time.
+ * @throws With {@link CONFIG_CHANGED_SENTENCE} when the second file is not the first by device and inode number, and with the sentence that fits when the file cannot be opened or changed ({@link refusalOfConfigTimes}). Nothing is created, truncated or written.
+ * @example await setTimesThroughWritableFile(await handle.stat({ bigint: true }), targetPath, status.atime, new Date())
+ */
+async function setTimesThroughWritableFile(
+  opened: BigIntStats,
+  targetPath: string,
+  accessedAt: Date,
+  modifiedAt: Date,
+): Promise<void> {
+  const writable = await openConfigForItsTimes(targetPath)
+  try {
+    const reopened = await writable.stat({ bigint: true })
+    // The time is set only on the file that was looked at and read.
+    if (reopened.dev !== opened.dev || reopened.ino !== opened.ino)
+      throw new Error(CONFIG_CHANGED_SENTENCE)
+    await writable.utimes(accessedAt, modifiedAt).catch((error: unknown) => {
+      throw refusalOfConfigTimes(error)
+    })
+  } finally {
+    await writable.close()
+  }
+}
+
+/**
+ * Sets the times of the config the refresh has open, so that Cursor's file watcher fires; called by {@link refreshCursorMcpCatalog} after it read the config's status.
+ * The times are set through the file that is open for reading where the system allows that (Linux and macOS, also for a read-only file of this user). Where it refuses (Windows sets times only through a file opened with write access), they are set through a second file opened with write access that must be the same file ({@link setTimesThroughWritableFile}). Which way is taken depends on the refusal alone, never on the system's name.
+ * @param handle - The config, open for reading.
+ * @param targetPath - The config's path.
+ * @param accessedAt - The access time to keep.
+ * @param modifiedAt - The new modification time.
+ * @throws With a sentence when this user may not change the file or the path came to hold another entry ({@link refusalOfConfigTimes}); the config's bytes are never changed.
+ * @example await setTimesOfOpenConfig(handle, '/home/user/.cursor/mcp.json', status.atime, new Date())
+ */
+async function setTimesOfOpenConfig(
+  handle: FileHandle,
+  targetPath: string,
+  accessedAt: Date,
+  modifiedAt: Date,
+): Promise<void> {
+  try {
+    await handle.utimes(accessedAt, modifiedAt)
+  } catch (error) {
+    if (!WRITE_REFUSED_CODES.has(systemErrorCode(error))) throw error
+    await setTimesThroughWritableFile(
+      await handle.stat({ bigint: true }),
+      targetPath,
+      accessedAt,
+      modifiedAt,
+    )
   }
 }
 
@@ -355,13 +530,10 @@ export async function refreshCursorMcpCatalog(
       if (previous !== undefined) parseReceipt(previous, targetPath)
       let handle
       try {
-        handle = await openWithoutFollowing(targetPath)
+        handle = await openConfigForRefresh(targetPath)
       } catch (error) {
-        if (!isMissing(error))
-          throw new Error(
-            'Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.',
-            { cause: error },
-          )
+        // Only a path that holds nothing is filled; every refusal already carries its sentence.
+        if (!isMissing(error)) throw error
         const stagedPath = join(
           cursorDirectory,
           `.codebook-${randomUUID()}.mcp.json`,
@@ -411,7 +583,7 @@ export async function refreshCursorMcpCatalog(
             targetPath,
             cursorDirectory,
           )
-          handle = await openWithoutFollowing(targetPath)
+          handle = await openConfigForRefresh(targetPath)
         }
         if (!handle) {
           if (!(await ownedFile(targetPath, owner)))
@@ -425,21 +597,20 @@ export async function refreshCursorMcpCatalog(
           )
           await unlink(stagedPath)
           await unlink(pendingCreationPath)
-          handle = await openWithoutFollowing(targetPath)
+          handle = await openConfigForRefresh(targetPath)
         }
       }
       try {
         const status = await handle.stat()
-        if (!status.isFile())
-          throw new Error(
-            'Cursor MCP config is not a regular file; Codebook left its settings unchanged.',
-          )
+        if (!status.isFile()) throw new Error(CONFIG_NOT_REGULAR_SENTENCE)
         if (status.size === 0)
           throw new Error(
             'Cursor MCP config is empty; Codebook preserved it. Inspect this file before retrying setup.',
           )
         // Cursor 3.21.16 may connect an extension server without publishing it to Agent until this file watcher fires.
-        await handle.utimes(
+        await setTimesOfOpenConfig(
+          handle,
+          targetPath,
           status.atime,
           new Date(
             Math.max(
