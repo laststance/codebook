@@ -215,13 +215,19 @@ export async function nativeParticipantsHarness(
   let revokeDuringDom = false,
     afterReadyBeforeInput = false,
     afterReadyAfterInput = true,
-    afterReadCount = 0
+    afterReadCount = 0,
+    afterReadBeforeInputCount = 0
   // The failure a test makes the run's place naming throw, as a sealed map that cannot be read would.
   let pausePlaceFailure: string | undefined
   // A browser pause the page makes before the server's continue is requested: delivered when the run asks the browser channel for earlier events, otherwise with that continue request.
   let earlyBrowserPause: 'pending' | 'sent' | undefined
   // The page is paused at a server stop's breakpoint in its stub of the server module; the next browser continue resumes only that pause.
   let browserAtServerBreakpoint = false
+  // Where the server's adapter reports its breakpoints verified while the run reads the after conditions before the input, once.
+  let newsDuringDomCheck: { line: number; column: number } | undefined
+  // The adapter's next answer to a break location request, kept back until released.
+  let heldBreakLocationAnswer: Promise<void> | undefined,
+    releaseBreakLocationAnswer = (): void => {}
   // The failure a participant's channel answers the run's next read of its earlier pauses with, once.
   let earlierPauseReadFailure:
     { participant: Participant; message: string } | undefined
@@ -433,6 +439,28 @@ export async function nativeParticipantsHarness(
     emitDeclaredPause(name)
     emitStopped(name)
   }
+  /** Sends the adapter's DAP `breakpoint` event for every breakpoint in the editor: verified at this position. */
+  const announceVerified = (
+    name: Participant,
+    line: number,
+    column: number,
+  ): void => {
+    for (const breakpoint of breakpoints)
+      run.onEvent(sessions[name], {
+        type: 'event',
+        seq: ++sequence,
+        event: 'breakpoint',
+        body: {
+          reason: 'changed',
+          breakpoint: {
+            id: adapterId(breakpoint),
+            verified: true,
+            line,
+            column,
+          },
+        },
+      })
+  }
   /** Answers what the page evaluates: its location, and the configured DOM conditions, of which the after conditions hold once the input was sent (or at once, when a test says so). */
   const pageEvaluation = (expression: string | undefined): unknown => {
     if (expression === 'location.href') return 'about:blank'
@@ -469,6 +497,7 @@ export async function nativeParticipantsHarness(
       released.push(`${name} proxy`)
       inputResolve()
       heldResponse?.()
+      releaseBreakLocationAnswer()
       this.onClose?.()
     },
     async request(
@@ -515,12 +544,28 @@ export async function nativeParticipantsHarness(
         earlyBrowserPause = 'sent'
         emitDeclaredPause('browser')
       }
+      // The server module loads while the page is read before the input: the adapter announces the module and verifies its pending breakpoints.
+      if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression &&
+        newsDuringDomCheck
+      ) {
+        const { line, column } = newsDuringDomCheck
+        newsDuringDomCheck = undefined
+        emitScript('server')
+        announceVerified('server', line, column)
+      }
       if (
         method === 'Runtime.evaluate' &&
         parameters?.expression === afterExpression &&
         run.view().operation?.inputDispatched
       )
         afterReadCount++
+      else if (
+        method === 'Runtime.evaluate' &&
+        parameters?.expression === afterExpression
+      )
+        afterReadBeforeInputCount++
       if (method === 'Runtime.evaluate')
         return { result: { value: pageEvaluation(parameters?.expression) } }
       if (method === 'Page.navigate') {
@@ -554,6 +599,12 @@ export async function nativeParticipantsHarness(
           end: parameters.end,
         })
         breakLocationRequests.push({ participant: name, ...range })
+        const held = heldBreakLocationAnswer
+        // A held answer keeps this one request open; later requests are answered at once.
+        if (held) {
+          heldBreakLocationAnswer = undefined
+          await held
+        }
         return answer
       }
       if (method === 'Input.dispatchMouseEvent') {
@@ -902,6 +953,10 @@ export async function nativeParticipantsHarness(
     afterReads(): number {
       return afterReadCount
     },
+    /** How many times the run read the after conditions before the input: once per read of the page at the input boundary. */
+    afterReadsBeforeInput(): number {
+      return afterReadBeforeInputCount
+    },
     /** Makes naming a paused place throw this failure, as a sealed map that cannot be read would at a deadline. */
     failPausePlace(message: string): void {
       pausePlaceFailure = message
@@ -1076,21 +1131,21 @@ export async function nativeParticipantsHarness(
       line: number,
       column: number,
     ): void {
-      for (const breakpoint of breakpoints)
-        run.onEvent(sessions[name], {
-          type: 'event',
-          seq: ++sequence,
-          event: 'breakpoint',
-          body: {
-            reason: 'changed',
-            breakpoint: {
-              id: adapterId(breakpoint),
-              verified: true,
-              line,
-              column,
-            },
-          },
-        })
+      announceVerified(name, line, column)
+    },
+    /** Makes the server's adapter announce the server module and report its breakpoints verified at this position while the run reads the after conditions before the input, once: the news arrives between the page reads and the last receipt check. @example harness.announceServerBreakpointVerifiedDuringDomCheck(4, 1) */
+    announceServerBreakpointVerifiedDuringDomCheck(
+      line: number,
+      column: number,
+    ): void {
+      newsDuringDomCheck = { line, column }
+    },
+    /** Keeps the adapter's next answer to a break location request back until released (or the connection closes), so a test can act while that judgement is still open; later requests are answered at once. @example const answer = harness.holdBreakLocationAnswer(); answer.release() */
+    holdBreakLocationAnswer(): { release(): void } {
+      heldBreakLocationAnswer = new Promise<void>((resolve) => {
+        releaseBreakLocationAnswer = resolve
+      })
+      return { release: (): void => releaseBreakLocationAnswer() }
     },
     /** Acknowledges later registrations as verified at this position, as an adapter does for a module that is already loaded. */
     acknowledgeRegistrationsAt(line: number, column: number): void {

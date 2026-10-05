@@ -3350,6 +3350,45 @@ test('a server stop whose pending breakpoint the debugger reports verified past 
   )
 })
 
+// Cycle 0046 (row 51): red while the last receipt check before the input failed the run with the source map's refusal ("line 2 between the declared line 1 and line 4 has a mapped position") when the adapter's news arrived during the page reads and the debugger had not yet answered the break-location request that lifts it.
+test('a server stop whose pending breakpoint the debugger reports verified past a function head while the page is read before the input still gets its input and is captured', async (context) => {
+  // Arrange: the function head over lines 1 to 3 is mapped and the debugger lists a break location on line 4 only. The news comes while the run reads the after conditions, and the debugger's answer to the judgement that news starts is kept back.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: 'AAAA;AACA;AACA;AACA;AACA' },
+    fixture: {
+      server: {
+        source:
+          'export async function authenticate(\n  mode,\n) {\n  return mode\n}\n',
+        citationEndLine: 5,
+      },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 3, columnNumber: 0 },
+  ])
+  await harness.run.prepare()
+  harness.pauseAt('server', 3, 0)
+  harness.bindAt('server', 4, 1)
+  harness.movePausedFrame(4)
+  const firstJudgement = harness.holdBreakLocationAnswer()
+  harness.announceServerBreakpointVerifiedDuringDomCheck(4, 1)
+  // Act
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  firstJudgement.release()
+  // Assert: the stop is captured on line 4, and the page was read a second time, and no third, before the one input.
+  assert.equal(server.source.line, 4)
+  assert.equal(server.source.column, 1)
+  assert.equal(harness.run.view().snapshots.length, 1)
+  assert.equal(harness.afterReadsBeforeInput(), 2)
+  assert.equal(
+    harness.commands.filter(
+      (command) => command.method === 'Input.dispatchMouseEvent',
+    ).length,
+    2,
+  )
+})
+
 // Cycle 0046 (row 50, found while fixing row 8): red while a later server stop, armed in a module that is already loaded, whose registration the adapter verified past mapped lines without break locations, was refused by the source map alone while it was armed ("Next declared stop was not armed and no resume was sent: … has a mapped position").
 test('a later server stop whose registration the debugger verifies past mapped lines without break locations is requested again, armed and captured there', async (context) => {
   // Arrange: lines 1 to 3 are mapped; both stops are declared at 1:1. The first stop pauses on line 1; afterwards the debugger lists a break location on line 3 only and verifies a new registration at 3:1.

@@ -1663,6 +1663,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       return false
     const places = await this.mappedBreakLocations(stop)
     if (!places) return false
+    // Another judgement of the same stop finished while the debugger answered: its rule stands.
+    if (stop.acceptsBoundLine(line)) return true
     const breakLocationLines = [
       ...new Set(places.map((place) => place.line)),
     ].sort((left, right) => left - right)
@@ -2769,25 +2771,17 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.track(this.dispatchInput())
     return { id: this.operation.id }
   }
-  /** Verifies sources, exact origin and a unique enabled center immediately before the one mouse sequence. @example await this.dispatchInput() */
+  /** Verifies sources, exact origin and a unique enabled center immediately before the one mouse sequence. The page is read once more, and only once, when the adapter's news about a server stop's breakpoint arrived during the first read and had to be judged by the debugger's break locations ({@link judgeNewsRefusedBeforeInput}); the synchronous receipt check stays the last step before the input. @example await this.dispatchInput() */
   private async dispatchInput(): Promise<void> {
     await this.verifySources()
-    for (const stop of this.stops.filter(
-      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
-    )) {
+    for (const stop of this.armedServerStops()) {
       await this.registeredStop(stop)
       this.alive()
     }
-    const target = await this.readDom('before')
-    this.alive()
-    const point = this.clickPoint(target)
-    // A result predicate already true before the click cannot prove this operation caused the result.
-    const priorResult = await this.readDom('after')
-    this.alive()
-    if (priorResult.ready)
-      throw new Error(
-        'Configured after conditions were already true before application input',
-      )
+    let point = await this.clickPointBeforeInput()
+    // The DOM reads yielded to the adapter's news: a place the source map alone refused is judged by the break locations first, and the page, which went on meanwhile, is read again.
+    if (await this.judgeNewsRefusedBeforeInput())
+      point = await this.clickPointBeforeInput()
     // DOM checks yield to native events; recheck pending authority synchronously before dispatching the first input.
     this.assertServerRegistrationsHeld()
     this.operation!.inputDispatched = true
@@ -2825,6 +2819,57 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.evidence.record('input.acknowledged')
   }
 
+  /** Lists the server stops whose owned breakpoint exists, for the receipt reads of {@link dispatchInput}, {@link judgeNewsRefusedBeforeInput} and {@link assertServerRegistrationsHeld}. @example this.armedServerStops() // [stops[0]] before the first input of a run whose first stop is a server stop */
+  private armedServerStops(): PreparedStop[] {
+    return this.stops.filter(
+      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
+    )
+  }
+
+  /**
+   * Reads the page right before the input, for {@link dispatchInput}: the before conditions with the click target, then the after conditions, which must not hold yet.
+   * @returns The center of the unique enabled click target, in viewport coordinates.
+   * @throws When the before conditions do not hold or name no point ({@link clickPoint}), and when the after conditions already hold: a result that is true before the click cannot prove this operation caused it.
+   * @example
+   * ```ts
+   * const point = await this.clickPointBeforeInput() // { x: 120, y: 48 }
+   * ```
+   */
+  private async clickPointBeforeInput(): Promise<{ x: number; y: number }> {
+    const target = await this.readDom('before')
+    this.alive()
+    const point = this.clickPoint(target)
+    // A result predicate already true before the click cannot prove this operation caused the result.
+    const priorResult = await this.readDom('after')
+    this.alive()
+    if (priorResult.ready)
+      throw new Error(
+        'Configured after conditions were already true before application input',
+      )
+    return point
+  }
+
+  /**
+   * Judges news about an armed server stop's breakpoint that arrived while {@link dispatchInput} read the page and that the source map alone refused, before the synchronous receipt check would end the run with that refusal: the debugger's break locations need a round trip, which {@link registeredStop} makes.
+   * @returns `true` when at least one armed server stop had a refused place and its receipt stands again, so the caller reads the page once more; `false` when no stop had one.
+   * @throws The registration failure of {@link registeredStop} when the break locations keep the refusal, or the registration was refused for another reason.
+   * @example
+   * ```ts
+   * if (await this.judgeNewsRefusedBeforeInput()) point = await this.clickPointBeforeInput()
+   * ```
+   */
+  private async judgeNewsRefusedBeforeInput(): Promise<boolean> {
+    const session = this.participants.server.selected
+    const refused = this.armedServerStops().filter(
+      (stop) => session && stop.breakpoint!.refusedPlace(session),
+    )
+    for (const stop of refused) {
+      await this.registeredStop(stop)
+      this.alive()
+    }
+    return refused.length > 0
+  }
+
   /**
    * Takes the point of the one mouse sequence from what the page answered for the before conditions, for {@link dispatchInput} right after that read.
    * @param target - The answer of the page for the `before` phase.
@@ -2852,9 +2897,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private assertServerRegistrationsHeld(): void {
-    for (const stop of this.stops.filter(
-      (candidate) => candidate.participant === 'server' && candidate.breakpoint,
-    )) {
+    for (const stop of this.armedServerStops()) {
       let receipt: ReturnType<OwnedRepositoryBreakpoint['registration']>
       try {
         receipt = stop.breakpoint!.registration(
