@@ -2153,6 +2153,233 @@ test('at a recorded stop the Study pane receives that stop’s explanation with 
   }
 })
 
+// Value: protects=the recorded application image and Run and Debug staying as they are while Play passes the time the agent explained the stop on screen; fails_when=the reader presents the same image and stop again when only the shown explanations change (native check F18 of NF-13 looked for exactly this); why_new=Cycle 0045 FXU; seam=duringStop saves the explanation at 150 ms of the recording, and the test counts the recording viewport's image presentations and clears
+test('Play across the time the stop on screen was explained leaves the recorded image and Run and Debug untouched, and the Study pane gains the explanation', async () => {
+  // Arrange: a stop without recorded debugger state committed at 100 ms of a film that ended at 200 ms; the agent explained it at 150 ms.
+  const harness = await recordedReaderHarness(
+    true,
+    false,
+    1,
+    async (stopped) => {
+      const { service } = stopped,
+        record = [...service.records.values()][0]!
+      stopped.clock(150)
+      await service.explain({
+        instanceId: service.instanceId,
+        runId: record.id,
+        snapshotUri: service.state(record).observations[0]!.snapshotUri,
+        sourceHash: stopped.runtimes[0]!.snapshots[0]!.source.hash,
+        valuePaths: ['value:nextTheme'],
+        key: 'explanation',
+        interpretation: 'The theme is read before the click applies it.',
+      })
+    },
+  )
+  try {
+    const { service, record, controller, studyId } = harness
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        service.state(record).historyOutcome.status === 'saved' &&
+        service.state(record).recording.contextStatus === 'saved',
+      'the explanation saved with the recording context',
+      2_000,
+    )
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 120,
+    })
+    await controller.settle()
+    const beforePlay = harness.postedMessages().slice(-1)[0]!
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const imagePresentedAtMs: Array<number | undefined> = [],
+      imageClearedAtMs: Array<number | undefined> = []
+    const presentImage = viewport.present.bind(viewport),
+      clearImage = viewport.clearRecorded.bind(viewport)
+    viewport.present = async (image: string): Promise<void> => {
+      imagePresentedAtMs.push(controller.state().requestedMs)
+      await presentImage(image)
+    }
+    viewport.clearRecorded = (): void => {
+      imageClearedAtMs.push(controller.state().requestedMs)
+      clearImage()
+    }
+    const debugPresentationsBeforePlay =
+        harness.historicalDebugPresentations.length,
+      debugInvalidationsBeforePlay = harness.historicalDebugInvalidations()
+
+    // Act: Play runs from 120 ms to the end of the recording.
+    controller.command({
+      action: 'play',
+      studyId,
+      expectedRevision: controller.state().revision,
+    })
+    await waitUntil(
+      () =>
+        controller.state().mode === 'paused' &&
+        controller.state().presentedMs === 200,
+      'Play reaches the end of the recording',
+      2_000,
+    )
+    await controller.settle()
+
+    // Assert
+    const shownAt = (positionMs: number) =>
+      harness
+        .postedMessages()
+        .findLast((message) => message.recording?.presentedMs === positionMs)
+        ?.model.observation?.interpretations.map(
+          (interpretation) => interpretation.text,
+        )
+    assert.equal(beforePlay.recording?.presentedMs, 120)
+    assert.deepEqual(
+      beforePlay.model.observation?.interpretations.map(
+        (interpretation) => interpretation.text,
+      ),
+      [],
+    )
+    assert.deepEqual(shownAt(150), [
+      'The theme is read before the click applies it.',
+    ])
+    assert.deepEqual(shownAt(200), [
+      'The theme is read before the click applies it.',
+    ])
+    assert.deepEqual(imagePresentedAtMs, [])
+    assert.deepEqual(imageClearedAtMs, [])
+    assert.equal(
+      harness.historicalDebugPresentations.length,
+      debugPresentationsBeforePlay,
+    )
+    assert.equal(
+      harness.historicalDebugInvalidations(),
+      debugInvalidationsBeforePlay,
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the recorded image and Run and Debug staying as they are while Play passes the saved time of an explanation inside the stop's recorded pause, where only its saved-while-held note leaves; fails_when=the note's change re-presents the stop, or the Study pane keeps the note after the explanation's saved time; why_new=Cycle 0045 FXU: native check F18 crossed such a time (152.78 s, inside the pause 144.11 to 153.24 s); seam=duringStop saves the explanation at 500 ms of the recording, and the test counts the recording viewport's image presentations and clears
+test('Play across an explanation’s saved time inside the stop’s recorded pause keeps the image and Run and Debug until the pause ends, and the Study pane drops the saved-while-held note at that time', async () => {
+  // Arrange: a stop with recorded debugger state committed at 100 ms and paused until 900 ms of a film that ended at 1,000 ms; the agent explained it at 500 ms.
+  const harness = await recordedReaderHarness(
+    true,
+    true,
+    1,
+    async (stopped) => {
+      const { service } = stopped,
+        record = [...service.records.values()][0]!
+      stopped.clock(500)
+      await service.explain({
+        instanceId: service.instanceId,
+        runId: record.id,
+        snapshotUri: service.state(record).observations[0]!.snapshotUri,
+        sourceHash: stopped.runtimes[0]!.snapshots[0]!.source.hash,
+        valuePaths: ['value:nextTheme'],
+        key: 'explanation',
+        interpretation: 'This stop holds the dark theme before it is applied.',
+      })
+    },
+  )
+  try {
+    const { service, record, controller, studyId } = harness
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        service.state(record).historyOutcome.status === 'saved' &&
+        service.state(record).recording.contextStatus === 'saved',
+      'the explanation saved with the recording context',
+      2_000,
+    )
+    await harness.reader.openRecording(studyId)
+    await controller.settle()
+    controller.command({
+      action: 'seek',
+      studyId,
+      expectedRevision: controller.state().revision,
+      positionMs: 100,
+    })
+    await controller.settle()
+    const atStop = harness.postedMessages().slice(-1)[0]!
+    const viewport = harness.viewportInstances.find(
+      (instance) => instance.mode === 'recording',
+    )!
+    const imagePresentedAtMs: Array<number | undefined> = [],
+      imageClearedAtMs: Array<number | undefined> = []
+    const presentImage = viewport.present.bind(viewport),
+      clearImage = viewport.clearRecorded.bind(viewport)
+    viewport.present = async (image: string): Promise<void> => {
+      imagePresentedAtMs.push(controller.state().requestedMs)
+      await presentImage(image)
+    }
+    viewport.clearRecorded = (): void => {
+      imageClearedAtMs.push(controller.state().requestedMs)
+      clearImage()
+    }
+    const debugPresentationsAtStop = harness.historicalDebugPresentations.length
+
+    // Act: Play runs from the stop to the end of the recording.
+    controller.command({
+      action: 'play',
+      studyId,
+      expectedRevision: controller.state().revision,
+    })
+    await waitUntil(
+      () =>
+        controller.state().mode === 'paused' &&
+        controller.state().presentedMs === 1_000,
+      'Play reaches the end of the recording',
+      5_000,
+    )
+    await controller.settle()
+
+    // Assert
+    const shownAt = (positionMs: number) =>
+      harness
+        .postedMessages()
+        .findLast((message) => message.recording?.presentedMs === positionMs)
+        ?.model.observation?.interpretations.map(
+          (interpretation: ShownInterpretation) => [
+            interpretation.text,
+            interpretation.savedLater,
+          ],
+        )
+    assert.deepEqual(
+      atStop.model.observation?.interpretations.map(
+        (interpretation: ShownInterpretation) => [
+          interpretation.text,
+          interpretation.savedLater,
+        ],
+      ),
+      [
+        [
+          'This stop holds the dark theme before it is applied.',
+          'while-pause-held',
+        ],
+      ],
+    )
+    assert.deepEqual(shownAt(500), [
+      ['This stop holds the dark theme before it is applied.', undefined],
+    ])
+    assert.deepEqual(imagePresentedAtMs, [900])
+    assert.deepEqual(imageClearedAtMs, [900])
+    assert.deepEqual(
+      harness.historicalDebugPresentations
+        .slice(debugPresentationsAtStop)
+        .map((presentation) => presentation.label),
+      ['Not recorded at this moment'],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 for (const failure of ['corrupt', 'future', 'missing'] as const)
   test(`a ${failure} configured recording keeps the real article return pose, learner ledger and input count intact`, async () => {
     // Arrange
