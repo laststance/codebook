@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
   mkdir,
@@ -55,9 +55,9 @@ function exists(path: string): Promise<boolean> {
   )
 }
 
-/** The id of a process that has ended, as the editor process of a killed window has. @example endedProcessId() // => 51234 */
+/** The id of a process that has ended, as the editor process of a killed window has: an id no process can have (above Linux's highest, 2 ** 22), because the id of a child that has just exited can be given to a new process before the sweep judges the marker. @example endedProcessId() // => 4194305 */
 function endedProcessId(): number {
-  return spawnSync(process.execPath, ['-e', '']).pid
+  return 2 ** 22 + 1
 }
 
 test('a profile folder whose marker names a process that is gone is left while a process still runs with it as its profile', async (context) => {

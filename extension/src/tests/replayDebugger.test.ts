@@ -2967,32 +2967,51 @@ test('the reader is told that Run and Debug loaded the values 150 ms after they 
   }
 })
 
-/** Counts the timers the process still waits for, as `process.getActiveResourcesInfo()` names them. @example pendingTimeouts() // => 1 while one setTimeout has not run */
-function pendingTimeouts(): number {
-  return process
-    .getActiveResourcesInfo()
-    .filter((resource) => resource === 'Timeout').length
-}
-
-// Value: protects=the editor's event loop after the historical debugger was disposed: no notice to the reader waits on a timer of an owner that is gone; fails_when=the values-loaded notice, scheduled 150 ms after the adapter served the values, stays pending through the disposal and keeps the event loop alive for an owner that tells its reader nothing any more; why_new=Cycle 0045 local review coderabbit #4 (the notice's timer handle was not kept); seam=the process's active timers
-test('a disposed historical debugger leaves no values-loaded notice waiting on a timer', async () => {
-  // Arrange: the values of the presented stop were served, so the notice to the reader waits for its paint allowance.
+// Value: protects=the editor's event loop after the historical debugger was disposed: no notice to the reader waits on a timer of an owner that is gone; fails_when=the values-loaded notice, scheduled 150 ms after the adapter served the values, stays pending through the disposal and keeps the event loop alive for an owner that tells its reader nothing any more; why_new=Cycle 0045 local review coderabbit #4 (the notice's timer handle was not kept), and its pre-landing review PL-29 (row 37 of Cycle 0046): the test counted the pending timers of the whole process, which the timers of earlier tests change; seam=node:test's fake timers, with a record of the timers this test starts and cancels
+test('a disposed historical debugger leaves no values-loaded notice waiting on a timer', async (context) => {
+  // Arrange: no real time passes, and every timer started or cancelled from here on is recorded.
+  context.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const startedTimers = context.mock.method(globalThis, 'setTimeout'),
+    cancelledTimers = context.mock.method(globalThis, 'clearTimeout')
   const fixture = harness(undefined, undefined, 0, false, true)
-  await fixture.owner.present(
+  const showing = fixture.owner.present(
     inspectedSnapshot,
     'Recorded pause',
     new AbortController().signal,
   )
-  const timersBeforeTheNotice = pendingTimeouts()
-  fixture.inspect()
-  const timersWhileTheNoticeWaits = pendingTimeouts()
+  try {
+    await fixture.started
+    await flushNative()
+    context.mock.timers.tick(REPLAY_DEBUG_INSPECTION_GRACE_MS)
+    await showing
+    // The values of the presented stop are served, so the notice to the reader waits for its paint allowance.
+    const timersStartedBeforeTheNotice = startedTimers.mock.callCount()
+    fixture.inspect()
+    const noticeTimers = startedTimers.mock.calls.slice(
+      timersStartedBeforeTheNotice,
+    )
 
-  // Act
-  await fixture.owner.dispose()
+    // Act
+    await fixture.owner.dispose()
+    const wasNoticeTimerCancelled = cancelledTimers.mock.calls.some(
+      (cancellation) => cancellation.arguments[0] === noticeTimers[0]?.result,
+    )
+    context.mock.timers.tick(150)
 
-  // Assert
-  assert.equal(timersWhileTheNoticeWaits, timersBeforeTheNotice + 1)
-  assert.equal(pendingTimeouts(), timersBeforeTheNotice)
+    // Assert: serving the values started one timer, of 150 ms, and the disposal cancelled that very timer; the reader was told of the session's end and of nothing after it.
+    assert.deepEqual(
+      noticeTimers.map((timer) => timer.arguments[1]),
+      [150],
+    )
+    assert.equal(wasNoticeTimerCancelled, true)
+    assert.equal(fixture.changes(), 1)
+  } finally {
+    // The records come off before the fake timers do, so the real timer functions are back for the next test.
+    startedTimers.mock.restore()
+    cancelledTimers.mock.restore()
+    context.mock.timers.reset()
+    await fixture.owner.dispose()
+  }
 })
 
 // Value: protects=the hint of the stop the reader shows now; fails_when=values served for a stop the recording left within the paint allowance are still reported, so the reader drops the hint of the moment it moved to; why_new=Cycle 0044 (the values-loaded notification is delivered late); seam=none

@@ -4,7 +4,6 @@ import { readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 
-import * as constants from '../constants'
 import type * as DeepWikiReaderModule from '../deepWikiReader'
 import type { WikiIncludedSource } from '../utils/answerDeepWikiQuestion'
 import type { WikiFreshness } from '../utils/inspectDeepWikiFreshness'
@@ -417,18 +416,10 @@ test('a freshness request made after a publish does not join the inspection of t
   }
 })
 
-/** Waits for a real duration; the reader's stamp rises on a real timer. */
-const sleep = (milliseconds: number): Promise<void> =>
-  new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
-
-test('a source changed outside the editor raises the stamp of the update state once its burst has ended, and a file of the Wiki folder or an excluded path does not', async () => {
-  // Arrange: a reader whose bursts last 300 ms, long enough for a request on a loaded machine to be answered inside one, on a Wiki that indexes src/a.ts and excludes examples.
-  const { startDeepWikiReader } = await loadModule<typeof DeepWikiReaderModule>(
-    resolve(__dirname, '../deepWikiReader.js'),
-    { './constants': { ...constants, WIKI_SOURCE_CHANGE_DEBOUNCE_MS: 300 } },
-    { URL },
-  )
-  const wiki = await serveMinimalWiki(undefined, startDeepWikiReader)
+// Value: protects=the label of an open Wiki page after source changed outside the editor: the update state's stamp rises once per burst of changes, and only for a file the freshness check weighs; fails_when=a file of the Wiki folder, of a candidate folder, of an excluded path, of node_modules or outside the project raises the stamp, the stamp rises before the burst has ended, or each change of a burst raises it; why_new=Cycle 0045 pre-landing review PL-29 (row 37 of Cycle 0046): the test waited real time and asked for the stamp inside a 300 ms burst, so a slow request met the burst's end; seam=node:test's fake setTimeout, so only the test ends a burst
+test('a source changed outside the editor raises the stamp of the update state once its burst has ended, and a file of the Wiki folder or an excluded path does not', async (context) => {
+  // Arrange: a Wiki that indexes src/a.ts and excludes examples; the burst's timer is a fake one, so no request can meet its end.
+  const wiki = await serveMinimalWiki()
   const projectRoot = resolve(wiki.outputDirectory, '../..')
   const manifest = JSON.parse(await readFile(wiki.manifestPath, 'utf8'))
   await writeFile(
@@ -442,6 +433,7 @@ test('a source changed outside the editor raises the stamp of the update state o
   const readStamp = async (): Promise<number> =>
     (await (await fetch(new URL('api/update-status', wiki.reader.url))).json())
       .sourceChangeStamp
+  context.mock.timers.enable({ apis: ['setTimeout'] })
   try {
     // The reader takes in the manifest's index with its next request.
     await fetch(wiki.reader.url)
@@ -455,26 +447,24 @@ test('a source changed outside the editor raises the stamp of the update state o
       resolve(projectRoot, '../elsewhere/src/a.ts'),
     ])
       wiki.reader.noteSourceChange(path)
-    // Longer than a burst: a file that counted would have raised the stamp by now.
-    await sleep(450)
+    // A whole burst of 1,000 ms: a file that counted would have raised the stamp by now.
+    context.mock.timers.tick(1_000)
     const stampAfterFilesThatAreNoSource = await readStamp()
     // An agent's CLI rewrites the indexed file and adds a new one in one burst.
     wiki.reader.noteSourceChange(join(projectRoot, 'src/a.ts'))
     wiki.reader.noteSourceChange(join(projectRoot, 'src/new.ts'))
+    context.mock.timers.tick(999)
     const stampInsideTheBurst = await readStamp()
-    // The burst ends 300 ms after its last change; the stamp is asked for until it has risen, for five seconds at most.
-    const deadline = Date.now() + 5_000
-    let stampAfterTheBurst = await readStamp()
-    while (stampAfterTheBurst === 0 && Date.now() < deadline) {
-      await sleep(50)
-      stampAfterTheBurst = await readStamp()
-    }
+    // The burst ends 1,000 ms after its first change.
+    context.mock.timers.tick(1)
+    const stampAfterTheBurst = await readStamp()
 
     // Assert
     assert.equal(stampAfterFilesThatAreNoSource, 0)
     assert.equal(stampInsideTheBurst, 0)
     assert.equal(stampAfterTheBurst, 1)
   } finally {
+    context.mock.timers.reset()
     await wiki.close()
   }
 })
