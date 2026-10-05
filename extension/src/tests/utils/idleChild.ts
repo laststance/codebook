@@ -9,7 +9,7 @@ import type { TestContext } from 'node:test'
  * @returns The running child; its `pid` names a live process.
  * @example
  * const child = await idleChild(context)
- * await readProcessStart(child.pid!) // => 'linux:16362446'
+ * await readProcessStart(child.pid!) // => 'linux@4026531836:16362446' on Linux, with the pid namespace of the reading process
  */
 export async function idleChild(context: TestContext): Promise<ChildProcess> {
   const child = spawn(
