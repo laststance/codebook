@@ -284,6 +284,47 @@ function studyClient(
     const target = element(id)
     if (target.textContent !== value) target.textContent = value
   }
+  // A focus one part of the pane owes to a control of its own choice (the Saved studies list, the same item of a list that was rendered again), for a control that left while it held the focus. It is placed like the transport's: at once while this document has the focus, else at its next focus event, so a pane the learner left takes no focus back.
+  let partFocusOwed:
+    | {
+        leaving: Element
+        target: () => HTMLElement | null | undefined
+        focusOptions: FocusOptions
+      }
+    | undefined
+  /**
+   * Places the focus a part of the pane owes, once; called by {@link moveFocusOf} while this document has the focus, and at the document's next focus event otherwise. A learner who put the focus on another control meanwhile keeps it.
+   * @example payPartFocus()
+   */
+  const payPartFocus = (): void => {
+    const owed = partFocusOwed
+    if (!owed) return
+    partFocusOwed = undefined
+    if (
+      document.activeElement !== document.body &&
+      document.activeElement !== owed.leaving
+    )
+      return
+    owed.target()?.focus(owed.focusOptions)
+  }
+  // Added ahead of the pane's general rule for a focus that lost its control, so a part's own choice comes first.
+  window.addEventListener('focus', payPartFocus)
+  /**
+   * Moves the focus of a control that left to the control its part of the pane names for it; called by the parts that know a better place than the pane's general rule (Saved studies, the lists that are rendered again).
+   * Nothing is focused in a pane that does not have the focus: whether a webview's `focus()` takes the window's keyboard from the editor part the learner is in is not known here, so the move is owed to the pane's next focus event.
+   * @param leaving - The control that held the focus and left.
+   * @param target - Finds the control that takes the focus, when the focus is placed.
+   * @param focusOptions - How the control is focused; without scrolling unless the caller says otherwise.
+   * @example moveFocusOf(repair, () => element('studies'))
+   */
+  const moveFocusOf = (
+    leaving: Element,
+    target: () => HTMLElement | null | undefined,
+    focusOptions: FocusOptions = { preventScroll: true },
+  ): void => {
+    partFocusOwed = { leaving, target, focusOptions }
+    if (document.hasFocus()) payPartFocus()
+  }
   const renderKeys = new Map<string, string>()
   const replace = (id: string, data: unknown, children: () => Node[]): void => {
     const key = JSON.stringify(data)
@@ -1194,7 +1235,7 @@ function studyClient(
       heldFocus = document.activeElement === repair
     repair.hidden = shownNote !== 'study-repairable'
     if (heldFocus && repair.hidden)
-      element('studies').focus({ preventScroll: true })
+      moveFocusOf(repair, () => element('studies'))
   }
   /**
    * Gives this pane's files request when it is for one entry; read by the functions that follow a request ({@link settleFilesRequest}, {@link filesRefusalFor}, {@link isFilesRequestOpen}).
@@ -1457,7 +1498,7 @@ function studyClient(
     focusedBefore: Element | undefined,
   ): void => {
     if (!focusedBefore || focusedBefore.checkVisibility()) return
-    savedStudiesFocusTarget().focus({ preventScroll: true })
+    moveFocusOf(focusedBefore, savedStudiesFocusTarget)
   }
   /** Names the entry the "Remove by hand" disclosure is offered for: the chosen entry of a window without a Trash that no reason keeps from being removed. Read by {@link showStudyFiles}. @example filesOfferedFor(message, entry, '') // => entry.id in a WSL remote window */
   const filesOfferedFor = (
@@ -2542,11 +2583,12 @@ function studyClient(
         )
       }
     }
-    const focusedItem =
+    const focusedListControl =
       document.activeElement instanceof HTMLElement
-        ? document.activeElement.dataset.item
+        ? document.activeElement
         : undefined
-    const focusedRegion = document.activeElement?.parentElement?.id
+    const focusedItem = focusedListControl?.dataset.item
+    const focusedRegion = focusedListControl?.parentElement?.id
     replace(
       'flow',
       model.progressByItem.map((value) => [value.id, value.title]),
@@ -2584,13 +2626,17 @@ function studyClient(
         }),
     )
     if (!message.moments.length) text('moments', 'No observed moments yet.')
+    // The same item's control of a list that was rendered again takes the focus its old control held.
     if (
+      focusedListControl &&
       focusedItem &&
       (focusedRegion === 'flow' || focusedRegion === 'moments')
     )
-      element(focusedRegion)
-        .querySelector<HTMLButtonElement>(`[data-item="${focusedItem}"]`)
-        ?.focus({ preventScroll: true })
+      moveFocusOf(focusedListControl, () =>
+        element(focusedRegion).querySelector<HTMLButtonElement>(
+          `[data-item="${focusedItem}"]`,
+        ),
+      )
     const studies = element('studies')
     if (studies instanceof HTMLSelectElement) {
       const previous = studies.value
@@ -2962,19 +3008,27 @@ function studyClient(
           }),
       )
       // Keyboard focus returns to the same stop's control after the list was rendered again.
-      if (focusedStop && !nodeEvents.contains(document.activeElement))
-        Array.from(
-          nodeEvents.querySelectorAll<HTMLButtonElement>(
-            'button[data-node-history-sequence]',
-          ),
+      if (
+        focusedControl &&
+        focusedStop &&
+        !nodeEvents.contains(document.activeElement)
+      )
+        moveFocusOf(
+          focusedControl,
+          () =>
+            Array.from(
+              nodeEvents.querySelectorAll<HTMLButtonElement>(
+                'button[data-node-history-sequence]',
+              ),
+            ).find(
+              (control) =>
+                control.dataset.nodeHistorySequence === focusedStop.sequence &&
+                (control.dataset.inspectNodeHistoryStop === 'true') ===
+                  focusedStop.inspect,
+            ),
+          // As before this rule: the stop's control is brought into view with the focus.
+          {},
         )
-          .find(
-            (control) =>
-              control.dataset.nodeHistorySequence === focusedStop.sequence &&
-              (control.dataset.inspectNodeHistoryStop === 'true') ===
-                focusedStop.inspect,
-          )
-          ?.focus()
     }
     for (const link of Array.from(
       document.querySelectorAll<HTMLButtonElement>('.link[data-action]'),

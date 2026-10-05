@@ -165,6 +165,17 @@ async function check(page, options, collected) {
         `${focused.tagName.toLowerCase()}: ${focused.textContent.trim()}`
       )
     })
+  /** Takes the focus from the pane the way the editor does while the learner works in another part of it: the document reports that it has none. */
+  const leavePane = () =>
+    page.evaluate(() => {
+      document.hasFocus = () => false
+    })
+  /** Gives the pane the focus back and tells it so with the window's focus event. */
+  const returnToPane = () =>
+    page.evaluate(() => {
+      delete document.hasFocus
+      window.dispatchEvent(new Event('focus'))
+    })
   /** Reads one status region of the pane: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor has the `hidden` attribute or `display:none`, and when a closed disclosure holds it; a region that is rendered exists for assistive technology before its first text. */
   const statusRegion = (id) =>
     page.evaluate((id) => {
@@ -1404,6 +1415,26 @@ async function check(page, options, collected) {
           afterInspect.focusedIsInspect === true &&
           afterInspect.label === 'Debugger stop selected' &&
           stopRequestsAfter === stopRequestsBefore + 1,
+      })
+      // Arrange: the same stop's Inspect holds the focus, and the learner has left the pane for another part of the editor (row 172).
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      await nodeInspect.focus()
+      await leavePane()
+      // Act: the native session shows the stop, so the list is rendered again; later the learner returns to the pane.
+      await publish({ ...nodeReader, nodeHistoryPosition: nodeStop })
+      const nodeFocusWhileAway = await focusName()
+      await returnToPane()
+      const nodeFocusOnReturn = await focusName()
+      // Assert
+      cases.push({
+        name: 'when the Node event list is rendered again while the pane does not have the focus, the pane takes none, and the same stop’s control has it when the learner returns',
+        actual: { nodeFocusWhileAway, nodeFocusOnReturn },
+        passed:
+          nodeFocusWhileAway === 'body' &&
+          nodeFocusOnReturn === 'button: Debugger stop selected',
       })
       // Arrange: a Node playhead scrub that ends without a change event (Cycle 0044, 0031-U6).
       const nodeTimeline = {
@@ -5238,6 +5269,72 @@ async function check(page, options, collected) {
       oneLeft.deletes.length === askedAfterRetry.deletes.length &&
       JSON.stringify(focusAfterAnswer) ===
         JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }),
+  })
+
+  // Arrange: the parts of Saved studies that name the place of a lost focus themselves, each with the pane out of focus: the learner works in another part of the editor while the host's message arrives (row 172).
+  await library(threeStudies, thirdStudy.id, thirdListed)
+  await copyButton.focus()
+  await leavePane()
+  // Act: another pane makes the host show another study, so Remove by hand closes under the focused button; later the learner returns.
+  await library(threeStudies, shownStudy.id, thirdListed)
+  const disclosureFocusWhileAway = await focusName()
+  await returnToPane()
+  const disclosureFocusOnReturn = await focusName()
+  // The repair button leaves under the focus because the host repaired the entry.
+  const libraryToRepair = [shownStudy, repairableStudy, legacyStudy]
+  await library(libraryToRepair, shownStudy.id)
+  await page.selectOption('#studies', repairableStudy.id)
+  await page.locator('#repair-study').focus()
+  await leavePane()
+  await library(
+    [
+      shownStudy,
+      { ...repairableStudy, metadata: 'validated', reason: undefined },
+      legacyStudy,
+    ],
+    shownStudy.id,
+  )
+  const repairFocusWhileAway = await focusName()
+  await returnToPane()
+  const repairFocusOnReturn = await focusName()
+  // An observed moment's control is rendered again because another moment was observed.
+  const observedMoment = (id) => ({
+    id,
+    itemId: options.message.model.selection.itemId,
+    title: 'Observed stop',
+    at: '2026-09-27T00:00:00.000Z',
+  })
+  await library([shownStudy], shownStudy.id, {
+    moments: [observedMoment('observed-1')],
+  })
+  await page.locator('#moments button').first().focus()
+  await leavePane()
+  await library([shownStudy], shownStudy.id, {
+    moments: [observedMoment('observed-1'), observedMoment('observed-2')],
+  })
+  const momentFocusWhileAway = await focusName()
+  await returnToPane()
+  const momentFocusOnReturn = await page.evaluate(
+    () => document.activeElement.dataset.observation,
+  )
+  // Assert
+  cases.push({
+    name: 'while the pane does not have the focus, a part of it that leaves or is rendered again under the control the learner left takes no focus, and when the learner returns the focus is where that part puts it: on the summary of Remove by hand, on the Saved studies list after a repair, on the same item of the observed moments',
+    actual: {
+      disclosureFocusWhileAway,
+      disclosureFocusOnReturn,
+      repairFocusWhileAway,
+      repairFocusOnReturn,
+      momentFocusWhileAway,
+      momentFocusOnReturn,
+    },
+    passed:
+      disclosureFocusWhileAway === 'body' &&
+      disclosureFocusOnReturn === 'summary: Remove by hand' &&
+      repairFocusWhileAway === 'body' &&
+      repairFocusOnReturn === 'studies' &&
+      momentFocusWhileAway === 'body' &&
+      momentFocusOnReturn === 'observed-1',
   })
 
   // Arrange: Remove by hand opened for the other study, whose files the host has not listed; every message until the host renders again carries the revision the pane asked under (row 168).
