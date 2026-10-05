@@ -5475,6 +5475,65 @@ async function check(page, options, collected) {
       ),
   })
 
+  // Arrange: what is left of a study without its archive, as the library lists it since it lists such rests: an entry that cannot be opened and has no reason, because nothing Retry storage does brings the archive back (row 181).
+  const restOfStudy = savedStudy('window_run-rest0011', {
+    profile: undefined,
+    format: 'archive-missing',
+    outcome: 'Archive missing; remaining files kept',
+    metadata: 'unavailable',
+  })
+  await library([shownStudy, restOfStudy], shownStudy.id)
+  const opensBeforeRest = (await removalControl()).histories
+  // Act: the learner chooses the rest in a window with a Trash and presses the delete button by keyboard; then the same entry in a window without a Trash, where the learner opens Remove by hand.
+  await page.selectOption('#studies', restOfStudy.id)
+  const restWithTrash = await removalControl()
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  const askedToDeleteRest = await removalControl()
+  await library([shownStudy, restOfStudy], shownStudy.id, withoutTrash)
+  const restWithoutTrash = await removalControl()
+  await openRemoveByHandAndAwaitRequest()
+  const askedForRestFiles = await removalControl()
+  // Assert
+  cases.push({
+    name: 'what is left of a saved study without its archive is listed as an entry that cannot be opened: it is chosen without asking the host to open it, its note says that it can still be deleted where the window has a Trash and that it can only be removed by hand where it has none, no repair is offered, and the delete button or Remove by hand asks the host for that entry',
+    actual: {
+      restWithTrash,
+      askedToDeleteRest,
+      restWithoutTrash,
+      askedForRestFiles,
+    },
+    passed:
+      restWithTrash.chosen === restOfStudy.id &&
+      restWithTrash.shownText.includes(
+        ' · Archive missing; remaining files kept · rest0011',
+      ) &&
+      restWithTrash.histories === opensBeforeRest &&
+      restWithTrash.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      restWithTrash.repairNote === null &&
+      !restWithTrash.repairVisible &&
+      restWithTrash.buttonVisible &&
+      restWithTrash.ariaDisabled === null &&
+      restWithTrash.reason === null &&
+      askedToDeleteRest.deletes.length === restWithTrash.deletes.length + 1 &&
+      askedToDeleteRest.deletes.at(-1)[0] === restOfStudy.id &&
+      // Without a Trash the same entry stays chosen and offers the removal by hand in place of the delete button.
+      restWithoutTrash.chosen === restOfStudy.id &&
+      restWithoutTrash.note ===
+        'This saved study cannot be opened. This window has no Trash, so it can only be removed by hand.' &&
+      !restWithoutTrash.repairVisible &&
+      !restWithoutTrash.buttonVisible &&
+      restWithoutTrash.reason === null &&
+      restWithoutTrash.removeByHand.open === false &&
+      restWithoutTrash.removeByHand.summary === 'Remove by hand' &&
+      askedForRestFiles.deletes.length ===
+        askedToDeleteRest.deletes.length + 1 &&
+      askedForRestFiles.deletes.at(-1)[0] === restOfStudy.id &&
+      askedForRestFiles.removeByHand.note === "Listing this study's files…" &&
+      askedForRestFiles.histories === opensBeforeRest,
+  })
+
   // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
   const retryVisible = () =>
     page.evaluate(

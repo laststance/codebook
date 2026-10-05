@@ -6532,6 +6532,7 @@ export class StudyWorkspace {
       }
       try {
         this.catalog = await this.library.list()
+        this.giveUpSelectionOfRest()
         const id = this.firstShownStudyId()
         if (id) {
           this.selectedArchive = await this.readSavedArchive(id)
@@ -6561,15 +6562,39 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the library lists only what is left of a study without its archive (a catalog file, a recording), as after its files were removed by hand in part; asked by {@link giveUpSelectionOfRest} and {@link forgetStudiesRemovedByHand}.
+   * Such an entry is listed so that the rest can be removed. It cannot be read, so the reader neither selects it nor writes its study again.
+   * @param studyId - The study an entry may list.
+   * @example this.isRestWithoutArchive(study.id) // => true once the study's archive was removed by hand and the list was read again
+   */
+  private isRestWithoutArchive(studyId: string): boolean {
+    return this.catalog.some(
+      (entry) => entry.id === studyId && entry.format === 'archive-missing',
+    )
+  }
+
+  /**
+   * Gives up a saved selection that names what is left of a study without its archive, so a fresh reader does not try to read it and report "Study archive is unavailable."; called by {@link initialize} in the turn the catalog was listed, before {@link firstShownStudyId}.
+   * @example this.giveUpSelectionOfRest()
+   */
+  private giveUpSelectionOfRest(): void {
+    const selected = this.selection.studyId
+    if (selected && this.isRestWithoutArchive(selected)) this.selectNoStudy()
+  }
+
+  /**
    * Names the saved study a fresh reader shows first; read by {@link initialize} in the turn the catalog was listed.
    * @returns The study the saved selection names, otherwise the newest listed study this Codebook can read, or `undefined` for a library without one.
    * @example const id = this.firstShownStudyId()
    */
   private firstShownStudyId(): string | undefined {
-    // A study a newer Codebook saved cannot be read here; the newest entry that is not one is shown first.
+    // A study a newer Codebook saved cannot be read here, and of a study without its archive nothing can be read; the newest entry that is neither is shown first.
     return (
       this.selection.studyId ??
-      this.catalog.find((entry) => entry.format !== 'newer')?.id
+      this.catalog.find(
+        (entry) =>
+          entry.format !== 'newer' && entry.format !== 'archive-missing',
+      )?.id
     )
   }
 
@@ -12820,6 +12845,7 @@ export class StudyWorkspace {
    * Follows studies that left the library without a removal of this reader, as after the learner removed the listed files by hand; called by Retry storage / refresh before it reads the ledger and writes the selection.
    * The file lists kept for "Remove by hand" are forgotten first, also when a later step fails: a list made before the learner removed files names paths that may be gone ({@link forgetListedStudyFiles}).
    * Such a study is one the reader listed before and the library no longer holds, or one the ledger still named. The ledger's references are dropped under the storage lock, a run of this window is forgotten like a removed one (so it is not written back), and a reader that selects the study selects none. A study that was never saved is in neither group and is left alone.
+   * A study of which only a rest without its archive is listed ({@link isRestWithoutArchive}) has left the library in the same way: its entry stays, so the rest can be removed, and Retry does not write its archive again.
    * @example await this.forgetStudiesRemovedByHand()
    */
   private async forgetStudiesRemovedByHand(): Promise<void> {
@@ -12829,7 +12855,9 @@ export class StudyWorkspace {
     this.catalog = await this.library!.list()
     const gone = new Set(
       [...listedBefore, ...namedByLedger].filter(
-        (studyId) => !this.catalog.some((entry) => entry.id === studyId),
+        (studyId) =>
+          this.isRestWithoutArchive(studyId) ||
+          !this.catalog.some((entry) => entry.id === studyId),
       ),
     )
     for (const studyId of gone) {
