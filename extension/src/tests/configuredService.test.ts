@@ -850,7 +850,7 @@ test('configured help tells an agent that only the next stop is armed and where 
   )
   assert.match(
     contract.sourceBinding,
-    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run \(the stop then ends at the 20 second deadline\); declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
+    /Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run \(the stop then ends at the 20-second deadline\); declare the bound place instead, in a citation that covers it\. Two declared stops that bind on one place fail when the second binds; declare that place once\./,
   )
   assert.match(
     contract.sourceBinding,
@@ -952,7 +952,7 @@ test('configured help names the active-progress deadline the run uses, in second
   )
   assert.equal(
     contract.sourceBinding.includes(
-      `the stop then fails at the ${deadlineSeconds} second deadline`,
+      `the stop then fails at the ${deadlineSeconds}-second deadline`,
     ),
     true,
   )
@@ -963,7 +963,7 @@ test('configured help names the active-progress deadline the run uses, in second
     true,
   )
   assert.equal(
-    (help.text.match(new RegExp(`${deadlineSeconds} second`, 'g')) ?? [])
+    (help.text.match(new RegExp(`${deadlineSeconds}[ -]second`, 'g')) ?? [])
       .length,
     6,
   )
@@ -982,7 +982,7 @@ test('configured help tells an agent when a binding on another line fails for ea
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sourceBinding.includes(
-      'Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run (the stop then ends at the 20 second deadline); declare the bound place instead, in a citation that covers it.',
+      'Any other binding on another line fails, naming the condition that refused it: a browser stop at once while it is armed, a server stop when the adapter acknowledges it on that line or, while its registration is pending, only at its pause, about 3 seconds after it, and never when that line does not run (the stop then ends at the 20-second deadline); declare the bound place instead, in a citation that covers it.',
     ),
     true,
   )
@@ -1017,7 +1017,7 @@ test('configured help tells an agent that a run waits for the debugger’s own p
     .parse(JSON.parse(help.text))
   assert.equal(
     contract.sequence[4]?.includes(
-      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20 second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records a pause as cdp.pause-observed',
+      'A run does not complete while a pause the debugger made for itself is still open; if it stays open, the run fails at its 20-second deadline. A deadline that expires while a participant is paused with no announced stop adds where, for example "The server is paused at auth.ts:18 without a debugger stop." The place is <repository path>:<line> in a declared stop\'s module, <script URL> <line>:<column> in another announced script, "an unknown script <line>:<column>" in one never announced, and "an unknown place" for an empty stack. The journal records a pause as cdp.pause-observed',
     ),
     true,
   )
@@ -2365,7 +2365,7 @@ test('a run that completes in the turn in which its whole-run deadline passes an
   assert.equal(answer.state.error, undefined)
 })
 
-// Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20 second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
+// Value: protects=the one bound of the wait: the run's active deadline plus two seconds, counted from the acknowledgement; fails_when=the wait has no end of its own, or ends before a run that fails at its 20-second deadline could say so; why_new=Cycle 0045 cause 3 (ER-7 with PC-2.7: at the bound the answer carries the latest state); seam=the service's clock, moved by the test
 test('a continuation whose run shows no next state within 22 seconds of its acknowledgement answers accepted with the latest state and no next state', async (context) => {
   // Arrange: a run is paused at its first stop; after the continuation the synthetic runtime keeps running.
   let nowMs = CLOCK_START_MS
