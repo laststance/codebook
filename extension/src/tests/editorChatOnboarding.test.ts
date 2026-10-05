@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
-import { hostname, tmpdir } from 'node:os'
+import os, { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import type * as ExtensionModule from '../extension'
+import * as storageOwner from '../utils/currentStorageOwner'
+import { readProcessStart } from '../utils/readProcessStart'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
 import { loadModule } from './utils/loadModule'
@@ -561,9 +563,10 @@ test('stopping Cursor while its Node resolves never registers a retired server d
   }
 })
 
-// Value: protects=another window can tell this window's connection descriptor from one a crashed window left, also on storage two machines share and after a restart; fails_when=the descriptor names a process id and no machine (Cycle 0044 row C-L1), so its owner is judged by a process id of whatever machine reads it; why_new=the descriptor's content beyond the instance was never asserted; seam=the editor boundary, whose machine id the test names
-test('the connection descriptor of a started agent server names its process, its machine and its boot', async (context) => {
-  // Arrange: a local editor window whose machine id is "machine-of-this-editor", under the kernel boot "boot-of-this-test".
+// Value: protects=another window can tell this window's connection descriptor from one a crashed window left, also on storage two machines share, after a restart, and when another process has this window's process id; fails_when=the descriptor names a process id and no machine (Cycle 0044 row C-L1), so its owner is judged by a process id of whatever machine reads it, or it lacks the start of its process (Cycle 0046 rows 2 and 9), so a crashed window's descriptor counts for as long as any process has its id; why_new=the descriptor's content beyond the instance was never asserted; seam=the editor boundary, whose machine id the test names, the host name and the kernel boot id file
+test('the connection descriptor of a started agent server names its process, its machine, its boot and the start of its process', async (context) => {
+  // Arrange: a local editor window whose machine id is "machine-of-this-editor", on the host "workstation", under the kernel boot "boot-of-this-test".
+  context.mock.method(os, 'hostname', () => 'workstation')
   answerKernelBootId(context, 'boot-of-this-test')
   const editor = await boundary(context, 'Visual Studio Code')
   try {
@@ -572,9 +575,11 @@ test('the connection descriptor of a started agent server names its process, its
       'codebook.startAgentServer',
     )!()
 
-    // Assert
+    // Assert: the digests are the first 16 hex characters of the SHA-256 of "machine-of-this-editor" and of "workstation"; the start is the one the system names for this test process.
     assert.ok(typeof descriptorPath === 'string')
     const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'))
+    const startOfThisProcess = await readProcessStart(process.pid)
+    assert.equal(typeof startOfThisProcess, 'string')
     assert.deepEqual(descriptor, {
       url: 'http://127.0.0.1/instance-1/mcp',
       token: 'token-instance-1',
@@ -582,11 +587,49 @@ test('the connection descriptor of a started agent server names its process, its
       workspace: editor.directory,
       apiVersion: '1.6',
       pid: process.pid,
-      hostname: hostname(),
+      hostname: 'workstation',
       machineId: 'machine-of-this-editor',
+      machineKey: '697e59dbdfe8f050',
+      hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-of-this-test' },
+      processStart: startOfThisProcess,
     })
     await editor.commands.get('codebook.stopAgentServer')!()
+  } finally {
+    await editor.loaded.deactivate()
+  }
+})
+
+// Value: protects=the first storage lock of a window on macOS or Windows does not wait for the spawned query of this process's start; fails_when=activation no longer names the storage owner at its start, so the first write waits for ps or PowerShell, or names it before the editor's machine id is known (ER-11); why_new=the process start is read since Cycle 0046; seam=the storage owner module the activation loads
+test('activation begins the read of this process’s start right after it took the editor’s machine id, before any command runs', async (context) => {
+  // Arrange: every use of the storage owner module is recorded in order.
+  const uses: string[] = []
+  const takeMachineId = storageOwner.useEditorMachineId,
+    nameOwner = storageOwner.currentStorageOwner
+  context.mock.method(
+    storageOwner,
+    'useEditorMachineId',
+    (...input: Parameters<typeof takeMachineId>) => {
+      uses.push(`useEditorMachineId(${input[0]})`)
+      takeMachineId(...input)
+    },
+  )
+  context.mock.method(
+    storageOwner,
+    'currentStorageOwner',
+    (...input: Parameters<typeof nameOwner>) => {
+      uses.push('currentStorageOwner()')
+      return nameOwner(...input)
+    },
+  )
+  // Act: the window activates; no command runs.
+  const editor = await boundary(context, 'Visual Studio Code')
+  try {
+    // Assert
+    assert.deepEqual(uses, [
+      'useEditorMachineId(machine-of-this-editor)',
+      'currentStorageOwner()',
+    ])
   } finally {
     await editor.loaded.deactivate()
   }

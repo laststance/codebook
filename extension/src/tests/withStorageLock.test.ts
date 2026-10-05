@@ -14,10 +14,12 @@ import os, { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import { readProcessStart } from '../utils/readProcessStart'
 import type { StorageOwnerIdentity } from '../utils/readRecordedOwner'
 import { withStorageLock } from '../utils/withStorageLock'
 
 import { answerKernelBootId } from './utils/answerKernelBootId'
+import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /** Creates an empty storage directory that is removed with the test, and returns its canonical path, which is the one the lock file is named by. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
@@ -663,4 +665,132 @@ test('a write that meets a stale lock after the first write of this window still
   // Assert
   assert.equal(outcome, 'written')
   assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=a storage lock a killed window left is taken over in the same boot although another process has its process id; fails_when=the lock is judged by process id and boot alone, so it refuses every write until the machine restarts or the file is removed by hand (Cycle 0046 row 2, LK-F1, and row 9); why_new=withStorageLock.test.ts had no case with a process start; seam=none (the lock names this running test process with another start)
+test('a lock whose owner’s process id is in use by another process is taken over', async (context) => {
+  // Arrange: the lock of a window that was killed; this test process has its process id now, and it began at another time.
+  const directory = await storageDirectory(context)
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({
+      pid: process.pid,
+      hostname: hostname(),
+      processStart: startOfKilledWindow(),
+    }),
+  )
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=two windows never write the saved data at once because the clock was set forward while one held the lock, on a system without a kernel boot id (macOS, Windows); fails_when=a lock that carries its owner's start is still judged by the boot time, which a forward step of more than 60 s moves past the recorded one (Cycle 0046 row 9, PL-1); why_new=every boot time test wrote a lock without a start; seam=the injected boot identity (the lock names this running test process with its real start)
+test('a live window’s lock stays in place after the clock moves forward by 90 s, and this window’s write is refused', async (context) => {
+  // Arrange: this running process holds the lock, recorded with its start and the boot time it computed; a second window computes its boot time after the clock was set forward by 90 s.
+  const directory = await storageDirectory(context)
+  const lockPath = join(directory, 'writer.lock')
+  const startOfTheHolder = await readProcessStart(process.pid)
+  const lockOfTheHolder = JSON.stringify({
+    pid: process.pid,
+    hostname: 'workstation',
+    boot: { startedAtMs: 1_790_000_000_000 },
+    processStart: startOfTheHolder,
+  })
+  await writeFile(lockPath, lockOfTheHolder)
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(
+    directory,
+    async () => {
+      writes += 1
+    },
+    { hostname: 'workstation', boot: { startedAtMs: 1_790_000_090_000 } },
+  )
+  // Assert
+  assert.equal(typeof startOfTheHolder, 'string')
+  assert.equal(
+    outcome,
+    `Error: Learning storage is locked by another writer or an interrupted session (lock file: ${lockPath}). No data changed; retry after resolving the lock.`,
+  )
+  assert.equal(writes, 0)
+  assert.equal(await readFile(lockPath, 'utf8'), lockOfTheHolder)
+  assert.deepEqual(await readdir(directory), ['writer.lock'])
+})
+
+// Value: protects=a window killed while it held the takeover claim does not block every takeover of a stale lock until the next restart; fails_when=the claim is judged by process id and boot alone, so it stays for as long as any process has its owner's id, and no window can take the stale lock over (Cycle 0046 row 2, LK-F1, identity half: storage claims); why_new=every claim test named a process id that no longer exists or a running window; seam=the process probe (the claim names this running test process with another start)
+test('a takeover claim of a killed window whose process id is in use again does not keep a stale storage lock in place', async (context) => {
+  // Arrange: the lock of exited process 4242, and the takeover claim of a window that was killed in the middle of a takeover; this test process has that window's process id now.
+  const directory = await storageDirectory(context)
+  const claimDirectory = join(directory, 'writer.lock.takeover')
+  await writeFile(
+    join(directory, 'writer.lock'),
+    JSON.stringify({ pid: 4242, hostname: hostname() }),
+  )
+  await mkdir(claimDirectory)
+  await writeFile(
+    join(claimDirectory, 'claim-of-a-killed-window'),
+    JSON.stringify({
+      pid: process.pid,
+      hostname: hostname(),
+      processStart: startOfKilledWindow(),
+    }),
+  )
+  answerProcessProbes(context, [4242])
+  let writes = 0
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {
+    writes += 1
+  })
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.equal(writes, 1)
+  assert.deepEqual(await readdir(directory), [])
+})
+
+// Value: protects=what a killed window prepared for a lock or a takeover and never placed does not stay in the storage for good because another process has its process id, and what a running window prepares is never removed; fails_when=a prepared claim or a prepared lock is judged by process id and boot alone (Cycle 0046 row 2, identity half: storage claims), or a leftover with a start is removed whatever that start is; why_new=every prepared leftover test named a process id that no longer exists; seam=none (the leftovers name this running test process, with another start and with its real one)
+test('a prepared takeover claim and a prepared lock of a killed window whose process id is in use again are removed by the next write, and those of a running window stay', async (context) => {
+  // Arrange: no lock. A killed window left a prepared claim and a prepared lock; this test process has its process id now. A running window, recorded with the real start of this process, is preparing the same two.
+  const directory = await storageDirectory(context)
+  const ofTheKilledWindow = JSON.stringify({
+      pid: process.pid,
+      hostname: hostname(),
+      processStart: startOfKilledWindow(),
+    }),
+    ofTheRunningWindow = JSON.stringify({
+      pid: process.pid,
+      hostname: hostname(),
+      processStart: await readProcessStart(process.pid),
+    })
+  await mkdir(join(directory, 'writer.lock.takeover-killed'))
+  await writeFile(
+    join(directory, 'writer.lock.takeover-killed', 'killed'),
+    ofTheKilledWindow,
+  )
+  await writeFile(
+    join(directory, 'writer.lock.pending-killed'),
+    ofTheKilledWindow,
+  )
+  await mkdir(join(directory, 'writer.lock.takeover-running'))
+  await writeFile(
+    join(directory, 'writer.lock.takeover-running', 'running'),
+    ofTheRunningWindow,
+  )
+  await writeFile(
+    join(directory, 'writer.lock.pending-running'),
+    ofTheRunningWindow,
+  )
+  // Act
+  const outcome = await writeUnderLock(directory, async () => {})
+  // Assert
+  assert.equal(outcome, 'written')
+  assert.deepEqual((await readdir(directory)).sort(), [
+    'writer.lock.pending-running',
+    'writer.lock.takeover-running',
+  ])
 })

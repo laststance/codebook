@@ -125,6 +125,8 @@ export function activate(
 ) {
   // Before anything takes a storage lock: locks and the connection descriptor name this machine by the editor's id.
   useEditorMachineId(vscode.env?.machineId, vscode.env?.remoteName)
+  // The read of this process's start (a spawned query on macOS and Windows) begins now and is kept, so the first storage lock does not wait for it.
+  void currentStorageOwner().catch(() => undefined)
   type Running = {
     endpoint: Awaited<ReturnType<typeof startServer>>
     environment: Awaited<ReturnType<typeof createEnvironment>>

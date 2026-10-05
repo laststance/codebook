@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from '../constants'
 
+import { readProcessStart, type ProcessStartReader } from './readProcessStart'
 import type { StorageOwnerIdentity } from './readRecordedOwner'
 import { removeStaleStorageClaims } from './removeStaleStorageClaims'
 import { systemErrorCode } from './systemErrorCode'
@@ -16,6 +17,7 @@ const OCCUPIED_CLAIM_CODES = ['ENOTEMPTY', 'EEXIST', 'EPERM', 'EACCES']
  * The claim is the directory `<lock>.takeover` with one uniquely named owner file. It is prepared aside and renamed into place: the rename succeeds only while no other claim is inside, and puts the directory and its owner there in one step. What a window that was killed in the middle of a takeover left, in the claim directory or prepared beside it, is removed first by its unique name ({@link removeStaleStorageClaims}), which can never remove a later claim, so such a leftover does not keep the stale lock in place.
  * @param lockPath - The `writer.lock` file to take over.
  * @param identity - The machine and the boot of this process; the claim records them with the process id, as the lock does.
+ * @param readStart - Reads the start of the process that has a leftover claim's process id now, handed on to {@link removeStaleStorageClaims}; {@link readProcessStart} unless a test names its own.
  * @returns
  * - The function that releases the claim, when this caller holds it
  * - `undefined` while another running window holds the claim
@@ -27,6 +29,7 @@ const OCCUPIED_CLAIM_CODES = ['ENOTEMPTY', 'EEXIST', 'EPERM', 'EACCES']
 export async function claimStorageLockTakeover(
   lockPath: string,
   identity: StorageOwnerIdentity,
+  readStart: ProcessStartReader = readProcessStart,
 ): Promise<(() => Promise<void>) | undefined> {
   const claimDirectory = `${lockPath}.takeover`,
     claimName = randomUUID(),
@@ -38,7 +41,7 @@ export async function claimStorageLockTakeover(
       JSON.stringify({ pid: process.pid, ...identity }),
       { mode: PRIVATE_FILE_MODE },
     )
-    await removeStaleStorageClaims(lockPath, identity)
+    await removeStaleStorageClaims(lockPath, identity, readStart)
     // An empty claim directory is nobody's; removing it lets the rename succeed where a directory cannot be replaced.
     await rmdir(claimDirectory).catch(() => undefined)
     await rename(preparedDirectory, claimDirectory)
