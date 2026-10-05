@@ -4261,3 +4261,62 @@ for (const situation of [
     },
   )
 }
+
+for (const host of ['Visual Studio Code', 'Cursor'] as const)
+  // Value: protects=a learner in VS Code told where the keyboard is when the captured source took it from the file the debugger opened at a pause, with what to do if they were typing in the chat; Cursor, which names its chat's state, shows nothing; fails_when=the keyboard leaves the chat input of VS Code at the first pause of an agent's run without a word, or Cursor's learner gets a sentence about a limit Cursor does not have; why_new=Cycle 0046 row 5 (Cycle 0045 NF-4b with the limit X7-A.4: the extension API reads the same in VS Code whether or not the chat input had the keyboard); seam=workspace harness with the controlled runtime, focusMutableDraft, setActiveStackItem, useHostAppName, the information messages
+  test(`the captured source that takes the keyboard from the file the debugger focused at a pause ${host === 'Cursor' ? 'shows no sentence in Cursor' : 'says once in an editor session where the keyboard is in VS Code'}`, async () => {
+    // Arrange: the reader follows a live run in its two panes; the debugger opened the paused file in front of the source group with the keyboard focus.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.useHostAppName(host)
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      harness.focusMutableDraft('actions.ts', 2)
+      harness.setActiveStackItem({
+        session: { id: 'live-next-server' },
+        threadId: 1,
+      })
+      const showsBefore = harness.textDocumentShows().length
+
+      // Act: the run reaches its stop and the reader shows the stop's captured source over the paused file.
+      harness.service.action({
+        instanceId: harness.service.instanceId,
+        runId: record.id,
+        key: randomUUID(),
+        action: 'repository-click',
+      })
+      await readerSeams(harness).refresh()
+      const sentencesAfterPause = harness.informationMessages.map(
+        (message) => message.message,
+      )
+      // A later capture of the session whose source takes the keyboard from the paused file the same way.
+      readerSeams(harness).tellSourceTookPausedFocus()
+
+      // Assert: the sentence follows the capture, and is shown once in an editor session.
+      assert.deepEqual(harness.textDocumentShows().slice(showsBefore), [
+        { name: 'Captured-theme.ts', viewColumn: 2, preserveFocus: false },
+      ])
+      assert.deepEqual(
+        sentencesAfterPause,
+        host === 'Cursor'
+          ? []
+          : [
+              'Codebook showed the captured source in place of the file the debugger opened at the pause, and the keyboard is in that source now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
+            ],
+      )
+      assert.equal(
+        harness.informationMessages.length,
+        host === 'Cursor' ? 0 : 1,
+      )
+    } finally {
+      await harness.close()
+    }
+  })

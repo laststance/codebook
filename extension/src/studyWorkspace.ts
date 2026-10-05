@@ -41,6 +41,8 @@ import {
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
   SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
   SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
+  SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
+  STUDY_CLOSE_KEYBOARD_MESSAGE,
   STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
   STUDY_EDITOR_GROUP_COUNT,
   STUDY_LAYOUT_STABLE_MISMATCH_MS,
@@ -55,6 +57,7 @@ import {
   SUMMARY_PLACEMENT_ANSWERED_KEY,
   SUMMARY_PLACEMENT_CONTEXT_KEY,
   SUMMARY_PLACEMENT_OFFER,
+  UNMAXIMIZE_FOCUS_SETTLE_MS,
   UNRETRYABLE_READER_ERROR_KINDS,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
@@ -489,6 +492,8 @@ export class StudyWorkspace {
   private studyRemovalRunId?: string
   /** The number the asking pane gave the delete request whose removal is in progress or was answered last; absent for a request without a number. */
   private studyRemovalRequest?: number
+  /** Whether {@link removeSavedStudy} has taken a delete request and not ended it yet; set before its first `await`, so a second request delivered in the same turn is refused before {@link askStudyRemoval} marks the removal `confirming`. */
+  private studyRemovalTaken = false
   /** Studies this window moved to the system Trash; a position save still queued for one of them writes nothing. */
   private readonly removedStudyIds = new Set<string>()
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
@@ -519,6 +524,8 @@ export class StudyWorkspace {
   private readonly summaryPlacementOffersMade =
     new Set<SummaryPlacementOccasion>()
   private liveEntryRunId?: string
+  /** Whether {@link tellSourceTookPausedFocus} showed its sentence in this editor session; it is shown once. */
+  private pausedFocusNoticeShown = false
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
   private leaseId?: string
@@ -543,10 +550,14 @@ export class StudyWorkspace {
   private arranging?: Promise<void>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
-  /** What {@link rememberSideBarsBeforeRead} measured before a Read's maximize command hid the side bars, for {@link showSideBarsHiddenByRead}: whether the primary side bar was open, and the editor area's width without it. `undefined` while no reading is pending, and during a reading whose editor area gave no width: {@link maximizeForRead} then hides no side bar. */
+  /** What {@link rememberSideBarsBeforeRead} and {@link rememberAuxiliaryBarAtRead} measured when a Read began, for {@link showSideBarsHiddenByRead}. `undefined` while no reading is pending, and during a reading whose editor area gave no width at all: {@link maximizeForRead} then hides no side bar. */
   private sideBarsBeforeRead?: {
+    /** Whether the primary side bar is shown again when the reading ends: it was open before the Read, or the measurement hid it and the read after that gave no width. */
     primaryVisible: boolean
-    widthWithoutPrimaryPx: number
+    /** The editor area's width without the primary side bar; `undefined` when that read gave none: the reading then hides no other bar and shows only the primary one again. */
+    widthWithoutPrimaryPx?: number
+    /** Whether the secondary side bar was open before the Read, from the editor area the Read's maximization left; `undefined` when that read gave no width, and {@link sideBarShowCommands} measures it when the reading ends. */
+    auxiliaryVisible?: boolean
   }
   /** How often {@link readMainEditorGrid} gave the main editor the keyboard to measure it; {@link retainForeignTabFocus} compares it, because Cursor does not report every focus a pane takes beside the chat. */
   private mainEditorFocusBorrows = 0
@@ -1332,11 +1343,13 @@ export class StudyWorkspace {
       const pending = (async () => {
         try {
           // Read/Enlarge may hide the other main leaf; restore visibility before measuring the two-pane layout.
-          await vscode.commands.executeCommand(
-            'workbench.action.minimizeOtherEditors',
-          )
-          this.maximizedByRead = false
-          await this.showSideBarsHiddenByRead()
+          await focusedPane.endReadMaximization(async () => {
+            await vscode.commands.executeCommand(
+              'workbench.action.minimizeOtherEditors',
+            )
+            this.maximizedByRead = false
+            await this.showSideBarsHiddenByRead()
+          })
           this.assertLifetime(lifetime)
           transition.cancellation.signal.throwIfAborted()
           focusedPane.assertCurrent()
@@ -1771,11 +1784,13 @@ export class StudyWorkspace {
     pending = (async () => {
       try {
         // The maximized group can hide the other leaves from getEditorLayout; restore its grid before measuring ratios.
-        await vscode.commands.executeCommand(
-          'workbench.action.minimizeOtherEditors',
-        )
-        this.maximizedByRead = false
-        await this.showSideBarsHiddenByRead()
+        await focusedPane.endReadMaximization(async () => {
+          await vscode.commands.executeCommand(
+            'workbench.action.minimizeOtherEditors',
+          )
+          this.maximizedByRead = false
+          await this.showSideBarsHiddenByRead()
+        })
         transition.cancellation.signal.throwIfAborted()
         this.assertLifetime(lifetime)
         focusedPane.assertCurrent()
@@ -2591,8 +2606,8 @@ export class StudyWorkspace {
 
   /**
    * Measures which side bars are open before {@link maximizeForRead} maximizes a pane, and hides the primary one for that measurement.
-   * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link sideBarShowCommands} reads it once more when both bars are hidden.
-   * @returns Once {@link sideBarsBeforeRead} holds the measurement, or is left `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement): no bar is hidden for a measurement that cannot be made.
+   * The editor's maximize command hides both side bars and no command of the editor brings them back when the maximization ends; the extension API does not say which bars are open. The editor area between the bars tells it: the area grows when a bar is hidden. The primary side bar is hidden here, which the maximize command would do next anyway, and the area is read before and after; {@link rememberAuxiliaryBarAtRead} reads it once more when the maximization has hidden the secondary bar too.
+   * @returns Once {@link sideBarsBeforeRead} holds the measurement; or `undefined` because the editor area gave no width (a grid whose top level is rows, as in the live and the replay arrangement), and no bar is hidden for a measurement that cannot be made; or, when the read after hiding the primary side bar gave no width, a record without that width that shows the primary side bar again when the reading ends, because the measurement hid it and cannot tell whether it was open.
    * @example
    * ```ts
    * await this.rememberSideBarsBeforeRead() // sideBarsBeforeRead => { primaryVisible: true, widthWithoutPrimaryPx: 874 } for columns of 363 + 297 beside a side bar of 214
@@ -2607,12 +2622,36 @@ export class StudyWorkspace {
       .executeCommand('workbench.action.closeSidebar')
       .then(undefined, () => undefined)
     const widthWithoutPrimaryPx = await this.readEditorAreaWidthPx()
-    // A second read that fails leaves the reading without a measurement: what was open before it is not known.
-    if (widthWithoutPrimaryPx === undefined) return
+    // The measurement hid the primary side bar and cannot tell whether it was open: the end of the reading shows it again rather than leave the learner's bar away.
+    if (widthWithoutPrimaryPx === undefined) {
+      this.sideBarsBeforeRead = { primaryVisible: true }
+      return
+    }
     this.sideBarsBeforeRead = {
       primaryVisible: this.hasSideBarGain(widthWithoutPrimaryPx, widthPx),
       widthWithoutPrimaryPx,
     }
+  }
+
+  /**
+   * Measures whether the secondary side bar was open before a Read, right after the Read's maximize command hid it; called by {@link maximizeForRead} once for each reading that hid both bars.
+   * The editor area is read at the Read itself and compared with its width without the primary side bar a moment before, so a window the learner resizes during the reading does not count as a side bar.
+   * @returns Once {@link sideBarsBeforeRead} says whether the secondary bar was open; left without that answer when the area gave no width, and {@link sideBarShowCommands} measures it when the reading ends.
+   * @example
+   * ```ts
+   * await this.rememberAuxiliaryBarAtRead() // sideBarsBeforeRead.auxiliaryVisible => true for an area of 1335 that was 874 without the primary side bar
+   * ```
+   */
+  private async rememberAuxiliaryBarAtRead(): Promise<void> {
+    const before = this.sideBarsBeforeRead
+    // Only a reading whose maximization hid both bars has a secondary bar to measure.
+    if (before?.widthWithoutPrimaryPx === undefined) return
+    const maximizedWidthPx = await this.readEditorAreaWidthPx()
+    if (maximizedWidthPx === undefined) return
+    before.auxiliaryVisible = this.hasSideBarGain(
+      maximizedWidthPx,
+      before.widthWithoutPrimaryPx,
+    )
   }
 
   /**
@@ -2636,6 +2675,8 @@ export class StudyWorkspace {
         assertReadFocus()
       }
       await this.maximizeActiveGroupForRead(assertReadFocus)
+      // The secondary bar is measured at the Read itself, before the learner can resize the window.
+      if (startsReading) await this.rememberAuxiliaryBarAtRead()
     } catch (error) {
       // A Read refused before its maximization begins no reading: the side bar hidden for the measurement is shown again, and the next Read measures anew.
       if (startsReading) {
@@ -2649,7 +2690,7 @@ export class StudyWorkspace {
   /**
    * Runs the editor commands that maximize the active group for a Read; called by {@link maximizeForRead} once the side bars were measured or found unmeasurable.
    * @param assertReadFocus - Throws when the learner or the window took the focus from the pane being read.
-   * @returns Once the editor answered: both side bars hidden for a measured reading ({@link sideBarsBeforeRead} set), or the side bars untouched after Expand and the maximize toggle.
+   * @returns Once the editor answered: both side bars hidden for a reading whose primary side bar was measured ({@link sideBarsBeforeRead} with its width), or the side bars left as they are after Expand and the maximize toggle.
    * @throws What `assertReadFocus` throws, and a rejection of an editor command.
    * @example
    * ```ts
@@ -2659,8 +2700,8 @@ export class StudyWorkspace {
   private async maximizeActiveGroupForRead(
     assertReadFocus: () => void,
   ): Promise<void> {
-    // A measured reading hides both side bars with the group's maximization.
-    if (this.sideBarsBeforeRead) {
+    // A measured reading hides both side bars with the group's maximization; one whose measurement failed after hiding the primary bar leaves the secondary bar alone.
+    if (this.sideBarsBeforeRead?.widthWithoutPrimaryPx !== undefined) {
       await vscode.commands.executeCommand(
         'workbench.action.maximizeEditorHideSidebar',
       )
@@ -2700,7 +2741,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the editor area grew by a hidden side bar between two reads; asked by {@link rememberSideBarsBeforeRead} and {@link sideBarShowCommands}.
+   * Says whether the editor area grew by a hidden side bar between two reads; asked by {@link rememberSideBarsBeforeRead}, {@link rememberAuxiliaryBarAtRead} and {@link sideBarShowCommands}.
    * @param widerPx - The editor area's width that is expected to be the wider one, `undefined` when it could not be read.
    * @param narrowerPx - The width it is compared with, `undefined` when it could not be read.
    * @returns `true` when the first width exceeds the second by more than {@link HIDDEN_SIDE_BAR_MIN_GAIN_PX}; `false` when it does not, and when either width is unknown.
@@ -2718,18 +2759,32 @@ export class StudyWorkspace {
   }
 
   /**
-   * Measures which side bars a Read hid and lists the editor commands that show them, in the order {@link showSideBarsHiddenByRead} runs them: the secondary bar first, then the primary one.
-   * The secondary bar was open when the editor area is wider now than it was without the primary bar alone. An area that did not grow says nothing while the learner may have opened a bar during the reading, which takes that width away again: {@link sideBarsHiddenAtSecondLook} then hides the primary bar once more and reads the area again, which tells both whether the secondary bar is still hidden and whether the primary one was open.
-   * @param before - What {@link rememberSideBarsBeforeRead} measured.
-   * @returns One command for each bar that was open before the Read and for a primary bar the learner opened during it; an empty list when both were closed. A bar whose state could not be measured is left out.
+   * Lists the editor commands that show the side bars a Read hid, in the order {@link showSideBarsHiddenByRead} runs them: the secondary bar first, then the primary one.
+   * What the Read measured decides without another read: the secondary bar measured at the Read ({@link rememberAuxiliaryBarAtRead}), and the primary bar alone for a reading whose measurement failed after hiding it. Only when the secondary bar could not be measured at the Read is the editor area read now: the secondary bar was open when the area is wider than it was without the primary bar alone. An area that did not grow says nothing while the learner may have opened a bar during the reading, which takes that width away again: {@link sideBarsHiddenAtSecondLook} then hides the primary bar once more and reads the area again, which tells both whether the secondary bar is still hidden and whether the primary one was open.
+   * @param before - What {@link rememberSideBarsBeforeRead} and {@link rememberAuxiliaryBarAtRead} measured.
+   * @returns One command for each bar that was open before the Read and for a primary bar the learner opened during it; an empty list when both were closed. A bar whose state could not be measured is left out, except the primary bar the measurement itself hid.
    * @example
    * ```ts
-   * await this.sideBarShowCommands({ primaryVisible: true, widthWithoutPrimaryPx: 874 }) // => ['workbench.action.focusSideBar'] while the area is 874 px wide
+   * await this.sideBarShowCommands({ primaryVisible: true, widthWithoutPrimaryPx: 874, auxiliaryVisible: false }) // => ['workbench.action.focusSideBar']
+   * await this.sideBarShowCommands({ primaryVisible: true }) // => ['workbench.action.focusSideBar'] after a measurement that failed once it had hidden the primary bar
    * ```
    */
   private async sideBarShowCommands(
     before: NonNullable<StudyWorkspace['sideBarsBeforeRead']>,
   ): Promise<string[]> {
+    const primaryCommands = before.primaryVisible
+      ? ['workbench.action.focusSideBar']
+      : []
+    // A reading whose measurement failed after hiding the primary bar left the secondary bar as it was.
+    if (before.widthWithoutPrimaryPx === undefined) return primaryCommands
+    // Measured at the Read, the secondary bar's state does not depend on the window's width now.
+    if (before.auxiliaryVisible !== undefined)
+      return [
+        ...(before.auxiliaryVisible
+          ? ['workbench.action.focusAuxiliaryBar']
+          : []),
+        ...primaryCommands,
+      ]
     const widthPx = await this.readEditorAreaWidthPx()
     // A wider area says that the secondary bar was open and is still hidden; anything else needs a second look.
     const hidden = this.hasSideBarGain(widthPx, before.widthWithoutPrimaryPx)
@@ -3567,6 +3622,7 @@ export class StudyWorkspace {
     assertUndeparted(): void
     assertCurrent(): void
     beforeScopeFocus(acquire?: RepositoryFocusTarget): void
+    endReadMaximization(end: () => Promise<void>): Promise<void>
     dispose(): void
   } {
     const group = vscode.window.tabGroups.activeTabGroup,
@@ -3612,7 +3668,8 @@ export class StudyWorkspace {
     }
     let departed = false,
       borrowed: RepositoryFocusTarget | undefined,
-      pendingBorrow: RepositoryFocusTarget | undefined
+      pendingBorrow: RepositoryFocusTarget | undefined,
+      endingMaximization = false
     const observe = (): void => {
       if (departed) return
       // Leaving the work window revokes Restore even if focus returns before native measurement completes.
@@ -3620,6 +3677,8 @@ export class StudyWorkspace {
         departed = true
         return
       }
+      // While Codebook's own commands end a Read's maximization, the editor's group events are judged by the focus they leave once they settled.
+      if (endingMaximization) return
       if (pendingBorrow?.matchesGroup()) {
         // Only the announced native target can replace the old focus; returning to the original pane ends the borrow.
         borrowed = retainsFocus() ? undefined : pendingBorrow
@@ -3658,6 +3717,35 @@ export class StudyWorkspace {
             'The Study scope focus target could not be retained safely.',
           )
         pendingBorrow = acquire
+        observe()
+      },
+      /**
+       * Runs Codebook's own commands that end a Read's maximization (the un-maximize and the side bars shown again); called by the live branch of {@link admitPresentation} and by {@link restoreStudyArrangement} before they measure.
+       * Cursor names another editor group as the active one for a moment while a maximization ends (Cycle 0045 NF-7b): an active group the editor names while these commands run, and one it names again within {@link UNMAXIMIZE_FOCUS_SETTLE_MS} after them, is their event, not the learner's change. A change that lasts past that moment, and leaving the work window, still count.
+       * @param end - The commands that end the maximization.
+       * @returns Once the commands answered and the editor names the watched focus again, or the settle time passed.
+       * @throws What `end` throws.
+       * @example
+       * ```ts
+       * await focusedPane.endReadMaximization(async () => {
+       *   await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+       *   await this.showSideBarsHiddenByRead()
+       * })
+       * ```
+       */
+      async endReadMaximization(end): Promise<void> {
+        endingMaximization = true
+        try {
+          await end()
+          // A group named for the un-maximize alone gives way to the watched focus within the settle time; a change that lasts is the learner's.
+          await waitUntil(
+            () => !vscode.window.state.focused || retainsFocus(),
+            'the focus after the maximization ended',
+            UNMAXIMIZE_FOCUS_SETTLE_MS,
+          ).catch(() => undefined)
+        } finally {
+          endingMaximization = false
+        }
         observe()
       },
       dispose(): void {
@@ -5838,7 +5926,13 @@ export class StudyWorkspace {
     }
   }
 
-  /** Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels. @example await workspace.close() */
+  /**
+   * Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels; called by the command "Codebook: Close Study Workspace".
+   * When a closed pane or the captured source was the active editor, the active editor group gets the keyboard and the learner is told so with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}: the editor does not say whether the keyboard was in that pane or in the terminal or a view before the Command Palette opened. {@link dispose} closes the reader too, when the extension host ends, and shows nothing.
+   * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
+   * @throws When the editor refused to close a captured source's tab.
+   * @example await workspace.close()
+   */
   async close(): Promise<void> {
     if (this.closingPromise) return this.closingPromise
     // A pane or the captured source that has the keyboard is closed below: the editor group that remains then gets it.
@@ -5957,6 +6051,13 @@ export class StudyWorkspace {
         await vscode.commands
           .executeCommand('workbench.action.focusActiveEditorGroup')
           .then(undefined, () => undefined)
+        // The keyboard may have been in the terminal or a view before the Command Palette; the editor does not say, so the learner is told where it is now. A reader closed with its extension host has no learner to tell.
+        if (closesKeyboardHolder && !this.disposed)
+          void showPlainNotice(
+            vscode.window,
+            'information',
+            STUDY_CLOSE_KEYBOARD_MESSAGE,
+          )
       }
       clearTimeout(this.citationRefreshTimer)
       this.citationRevision++
@@ -8013,16 +8114,18 @@ export class StudyWorkspace {
           Boolean(placement),
         )
         if (this.closing || lifetime !== this.lifetime) return
+        // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
+        const takesPausedFocus =
+          preserveFocus &&
+          this.replacesEditorFocusedByPause(targetColumn, document.uri)
         const editor = await vscode.window.showTextDocument(document, {
           viewColumn: targetColumn,
-          // Over the file the debugger focused at a live pause the source takes the keyboard focus that file had: hiding that editor while preserving the focus would leave it nowhere.
-          preserveFocus:
-            preserveFocus &&
-            !this.replacesEditorFocusedByPause(targetColumn, document.uri),
+          preserveFocus: preserveFocus && !takesPausedFocus,
           preview: false,
           selection: new vscode.Range(position, position),
         })
         if (this.closing || lifetime !== this.lifetime) return
+        if (takesPausedFocus) this.tellSourceTookPausedFocus()
         if (confirmedLayout) await this.reapplyConfirmedLayout(confirmedLayout)
         if (this.closing || lifetime !== this.lifetime) return
         // Retain accepted placement before cancellation, while observation/source/value commits still require the current intent.
@@ -8326,6 +8429,22 @@ export class StudyWorkspace {
     return (
       this.isFocusedGroupShowingOtherText(column, source) &&
       this.hasEditorFocusedOnBreak(column)
+    )
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the captured source took the keyboard from the file the debugger opened at a pause; called by the source's reveal right after it did ({@link replacesEditorFocusedByPause}).
+   * In VS Code the chat is a side view and the extension API reads the same whether the keyboard was in the paused file or in the chat input, so the keyboard cannot be given back to the chat without taking it from a learner who works in a file; the sentence says where it is and what to do. Cursor names its chat's state, and the source takes no focus from its chat there.
+   * @returns Once the notification is shown, or at once in Cursor and after the first time.
+   * @example if (takesPausedFocus) this.tellSourceTookPausedFocus()
+   */
+  private tellSourceTookPausedFocus(): void {
+    if (this.isCursorHost() || this.pausedFocusNoticeShown) return
+    this.pausedFocusNoticeShown = true
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
     )
   }
 
@@ -12483,19 +12602,29 @@ export class StudyWorkspace {
 
   /**
    * Removes one saved study on the learner's request from the Saved studies section: confirms in a native dialog, holds off this window's writers of that study, moves its files to the system Trash through {@link LearningLibrary.removeStudy} and reports the outcome in the message's `studyRemoval` field.
-   * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines.
+   * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines. Called by {@link receive} for the pane's `delete-study` message; one removal runs at a time, from its first check ({@link studyRemovalTaken}) to its move, and a request that arrives meanwhile returns without effect.
    * @param studyId - The entry the learner chose.
    * @param removalRequest - The number the asking pane gave this request; every state of this removal echoes it.
+   * @returns Once the removal ended: refused, cancelled, moved or left in place, as its `studyRemoval` field says; at once for a request made while another removal runs.
    * @example await this.removeSavedStudy(message.studyId, message.removalRequest)
    */
   private async removeSavedStudy(
     studyId: string,
     removalRequest?: number,
   ): Promise<void> {
-    // One removal at a time: a second request while the dialog is open or files are moving opens no second dialog.
-    if (this.studyRemovalInProgress()) return
+    // One removal at a time: a second request while this one is checked, while the dialog is open or while files are moving opens no second dialog.
+    if (this.studyRemovalTaken || this.studyRemovalInProgress()) return
+    // Taken before the first await: the checks below yield before the dialog marks the removal `confirming`.
+    this.studyRemovalTaken = true
     this.studyRemovalRequest = removalRequest
-    if (!(await this.studyRemovalConfirmed(studyId))) return
+    let confirmed: boolean
+    try {
+      confirmed = await this.studyRemovalConfirmed(studyId)
+    } finally {
+      // A confirmed removal is `confirming` now and stays in progress through its move; any other one has ended.
+      this.studyRemovalTaken = false
+    }
+    if (!confirmed) return
     // A checkpoint of this study waits until its files are settled instead of skipping the study.
     let release!: () => void
     const filesSettled = new Promise<void>((resolve) => {
