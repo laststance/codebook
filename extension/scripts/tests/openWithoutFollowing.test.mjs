@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { constants as flagsOfThisSystem } from 'node:fs'
 import {
+  lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -158,4 +161,87 @@ test('the script’s helper opens a regular file and refuses a link with ELOOP, 
     linkWithTheFlagsOfThisSystem: 'ELOOP',
     targetOfTheLink: 'bytes of the archive',
   })
+})
+
+// Value: protects=the package check and the package receipt on a Windows developer machine, which must read the file they looked at; fails_when=the script's helper does not compare the opened file with its look, so a file that takes the path after the look is validated and hashed as the artifact; why_new=Cycle 0046 row 154: the script's own copy of the rule had no test (with the comparison removed its four tests passed); seam=the look and the open handed to the helper, between which another file takes the path
+test('a path that another file takes between the script helper’s look at it and its open is refused with EREPLACED where the system’s open cannot refuse a link, and the file that took the path is not read', async (context) => {
+  // Arrange: a VSIX, and another file that is moved over it right after the look.
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-vsix-bytes-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const vsixPath = join(folder, 'codebook.vsix')
+  const otherPath = join(folder, 'another.vsix')
+  await writeFile(vsixPath, 'bytes of the archive')
+  await writeFile(otherPath, 'bytes of another archive')
+  const fileSystemWhosePathIsReplacedAfterTheLook = {
+    lstat: async (path, options) => {
+      const lookBeforeTheReplacement = await lstat(path, options)
+      await rename(otherPath, vsixPath)
+      return lookBeforeTheReplacement
+    },
+    open,
+  }
+
+  // Act
+  const outcome = await openWithoutFollowing(
+    vsixPath,
+    OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    fileSystemWhosePathIsReplacedAfterTheLook,
+  ).then(
+    async (file) => {
+      const text = await file.readFile('utf8')
+      await file.close()
+      return `opened and read: ${text}`
+    },
+    (error) => `refused with ${error.code}`,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, pathHolds: await readFile(vsixPath, 'utf8') },
+    {
+      outcome: 'refused with EREPLACED',
+      pathHolds: 'bytes of another archive',
+    },
+  )
+})
+
+// Value: protects=a packaging command from leaving a file open when it cannot tell which file it opened; fails_when=the read of the opened file's status fails and the helper throws with the file still open (on Windows an open file keeps its folder from being removed), or uses a file it could not compare with its look; why_new=Cycle 0046 row 154; seam=the open handed to the helper, whose file cannot be asked for its status and notes that it was closed
+test('a file whose status cannot be read after the script helper opened it is closed and refused with EREPLACED where the system’s open cannot refuse a link', async (context) => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-vsix-bytes-'))
+  context.after(() => rm(folder, { recursive: true, force: true }))
+  const vsixPath = join(folder, 'codebook.vsix')
+  await writeFile(vsixPath, 'bytes of the archive')
+  let closesOfTheOpenedFile = 0
+  const fileSystemWhoseOpenedFileHasNoStatus = {
+    lstat,
+    open: async (path, flags) => {
+      const file = await open(path, flags)
+      const closeOpenedFile = file.close.bind(file)
+      file.stat = async () => {
+        throw Object.assign(new Error('EIO: i/o error, fstat'), { code: 'EIO' })
+      }
+      file.close = async () => {
+        closesOfTheOpenedFile += 1
+        return closeOpenedFile()
+      }
+      return file
+    },
+  }
+
+  // Act
+  const outcome = await openWithoutFollowing(
+    vsixPath,
+    OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    fileSystemWhoseOpenedFileHasNoStatus,
+  ).then(
+    () => 'opened',
+    (error) => `refused with ${error.code}`,
+  )
+
+  // Assert
+  assert.deepEqual(
+    { outcome, closesOfTheOpenedFile },
+    { outcome: 'refused with EREPLACED', closesOfTheOpenedFile: 1 },
+  )
 })
