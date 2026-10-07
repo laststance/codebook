@@ -454,7 +454,8 @@ test('a Cursor update that ran past its bound says the agent was stopped and the
   )
 })
 
-test('a conflict tells the learner to move the file and update again', () => {
+// Value: protects=a learner whose VS Code chat staged a site that would overwrite a file of theirs: Codebook stopped watching, the chat was not stopped; fails_when=the sentence tells them only to move the file and press again, so they start a second chat beside the first, or says in the past of the whole update that nothing was replaced although that chat can still publish; why_new=Cycle 0046 row 343; seam=none
+test('a conflict over a learner’s file in VS Code tells the learner to move the file, names the chat that was not stopped and what to do with it, and what the press answers while Codebook waits for that chat', () => {
   // Arrange
   const status: WikiUpdateStatus = {
     state: 'conflict',
@@ -472,7 +473,7 @@ test('a conflict tells the learner to move the file and update again', () => {
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   )
   assert.deepEqual(described?.detail, [])
 })
@@ -946,5 +947,49 @@ test('a failed end after which somebody can still publish says that nothing had 
     'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry. The last usable site is kept.',
     'Update needs another run (21:10): Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry. This run replaced the site on disk.',
     'Update failed at 21:10: Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+  ])
+})
+
+// Value: protects=the two hosts' sentences for a learner's file in the way: Cursor's agent is a process that has ended, VS Code's chat goes on; fails_when=Cursor's sentence names a chat that is not there, or VS Code's sentence for several files or for a site that changed during the run loses the chat and the press that Codebook answers with the wait; why_new=Cycle 0046 row 343; seam=none
+test('a conflict over learner files in Cursor keeps its sentence, and in VS Code names the chat for one file, for several and for a site that changed during the run', () => {
+  // Arrange
+  const conflict = {
+    state: 'conflict',
+    finishedAt,
+    cause: 'learner-file',
+    ...place,
+  } as const
+
+  // Act
+  const sentences = [
+    describeWikiUpdate(
+      { ...conflict, host: 'cursor', paths: ['notes/mine.md'], site: 'kept' },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        ...conflict,
+        host: 'vscode',
+        paths: ['a.html', 'b.html'],
+        site: 'kept',
+      },
+      wording,
+    ),
+    describeWikiUpdate(
+      {
+        ...conflict,
+        host: 'vscode',
+        paths: ['notes/mine.md'],
+        site: 'replaced',
+      },
+      wording,
+    ),
+  ].map(sentenceOf)
+
+  // Assert
+  assert.deepEqual(sentences, [
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). Nothing was replaced. Move or rename the file, then press Update LLM Wiki again.',
+    'Update stopped at 21:10: it would overwrite your own files in the Wiki folder (a.html, b.html). Nothing was replaced. Move or rename them. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
+    'Update stopped at 21:10: it would overwrite your own file in the Wiki folder (notes/mine.md). The site on disk changed during the run; check the freshness label above. Move or rename the file. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it.',
   ])
 })

@@ -1363,6 +1363,92 @@ test('a VS Code watch that itself breaks off ends the update with the sentence t
   }
 })
 
+// Value: protects=the Update button of a window whose watched run ends at a moment the Wiki folder cannot be read, and the chat of that run, which was not stopped; fails_when=the end rejects where it reads the disk, the watch's own catch runs into the same read, and the run stays "running", so every later press is answered with "already updating" until the window is reloaded; or the run ends without the reservation of a cancelled watch and the next press sends a second request; why_new=Cycle 0046 row 344; seam=the read of the publish token, which rejects while the run ends
+test('a VS Code watch the learner cancels at a moment the Wiki folder cannot be read does not stay running: the update ends with the sentence that Codebook could not read how it ended, claims nothing about the site, and the next press is answered with the wait for the chat and Update anyway', async () => {
+  // Arrange
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress })
+  try {
+    await wiki.clickUpdate()
+    wiki.breakPublishTokenRead('EIO: i/o error, read')
+
+    // Act: the watch is cancelled while the folder cannot be read; then the folder can be read again and the learner presses.
+    progress[0]!.cancel()
+    const ended = await waitForEnd(wiki.status)
+    wiki.breakPublishTokenRead(undefined)
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(
+      ended.state === 'failed'
+        ? [ended.reason, ended.isCodebookSentence, ended.site]
+        : [ended.state],
+      [
+        'Codebook could not read the Wiki folder to see how the update ended (EIO: i/o error, read), so it does not say whether the site was replaced. Check the Wiki’s freshness label, then press Update LLM Wiki again.',
+        true,
+        'missing',
+      ],
+    )
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: Codebook could not read the Wiki folder to see how the update ended \\(EIO: i/o error, read\\), so it does not say whether the site was replaced\\. Check the Wiki’s freshness label, then press Update LLM Wiki again\\.$`,
+      ),
+    )
+    assert.match(
+      wiki.errors[1] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.equal(wiki.chatRequests.length, 1)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the Update button of a window whose update ends at its start (the chat's reply is complete at once) at a moment the Wiki folder cannot be read; fails_when=the end rejects, the guard around the start records the same end again and rejects too, the press itself rejects and the run stays "running", so the next press is answered with "already updating"; why_new=Cycle 0046 row 344 (the guard of row 151 ended a run through the same read); seam=the read of the publish token, which the chat's reply breaks so that it rejects from the run's end on
+test('a VS Code update that ends at its start at a moment the Wiki folder cannot be read does not stay running: the press returns, the update ends with the sentence that Codebook could not read how it ended, and the next press sends a request', async () => {
+  // Arrange: the chat answers with a complete reply at once; from that moment the folder cannot be read.
+  let breakTheRead = (): void => {}
+  const wiki = await openWikiWindow({
+    chatReply: async () => {
+      breakTheRead()
+      return {}
+    },
+  })
+  breakTheRead = (): void => wiki.breakPublishTokenRead('EIO: i/o error, read')
+  try {
+    // Act
+    const press = await wiki.clickUpdate().then(
+      () => 'returned',
+      (error: unknown) => `rejected: ${String(error)}`,
+    )
+    const ended = wiki.status()
+    wiki.breakPublishTokenRead(undefined)
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(press, 'returned')
+    assert.deepEqual(
+      ended.state === 'failed' ? [ended.reason, ended.site] : [ended.state],
+      [
+        'Codebook could not read the Wiki folder to see how the update ended (EIO: i/o error, read), so it does not say whether the site was replaced. Check the Wiki’s freshness label, then press Update LLM Wiki again.',
+        'missing',
+      ],
+    )
+    // The chat's reply was complete, so nothing is waited for: the second press sent its own request.
+    assert.equal(wiki.chatRequests.length, 2)
+    assert.deepEqual(wiki.offeredActions.at(-1)?.actions, ['Open LLM Wiki'])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('a Cursor update during which another repository was opened ends as failed and says to reopen the Wiki', async () => {
   // Arrange
   const otherRepository = await realpath(

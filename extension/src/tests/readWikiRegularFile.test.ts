@@ -364,3 +364,46 @@ test('a manifest whose file id is above 2^53, as on an NTFS volume, is read with
     await rm(folder, { recursive: true, force: true })
   }
 })
+
+// Value: protects=the watch of a VS Code update and the end of every run, which read the Wiki's manifest and receipt through this reader and catch nothing below it; fails_when=a file handle whose close fails makes the read reject, so the watch breaks off or a run stays "running" with no end, or the bytes of such a handle are answered as if the read had been whole; why_new=Cycle 0046 row 344 (the close was awaited in a `finally` outside the reader's `catch`); seam=the opener, whose real handle is closed and then reports the close as failed
+test('a manifest whose file handle cannot be closed is answered as a file that could not be read, without a rejection, and the same manifest is read whole by a handle that closes', async () => {
+  // Arrange: a manifest of ten bytes, and an opener whose handle really closes and then rejects, as a file system error at close does.
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-wiki-regular-file-'))
+  const manifestPath = join(folder, 'codebook-wiki.json')
+  await writeFile(manifestPath, '{"a":"12"}')
+  const closes: string[] = []
+  const { readWikiRegularFile: readWithAFailingClose } = await loadModule<
+    typeof ReadWikiRegularFileModule
+  >(resolve(__dirname, '../utils/readWikiRegularFile.js'), {
+    './openWithoutFollowing': {
+      openWithoutFollowing: async (
+        path: string,
+        flagsOfTheSystem?: NoFollowOpenConstants,
+      ): Promise<fileSystem.FileHandle> => {
+        const file = await openWithoutFollowing(path, flagsOfTheSystem)
+        const closeOfOpenedFile = file.close.bind(file)
+        file.close = async (): Promise<void> => {
+          await closeOfOpenedFile()
+          closes.push('closed, then reported as failed')
+          throw new Error('EIO: i/o error, close')
+        }
+        return file
+      },
+    },
+  })
+  try {
+    // Act
+    const outcome = await readWithAFailingClose(manifestPath).then(
+      (read) => (read === undefined ? 'not read' : 'read'),
+      (error: unknown) => `rejected: ${String(error)}`,
+    )
+    const readByAHandleThatCloses = await readWikiRegularFile(manifestPath)
+
+    // Assert
+    assert.equal(outcome, 'not read')
+    assert.deepEqual(closes, ['closed, then reported as failed'])
+    assert.equal(readByAHandleThatCloses?.bytes.toString('utf8'), '{"a":"12"}')
+  } finally {
+    await rm(folder, { recursive: true, force: true })
+  }
+})

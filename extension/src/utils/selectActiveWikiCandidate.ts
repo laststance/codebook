@@ -10,7 +10,7 @@ export const wikiLastRunSchema = z.object({
   startedAtMs: z.number(),
   /** When the run ended (epoch milliseconds). */
   endedAtMs: z.number(),
-  /** Whether the agent may still be working after the run ended: true only for a VS Code watch that was cancelled or timed out, since stopping the watch does not stop the chat. */
+  /** Whether the agent may still be working after the run ended: true only for a VS Code watch that stopped before its chat did ({@link mayWikiChatStillPublish}: cancelled, timed out, ended on a learner's file, or broke off), since stopping the watch does not stop the chat. */
   mayAgentStillWork: z.boolean(),
   /** Folder names of the candidates the run's looks saw that were written since its start; the next start tells the chat's own publish by them ({@link hasWikiPublishEndedWait}). Absent in a record an earlier version kept, which then counts as a run that saw none. */
   candidateNames: z.array(z.string()).optional(),
@@ -91,7 +91,7 @@ function isWrittenAfter(
  * @param options.lastRun - How this window's last run of this output ended; undefined when it has had none (the caller passes none for a record of another output).
  * @returns The most recently written candidate that blocks the start, or undefined when the start may go ahead:
  * - A candidate older than `activeWithinMs` never blocks
- * - A candidate written while the last run lasted is this window's own leftover and does not block, unless the agent may still work (a cancelled or timed-out VS Code watch): then it blocks, like one written after the watch stopped
+ * - A candidate written while the last run lasted is this window's own leftover and does not block, unless the agent may still work (a VS Code watch that stopped before its chat did): then it blocks, like one written after the watch stopped
  * - Any other recent candidate (written before the last run began, after it ended, or without any run of this window) is somebody else's and blocks
  *
  * @example
