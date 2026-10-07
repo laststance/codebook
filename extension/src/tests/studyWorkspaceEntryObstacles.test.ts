@@ -659,6 +659,173 @@ test('closing the Study workspace after the learner narrowed the window during a
   }
 })
 
+// Value: protects=the sizes of the learner's own editor groups after a Close made during a Read: the editor ends the maximization by itself when the panes' groups go, with every group at the size it had before the Read, and the reader runs no command that resizes a group; fails_when=Close ends the Read with the editor's Expand, which gives the active group all the room and leaves every other group at its minimum size, so that two groups of 344 and 343 px are 617 and 70 px high after Open, Read Application and Close and stay so; why_new=Cycle 0046 row 323 (native round in VS Code 1.140.0, check V-05: `vscode.getEditorLayout` after Open, Read and Close, three takes); seam=the workspace harness's closeDisposedPanelTabsLater (an emptied group is removed, which ends a maximization as both editors' grids do), its maximized group, command log and layout read
+test("Close Study Workspace during a Read leaves the learner's editor groups at the sizes they had before the Read: the maximization ends as the panes' groups go, and no command that resizes a group is run", async () => {
+  // Arrange: the learner has two editor groups, one above the other, of the same height; the editor removes a group its last tab left. The learner opens the Study workspace and reads the explanation enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  harness.closeDisposedPanelTabsLater()
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    const maximizedByRead = harness.maximizedEditorGroup()
+    const commandsBefore = harness.commands.length
+
+    // Act: Close, and longer than the fake editor takes to close the disposed panes' tabs and remove the group they left.
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // Assert: a Restore ends a Read with the editor's Expand and then applies its arrangement's sizes; a Close has no arrangement to apply, so it runs neither Expand nor another command that changes a group's size.
+    assert.equal(maximizedByRead, true)
+    assert.deepEqual(
+      {
+        resizingCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /minimizeOtherEditors|toggleMaximizeEditorGroup|maximizeEditorHideSidebar|evenEditorWidths|setEditorLayout/.test(
+              command,
+            ),
+          ),
+        maximized: harness.maximizedEditorGroup(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+        state: harness.reader.presentationState().state,
+      },
+      {
+        resizingCommands: [],
+        maximized: false,
+        layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        state: 'closed',
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner's side bars after a Read whose secondary bar could not be measured, in an editor that removes emptied groups: Close ends the maximization with the editor's Expand before it measures the editor area, and shows both bars again; fails_when=the maximization is left to the editor in that case too, the area is read from a maximized grid whose hidden columns answer the widths they had, and a bar is shown or left hidden by a wrong measurement; why_new=Cycle 0046 row 323 (the bound of the new rule: rows 167 and 255 measure the side bars in a grid that is not maximized); seam=the workspace harness's side bar model, holdNextCommand and failNextCommand for the layout read after the maximize command, closeDisposedPanelTabsLater and command log
+test('Close Study Workspace after a Read whose secondary side bar could not be measured ends the maximization with Expand before it measures the editor area, and shows both side bars again', async () => {
+  // Arrange: both side bars are open and the editor removes a group its last tab left; the editor refuses the layout read that follows the Read's maximize command, so the secondary bar is not measured at the Read.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: true })
+  harness.closeDisposedPanelTabsLater()
+  let release = (): void => {}
+  try {
+    await harness.reader.open()
+    const maximizing = harness.holdNextCommand(
+      'workbench.action.maximizeEditorHideSidebar',
+    )
+    release = maximizing.release
+    const reading = harness.reader.action('read-context')
+    await maximizing.started
+    harness.failNextCommand('vscode.getEditorLayout')
+    maximizing.release()
+    await reading
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // Assert: Expand runs once, before the first layout read of the close.
+    const closeCommands = harness.commands.slice(commandsBefore)
+    assert.deepEqual(
+      {
+        firstTwoOfGridAndLayout: closeCommands
+          .filter((command) =>
+            /minimizeOtherEditors|vscode\.getEditorLayout/.test(command),
+          )
+          .slice(0, 2),
+        expands: closeCommands.filter(
+          (command) => command === 'workbench.action.minimizeOtherEditors',
+        ).length,
+        sideBars: harness.sideBars(),
+        maximized: harness.maximizedEditorGroup(),
+      },
+      {
+        firstTwoOfGridAndLayout: [
+          'workbench.action.minimizeOtherEditors',
+          'vscode.getEditorLayout',
+        ],
+        expands: 1,
+        sideBars: { primary: true, auxiliary: true, hasKeyboard: false },
+        maximized: false,
+      },
+    )
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
+for (const read of [
+  { action: 'read-app', pane: 'the Application pane' },
+  { action: 'read-source', pane: 'the captured source' },
+  { action: 'read-context', pane: 'the Explanation pane' },
+] as const)
+  // Value: protects=the keyboard of a learner after a Restore of a Read, as far as the reader decides it: the Restore runs the editor's Expand, shows the side bars the Read hid, gives the active editor group the keyboard again and applies the Study layout, and runs no command or reveal that names another pane, so the pane that was read keeps the keyboard in an editor that moves none by itself; fails_when=a Restore of a Read reveals or focuses another pane than the one that was read, so the learner who read the explanation finds the keyboard in the Application pane; why_new=Cycle 0046 row 325 (native round in VS Code 1.140.0, check V-05, fourth step: after Read Explanation and Restore the Application pane had the keyboard; this test shows that no command of the reader moves it there, see the row's record for what is still open); seam=the workspace harness's side bar model, focusedPanel, active text editor, command log and panel reveals
+  test(`a Restore after a Read of ${read.pane} runs no command and no reveal that gives another pane the keyboard: ${read.pane} keeps it in an editor that moves none by itself`, async () => {
+    // Arrange: the primary side bar is open; the learner reads one pane enlarged, which hides the bar.
+    const harness = await workspaceHarness(false)
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    harness.modelSideBars({ primary: true, auxiliary: false })
+    const keyboardHolder = (): string | undefined =>
+      harness.focusedPanel() ??
+      (harness.editor.window.activeTextEditor?.viewColumn === 2
+        ? 'the captured source'
+        : undefined)
+    try {
+      await harness.reader.open()
+      await harness.reader.action(read.action)
+      const duringRead = keyboardHolder()
+      const commandsBefore = harness.commands.length,
+        revealsBefore = harness.panelReveals().length
+      const state = harness.reader.presentationState()
+
+      // Act: the Restore of the public presentation action.
+      await harness.reader.changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'restore',
+      })
+
+      // Assert
+      const expectedHolder = {
+        'read-app': 'codebook.scopedBrowser',
+        'read-source': 'the captured source',
+        'read-context': 'codebook.studyContext',
+      }[read.action]
+      assert.equal(duringRead, expectedHolder)
+      assert.deepEqual(
+        {
+          commands: harness.commands.slice(commandsBefore),
+          reveals: harness.panelReveals().slice(revealsBefore),
+          keyboardHolder: keyboardHolder(),
+          layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        },
+        {
+          commands: [
+            'workbench.action.minimizeOtherEditors',
+            'workbench.action.focusSideBar',
+            'workbench.action.focusActiveEditorGroup',
+            'vscode.getEditorLayout',
+            'runCommands',
+            'vscode.setEditorLayout',
+            'vscode.getEditorLayout',
+          ],
+          reveals: [],
+          keyboardHolder: expectedHolder,
+          layoutConfirmed: true,
+        },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
 // Value: protects=the learner's primary side bar when the editor answers the Read's first layout read and refuses the one after the measurement hid that bar: the Restore shows it again; fails_when=the reading keeps no record that its measurement hid the bar, so the Restore, Close and a refused Read show nothing and the file explorer stays away; why_new=Cycle 0046 row 33 (PL-25 of Cycle 0045: the second read's failure left the measurement undefined); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command and failNextCommand on the layout read after it
 test('a Restore after a Read whose layout read failed once the primary side bar was hidden for the measurement shows the primary side bar again', async () => {
   // Arrange: both side bars are open; the editor answers the Read's first layout read and rejects the one after the primary side bar was hidden.

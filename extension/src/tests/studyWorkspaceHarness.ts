@@ -1155,6 +1155,8 @@ export async function workspaceHarness(
         activeTabGroup.activeTab?.input instanceof TabInputUnknown)
     )
       keyboardOnBody = true
+    // Both editors leave a maximization when a group is removed from their grid, and the groups that remain have the sizes they had before it (the grid's `removeView` exits the maximized view first).
+    maximizedEditorGroup = false
     editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
     groups.splice(groups.indexOf(emptied), 1)
     for (const remaining of groups)
@@ -2391,6 +2393,8 @@ export async function workspaceHarness(
           if (sideBars && name === 'workbench.action.focusSideBar') {
             sideBars.primary = true
             keyboardInSideBar = true
+            // The primary bar's view has the keyboard now, so the chat's input has it no longer; only Cursor's Focus Agent or the learner gives it back. (Cursor keeps its chat tab's editor part inside the secondary bar, and what that bar's focus command focuses there is not known: the model leaves the chat as it is for that command.)
+            if (separateEditorPart) separateEditorPart.focused = false
           }
           if (sideBars && name === 'workbench.action.focusAuxiliaryBar') {
             sideBars.auxiliary = true
