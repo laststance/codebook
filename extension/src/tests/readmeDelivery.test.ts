@@ -39,6 +39,11 @@ import { describeWikiChatWatch } from '../utils/describeWikiChatWatch'
 import { pagePauseUnderResumeText } from '../utils/pagePauseUnderResumeText'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { startOverBy } from '../utils/startOverBy'
+import {
+  PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
+  REMOVE_LINK_OR_RENAME_IT,
+  stepPastNoRealFolder,
+} from '../utils/stepPastNoRealFolder'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
 
 /**
@@ -170,15 +175,15 @@ test('the packaged README says in both lock passages what a storage lock records
   assert.equal(STORAGE_LOCK_UNWRITTEN_GRACE_MS / MILLISECONDS_PER_SECOND, 10)
 })
 
-// Value: protects=a learner who finds the file of a running Wiki update in the project folder, or whose update is refused because of another window, reading what the file holds, that it names no computer, host or user in clear, and how long a marker counts that no window here can judge; fails_when=the README loses the marker's paragraphs, or names another longest time than the product computes for Cursor and VS Code; why_new=Cycle 0046 row 119 (amendment ER-14): no document described the marker; seam=none
-test('the packaged README says what the marker of a running Wiki update holds, that it names no computer, host or user in clear, that a killed window’s marker does not refuse a start, and that a marker nobody here can judge counts for at most 21 minutes in Cursor and 21 minutes 30 seconds in VS Code', async () => {
+// Value: protects=a learner who finds the file of a running Wiki update in the project folder, or whose update is refused because of another window, reading what the file holds, that it names no computer, host or user in clear, and how long a marker counts that no window here can judge; fails_when=the README loses the marker's paragraphs, leaves out one of the three refusals or one of the cases in which a marker is not judged by its process (a window that could not read its own process start, a Linux window that could not read its pid namespace), or names another longest time than the product computes for Cursor and VS Code; why_new=Cycle 0046 row 119 (amendment ER-14): no document described the marker; rows 103, 115 and 145 added the two cases and the third refusal after the paragraphs were written; seam=none
+test('the packaged README says what the marker of a running Wiki update holds, that it names no computer, host or user in clear, the three refusals of a start beside another window, that a killed window’s marker does not refuse a start, and that a marker nobody here can judge counts for at most 21 minutes in Cursor and 21 minutes 30 seconds in VS Code', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act: the two paragraphs under "LLM Wiki: open and update", whole.
   const delivered = heldSentences(readme, [
-    "While an update runs, its window keeps a marker file beside the output folder, `<folder>.update-run.json` (`.codebook/wiki.update-run.json` unless the setting names another folder), so that a second editor window on the same project does not start a second update. That window's start is refused with `Another editor window is updating this Wiki (<editor>, started <time>). Wait for it to finish, then press Update LLM Wiki again.` The marker usually lies in your project folder, so it holds nothing that names the computer, its host or its user in clear: it records the process id of the window's extension host and when that process began, a random id of the window, the editor, the time the run started, the kernel's boot id on Linux, and two digests that stand for the machine. A digest is a pseudonym and no secret: a commit of the file publishes it, and the digest of a common host name can be found by trying names. When the run ends, its window removes the marker; after a stopped VS Code watch the file stays as that window's note that the chat may still publish, and the window removes it later or the next update does.",
-    "A marker that a killed editor left on this machine does not refuse a start: a window of this build judges a marker by the start of its owner's process, so the marker counts as nobody's when that process is gone and also when another process has its process id since, and the next start removes it. A marker whose owner cannot be judged here counts until its run's longest time has passed at the latest: 21 minutes after the run began for Cursor and 21 minutes 30 seconds for VS Code (the 15 minutes of a run, in VS Code after the 30 seconds for the chat's first answer, then 1 minute, then the 5 minutes by which two clocks may differ). That is a marker written on another computer (a project folder shared between machines), in another system or another pid namespace of this computer (a Windows window beside a WSL window, another WSL distribution, a container), where its process id means another process, or by 0.2.29.0 when a process still has its process id. [What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits.",
+    "While an update runs, its window keeps a marker file beside the output folder, `<folder>.update-run.json` (`.codebook/wiki.update-run.json` unless the setting names another folder), so that a second editor window on the same project does not start a second update. That window's start is refused with `Another editor window is updating this Wiki (<editor>, started <time>). Wait for it to finish, then press Update LLM Wiki again.` Two shorter refusals name no run. `Another editor window is starting an update of this Wiki. Wait a moment and try again.` is shown while another window is writing its marker (a marker file without content that is younger than 2 seconds). `Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.` is shown while another window holds the claim under which a marker is removed or replaced, and a leftover marker is in the way. The marker usually lies in your project folder, so it holds nothing that names the computer, its host or its user in clear: it records the process id of the window's extension host and when that process began, a random id of the window, the editor, the time the run started, the kernel's boot id on Linux, and two digests that stand for the machine. A digest is a pseudonym and no secret: a commit of the file publishes it, and the digest of a common host name can be found by trying names. When the run ends, its window removes the marker; after a stopped VS Code watch the file stays as that window's note that the chat may still publish, and the window removes it later or the next update does.",
+    "A marker that a killed editor left on this machine does not refuse a start: a window of this build judges a marker by the start of its owner's process, so the marker counts as nobody's when that process is gone and also when another process has its process id since, and the next start removes it. A marker whose owner cannot be judged here counts until its run's longest time has passed at the latest: 21 minutes after the run began for Cursor and 21 minutes 30 seconds for VS Code (the 15 minutes of a run, in VS Code after the 30 seconds for the chat's first answer, then 1 minute, then the 5 minutes by which two clocks may differ). That is a marker written on another computer (a project folder shared between machines), in another system or another pid namespace of this computer (a Windows window beside a WSL window, another WSL distribution, a container), where its process id means another process, by a window that could not read its own process start, or by a Linux window that could not read its own pid namespace (such a window also judges no other window's marker by its process). A marker of this computer that names another boot of the Linux kernel than the running one is nobody's all the same. A marker of 0.2.29.0 counts that long when a process still has its process id. [What a lock or an update marker cannot tell](#what-a-lock-or-an-update-marker-cannot-tell) lists the limits.",
   ])
   const longestCursorMarkerMs =
     WIKI_CURSOR_UPDATE_TIMEOUT_MS +
@@ -190,7 +195,7 @@ test('the packaged README says what the marker of a running Wiki update holds, t
     WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS +
     WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
 
-  // Assert: both paragraphs, and the file name and the times the product keeps: 21 minutes, 21 minutes 30 seconds, and their parts.
+  // Assert: both paragraphs, and the file name and the times the product keeps: 21 minutes, 21 minutes 30 seconds and their parts, and the 2 seconds of a marker that is being written.
   assert.deepEqual(delivered, [true, true])
   assert.equal(WIKI_UPDATE_RUN_MARKER_SUFFIX, '.update-run.json')
   assert.equal(longestCursorMarkerMs, 1_260_000)
@@ -200,6 +205,7 @@ test('the packaged README says what the marker of a running Wiki update holds, t
   assert.equal(WIKI_CHAT_OPEN_TIMEOUT_MS, 30_000)
   assert.equal(WIKI_UPDATE_MARKER_EXPIRY_GRACE_MS, 60_000)
   assert.equal(WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS, 300_000)
+  assert.equal(WIKI_UPDATE_MARKER_WRITE_GRACE_MS, 2_000)
 })
 
 // Value: protects=a learner or a maintainer who needs to know where a storage lock and the Wiki update marker stop protecting: beside a window of 0.2.29.0, across hosts and systems, with equal host names, with clocks apart, without hard links, with a suspended window, and on the systems nobody observed; fails_when=the README loses a limit, or names another number than the product keeps (60 seconds of a claim, 2 seconds of a marker being written, 5 minutes between clocks, a minute between boot times); why_new=Cycle 0046 row 119: amendment ER-14 asked the README to carry these statements and none was written; seam=none
@@ -211,8 +217,8 @@ test('the packaged README states the limits of a storage lock and of the Wiki up
   const delivered = heldSentences(readme, [
     '### What a lock or an update marker cannot tell\n',
     "Two files keep editor windows from writing at the same time: `writer.lock` in each private storage folder (the learning storage, the Cursor skill and its catalog) and the marker of a running Wiki update beside the Wiki folder ([LLM Wiki: open and update](#llm-wiki-open-and-update)). Between windows of this build a lock, a marker and the claim a window holds for the moment in which it removes or replaces one of them are judged by the start of the owner's process. The limits:",
-    "- **A window of 0.2.29.0 on the same storage or project folder.** That window writes and judges as 0.2.29.0 did, so beside it the guarantees are those of 0.2.29.0. Its lock, its marker and its claim name no process start: this build judges such a lock by its process id and its boot, such a marker by its process id alone, and removes such a claim once it is 60 seconds old. The older window judges the files of this build in its own way: a lock or a marker whose process id went to another process stays for it, where the boot is a computed time (macOS, Windows) a clock set forward by more than a minute while a lock is held can make it take over that lock although its writer still runs, it removes a claim after 60 seconds although the claim's window still runs, it creates its marker in place, so that the file is empty for the time of one write, and when it finds no marker under its claim it removes the marker another window has just written. Update every window to leave these limits behind.",
-    "- **Another host, another system.** A lock or a marker written on another computer, or by an editor of another system of this computer (a Windows window beside a WSL window), is not judged by a process here, because its process id means another process there. Such a lock stays until you move it away; such a marker counts until its run's longest time has passed at the latest, and a claim on it for 60 seconds. For a marker and its claim, another pid namespace of this computer (another WSL distribution, a container) is such a system too.",
+    "- **A window of 0.2.29.0 on the same storage or project folder.** That window writes and judges as 0.2.29.0 did, so beside it the guarantees are those of 0.2.29.0. Its lock, its marker and its claim name no process start: this build judges such a lock by its process id and its boot, such a marker by its process id alone, and removes such a claim once it is 60 seconds old, or sooner when the claim names this machine and no process has its process id. The older window judges the files of this build in its own way: a lock or a marker whose process id went to another process stays for it, where the boot is a computed time (macOS, Windows) a clock set forward by more than a minute while a lock is held can make it take over that lock although its writer still runs, it removes a claim after 60 seconds although the claim's window still runs, it creates its marker in place, so that the file is empty for the time of one write, when it finds no marker under its claim it removes the marker another window has just written, and it follows a link at the path of the marker's claim (`<marker>.takeover`, which a cloned repository can carry): each time it asks for that claim it deletes the files directly in the folder the link leads to that were last changed more than 60 seconds ago. Update every window to leave these limits behind.",
+    "- **Another host, another system.** A lock or a marker written on another computer is not judged by a process here, and neither is a marker, or a lock that records its writer's process start, written by an editor of another system of this computer (a Windows window beside a WSL window), because its process id means another process there. Such a lock stays until you move it away; such a marker counts until its run's longest time has passed at the latest, and a claim on it for 60 seconds. For a marker and its claim, another pid namespace of this computer (another WSL distribution, a container) is such a system too, and so are a window that could not read its own process start and a Linux window that could not read its own pid namespace.",
     "- **Two computers with one host name.** A marker names its machine by digests, and the digest of the host name is the one VS Code and Cursor on one computer share. Two computers with the same host name on one shared project folder therefore look like one machine to the marker: each judges the other's marker by its own processes and its own boot, and a second update can start beside a running one.",
     "- **Clocks.** The marker's times allow the clocks of two windows, or one clock before and after a correction, to differ by 5 minutes. Computers whose clocks differ by more, a clock that moves by more during an update and a computer that sleeps for longer during one are not covered: a second update can start beside a running one.",
     '- **A file system without hard links.** A lock or a marker is written beside its path and then linked into place, so it never exists without its content. Where the file system cannot link, the file is created in place and is empty for the time of one write. Another window takes an empty marker younger than 2 seconds for one that is being written and refuses its own start, which narrows that race without closing it.',
@@ -663,6 +669,104 @@ test('the packaged README says that Cursor setup needs a file system with hard l
     describeRefusedSkillLink('<path>', 'EPERM'),
     "Cursor skill could not be installed: the file system refused to put Codebook's new file in place as <path> (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.",
   )
+})
+
+// Value: protects=a learner whose `~/.cursor` or a folder below it is a link (a home folder whose settings are linked from elsewhere) reading that Codebook sets up nothing below a link, which sentence a setup ends with and what either step does to the link; fails_when=the README does not state the limit, quotes another sentence than the setup builds for a link at a folder above the skill folder, or names another step for the skill folder than the product has; why_new=Cycle 0046 row 277: the limit stood in the cycle record alone; seam=none
+test('the packaged README says that Cursor setup does not go below a link, names the three folders, quotes the refusal of a setup for a link at ~/.cursor/skills as the setup builds it, and gives the step of the skill folder', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const paragraphs = readme.split('\n').filter((line) => line.trim() !== '')
+  const aLink = { isSymbolicLink: () => true, isDirectory: () => false }
+
+  // Act: the paragraph and the one right before it, and the end of the refusal as the product builds it for a link.
+  const at = paragraphs.findIndex((line) =>
+    line.startsWith('**Cursor setup does not go below a link.**'),
+  )
+  const paragraph = paragraphs[at] ?? ''
+  const stepOfTheSetup = stepPastNoRealFolder(
+    aLink,
+    PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
+    'Codebook: Set Up AI Chat',
+  )
+  const facts = {
+    standsAfterTheHardLinkParagraph: (paragraphs[at - 1] ?? '').startsWith(
+      '**Cursor setup needs a file system with hard links.**',
+    ),
+    namesTheThreeFolders: paragraph.includes(
+      'When `~/.cursor`, `~/.cursor/skills` or `~/.cursor/skills/codebook` is a link',
+    ),
+    namesTheThreeCommands: paragraph.includes(
+      'Codebook refuses the setup, the reconnect and the removal, and leaves the link and what it points to as they are.',
+    ),
+    quotesTheRefusalOfTheSetup: paragraph.includes(
+      `\`Codebook will not follow a non-directory skill path: /home/user/.cursor/skills. ${stepOfTheSetup}\``,
+    ),
+    givesTheStepOfTheSkillFolder: paragraph.includes(
+      `At \`~/.cursor/skills/codebook\` the step reads \`${REMOVE_LINK_OR_RENAME_IT}\`, because what that link points to may be a skill of your own.`,
+    ),
+  }
+
+  // Assert: the README's quotation ends as the product's sentence does, word for word.
+  assert.deepEqual(facts, {
+    standsAfterTheHardLinkParagraph: true,
+    namesTheThreeFolders: true,
+    namesTheThreeCommands: true,
+    quotesTheRefusalOfTheSetup: true,
+    givesTheStepOfTheSkillFolder: true,
+  })
+  assert.equal(
+    stepOfTheSetup,
+    "That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
+  )
+  assert.equal(
+    REMOVE_LINK_OR_RENAME_IT,
+    'Remove the link or give it another name',
+  )
+})
+
+// Value: protects=a learner whose Wiki output folder is a link, or is named by a Windows short name in the setting, reading why an update is refused and what to write instead, and that opening the Wiki is not refused; fails_when=the README loses the sentence of an output folder that is a link or a file, the limit of a short name with its step, or the statement that the Wiki still opens through a link; why_new=Cycle 0046 rows 185, 220 and 265: the refusal, the decision that opening stays and the limit of a short name stood in the cycle record alone; seam=none
+test('the packaged README quotes the refusal of an update whose output folder is a link or a file, says that the Wiki still opens through a link at its folder’s path, and states the limit of a folder named by a Windows short name with what to write instead', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const manifest = await readFile(
+    join(__dirname, '..', '..', 'package.json'),
+    'utf8',
+  )
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "An update refuses an output folder that is a link or a file (`Update not started (<time>): the Wiki folder itself (<name>) is a link or a file, and the publisher refuses anything there but a folder of its own. Replace it by a real folder (if it is a link to your Wiki, move the Wiki’s files into that folder), then press Update LLM Wiki again.`), while **Codebook: Open DeepWiki in Browser** still opens a Wiki through a link at its folder's path.",
+    "One limit: on Windows an output folder whose last name is written as a short name (`WIKI~1`) is taken for no folder of its own and gets that sentence too; write the folder's long name in `codebook.wikiOutputDirectory`.",
+  ])
+
+  // Assert: both sentences, and the setting and the command the README names are the manifest's.
+  assert.deepEqual(delivered, [true, true])
+  assert.equal(manifest.includes('"codebook.wikiOutputDirectory": {'), true)
+  assert.equal(
+    manifest.includes('"title": "Codebook: Open DeepWiki in Browser"'),
+    true,
+  )
+})
+
+// Value: protects=a learner who finds an entry "Archive missing; remaining files kept" in Saved studies, or whose Node test is refused beside another window, reading what the entry is, how its rest is removed and why the test did not start; fails_when=the README no longer names what is left of a study whose archive was removed, how it is removed with and without a Trash, that it is neither selected nor counted, and that a run whose archive only waits to be saved is not such a loss, or no longer says that the start of a Node test takes the storage lock; why_new=Cycle 0046 rows 86, 181, 248 and 190: the entry, its place in the list and the lock at a Node test's start stood in no document; seam=none
+test('the packaged README says what is left of a study whose archive was removed, with its words in the list, how the rest is removed, that it is neither selected nor counted and that a waiting archive is written by Retry, and that the start of a Node test takes the storage lock', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    '- An entry that cannot be opened (an older format, a study whose catalog file is missing, or what is left of a study whose archive was removed) can still be chosen and deleted.',
+    '- What is left of a study whose archive was removed (its catalog file, or a recording that no editor is still writing) stays in the list with `Archive missing; remaining files kept` in its label, so that the rest can be removed: **Delete saved study…** moves it to the Trash, and in a window without a Trash **Remove by hand** lists its files. Such an entry can be chosen and not opened, it has no **Repair saved study**, a reader that starts neither selects it nor shows it first, and it takes no place of the saved study limit. The finished recording of a run of this window whose archive could not be saved yet is listed with the same words; that study has not left the library, and **Retry storage / refresh** writes its archive.',
+    "The start of a Node test is different: it takes the storage lock (`writer.lock` in the learning storage) and reserves its history under it, so of two windows that start a test for the last free place one is refused with `Saved study storage is full. Increase Codebook: Saved Study Limit (codebook.savedStudyLimit) before starting another test; existing history was kept.` A start that meets the lock while another window holds it, or a lock that stays, is refused with the storage lock's sentence, which [Delete a saved study](#delete-a-saved-study) quotes and explains; nothing was written then, and the test was not started.",
+  ])
+  const retired = [
+    'An entry that cannot be opened (an older format, or a study whose catalog file is missing) can still be chosen and deleted.',
+  ].filter((sentence) => readme.includes(sentence))
+
+  // Assert: the README holds each sentence, and the section the last one points to.
+  assert.deepEqual(delivered, [true, true, true])
+  assert.deepEqual(retired, [])
+  assert.equal(readme.includes('\n#### Delete a saved study\n'), true)
 })
 
 // Value: protects=a learner who follows the README after a Cursor setup or removal was refused; fails_when=the README still forbids deleting a record that a refusal now tells the learner to delete, still sends a learner whose config cleanup failed through Restore Managed Cursor Skill, which installs again the skill that was just removed, or does not say what to do about a skill file that was edited or replaced; why_new=Cycle 0046 rows 188, 211 to 213 and 222 changed what these refusals say and what the removal command does; seam=none
