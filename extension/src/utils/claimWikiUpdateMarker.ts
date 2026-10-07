@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Stats } from 'node:fs'
-import { lstat, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, readdir, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -35,6 +35,7 @@ import {
   type StorageOwnerIdentity,
 } from './readRecordedOwner'
 import { readWikiRegularFile } from './readWikiRegularFile'
+import { removeWithoutFollowing } from './removeWithoutFollowing'
 import { systemErrorCode } from './systemErrorCode'
 import { withoutBootTime } from './withoutBootTime'
 
@@ -227,6 +228,7 @@ async function isExpiredMarkerClaim(
 
 /**
  * Removes one claim or prepared entry beside the marker when it is nobody's by its age ({@link isExpiredMarkerClaim}), by its own unique name; called by {@link removeExpiredMarkerClaims} and {@link removeExpiredPreparations}.
+ * The removal is Codebook's own walk ({@link removeWithoutFollowing}): a link is unlinked as a name, a prepared claim folder is emptied entry by entry, and nothing below a link is listed, whatever the system answers.
  * @param path - The claim's owner file, the prepared claim folder or the prepared marker file.
  * @param ownerPath - The file that records the owner of that entry.
  * @param judgement - The identity of this process and the clock.
@@ -240,7 +242,7 @@ async function removeIfExpired(
   judgement: MarkerClaimJudgement,
 ): Promise<void> {
   if (await isExpiredMarkerClaim(path, ownerPath, judgement))
-    await rm(path, { recursive: true, force: true }).catch(() => undefined)
+    await removeWithoutFollowing(path).catch(() => undefined)
 }
 
 /**
@@ -364,7 +366,7 @@ async function claimMarkerChange(
  * Removes the marker in the way when it is nobody's run, under the exclusive claim and after a look made while the claim is held; called by {@link claimWikiUpdateMarker} before its second exclusive creation.
  *
  * Why: between a window's look at a stale marker and its removal another window can have removed that marker and created its own. Under the claim no other window removes or replaces the marker, and none can create one while a file is there, so a marker that this look read is the marker that is removed. Where the look found no marker at all, nothing is removed: another window may have created its own in that instant.
- * The marker's path lies in the learner's project folder, where a cloned repository can put an entry that is no marker file: a link there is removed as the link and its target stays, and a folder is removed with its content, so no such entry refuses every start.
+ * The marker's path lies in the learner's project folder, where a cloned repository can put an entry that is no marker file: a link there is removed as the link and its target stays, and a folder is removed with its content, so no such entry refuses every start ({@link removeWithoutFollowing}). An entry the system does not let this window remove ends the start with the file system's error.
  * A window that was suspended under its claim can have lost it to a window that judged the claim by its age, so the claim is asked for once more right before the removal.
  * Limit: a window suspended in the instant between that check and the removal can still remove a marker another window created since.
  *
@@ -393,7 +395,7 @@ async function removeUnownedMarker(
     )
     // What the look read as nobody's is removed whatever it is: a file, a link as the link, a folder with its content.
     if (isMarkerOfNobodysRun(look) && (await claim.isStillHeld()))
-      await rm(markerPath, { recursive: true, force: true })
+      await removeWithoutFollowing(markerPath)
   } finally {
     await claim.release()
   }
@@ -413,7 +415,7 @@ async function removeUnownedMarker(
  * @returns `true` when the change was made; `false` when the file no longer holds this window's text, when this window's claim was removed meanwhile, or another window held the claim at each of {@link WIKI_UPDATE_MARKER_CLAIM_ATTEMPTS} attempts (the marker then stays as it is).
  * @throws What `change` throws; the claim is released first.
  * @example
- * await changeOwnMarker(markerPath, written, () => rm(markerPath, { force: true }), judgement) // => true
+ * await changeOwnMarker(markerPath, written, () => removeWithoutFollowing(markerPath), judgement) // => true
  */
 async function changeOwnMarker(
   markerPath: string,
@@ -459,7 +461,7 @@ async function replaceMarker(markerPath: string, text: string): Promise<void> {
     })
     await rename(besidePath, markerPath)
   } catch (error) {
-    await rm(besidePath, { force: true }).catch(() => undefined)
+    await removeWithoutFollowing(besidePath).catch(() => undefined)
     throw error
   }
 }
@@ -505,7 +507,7 @@ export async function claimWikiUpdateMarker(
           await changeOwnMarker(
             markerPath,
             written,
-            () => rm(markerPath, { force: true }),
+            () => removeWithoutFollowing(markerPath),
             await judgementFrom(inputs),
           )
         },

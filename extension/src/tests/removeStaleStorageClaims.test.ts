@@ -10,16 +10,20 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
 import {
   readProcessStart,
   type ProcessStartReader,
 } from '../utils/readProcessStart'
+import type * as sweepModule from '../utils/removeStaleStorageClaims'
 import { removeStaleStorageClaims } from '../utils/removeStaleStorageClaims'
+import type * as removalModule from '../utils/removeWithoutFollowing'
 
+import { fileSystemWhoseLinksResistRemoval } from './utils/fileSystemWhoseLinksResistRemoval'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+import { loadModule } from './utils/loadModule'
 
 /** Creates an empty storage directory that is removed with the test, and returns its canonical path. @example const directory = await storageDirectory(context) */
 async function storageDirectory(context: TestContext): Promise<string> {
@@ -150,6 +154,59 @@ test('a link at the claim folder’s path is removed as a link by the takeover c
     {
       besideTheMarker: ['a-folder-of-the-project'],
       linkedFolder: ['.gitkeep', 'record.json'],
+    },
+  )
+})
+
+// Value: protects=the folder behind a link where a prepared claim folder would lie, when the takeover claim's sweep runs for a marker in a project folder on a system that refuses to unlink the link; fails_when=the sweep removes the entry with the recursive removal of Node.js, which after the refused unlink follows the link and empties the folder behind it (row 187); why_new=Cycle 0046 row 187; seam=a file system whose unlink of a link answers EPERM, with the removal of Node.js as it runs on Windows for a caller that still uses it
+test('a link where a prepared claim folder would lie, which the system refuses to unlink, is left in place by the sweep: the folder it leads to keeps every file, also the one that reads as the record of a gone process', async (context) => {
+  // Arrange: a folder with a record of a process of this machine that is gone, named as the prepared claim's owner file would be, and another file; and a link to that folder at the prepared claim's name.
+  const directory = await storageDirectory(context)
+  const linkedFolder = join(directory, 'a-folder-of-the-project')
+  await mkdir(linkedFolder)
+  await writeFile(
+    join(linkedFolder, 'left'),
+    `{"pid":${ID_OF_NO_PROCESS},"hostname":"workstation"}`,
+  )
+  await writeFile(join(linkedFolder, 'notes.txt'), 'kept')
+  await symlink(
+    linkedFolder,
+    join(directory, 'wiki.update-run.json.takeover-left'),
+    'junction',
+  )
+  const resisting = fileSystemWhoseLinksResistRemoval()
+  const walkWhereLinksResist = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    { 'node:fs/promises': resisting.fileSystem },
+  )
+  const { removeStaleStorageClaims: sweepWhereLinksResist } = await loadModule<
+    typeof sweepModule
+  >(resolve(__dirname, '../utils/removeStaleStorageClaims.js'), {
+    'node:fs/promises': resisting.fileSystem,
+    './removeWithoutFollowing': walkWhereLinksResist,
+  })
+
+  // Act
+  await sweepWhereLinksResist(join(directory, 'wiki.update-run.json'), {
+    hostname: 'workstation',
+  })
+
+  // Assert
+  assert.deepEqual(
+    {
+      besideTheMarker: (await readdir(directory)).sort(),
+      linkedFolder: (await readdir(linkedFolder)).sort(),
+      listedBelowTheLink: resisting.listed.filter(
+        (path) => path === linkedFolder,
+      ),
+    },
+    {
+      besideTheMarker: [
+        'a-folder-of-the-project',
+        'wiki.update-run.json.takeover-left',
+      ],
+      linkedFolder: ['left', 'notes.txt'],
+      listedBelowTheLink: [],
     },
   )
 })
