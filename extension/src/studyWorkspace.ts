@@ -743,7 +743,6 @@ export class StudyWorkspace {
   constructor(
     private readonly context: WorkspaceContext,
     private readonly controls: {
-      start(): Promise<StudyService>
       connect(): Promise<void>
       returnToRepository?(selection: RepositorySelection): Promise<void>
       openArticle?(selection: RepositorySelection): Promise<void>

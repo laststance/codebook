@@ -242,11 +242,6 @@ export function activate(
   }
   const workspace = (): StudyWorkspace =>
     (reader ??= new StudyWorkspace(context, {
-      start: async () => {
-        await start()
-        if (!running) throw new Error('Study server did not start.')
-        return running.service
-      },
       connect,
       returnToRepository: (selection) =>
         repository().open(selection, undefined, true),

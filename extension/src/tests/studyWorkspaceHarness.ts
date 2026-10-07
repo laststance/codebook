@@ -3010,7 +3010,6 @@ export async function workspaceHarness(
   const articleOpens: RepositorySelection[] = [],
     articleReturns: RepositorySelection[] = []
   const controls = {
-    start: async () => harness.service,
     connect: async (): Promise<void> => {},
     returnToRepository: async (
       selection: RepositorySelection,
