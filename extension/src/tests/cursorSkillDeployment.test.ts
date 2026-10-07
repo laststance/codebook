@@ -2109,7 +2109,7 @@ async function skillWindowWhoseSkillIsEditedBeforeItsMove(
 }
 
 // Value: protects=a learner whose editor saves the skill file in the instant between setup's last check and its move, and every setup and removal after it; fails_when=setup keeps its recovery record and a second name of the learner's file, after which setup answers "Cursor skill changed during an interrupted setup; …" and removal answers "Cursor skill setup is interrupted. Run Codebook: Set Up AI Chat to recover before removal." for good; why_new=Cycle 0046 row 188 (the skill's setup); seam=node:fs/promises rename of the loaded deployment, before whose move the skill file is written
-test('a Cursor skill that is edited between setup’s last check and its move is put back and kept: setup says what to do, leaves no record, and the next setup and removal answer for the edit', async (context) => {
+test('a Cursor skill that is edited between setup’s last check and its move is put back and kept: setup says what to do, leaves no record, the next setup and removal answer for the edit, and after the learner undoes the edit in the file, setup updates the skill', async (context) => {
   // Arrange: the installed skill; the extension brings a new one, so setup moves the old one away; the learner's editor writes the file right before that move.
   const paths = await fixture(context)
   await deployCursorSkill(
@@ -2137,6 +2137,12 @@ test('a Cursor skill that is edited between setup’s last check and its move is
   const nextRemoval = await statusOrRefusalOf(
     removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
   )
+  const skillAfterTheRefusals = await readFile(paths.targetPath, 'utf8')
+  // The setup's sentence is followed to the letter: the edit is undone in the same file.
+  await writeFile(paths.targetPath, INITIAL_SKILL)
+  const setupAfterTheEditWasUndone = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
 
   // Assert
   assert.deepEqual(
@@ -2145,11 +2151,13 @@ test('a Cursor skill that is edited between setup’s last check and its move is
       filesAfterTheSetup,
       nextSetup,
       nextRemoval,
+      skillAfterTheRefusals,
+      setupAfterTheEditWasUndone,
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
       setup:
-        'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.',
+        'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -2159,7 +2167,9 @@ test('a Cursor skill that is edited between setup’s last check and its move is
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
       nextRemoval:
         'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
-      skill: EDITED_SKILL,
+      skillAfterTheRefusals: EDITED_SKILL,
+      setupAfterTheEditWasUndone: 'updated',
+      skill: NEXT_SKILL,
     },
   )
 })
@@ -2288,7 +2298,7 @@ test('an edited Cursor skill that a setup moved away, with another file at the s
 })
 
 // Value: protects=a learner who edits the skill file in the instant after a first setup published it; fails_when=setup keeps its record (every later setup is refused as interrupted) or leaves Codebook's staged name in ~/.cursor/skills as a second name of the learner's file; why_new=Cycle 0046 row 188 (the published skill); seam=node:fs/promises link of the loaded deployment, after which the published skill is written
-test('a Cursor skill that is edited right after a first setup published it is kept under its one name: setup says what to do, leaves no record, and the next setup answers that the skill folder is not Codebook’s', async (context) => {
+test('a Cursor skill that is edited right after a first setup published it is kept under its one name: setup says what to do, leaves no record, and the next setup answers that the skill folder is not Codebook’s, and after the learner deletes the file, setup installs the skill', async (context) => {
   // Arrange: no skill yet; the learner's editor writes the skill file right after setup linked it into place.
   const paths = await fixture(context)
   const window = await skillWindow(constants.EXTENSION_VERSION, {
@@ -2313,6 +2323,12 @@ test('a Cursor skill that is edited right after a first setup published it is ke
   const nextSetup = await statusOrRefusalOf(
     deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
   )
+  const skillAfterTheRefusals = await readFile(paths.targetPath, 'utf8')
+  // The setup's sentence is followed to the letter.
+  await rm(paths.targetPath)
+  const setupAfterTheFileWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
 
   // Assert
   assert.deepEqual(
@@ -2320,11 +2336,13 @@ test('a Cursor skill that is edited right after a first setup published it is ke
       setup,
       filesAfterTheSetup,
       nextSetup,
+      skillAfterTheRefusals,
+      setupAfterTheFileWasDeleted,
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
       setup:
-        'The published Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.',
+        "The published Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -2332,7 +2350,9 @@ test('a Cursor skill that is edited right after a first setup published it is ke
       },
       nextSetup:
         'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
-      skill: EDITED_SKILL,
+      skillAfterTheRefusals: EDITED_SKILL,
+      setupAfterTheFileWasDeleted: 'installed',
+      skill: INITIAL_SKILL,
     },
   )
 })
@@ -2577,7 +2597,7 @@ test('each refusal that keeps a setup’s record of the Cursor skill names the r
 })
 
 // Value: protects=a learner whose editor saves the skill file while setup stages its update, before setup moves anything; fails_when=setup refuses and keeps its staged file and its record, after which every setup is refused as interrupted and removal points back to setup; why_new=Cycle 0046 row 188 (the check before the move); seam=node:fs/promises lstat of the loaded deployment, at whose look at the staged file the skill file is written
-test('a Cursor skill that is edited while setup stages its update, before anything is moved, is kept: setup says what to do, leaves no record and no staged file, and the next setup answers for the edit', async (context) => {
+test('a Cursor skill that is edited while setup stages its update, before anything is moved, is kept: setup says what to do, leaves no record and no staged file, the next setup answers for the edit, and after the learner deletes the file, setup installs the skill again', async (context) => {
   // Arrange: the installed skill; the extension brings a new one; the learner's editor writes the skill file when setup looks at the file it staged.
   const paths = await fixture(context)
   await deployCursorSkill(
@@ -2612,6 +2632,12 @@ test('a Cursor skill that is edited while setup stages its update, before anythi
   const nextSetup = await statusOrRefusalOf(
     deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
   )
+  const skillAfterTheRefusals = await readFile(paths.targetPath, 'utf8')
+  // The setup's sentence is followed to the letter, by its second way.
+  await rm(paths.targetPath)
+  const setupAfterTheFileWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
 
   // Assert
   assert.deepEqual(
@@ -2619,11 +2645,13 @@ test('a Cursor skill that is edited while setup stages its update, before anythi
       setup,
       filesAfterTheSetup,
       nextSetup,
+      skillAfterTheRefusals,
+      setupAfterTheFileWasDeleted,
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
       setup:
-        'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.',
+        'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
       filesAfterTheSetup: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
@@ -2631,7 +2659,9 @@ test('a Cursor skill that is edited while setup stages its update, before anythi
       },
       nextSetup:
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
-      skill: EDITED_SKILL,
+      skillAfterTheRefusals: EDITED_SKILL,
+      setupAfterTheFileWasDeleted: 'restored',
+      skill: NEXT_SKILL,
     },
   )
 })
@@ -3219,7 +3249,7 @@ test('an update of the Cursor skill whose new skill the file system refuses to l
 })
 
 // Value: protects=a file that appears at the skill's path in the instant before Codebook links its new skill there; fails_when=setup ends with the file system's own text ("EEXIST: file already exists, link …") and keeps its staged file and its record, so the next setup starts in an interrupted state; why_new=Cycle 0046 row 214, found while working: the link's other refusal, a file that is already there, had no sentence either; seam=node:fs/promises link of the loaded deployment, before which a file takes the skill's path
-test('a file that takes the Cursor skill’s path in the instant before a first setup links its skill there is kept: setup answers that the skill changed during setup and leaves no record and no staged file', async (context) => {
+test('a file that takes the Cursor skill’s path in the instant before a first setup links its skill there is kept: setup answers that the skill changed during setup and leaves no record and no staged file, and after the learner deletes that file, setup installs the skill', async (context) => {
   // Arrange: no skill yet; a file of the learner appears at the skill's path right before the link.
   const paths = await fixture(context)
   const window = await skillWindow(constants.EXTENSION_VERSION, {
@@ -3241,19 +3271,23 @@ test('a file that takes the Cursor skill’s path in the instant before a first 
       paths.homeRoot,
     ),
   )
+  const files = await filesOfTheSetup(paths)
+  const fileAtTheSkillPath = await readFile(paths.targetPath, 'utf8')
+  // The setup's sentence is followed to the letter.
+  await rm(paths.targetPath)
+  const setupAfterTheFileWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
 
   // Assert
   assert.deepEqual(
-    {
-      setup,
-      files: await filesOfTheSetup(paths),
-      fileAtTheSkillPath: await readFile(paths.targetPath, 'utf8'),
-    },
+    { setup, files, fileAtTheSkillPath, setupAfterTheFileWasDeleted },
     {
       setup:
-        'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.',
+        "The Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       fileAtTheSkillPath: 'A file of the learner.\n',
+      setupAfterTheFileWasDeleted: 'installed',
     },
   )
 })
@@ -3348,6 +3382,216 @@ test('a removal whose skill file was edited before its move, and whose path anot
       refusal: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${join(skillFolder, displacedName)}). To start over, delete ${join(paths.storageRoot, 'cursor-skill', 'removal.json')}, then run Codebook: Remove Managed Cursor Skill again.`,
       displaced: EDITED_SKILL,
       skill: 'A newer file of the learner.\n',
+    },
+  )
+})
+
+// Value: protects=a learner whose installed Cursor skill is replaced by another file, or taken away, while an update of it runs; fails_when=setup says "Restore or remove that change", a step after which no setup adopts a replaced file, or speaks of a preserved file where none is left; why_new=Cycle 0046 row 242: each sentence names the step that works for what stands at the skill's path; seam=node:fs/promises of the loaded deployment: its rename, before whose move another file replaces the skill, and its lstat, at whose look at the staged file the skill is deleted
+test('an installed Cursor skill that another file replaces, or that is taken away, while its update runs: setup says for each what to do, and after the learner moves the other file out of the folder, or simply runs setup again, setup installs the skill', async (context) => {
+  // Arrange: two installed skills whose extension brings a new one. One is replaced by a file of the learner right before setup moves it; the other is deleted when setup looks at the file it staged.
+  const replaced = await fixture(context),
+    removed = await fixture(context)
+  for (const paths of [replaced, removed]) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    await writeFile(paths.sourcePath, NEXT_SKILL)
+  }
+  const windowOfTheReplacement = await skillWindow(
+    constants.EXTENSION_VERSION,
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        rename: async (from: string, to: string) => {
+          if (from === replaced.targetPath) {
+            await rm(from)
+            await writeFile(from, 'A file of the learner.\n')
+          }
+          return fileSystem.rename(from, to)
+        },
+      },
+    },
+  )
+  let isSkillRemoved = false
+  const windowOfTheRemoval = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      lstat: async (path: string, options?: StatOptions) => {
+        if (path.includes('.codebook-stage-') && !isSkillRemoved) {
+          isSkillRemoved = true
+          await rm(removed.targetPath)
+        }
+        return fileSystem.lstat(path, options)
+      },
+    },
+  })
+
+  // Act: each refusal, and then its sentence followed to the letter.
+  const setupOfTheReplaced = await statusOrRefusalOf(
+    windowOfTheReplacement.deployCursorSkill(
+      replaced.extensionPath,
+      replaced.storageRoot,
+      replaced.homeRoot,
+    ),
+  )
+  const filesOfTheReplaced = await filesOfTheSetup(replaced)
+  const fileOfTheLearner = await readFile(replaced.targetPath, 'utf8')
+  await rename(replaced.targetPath, join(replaced.homeRoot, 'my-SKILL.md'))
+  const setupAfterTheFileWasMovedOut = await statusOrRefusalOf(
+    deployCursorSkill(
+      replaced.extensionPath,
+      replaced.storageRoot,
+      replaced.homeRoot,
+    ),
+  )
+  const setupOfTheRemoved = await statusOrRefusalOf(
+    windowOfTheRemoval.deployCursorSkill(
+      removed.extensionPath,
+      removed.storageRoot,
+      removed.homeRoot,
+    ),
+  )
+  const filesOfTheRemoved = await filesOfTheSetup(removed)
+  const setupRunAgain = await statusOrRefusalOf(
+    deployCursorSkill(
+      removed.extensionPath,
+      removed.storageRoot,
+      removed.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setupOfTheReplaced,
+      filesOfTheReplaced,
+      fileOfTheLearner,
+      setupAfterTheFileWasMovedOut,
+      setupOfTheRemoved,
+      filesOfTheRemoved,
+      setupRunAgain,
+    },
+    {
+      setupOfTheReplaced:
+        "The Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
+      filesOfTheReplaced: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [],
+        records: [],
+      },
+      fileOfTheLearner: 'A file of the learner.\n',
+      setupAfterTheFileWasMovedOut: 'restored',
+      setupOfTheRemoved:
+        'The Cursor skill was removed while setup ran; Codebook changed no file. Run Codebook: Set Up AI Chat again to install it.',
+      filesOfTheRemoved: { skillFolder: [], temporaryNames: [], records: [] },
+      setupRunAgain: 'restored',
+    },
+  )
+})
+
+// Value: protects=a learner whose editor saves the skill file right after an update published the new skill; fails_when=setup says "Restore or remove that change", although the receipt names the previous skill and no setup adopts the edited file again; why_new=Cycle 0046 row 242 (the update's case of the published skill); seam=node:fs/promises link of the loaded deployment, after whose link into place the skill file is written
+test('a Cursor skill that is edited right after an update published it is kept: setup says to delete it or to move it out of its folder, and after the learner deletes it, setup installs the skill again', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        await fileSystem.link(existingPath, newPath)
+        if (newPath === paths.targetPath) await writeFile(newPath, EDITED_SKILL)
+      },
+    },
+  })
+
+  // Act: the refusal, and then its sentence followed to the letter.
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+  const filesAfterTheSetup = await filesOfTheSetup(paths)
+  const skillAfterTheRefusal = await readFile(paths.targetPath, 'utf8')
+  await rm(paths.targetPath)
+  const setupAfterTheFileWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      filesAfterTheSetup,
+      skillAfterTheRefusal,
+      setupAfterTheFileWasDeleted,
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      setup:
+        "The published Cursor skill changed during setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again.",
+      filesAfterTheSetup: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [],
+        records: [],
+      },
+      skillAfterTheRefusal: EDITED_SKILL,
+      setupAfterTheFileWasDeleted: 'restored',
+      skill: NEXT_SKILL,
+    },
+  )
+})
+
+// Value: protects=a learner whose editor saves the installed skill while setup keeps a copy of it, before anything is staged or moved; fails_when=setup ends with "The Cursor skill changed during setup; no replacement was made.", which names no next step; why_new=Cycle 0046 row 242 (found beside it): that moment is answered by the check before the move, with the sentence of an edit; seam=node:fs/promises link of the loaded deployment, at whose link of the copy the skill file is written
+test('a Cursor skill that is edited while setup keeps a copy of the installed skill is kept: setup says to undo the edit or to delete or rename the file, and leaves no record and no staged file', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        if (newPath.endsWith('.SKILL.md'))
+          await writeFile(paths.targetPath, EDITED_SKILL)
+        return fileSystem.link(existingPath, newPath)
+      },
+    },
+  })
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      files: await filesOfTheSetup(paths),
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      setup:
+        'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+      files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+      skill: EDITED_SKILL,
     },
   )
 })

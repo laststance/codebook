@@ -51,13 +51,23 @@ const WIKI_PUBLISHER_PATH_MARKER = '{{CODEBOOK_PUBLISHER_PATH}}'
 const CHANGED_SKILL_REFUSAL =
   'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
 
-/** What setup answers when the skill file changed while setup ran (before or at its move away): the file is the learner's now and stays in place. */
-const SKILL_CHANGED_DURING_SETUP =
-  'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.'
+/** The step that lets a setup finish while a file that is not Codebook's stands at the skill's path: setup dropped its record when it refused, so the file is not adopted again, whatever is done to it. On a first install the skill folder must be empty, which is why the sentence says "out of its folder" and not "rename". */
+const FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN =
+  "Codebook leaves that file alone as long as it is there. To install Codebook's skill, delete that file or move it out of its folder, then run Codebook: Set Up AI Chat again."
 
-/** What setup answers when the skill it had just published changed before setup compared it. */
-const PUBLISHED_SKILL_CHANGED_DURING_SETUP =
-  'The published Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.'
+/** What setup answers when a file that is not the installed skill stands at the skill's path while setup runs: a file that took the path in the instant before a first setup's link, or one that replaced the installed skill during an update. The file is the learner's and stays in place. */
+const SKILL_CHANGED_DURING_SETUP = `The Cursor skill changed during setup; Codebook preserved it. ${FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN}`
+
+/** What setup answers when the installed skill was edited in place while an update ran: the receipt still names that file, so the next setup adopts it again once its content is back, and installs anew when the file is gone. */
+const SKILL_EDITED_DURING_SETUP =
+  'The Cursor skill was edited during setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.'
+
+/** What setup answers when the installed skill was taken away while an update ran: nothing is left to preserve, and the next setup installs the skill again. */
+const SKILL_REMOVED_DURING_SETUP =
+  'The Cursor skill was removed while setup ran; Codebook changed no file. Run Codebook: Set Up AI Chat again to install it.'
+
+/** What setup answers when the skill it had just published changed before setup compared it: the receipt does not name that file (none on a first install, the previous skill on an update), so it is not adopted again. */
+const PUBLISHED_SKILL_CHANGED_DURING_SETUP = `The published Cursor skill changed during setup; Codebook preserved it. ${FREE_THE_SKILL_PATH_THEN_SET_UP_AGAIN}`
 
 /** How a removal that found a file of the learner at the skill's path ends: Codebook removes no file that is not its own, and once the learner took the file away the removal has nothing left to remove and finishes. */
 const FINISH_REMOVAL_WITHOUT_THAT_FILE =
@@ -753,6 +763,27 @@ async function settleDisplacedName(
 }
 
 /**
+ * Words the refusal of an update whose installed skill changed while the setup ran, for {@link deploySkill} after it abandoned that setup: the path is looked at once more, because the step that works depends on what stands there now.
+ * @param targetPath - The managed skill path.
+ * @param receipt - The receipt of the installed skill, which no step of the abandoned setup changed.
+ * @returns
+ * - {@link SKILL_EDITED_DURING_SETUP}: the receipted file itself stands there with other bytes; once the edit is undone in that file the next setup adopts it
+ * - {@link SKILL_REMOVED_DURING_SETUP}: the path holds nothing
+ * - {@link SKILL_CHANGED_DURING_SETUP}: another file (or a link, or no file) stands there, which no setup adopts
+ * @example await sentenceOfSkillChangedDuringUpdate('/home/user/.cursor/skills/codebook/SKILL.md', receipt)
+ */
+async function sentenceOfSkillChangedDuringUpdate(
+  targetPath: string,
+  receipt: SkillReceipt,
+): Promise<string> {
+  const look = await lookAtSkillFile(targetPath)
+  if (look.kind === 'missing') return SKILL_REMOVED_DURING_SETUP
+  return look.kind === 'read' && isSameFileId(receipt.inode, look.status.ino)
+    ? SKILL_EDITED_DURING_SETUP
+    : SKILL_CHANGED_DURING_SETUP
+}
+
+/**
  * Ends a setup whose skill file changed while the setup ran, for {@link deploySkill} right before it refuses: what the move left is settled ({@link settleChangedSkill}), the staged file is removed and the record with it, so the next setup starts clean and answers for the file as it stands.
  * @param pending - The setup's record.
  * @param targetPath - The managed skill path.
@@ -1315,13 +1346,6 @@ async function deploySkill(
           await unlink(stagedBackup)
         }
       }
-      if (
-        sha256((await regularFile(targetPath)) ?? Buffer.alloc(0)) !==
-        receipt.skillSha256
-      )
-        throw new Error(
-          'The Cursor skill changed during setup; no replacement was made.',
-        )
     }
     await ensureDirectory(targetDirectory)
     const retiredDirectory =
@@ -1368,16 +1392,21 @@ async function deploySkill(
       await unlink(stagedPath)
       throw error
     }
+    // Also a change made while the copy above was kept is met here, before anything is moved.
     if (current && receipt && !(await matchesOwnedFile(targetPath, receipt))) {
       await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
-      throw new Error(SKILL_CHANGED_DURING_SETUP)
+      throw new Error(
+        await sentenceOfSkillChangedDuringUpdate(targetPath, receipt),
+      )
     }
     if (current && receipt && next.displacedPath) {
       await rename(targetPath, next.displacedPath)
       if (!(await matchesOwnedFile(next.displacedPath, receipt))) {
         // The file changed between the check and the move: it goes back to its place and stays the learner's.
         await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
-        throw new Error(SKILL_CHANGED_DURING_SETUP)
+        throw new Error(
+          await sentenceOfSkillChangedDuringUpdate(targetPath, receipt),
+        )
       }
     }
     await publishStagedSkill(next, targetPath, pendingPath)
