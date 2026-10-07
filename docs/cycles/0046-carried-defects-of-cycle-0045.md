@@ -380,7 +380,11 @@ That tree is verified at `85816f2` and pushed: the build passes, the full suite 
 
 **Package WUB's rows 216 and 217 merged (`51ab4ae`).** The notification that watches an update says where the request went, in the words the confirmation uses, when the watch ends, and that a learner who refused a step of the chat presses Cancel; the README says the same for the command, which asks nothing (rows 216 and 217; that the editor does not cut the longer title was read in its source at both tags and is owed a native look). Found by it and now row 223: the page's line of a running update does not say it.
 
-183 of 223 rows are closed. Open: 25 rows that owe a native check, 1 whose fix is on a branch that is not merged, and 14 that their packages work on or that were just added.
+**Package MKS's row 222 and the README paragraph of row 214 merged (`5f9153a`).** A second removal goes on to the catalog's cleanup when the skill is already removed and says what became of the config, and the warning of a refused cleanup ends with that way on (row 222). The README states that Cursor setup needs a file system with hard links, and its sentences about an interrupted or refused setup agree with the sentences of rows 188 and 211 to 213; the three quotations are built in the tests from the functions that word them in the product. Found by it and now row 224: a damaged catalog record ends the whole removal command at its first step, with a sentence that tells a learner who asked for a removal to set up.
+
+**The pass over what changed since each group was read** started on 2026-10-07 with six groups cut by area (`open-code-review-delegate`, read-only reviewers that read by commit): the lock, the marker and the removals (53 files) and the reader, the publisher and CI (44) at `abfa846`, the Cursor setup and the stores (37) at `5f9153a`; the update flow, the configured run and the Study workspace follow when their last rows are merged. Each file is read from the commit at which it was last reviewed. Every finding becomes a row.
+
+184 of 224 rows are closed. Open: 25 rows that owe a native check, 0 whose fix is on a branch that is not merged, and 15 that their packages work on or that were just added.
 
 ## Result and decision
 
