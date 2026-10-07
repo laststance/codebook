@@ -5,7 +5,7 @@ import { CAPTURE_TIMEOUT_MS } from './runtimeSupport/constants'
  * 1.7 removed a member: `codebook_source`, and `codebook_read_resource` for a book's cited source, answer the source's lines as `numberedText` and no longer as `text` (1.6 answered both); an MCP resource read of a cited source still answers its exact text. No request states a version, so a client written for 1.6 gets the 1.7 answers.
  */
 export const API_VERSION = '1.7'
-export const EXTENSION_VERSION = '0.2.29'
+export const EXTENSION_VERSION = '0.2.30'
 export const CONFIGURED_MINIMUM_EXTENSION_VERSION = '0.2.0'
 export const NODE_TEST_MINIMUM_EXTENSION_VERSION = '0.2.12'
 export const LOOPBACK_ADDRESS = '127.0.0.1'
@@ -532,6 +532,9 @@ export const NUMBERED_SOURCE_LINES_HELP =
 /** Said where an agent reads the inspection rule before it declares a stop (the description of every `inspections` field of `codebook_start` and the repository-browser help's `inspections`), so it knows that Codebook requests a stop whose own line declares a binding it requires after that declaration's statement, when the stop stays on its line instead, and what to require for the state before that line. */
 export const SELF_DECLARED_BINDING_HELP =
   "A required value is read when the debugger pauses, before the stop's line runs, so a binding that the stop's own line declares has no value there; Codebook then requests the stop on the first line within the stop's citation that can pause after the statement that line begins, and names that line in the inspection's armed and place, so require a value that already exists before the stop's line when you want the state before that line runs; when no later line of the citation can pause, the statement does not end within the citation, Codebook does not recognize the declaration (it reads only the first const or let with an initializer on the stop's line, not a pattern over several lines or a second declarator), or the sealed map is too large to scan completely and the debugger cannot be asked where it can pause after the statement (a server stop whose module is not loaded before the input, or a debugger that lists no break locations), the stop stays on its line and its failure names the line to follow; when you know the statement spans several lines, declare the stop on a statement after it."
+/** Said where an agent reads what refuses a run (the `recovery` of the repository-browser help and of the node-test help), so it knows that a start saves no document, that a cited source open in the editor with other text refuses the start before anything runs and ends a run that is already going ({@link assertConfiguredSourceDocuments}), and what the learner and it do then. */
+export const OPEN_CITED_SOURCE_HELP =
+  'Codebook starts its debuggers without saving a document of the learner, and a start is refused with SOURCE_CHANGED, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with text that differs from the text the article cites, and a run that is already going ends with it at its next stop at the latest (a document that is only marked as modified and holds the cited text refuses and ends nothing): the message names the file, so ask the learner to save it, then read the source again and publish the article again, or to revert it, and start a new run.'
 /** The most node ids a refused start names of the revision it selected, before the rest is counted ({@link describeMissingBookNode}). */
 export const MISSING_BOOK_NODE_IDS_NAMED_LIMIT = 5
 export const REPOSITORY_SOURCE_EXTENSIONS = [

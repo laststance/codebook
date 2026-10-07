@@ -10,6 +10,7 @@ import type { NodeTestSourceStop } from '../ownedNodeTestRun'
 import { readResource } from '../resources'
 import type { NodeTestRuntime } from '../runtime'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSourceDocuments'
 
 import { createHarness } from './helpers'
 import { nodeTestHistoryHeader } from './utils/nodeTestHistoryFixture'
@@ -375,6 +376,83 @@ test('public Node start rejects cited source drift before creating a process own
     assert.equal(
       service.state(service.record(receipt)).error?.code,
       'SOURCE_CHANGED',
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Cycle 0046 (row 314): red while the service gave a Node test run nothing to compare the editor's documents with, so a test started while the editor held unsaved lines of a cited source.
+test('a Node test start whose cited source is open in the editor with other text ends in its run resource with SOURCE_CHANGED and the sentence that names the file', async () => {
+  // Arrange
+  const harness = await createHarness(),
+    { service } = harness
+  service.nodeHistoryStore = new NodeTestHistoryStore(
+    join(harness.directory, '.learning'),
+    '0'.repeat(64),
+  )
+  service.environment.build.sourceHash = 'f'.repeat(64)
+  let releases = 0
+  // The stand-in applies the owned run's own check to the cited text the service hands it, as the owned run does before it lists or launches the test; the editor holds other text for the cited file.
+  service.environment.createNodeTestRun = async (
+    _configuration,
+    _record,
+    citedSources,
+  ) => ({
+    id: 'node-run',
+    async prepare() {
+      assertConfiguredSourceDocuments(harness.directory, citedSources, [
+        {
+          uri: {
+            scheme: 'file',
+            fsPath: join(harness.directory, 'src/theme.ts'),
+          },
+          getText: () => 'const nextTheme = "light";\n',
+        },
+      ])
+      throw new Error('The check found no cited source with other text.')
+    },
+    hasNextStop: () => false,
+    async advance() {
+      throw new Error('A refused run has no next stop.')
+    },
+    async complete() {
+      throw new Error('A refused run has no result.')
+    },
+    async stop(): Promise<void> {
+      releases++
+    },
+  })
+  const configuration: NodeTestConfiguration = {
+    version: 1,
+    adapter: 'vitest-node',
+    book: harness.configuration.book,
+    testFile: 'src/theme.test.ts',
+    testTitles: ['theme', 'selects the dark theme'],
+    testHash: 'a'.repeat(64),
+    source: harness.configuration.source,
+    inspections: harness.configuration.inspections.slice(0, 1),
+  }
+  try {
+    // Act
+    const receipt = service.start({
+      instanceId: service.instanceId,
+      profile: NODE_TEST_PROFILE,
+      key: 'other-text-in-editor',
+      configuration,
+    })
+    await service.record(receipt).preparation
+    await waitUntil(() => releases === 1, 'refused Node test run released')
+
+    // Assert
+    const error = service.state(service.record(receipt)).error
+    assert.deepEqual(
+      { code: error?.code, message: error?.message },
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
     )
   } finally {
     await harness.close()

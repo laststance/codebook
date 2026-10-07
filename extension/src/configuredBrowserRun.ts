@@ -3164,6 +3164,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
           },
           timeout: ACTIVE_TIMEOUT_MS,
         },
+        // Without this the editor saves every modified editor of the learner as the session starts, and a cited source written then no longer is the file the run sealed.
+        { suppressSaveBeforeStart: true },
       ),
     )
     this.alive()
@@ -5415,7 +5417,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     assertConfiguredSourceDocuments(
       this.options.workspace,
-      this.definition,
+      this.definition.descriptor.sources,
       vscode.workspace.textDocuments,
     )
     if (!this.preparedSources) throw new Error('Prepared sources are absent')
@@ -5425,7 +5427,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     this.alive()
     assertConfiguredSourceDocuments(
       this.options.workspace,
-      this.definition,
+      this.definition.descriptor.sources,
       vscode.workspace.textDocuments,
     )
   }

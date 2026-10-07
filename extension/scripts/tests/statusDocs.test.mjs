@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 /**
@@ -199,6 +199,55 @@ test("README's implementation status states the delivered and the open cycle and
     `the status links the records of ${cyclesWithLinkedRecords.length} cycles: ${cyclesWithLinkedRecords.join(', ')}`,
   )
   assert.deepEqual(pointsToHistory, [true, true, true])
+})
+
+// Value: protects=a developer who selects the workspace regressions for a focused run and reads in the guide what each file of them holds; fails_when=a `studyWorkspace*.test.ts` file is added, renamed or retired and the guide's list of the partitions stays as it was; why_new=Cycle 0046 added the partitions of the debug stops and of the Node history admission (rows 183 and 275), and the guide still listed eleven; seam=none
+test('the test execution guide names every partition of the workspace regressions, one name for each studyWorkspace test file', async () => {
+  // Arrange
+  const guide = await readDocument('docs/qa/test-execution.md')
+  const testFiles = await readdir(new URL('../../src/tests/', import.meta.url))
+
+  // Act: the guide's list, and the partition each test file holds under the name the guide gives it.
+  const namedPartitions = (
+    /are divided by behavior into `studyWorkspace\*\.test\.ts`: (.+?)\. They share/.exec(
+      guide,
+    )?.[1] ?? ''
+  ).split(/, | and /)
+  const partitionFiles = testFiles
+    .filter((name) => /^studyWorkspace\w*\.test\.ts$/.test(name))
+    .toSorted()
+
+  // Assert: thirteen files, and for each of them its name in the guide.
+  assert.deepEqual(partitionFiles, [
+    'studyWorkspace.test.ts',
+    'studyWorkspaceDebugStops.test.ts',
+    'studyWorkspaceEntry.test.ts',
+    'studyWorkspaceEntryObstacles.test.ts',
+    'studyWorkspaceFocus.test.ts',
+    'studyWorkspaceLayout.test.ts',
+    'studyWorkspaceLifecycle.test.ts',
+    'studyWorkspaceNavigation.test.ts',
+    'studyWorkspaceNodeHistoryAdmission.test.ts',
+    'studyWorkspacePresentation.test.ts',
+    'studyWorkspaceRemoval.test.ts',
+    'studyWorkspaceReplay.test.ts',
+    'studyWorkspaceStorage.test.ts',
+  ])
+  assert.deepEqual(namedPartitions, [
+    'core Node history/save',
+    'navigation',
+    'entry',
+    'entry obstacles',
+    'focus',
+    'debug stops',
+    'replay',
+    'storage',
+    'layout',
+    'presentation',
+    'lifecycle',
+    'saved-study removal',
+    'Node history admission',
+  ])
 })
 
 // Cycle 0045 (test count): red while the guide said "the 193 package and script tests", a count every package of a cycle changes (201 on the merged tree).
