@@ -676,6 +676,84 @@ async function abandonSetupOfChangedSkill(
   await unlink(pendingPath)
 }
 
+/** What every refused link of the skill setup ends with: what the folder must allow, and the command to run again. A file system without hard links (exFAT, some network shares) refuses every such link. */
+const ALLOW_LINKS_THEN_SET_UP_AGAIN =
+  'Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.'
+
+/**
+ * Turns a failure to keep a copy of the installed skill in Codebook's storage into a sentence, for {@link deploySkill} before it updates the skill: the copy is put under its name with a hard link, which the file system can refuse.
+ * @param error - What `link` threw.
+ * @param backupPath - The copy's name in Codebook's storage.
+ * @returns An error that names the path and the file system's code, with the failure as its cause; a failure without a code itself. Nothing of the skill was changed at that point.
+ * @example throw refusalOfBackupLink(Object.assign(new Error('EPERM'), { code: 'EPERM' }), '/private/cursor-skill/3f6c….SKILL.md')
+ */
+function refusalOfBackupLink(error: unknown, backupPath: string): unknown {
+  const code = systemErrorCode(error)
+  return code
+    ? new Error(
+        `Cursor skill could not be updated: the file system refused to keep a copy of the installed skill as ${backupPath} (${code}). No skill file was changed. ${ALLOW_LINKS_THEN_SET_UP_AGAIN}`,
+        { cause: error },
+      )
+    : error
+}
+
+/**
+ * Words the refusal of the link that puts Codebook's new skill in place, for {@link publishStagedSkill}, and leaves the setup in a state the sentence describes.
+ * A first install, or a restore of a skill that was gone, has moved nothing: its staged file and its record are removed, so nothing is left. An update has moved Codebook's previous skill to its displaced name before the link: that file and the record stay, and the sentence says where the previous skill is and how to go on using it (a link back would be refused as well, and a move back could replace a file that took the path).
+ * @param code - The file system's code for the refused link; never `EEXIST`.
+ * @param pending - The setup's record.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @returns The sentence.
+ * @example await sentenceOfRefusedSkillLink('EPERM', next, targetPath, pendingPath)
+ */
+async function sentenceOfRefusedSkillLink(
+  code: string,
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<string> {
+  const refused = `Cursor skill could not be installed: the file system refused to put Codebook's new file in place as ${targetPath} (${code}).`
+  const displacedPath = pending.displacedPath
+  if (displacedPath && (await inspectedPath(displacedPath)))
+    return `${refused} Codebook's previous skill is kept as ${displacedPath}; move it back to ${targetPath} to go on using it. ${ALLOW_LINKS_THEN_SET_UP_AGAIN}`
+  await removeOwnedStage(pending)
+  await unlink(pendingPath)
+  return `${refused} No existing file was changed. ${ALLOW_LINKS_THEN_SET_UP_AGAIN}`
+}
+
+/**
+ * Puts the staged skill in place with a hard link, the one call that never replaces a file that stands at the skill's path, and answers its refusal with a sentence; called by {@link deploySkill} after its last check of the path.
+ * @param pending - The setup's record, with the staged file.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @throws
+ * - `EEXIST` (a file took the skill's path in that instant): the setup is settled as for a skill that changed ({@link abandonSetupOfChangedSkill}) and ends with {@link SKILL_CHANGED_DURING_SETUP}
+ * - Every other code (`EPERM` on Linux and `ENOTSUP` on macOS for a file system without hard links, `ENOSYS` where the file system has no such call, `EACCES` or `EROFS` for a folder that allows no new files, and whatever else the system answers): the sentence of a refused link, which names the path and the code ({@link sentenceOfRefusedSkillLink}), with the failure as its cause
+ * - A failure without a code: itself
+ * @example await publishStagedSkill(next, '/home/user/.cursor/skills/codebook/SKILL.md', '/private/cursor-skill/pending.json')
+ */
+async function publishStagedSkill(
+  pending: PendingSkill,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  try {
+    await link(pending.stagedPath, targetPath)
+  } catch (error) {
+    const code = systemErrorCode(error)
+    if (!code) throw error
+    if (code === 'EEXIST') {
+      await abandonSetupOfChangedSkill(pending, targetPath, pendingPath)
+      throw new Error(SKILL_CHANGED_DURING_SETUP, { cause: error })
+    }
+    throw new Error(
+      await sentenceOfRefusedSkillLink(code, pending, targetPath, pendingPath),
+      { cause: error },
+    )
+  }
+}
+
 /**
  * Says whether a removal's move was of a skill file that is not Codebook's, and undoes what is left of it, for {@link recoverRemoval} and for {@link removeManagedCursorSkill} when the file changed between its check and its move.
  * @param pending - The removal's record.
@@ -1113,7 +1191,9 @@ async function deploySkill(
           current.bytes,
         )
         try {
-          await link(stagedBackup, backupPath)
+          await link(stagedBackup, backupPath).catch((error: unknown) => {
+            throw refusalOfBackupLink(error, backupPath)
+          })
         } finally {
           await unlink(stagedBackup)
         }
@@ -1183,7 +1263,7 @@ async function deploySkill(
         throw new Error(SKILL_CHANGED_DURING_SETUP)
       }
     }
-    await link(stagedPath, targetPath)
+    await publishStagedSkill(next, targetPath, pendingPath)
     if (!(await matchesOwnedFile(targetPath, next))) {
       await abandonSetupOfChangedSkill(next, targetPath, pendingPath)
       throw new Error(PUBLISHED_SKILL_CHANGED_DURING_SETUP)

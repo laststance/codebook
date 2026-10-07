@@ -2861,3 +2861,206 @@ test('each invalid part of a Cursor skill record is refused with the sentence of
     ),
   })
 })
+
+/**
+ * Loads the skill deployment as a window on a file system that refuses a hard link with one code, as a file system without hard links does (`EPERM` on Linux, `ENOTSUP` on macOS, `ENOSYS` where the file system has no such call).
+ * @param code - The code the refused link carries.
+ * @param isRefused - Which new names are refused; every one when left out.
+ * @returns The window.
+ */
+async function skillWindowWhoseLinkIsRefused(
+  code: string,
+  isRefused: (newPath: string) => boolean = () => true,
+): Promise<typeof CursorSkillModule> {
+  return skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        if (isRefused(newPath))
+          throw Object.assign(new Error(`${code}: refused, link`), { code })
+        return fileSystem.link(existingPath, newPath)
+      },
+    },
+  })
+}
+
+// Value: protects=a learner whose home folder is on a file system without hard links (exFAT, some network shares); fails_when=Cursor chat setup ends at every try with the file system's own text ("EPERM: operation not permitted, link …"), which says neither what was refused nor what the folder must allow, or leaves its staged file and its record behind; why_new=Cycle 0046 row 214; seam=node:fs/promises link of the loaded deployment, which the file system refuses
+test('a first setup of the Cursor skill on a file system that refuses hard links ends with a sentence that names the path, the refusal and what the folder must allow, for EPERM, ENOTSUP and ENOSYS alike; it leaves nothing behind and changes no file of the learner', async (context) => {
+  // Arrange: three home folders without a skill, each with a file of the learner beside the place of Codebook's skill folder.
+  const refusals: Record<string, string> = {}
+  const leftBehind: Record<string, unknown> = {}
+  const expectedRefusals: Record<string, string> = {}
+  for (const code of ['EPERM', 'ENOTSUP', 'ENOSYS']) {
+    const paths = await fixture(context)
+    const skills = join(paths.homeRoot, '.cursor', 'skills')
+    await mkdir(skills, { recursive: true })
+    await writeFile(join(skills, 'mine.md'), 'A skill of the learner.\n')
+    const window = await skillWindowWhoseLinkIsRefused(code)
+
+    // Act
+    refusals[code] = await statusOrRefusalOf(
+      window.deployCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    )
+    leftBehind[code] = {
+      ...(await filesOfTheSetup(paths)),
+      learnersFile: await readFile(join(skills, 'mine.md'), 'utf8'),
+    }
+    expectedRefusals[code] =
+      `Cursor skill could not be installed: the file system refused to put Codebook's new file in place as ${paths.targetPath} (${code}). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`
+  }
+
+  // Assert
+  const nothingLeft = {
+    skillFolder: [],
+    temporaryNames: [],
+    records: [],
+    learnersFile: 'A skill of the learner.\n',
+  }
+  assert.deepEqual(
+    { refusals, leftBehind },
+    {
+      refusals: expectedRefusals,
+      leftBehind: {
+        EPERM: nothingLeft,
+        ENOTSUP: nothingLeft,
+        ENOSYS: nothingLeft,
+      },
+    },
+  )
+})
+
+// Value: protects=the installed skill of a learner whose storage folder refuses hard links when an extension update brings a new skill; fails_when=the update ends with the file system's own text, or changes the installed skill before it could keep a copy of it; why_new=Cycle 0046 row 214 (the copy setup keeps before an update is linked too); seam=node:fs/promises link of the loaded deployment, which the file system refuses
+test('an update of the Cursor skill whose copy of the installed skill the file system refuses to link ends with a sentence that names the copy and the refusal, and the installed skill stays as it is', async (context) => {
+  // Arrange: the installed skill; the extension brings a new one; every link is refused.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const window = await skillWindowWhoseLinkIsRefused('EPERM')
+
+  // Act
+  const update = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      update,
+      files: await filesOfTheSetup(paths),
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      update: `Cursor skill could not be updated: the file system refused to keep a copy of the installed skill as ${join(paths.storageRoot, 'cursor-skill', `${createHash('sha256').update(INITIAL_SKILL).digest('hex')}.SKILL.md`)} (EPERM). No skill file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+      files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+      skill: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=Codebook's previous skill when the link of an update is refused after the previous skill was moved away; fails_when=the update ends with the file system's own text and the learner cannot tell that the skill they had is under another name, or the sentence's way back does not work; why_new=Cycle 0046 row 214: after the move no call puts the file back that could not replace another file, so the sentence says where it is; seam=node:fs/promises link of the loaded deployment, which the file system refuses for the skill's path alone
+test('an update of the Cursor skill whose new skill the file system refuses to link, after the previous skill was moved away, says where the previous skill is kept, and after the learner moves it back, a setup on a file system that links updates the skill', async (context) => {
+  // Arrange: the installed skill; the extension brings a new one; only the link to the skill's path is refused.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.sourcePath, NEXT_SKILL)
+  const window = await skillWindowWhoseLinkIsRefused(
+    'EPERM',
+    (newPath) => newPath === paths.targetPath,
+  )
+
+  // Act: the refusal is followed to the letter.
+  const update = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+  const [displacedName] = (await filesOfTheSetup(paths)).skillFolder
+  const displacedPath = join(
+    paths.homeRoot,
+    '.cursor',
+    'skills',
+    'codebook',
+    displacedName ?? 'no displaced file',
+  )
+  const previousSkillUnderItsOtherName = await readFile(displacedPath, 'utf8')
+  await rename(displacedPath, paths.targetPath)
+  const setupWhereLinksWork = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      update,
+      previousSkillUnderItsOtherName,
+      setupWhereLinksWork,
+      files: await filesOfTheSetup(paths),
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      update: `Cursor skill could not be installed: the file system refused to put Codebook's new file in place as ${paths.targetPath} (EPERM). Codebook's previous skill is kept as ${displacedPath}; move it back to ${paths.targetPath} to go on using it. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+      previousSkillUnderItsOtherName: INITIAL_SKILL,
+      setupWhereLinksWork: 'updated',
+      files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+      skill: NEXT_SKILL,
+    },
+  )
+})
+
+// Value: protects=a file that appears at the skill's path in the instant before Codebook links its new skill there; fails_when=setup ends with the file system's own text ("EEXIST: file already exists, link …") and keeps its staged file and its record, so the next setup starts in an interrupted state; why_new=Cycle 0046 row 214, found while working: the link's other refusal, a file that is already there, had no sentence either; seam=node:fs/promises link of the loaded deployment, before which a file takes the skill's path
+test('a file that takes the Cursor skill’s path in the instant before a first setup links its skill there is kept: setup answers that the skill changed during setup and leaves no record and no staged file', async (context) => {
+  // Arrange: no skill yet; a file of the learner appears at the skill's path right before the link.
+  const paths = await fixture(context)
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      link: async (existingPath: string, newPath: string) => {
+        if (newPath === paths.targetPath)
+          await writeFile(newPath, 'A file of the learner.\n')
+        return fileSystem.link(existingPath, newPath)
+      },
+    },
+  })
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      files: await filesOfTheSetup(paths),
+      fileAtTheSkillPath: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      setup:
+        'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.',
+      files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+      fileAtTheSkillPath: 'A file of the learner.\n',
+    },
+  )
+})
