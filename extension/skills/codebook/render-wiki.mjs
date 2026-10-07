@@ -43,7 +43,7 @@ const withRenamedContentIds = (page, renamesByPage) => {
     return renamed === undefined ? address : `${beforeFragment}#${renamed}`;
   };
   /** An id, or a list of ids with its spaces kept, with each renamed id of this page under its new name. */
-  const renamedIds = ids => ids.split(/(\s+)/).map(part => ownRenames.get(part) ?? part).join('');
+  const renamedIds = ids => ids.split(/([\t\n\f\r ]+)/).map(part => ownRenames.get(part) ?? part).join('');
   return withAttributeValues(page.contentHtml, (name, value) => name === 'href' ? renamedLink(value) : ID_ATTRIBUTES.has(name) ? renamedIds(value) : value);
 };
 /** Keeps generated files and source references within relative repository paths. @example safePath('../outside') // false */

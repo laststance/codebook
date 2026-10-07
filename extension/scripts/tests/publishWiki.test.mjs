@@ -2813,6 +2813,44 @@ for (const [what, markup, place] of [
     }
   })
 
+// Value: protects=the ids the publisher reads in a tag that holds a space character a browser does not separate at; fails_when=the publisher separates a tag's name and attributes at every character JavaScript calls white space, so for `<h2\u00a0id="ghost">` it reads an id where a browser reads a tag named `h2\u00a0id="ghost"` without one, and an outline entry for that id is accepted and leads nowhere; why_new=Cycle 0046 row 234 (the patterns used JavaScript's white space class); seam=none
+test('a tag whose name is followed by a no-break space is refused: a browser separates a tag at tab, line feed, form feed, carriage return and space alone', async () => {
+  // Arrange: a heading whose id follows a no-break space, named by the outline; and the same heading with a form feed there, which a browser does separate at.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-tag-space-')),
+  )
+  try {
+    const withNoBreakSpace = await readerInput(root)
+    withNoBreakSpace.pages[0].contentHtml = '<h2\u00a0id="ghost">A ghost</h2>'
+    withNoBreakSpace.pages[0].outline = [{ id: 'ghost', label: 'A ghost' }]
+    const withFormFeed = await readerInput(root)
+    withFormFeed.pages[0].contentHtml = '<h2\fid="real">A heading</h2>'
+    withFormFeed.pages[0].outline = [{ id: 'real', label: 'A heading' }]
+
+    // Act
+    const outcomes = []
+    for (const manifest of [withNoBreakSpace, withFormFeed])
+      outcomes.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          (pages) =>
+            pages.get('index.html').includes('<a href="#real">A heading</a>'),
+          (error) => error.message,
+        ),
+      )
+
+    // Assert
+    assert.deepEqual(outcomes, [
+      'Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: <h2\u00a0id="ghost">A ghost</h2>',
+      true,
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // Value: protects=the markup an article is written in, which the rule above must not refuse; fails_when=the publisher refuses a `<` that is text for a browser (before a space, a digit or the page's end), a tag with a slash before its end, a bare attribute value, an attribute directly after a closing quote, an ampersand in an address, an id written with `&amp;` or a numeric reference, a custom element, or mathematics with an id inside, whose id it must read and rename like any other; why_new=Cycle 0046 row 206 (the rule was run over the 104 pages of the real Wikis on this machine first and refused none); seam=none
 test('a page whose every < is text, a comment that ends, an end tag or a plainly written start tag is published as authored, and an id inside mathematics is read like any other', async () => {
   // Arrange: the forms an article uses, and a mathematics element one of whose parts carries an id of the reader.

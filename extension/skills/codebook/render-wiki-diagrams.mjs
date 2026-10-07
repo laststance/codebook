@@ -182,8 +182,9 @@ const CLOSED_COMMENT = /^<!--(?:-?>|[\s\S]*?--!?>)$/;
 const START_TAG = /<[A-Za-z][^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/;
 /** A comment or a start tag of authored HTML, the two things {@link withAttributeValues} tells apart from text. A comment is passed over whole, so an element inside it is no element of the page. */
 const COMMENT_OR_START_TAG = new RegExp(`${COMMENT.source}|${START_TAG.source}`, 'g');
+/** White space inside a tag is what a browser separates at there: tab, line feed, form feed, carriage return and space. Another space character (a no-break space) is a character of a name or of a bare value, so the patterns below name these five and never JavaScript's wider class. */
 /** One attribute of a start tag, read in the order a browser reads them: what stands before its name (spaces, a slash, or nothing after a closing quote), its name, and, when it has a value, its equals sign and the value in double quotes, in single quotes or bare. */
-const ATTRIBUTE = /([\s/]*)([^\s"'<>/=]+)(?:(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const ATTRIBUTE = /([\t\n\f\r /]*)([^\t\n\f\r "'<>/=]+)(?:([\t\n\f\r ]*=[\t\n\f\r ]*)(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r "'=<>`]+)))?/g;
 /** A character reference in an attribute value: decimal, hexadecimal, or one of the five named ones an author writes into an address or an id. */
 const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|(amp|lt|gt|quot|apos));/g;
 const NAMED_CHARACTERS = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
@@ -196,9 +197,9 @@ const attributeText = value => value.replace(CHARACTER_REFERENCE, (_reference, d
 /** An attribute's value as written, in whichever of the three forms {@link ATTRIBUTE} matched it. Called by {@link withAttributeValues}. @example writtenValue(undefined, 'a', undefined) // => 'a' */
 const writtenValue = (double, single, bare) => double ?? single ?? bare;
 /** What the publisher reads exactly as a browser does at a `<` of authored HTML, tried at that `<` alone: a comment that ends; an end tag; a start tag (the one group) whose attributes are separated by spaces or follow a closing quote and whose values are quoted, or bare without a character a browser takes for an error there (a quotation mark, `<`, `=` or a backtick); or a `<` before a character that starts no tag, which is text. Anything else at a `<` (`<?`, `<!` without `--`, a CDATA section, a quote that is no attribute's value, a tag or a quoted value that never ends, an end tag with an attribute) a browser reads by rules this publisher does not follow. */
-const READ_EXACTLY = /<!--(?:-?>|[\s\S]*?--!?>)|<\/[A-Za-z][A-Za-z0-9:._-]*\s*>|(<[A-Za-z][A-Za-z0-9:._-]*(?:(?:\s+|(?<=["']))[^\s"'<>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>=`]+))?)*\s*\/?>)|<(?![A-Za-z!/?])/y;
+const READ_EXACTLY = /<!--(?:-?>|[\s\S]*?--!?>)|<\/[A-Za-z][A-Za-z0-9:._-]*[\t\n\f\r ]*>|(<[A-Za-z][A-Za-z0-9:._-]*(?:(?:[\t\n\f\r ]+|(?<=["']))[^\t\n\f\r "'<>/=]+(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"[^"]*"|'[^']*'|[^\t\n\f\r "'<>=`]+))?)*[\t\n\f\r ]*\/?>)|<(?![A-Za-z!/?])/y;
 /** The attributes of a start tag as {@link ATTRIBUTE} reads them: for each its name in lower case and its value as written (an empty text without one). Called by {@link isTagReadExactly}. @example attributesOf('<h2 id="a" hidden>') // => [['id', 'a'], ['hidden', '']] */
-const attributesOf = tag => [...tag.slice(tag.search(/[\s/>]/)).matchAll(ATTRIBUTE)].map(([, , name, , double, single, bare]) => [name.toLowerCase(), writtenValue(double, single, bare) ?? '']);
+const attributesOf = tag => [...tag.slice(tag.search(/[\t\n\f\r />]/)).matchAll(ATTRIBUTE)].map(([, , name, , double, single, bare]) => [name.toLowerCase(), writtenValue(double, single, bare) ?? '']);
 /** Whether an id is written so that the publisher reads the text a browser reads: plain, or with the character references {@link attributeText} reads. Another reference (`&lowbar;`, or `&#45` without its semicolon) a browser turns into a character the publisher would not see. Called by {@link isTagReadExactly}. @example isIdReadExactly('qa&#45;form') // => true; isIdReadExactly('qa&#45form') // => false */
 const isIdReadExactly = id => !/&[#A-Za-z0-9]/.test(id.replace(CHARACTER_REFERENCE, ''));
 /** Whether a start tag that {@link READ_EXACTLY} matched carries what the publisher reads as a browser does: each attribute once (a browser keeps the first of two and drops the other) and an id read exactly. Called by {@link unreadMarkupOf}. @example isTagReadExactly('<h2 id="a" id="qa-form">') // => false */
@@ -217,7 +218,7 @@ const readLengthAt = (html, index) => {
 export const unreadMarkupOf = html => {
   for (let index = html.indexOf('<'); index !== -1;) {
     const length = readLengthAt(html, index);
-    if (length === 0) return html.slice(index, index + 40).replace(/\s+/g, ' ');
+    if (length === 0) return html.slice(index, index + 40).replace(/[\t\n\f\r ]+/g, ' ');
     index = html.indexOf('<', index + length);
   }
   return undefined;
@@ -228,7 +229,7 @@ const quoteOf = (double, single) => double !== undefined ? '"' : single !== unde
 export const withAttributeValues = (html, rewrite) => html.replace(COMMENT_OR_START_TAG, markup => {
   if (markup.startsWith('<!--')) return markup;
   // The tag's name ends at the first space, slash or closing bracket; what follows are its attributes.
-  const nameEnd = markup.search(/[\s/>]/);
+  const nameEnd = markup.search(/[\t\n\f\r />]/);
   return markup.slice(0, nameEnd) + markup.slice(nameEnd).replace(ATTRIBUTE, (attribute, lead, name, equals, double, single, bare) => {
     // An attribute without a value refers to nothing.
     if (equals === undefined) return attribute;
@@ -244,11 +245,11 @@ export const contentIdsOf = html => {
   return ids;
 };
 /** An empty figure slot of a diagram as the agent writes it into a page's content; the second group is the diagram's id. */
-const SLOT = /<figure\s+data-codebook-diagram=(["'])([A-Za-z][\w-]{0,63})\1\s*>\s*<\/figure>/;
+const SLOT = /<figure[\t\n\f\r ]+data-codebook-diagram=(["'])([A-Za-z][\w-]{0,63})\1[\t\n\f\r ]*>[\t\n\f\r ]*<\/figure>/;
 /** A comment, a slot or any other start tag, tried in that order at each `<` of authored HTML: the text of a slot inside a comment or inside another tag's quoted attribute value belongs to that comment or tag and is no slot. */
 const COMMENT_SLOT_OR_START_TAG = new RegExp(`${COMMENT.source}|${SLOT.source}|${START_TAG.source}`, 'g');
 /** Whether a piece of markup is a comment that holds the start of a slot. Called by {@link diagramSlotsOf}. @example isCommentedSlot('<!-- <figure data-codebook-diagram="old"></figure> -->') // => true */
-const isCommentedSlot = markup => markup.startsWith('<!--') && /<figure\s+data-codebook-diagram\s*=/.test(markup);
+const isCommentedSlot = markup => markup.startsWith('<!--') && /<figure[\t\n\f\r ]+data-codebook-diagram[\t\n\f\r ]*=/.test(markup);
 /** Reads the diagram slots of a page's content: the ids of the empty figure slots that are elements of the page, and whether a comment holds the start of one. Called by {@link renderWikiDiagrams}. @example diagramSlotsOf('<figure data-codebook-diagram="flow"></figure><!-- <figure data-codebook-diagram="old"></figure> -->') // => { slots: ['flow'], hasCommentedSlot: true } */
 const diagramSlotsOf = contentHtml => {
   const markup = [...contentHtml.matchAll(COMMENT_SLOT_OR_START_TAG)];
