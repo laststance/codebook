@@ -44,7 +44,7 @@ const OUTLINE_ENTRY_COUNT = 40
 /** Why a start was refused in the owned clone's native check W-3: another window appeared to be updating. The page words it into its longest sentence of a refused update (about 341 characters with its lead words and its end). */
 const REFUSAL_REASON =
   'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification.'
-/** The pages a conflict names in the check: more than the sentence names, so the page offers the whole list. */
+/** The pages a conflict names in the check, by hand-edited pages and by files of the learner's in the way alike: more than the sentence names, so the page offers the whole list. */
 const CONFLICT_PATHS = Array.from(
   { length: 12 },
   (_unused, index) => `pages/reference/changed-by-hand-${index + 1}.html`,
@@ -426,7 +426,7 @@ async function check(page, options, collected) {
       actual: { ...actual, checks },
       passed: Object.values(checks).every(Boolean),
     })
-  /** Makes the check's reader answer one update state from now on: `idle`, `refused` (a start refused because another window appears to be updating) or `conflict` (twelve pages changed by hand); the next page that is opened shows it as a learner's page does. @example await answerUpdateStatus('refused') */
+  /** Makes the check's reader answer one update state from now on: `idle`, `refused` (a start refused because another window appears to be updating), `conflict` (twelve pages changed by hand), `watchPastItsBound` (a VS Code watch that passed its 15 minutes) or `learnerFiles` (a VS Code update that stopped on twelve files of the learner's); the next page that is opened shows it as a learner's page does. @example await answerUpdateStatus('refused') */
   const answerUpdateStatus = (name) =>
     page.request.get(`${options.updateStatusControl}${name}`)
   /** Opens a page of the served Wiki at one viewport and waits until its script has written the freshness of the changed source; the page of the running pass unless one is named. @example await openWiki(960, 600) */
@@ -1232,6 +1232,71 @@ async function check(page, options, collected) {
       },
     )
   }
+  /** Measures the rail at 960 x 600 with the watch-bound and learner-file end sentences: the end of a VS Code watch at its bound and a VS Code update that stopped on twelve files of the learner's, each with a chat that goes on and the steps for it. The refusal's sentence, with the end of an update somebody else may still publish, is measured by the step before. @example await measureRailWithStoppedWatchEnds() */
+  const measureRailWithStoppedWatchEnds = async () => {
+    // Arrange: the check's reader answers a VS Code watch that passed its 15 minutes while the chat still works. Act: the page is loaded at 960 x 600 and words that state itself.
+    await answerUpdateStatus('watchPastItsBound')
+    await openWiki(960, 600)
+    await page.waitForSelector(
+      '[data-codebook-update-status][data-state=timed-out]',
+    )
+    const atTheBound = await measureRail()
+    await page.locator('.right-rail').screenshot({
+      path: `${options.output}/wiki-rail-watch-past-its-bound-960x600.png`,
+    })
+    // Assert
+    record(
+      'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a VS Code watch that passed its 15 minutes, with the steps for a chat that waits, still works or stopped, and its output line without a scrollbar',
+      atTheBound,
+      {
+        ...railChecks(atTheBound),
+        isSentenceOfTheBound: atTheBound.statusText.startsWith(
+          'No new site appeared within 15 minutes, so Codebook stopped watching at ',
+        ),
+        doesSentenceNameEveryStep: atTheBound.statusText.endsWith(
+          '. Nothing had been replaced by then. Check the VS Code chat: answer it if it waits for you; let it finish if it is still working (it can still publish, and the Wiki page says when it has). If it stopped or reported a problem, press Update LLM Wiki, then Update anyway in the editor’s notification if Codebook still waits for that chat.',
+        ),
+        doesPanelNameTheOutput:
+          atTheBound.outputLine === 'Output: .codebook/wiki',
+        isRailAtMost45vh:
+          atTheBound.rail.height <= atTheBound.viewportHeight * 0.45,
+      },
+    )
+    // Arrange: the check's reader answers a VS Code update that stopped on twelve files of the learner's. Act: the page is loaded at 960 x 600; the list of the files stays closed.
+    await answerUpdateStatus('learnerFiles')
+    await openWiki(960, 600)
+    await page.waitForSelector(
+      '[data-codebook-update-status][data-state=conflict]',
+    )
+    const onLearnerFiles = await measureRail()
+    await page.locator('.right-rail').screenshot({
+      path: `${options.output}/wiki-rail-learner-files-960x600.png`,
+    })
+    // Assert
+    record(
+      'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a VS Code update that stopped on twelve files of the learner’s, with the chat that was not stopped, and its output line without a scrollbar',
+      onLearnerFiles,
+      {
+        ...railChecks(onLearnerFiles),
+        isSentenceOfTheStop:
+          onLearnerFiles.statusText.startsWith('Update stopped at '),
+        doesSentenceNameThreeFilesAndCountTheRest:
+          onLearnerFiles.statusText.includes(
+            'it would overwrite your own files in the Wiki folder (pages/reference/changed-by-hand-1.html, pages/reference/changed-by-hand-2.html, pages/reference/changed-by-hand-3.html and 9 more).',
+          ),
+        doesSentenceNameTheChat: onLearnerFiles.statusText.endsWith(
+          ' Nothing was replaced. Move or rename them. The VS Code chat was not stopped: answer it and it can publish, or stop it and press Update LLM Wiki, then Update anyway if Codebook still waits for it. The full list is below.',
+        ),
+        doesPanelNameTheOutput:
+          onLearnerFiles.outputLine === 'Output: .codebook/wiki',
+        doesDetailOfferEveryFile:
+          onLearnerFiles.detailSummary === 'Show all 12 files',
+        isDetailClosed: !onLearnerFiles.isDetailOpen,
+        isRailAtMost45vh:
+          onLearnerFiles.rail.height <= onLearnerFiles.viewportHeight * 0.45,
+      },
+    )
+  }
   const measureRailWithOpenDetail = async () => {
     // Arrange: the check's reader answers a conflict of twelve pages changed by hand, and the page is loaded at 960 x 600. Act: a press opens the list of the files.
     await answerUpdateStatus('conflict')
@@ -1654,6 +1719,7 @@ async function check(page, options, collected) {
     measureReadingColumnInColumns,
     measureAnswerRing,
     measureRailWithRefusal,
+    measureRailWithStoppedWatchEnds,
     measureRailWithOpenDetail,
     measureDetailSummaryRingInRow,
     measureOutlineRingInRow,
@@ -1684,7 +1750,7 @@ const report = {
   cases: [],
 }
 const wiki = await publishSampleWiki()
-/** The update states the check's reader can answer, each as the extension's window would hold it when the page asks; an ended run ends at the moment it is chosen, after the sample Wiki was published. */
+/** The update states the check's reader can answer, each as the extension's window would hold it when the page asks; an ended run ends at the moment it is chosen, after the sample Wiki was published, so no publish counts as one that came after it. */
 const updateStatuses = {
   idle: () => ({ state: 'idle' }),
   refused: () => ({
@@ -1705,6 +1771,25 @@ const updateStatuses = {
     finishedAt: new Date().toISOString(),
     paths: CONFLICT_PATHS,
     cause: 'edited-page',
+    site: 'kept',
+    outputDirectory: wiki.outputDirectory,
+    outputLabel: '.codebook/wiki',
+  }),
+  watchPastItsBound: () => ({
+    state: 'timed-out',
+    host: 'vscode',
+    finishedAt: new Date().toISOString(),
+    timeoutMs: 900_000,
+    site: 'kept',
+    outputDirectory: wiki.outputDirectory,
+    outputLabel: '.codebook/wiki',
+  }),
+  learnerFiles: () => ({
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt: new Date().toISOString(),
+    paths: CONFLICT_PATHS,
+    cause: 'learner-file',
     site: 'kept',
     outputDirectory: wiki.outputDirectory,
     outputLabel: '.codebook/wiki',
