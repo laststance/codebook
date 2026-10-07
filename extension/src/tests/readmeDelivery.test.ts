@@ -542,6 +542,22 @@ test('the packaged README quotes the notice of a Codebook pane that took the key
   assert.equal(LEARNER_SIGN_FRESH_MS, 3_000)
 })
 
+// Value: protects=a learner whose keyboard is on no element after a Codebook pane covered a frame's file finding in the README which three gestures lead there and what to do; fails_when=the README loses the stated limit, names other gestures than the three the editor reports nothing for, or no longer says to press a key in the file first or to click afterwards; why_new=Cycle 0046 row 292 (what rows 263 and 273 could not close is a stated limit: the Call Stack view and the navigation commands look alike to an extension); seam=none
+test('the packaged README names the three Call Stack gestures after which a Codebook pane leaves the keyboard on no element, and what the learner does', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    "Three gestures at a pause give a frame's file the keyboard without the editor telling Codebook: the editor's **Navigate Up Call Stack** and **Navigate Down Call Stack** commands by themselves (and the two that go to the top and to the bottom of the call stack), a double click or Enter on a frame whose file is already open as a kept tab, and Enter on a row of the Call Stack view that is not the selected frame yet.",
+    'After one of them, the next Codebook pane (the Application pane or the captured source) that comes to the front over that file comes without the keyboard, which is then on no element.',
+    'Press a key in the file before that, so that Codebook knows you work there, or click where you want to type afterwards.',
+  ])
+
+  // Assert
+  assert.deepEqual(delivered, [true, true, true])
+})
+
 // Cycle 0045 (B2-README): red while step 8 named the arming failure as the only cause of a continuation that sends no resume; the help gives both since row B-L4.
 test('the packaged README gives both reasons of a continuation that sends no resume, as the help does', async () => {
   // Arrange
