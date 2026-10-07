@@ -531,7 +531,7 @@ test('an interrupted setup whose published skill the learner edited keeps that e
     },
     {
       setup:
-        'The managed Cursor skill was replaced after setup; Codebook preserved it.',
+        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
       skill: 'Learner changed the interrupted skill',
       recordsLeft: [],
     },
@@ -1311,7 +1311,7 @@ test('a Cursor skill replaced by a file with the same bytes, whose file id diffe
       idsDiffer: true,
       idsAsNumbers: [210_824_757_556_437_120, 210_824_757_556_437_120],
       update:
-        'The managed Cursor skill was replaced after setup; Codebook preserved it.',
+        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
       reconnect:
         'Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.',
       copy: INITIAL_SKILL,
@@ -1992,7 +1992,7 @@ test('a Cursor skill that is edited between setup’s last check and its move is
       nextSetup:
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
       nextRemoval:
-        'The Cursor skill was edited after setup; Codebook preserved it.',
+        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       skill: EDITED_SKILL,
     },
   )
@@ -2037,7 +2037,7 @@ test('the record, the staged file and the second name that a refused setup of an
         records: [],
       },
       removal:
-        'The Cursor skill was edited after setup; Codebook preserved it.',
+        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       skill: EDITED_SKILL,
     },
   )
@@ -2116,7 +2116,7 @@ test('an edited Cursor skill that a setup moved away, with another file at the s
         records: ['pending.json'],
       },
       setupAfterTheRecordWasDeleted:
-        'The managed Cursor skill was replaced after setup; Codebook preserved it.',
+        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
     },
   )
 })
@@ -2207,14 +2207,14 @@ test('a Cursor skill that is edited between the removal’s check and its move i
     },
     {
       removal:
-        'The Cursor skill changed during removal; Codebook did not remove it and left it in place. If you no longer want that file, delete it yourself.',
+        'The Cursor skill changed during removal; Codebook did not remove it and left it in place. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       filesAfterTheRemoval: {
         skillFolder: ['SKILL.md'],
         temporaryNames: [],
         records: [],
       },
       nextRemoval:
-        'The Cursor skill was edited after setup; Codebook preserved it.',
+        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       nextSetup:
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
       skill: EDITED_SKILL,
@@ -2261,7 +2261,7 @@ test('the record and the second name that a refused removal of an edited Cursor 
         records: [],
       },
       removal:
-        'The Cursor skill was edited after setup; Codebook preserved it.',
+        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
       skill: EDITED_SKILL,
     },
   )
@@ -2448,6 +2448,185 @@ test('a Cursor skill that is edited while setup stages its update, before anythi
       nextSetup:
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
       skill: EDITED_SKILL,
+    },
+  )
+})
+
+// Value: protects=the learner who put a file of their own in place of the skill Codebook installed; fails_when=setup or removal answer that the file was preserved and say nothing more, so the learner does not learn that Codebook leaves the file alone and that taking it away lets setup install the skill again and lets the removal finish; why_new=Cycle 0046 row 211: these are the sentences a learner reads after a recovery goes on; seam=none, the real files
+test('a file that took the place of the installed Cursor skill is left alone by setup and by removal, which say what to do: after the learner deletes it, setup installs the skill again, and after the learner renames it, the removal finishes', async (context) => {
+  // Arrange: two setups whose skill file the learner replaced by a file of their own.
+  const forSetup = await fixture(context),
+    forRemoval = await fixture(context)
+  for (const paths of [forSetup, forRemoval]) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    const replacement = join(paths.homeRoot, 'replacement.md')
+    await writeFile(replacement, 'A file of the learner.\n')
+    await rename(replacement, paths.targetPath)
+  }
+
+  // Act: each refusal is followed to the letter.
+  const setup = await statusOrRefusalOf(
+    deployCursorSkill(
+      forSetup.extensionPath,
+      forSetup.storageRoot,
+      forSetup.homeRoot,
+    ),
+  )
+  const fileAfterTheRefusedSetup = await readFile(forSetup.targetPath, 'utf8')
+  await rm(forSetup.targetPath)
+  const setupAfterTheFileWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(
+      forSetup.extensionPath,
+      forSetup.storageRoot,
+      forSetup.homeRoot,
+    ),
+  )
+  const removal = await statusOrRefusalOf(
+    removeManagedCursorSkill(forRemoval.storageRoot, forRemoval.homeRoot),
+  )
+  const fileAfterTheRefusedRemoval = await readFile(
+    forRemoval.targetPath,
+    'utf8',
+  )
+  await rename(
+    forRemoval.targetPath,
+    join(forRemoval.homeRoot, '.cursor', 'skills', 'codebook', 'mine.md'),
+  )
+  const removalAfterTheFileWasRenamed = await statusOrRefusalOf(
+    removeManagedCursorSkill(forRemoval.storageRoot, forRemoval.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      fileAfterTheRefusedSetup,
+      setupAfterTheFileWasDeleted,
+      skillAfterThatSetup: await readFile(forSetup.targetPath, 'utf8'),
+      removal,
+      fileAfterTheRefusedRemoval,
+      removalAfterTheFileWasRenamed,
+      skillFolderAfterThatRemoval: await readdir(
+        join(forRemoval.homeRoot, '.cursor', 'skills', 'codebook'),
+      ),
+    },
+    {
+      setup:
+        "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      fileAfterTheRefusedSetup: 'A file of the learner.\n',
+      setupAfterTheFileWasDeleted: 'restored',
+      skillAfterThatSetup: INITIAL_SKILL,
+      removal:
+        'The Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      fileAfterTheRefusedRemoval: 'A file of the learner.\n',
+      removalAfterTheFileWasRenamed: 'removed',
+      skillFolderAfterThatRemoval: ['mine.md'],
+    },
+  )
+})
+
+// Value: protects=the learner who edited the installed skill and then asks Codebook to remove its Cursor setup; fails_when=the removal says the edit was preserved and nothing more, or still refuses after the learner deleted the file as told ("No installed Codebook-owned Cursor skill was found"), so the registration and the empty MCP config can never be removed; why_new=Cycle 0046 row 211: the sentence names a next step, and that step must end the removal; seam=none, the real files
+test('an edited Cursor skill is left alone by removal, which says what to do: after the learner deletes the file, the removal finishes, the empty skill folder is gone and a later setup installs the skill anew', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await writeFile(paths.targetPath, 'An edit made by the learner.\n')
+
+  // Act: the refusal is followed to the letter.
+  const removal = await statusOrRefusalOf(
+    removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+  const fileAfterTheRefusedRemoval = await readFile(paths.targetPath, 'utf8')
+  await rm(paths.targetPath)
+  const removalAfterTheFileWasDeleted = await statusOrRefusalOf(
+    removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+  const skillFolderAfterThatRemoval = await readdir(
+    join(paths.homeRoot, '.cursor', 'skills'),
+  )
+  const removalOnceMore = await statusOrRefusalOf(
+    removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+  const laterSetup = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      fileAfterTheRefusedRemoval,
+      removalAfterTheFileWasDeleted,
+      skillFolderAfterThatRemoval,
+      removalOnceMore,
+      laterSetup,
+    },
+    {
+      removal:
+        'The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.',
+      fileAfterTheRefusedRemoval: 'An edit made by the learner.\n',
+      removalAfterTheFileWasDeleted: 'removed',
+      skillFolderAfterThatRemoval: [],
+      removalOnceMore:
+        'No installed Codebook-owned Cursor skill was found; no file was changed.',
+      laterSetup: 'restored',
+    },
+  )
+})
+
+// Value: protects=the learner who deletes the whole skill folder instead of the one file and then asks Codebook to remove its Cursor setup; fails_when=the removal answers "Codebook will not follow a missing or redirected skill directory" for good, so the registration and the empty MCP config can never be removed; why_new=Cycle 0046 row 211, found while working: the next step of the removal's sentences must end the removal also when the learner removed more than the file; seam=none, the real files
+test('a removal whose skill folder the learner deleted finishes: the receipt records the removal and a later setup installs the skill anew', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  await rm(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
+    recursive: true,
+  })
+
+  // Act
+  const removal = await statusOrRefusalOf(
+    removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+  const receipt: unknown = JSON.parse(
+    await readFile(
+      join(paths.storageRoot, 'cursor-skill', 'receipt.json'),
+      'utf8',
+    ),
+  )
+  const laterSetup = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      receiptSaysInstalled:
+        typeof receipt === 'object' &&
+        receipt !== null &&
+        'installed' in receipt
+          ? receipt.installed
+          : 'a receipt without that field',
+      laterSetup,
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      removal: 'removed',
+      receiptSaysInstalled: false,
+      laterSetup: 'restored',
+      skill: INITIAL_SKILL,
     },
   )
 })

@@ -53,9 +53,22 @@ const SKILL_CHANGED_DURING_SETUP =
 const PUBLISHED_SKILL_CHANGED_DURING_SETUP =
   'The published Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.'
 
+/** How a removal that found a file of the learner at the skill's path ends: Codebook removes no file that is not its own, and once the learner took the file away the removal has nothing left to remove and finishes. */
+const FINISH_REMOVAL_WITHOUT_THAT_FILE =
+  'To finish the removal, delete or rename that file, then run Codebook: Remove Managed Cursor Skill again.'
+
 /** What removal answers when the skill file changed between its check and its move away: the file is back in place and is the learner's now. */
-const SKILL_CHANGED_DURING_REMOVAL =
-  'The Cursor skill changed during removal; Codebook did not remove it and left it in place. If you no longer want that file, delete it yourself.'
+const SKILL_CHANGED_DURING_REMOVAL = `The Cursor skill changed during removal; Codebook did not remove it and left it in place. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
+
+/** What setup answers for a file that took the place of the skill Codebook installed (another inode): setup leaves it alone, and installs its skill again once the path is free. */
+const SKILL_REPLACED_AFTER_SETUP =
+  "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again."
+
+/** What removal answers for a file that took the place of the skill Codebook installed. */
+const SKILL_REPLACED_BEFORE_REMOVAL = `The Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
+
+/** What removal answers for the installed skill file with other bytes than Codebook wrote. */
+const SKILL_EDITED_BEFORE_REMOVAL = `The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
 
 /**
  * Says what the learner does about a recovery record that Codebook keeps because it cannot finish or undo the step itself; the end of every refusal that leaves such a record.
@@ -992,9 +1005,7 @@ async function deploySkill(
         'An existing codebook skill is not owned by this installation; no file was changed.',
       )
     if (receipt && current && !isSameFileId(receipt.inode, current.status.ino))
-      throw new Error(
-        'The managed Cursor skill was replaced after setup; Codebook preserved it.',
-      )
+      throw new Error(SKILL_REPLACED_AFTER_SETUP)
     if (receipt && current && sha256(current.bytes) !== receipt.skillSha256)
       throw new Error(
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
@@ -1233,6 +1244,47 @@ function rethrowUnlessLockHeldElsewhere(error: unknown, attempt: number): void {
     throw error
 }
 
+/**
+ * Removes Codebook's skill folder when nothing is left in it, for {@link removeManagedCursorSkill}; a folder that still holds a file of the learner stays.
+ * @param directory - `~/.cursor/skills/codebook`.
+ * @throws Every failure of the removal but a folder that is not empty or not there.
+ * @example await removeEmptySkillFolder('/home/user/.cursor/skills/codebook')
+ */
+async function removeEmptySkillFolder(directory: string): Promise<void> {
+  // Remove only an empty Codebook directory; leave any user-added files in place.
+  await rmdir(directory).catch((error: unknown) => {
+    if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(systemErrorCode(error)))
+      throw error
+  })
+}
+
+/**
+ * Finishes a removal whose skill file, or whole skill folder, is already gone, for {@link removeManagedCursorSkill}: the learner deleted or renamed it (after a refusal told them to, or on their own), so no file is moved; the receipt records the removal and the empty skill folder goes.
+ * @param receipt - The installed receipt.
+ * @param receiptPath - Its path.
+ * @param directory - `~/.cursor/skills/codebook`.
+ * @returns `removed`, with the digest and version the receipt held.
+ * @example await finishRemovalOfMissingSkill(receipt, '/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook') // => { status: 'removed', … }
+ */
+async function finishRemovalOfMissingSkill(
+  receipt: SkillReceipt,
+  receiptPath: string,
+  directory: string,
+): Promise<CursorSkillResult> {
+  await atomicPrivateWrite(
+    receiptPath,
+    { ...receipt, installed: false },
+    CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
+  )
+  await removeEmptySkillFolder(directory)
+  return {
+    status: 'removed',
+    path: receipt.targetPath,
+    sha256: receipt.skillSha256,
+    version: receipt.skillVersion,
+  }
+}
+
 /** Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. @example await removeManagedCursorSkill('/private', '/home') */
 export async function removeManagedCursorSkill(
   storageRoot: string,
@@ -1274,22 +1326,24 @@ export async function removeManagedCursorSkill(
         sha256: recovered.owner.skillSha256,
         version: recovered.owner.skillVersion,
       }
-    await assertSkillParents(homeRoot)
-    // The bytes and the inode number that are compared with the receipt are of one open file.
-    const receipt = await readReceipt(receiptPath, targetPath),
-      current = await readRegularFile(targetPath)
-    if (!receipt?.installed || !current)
+    const receipt = await readReceipt(receiptPath, targetPath)
+    if (!receipt?.installed)
       throw new Error(
         'No installed Codebook-owned Cursor skill was found; no file was changed.',
       )
+    // The skill's folder is gone (the learner took it away): nothing is left to remove, and the receipt says so.
+    if (!(await inspectedPath(directory)))
+      return finishRemovalOfMissingSkill(receipt, receiptPath, directory)
+    await assertSkillParents(homeRoot)
+    // The bytes and the inode number that are compared with the receipt are of one open file.
+    const current = await readRegularFile(targetPath)
+    // The same for the skill file alone.
+    if (!current)
+      return finishRemovalOfMissingSkill(receipt, receiptPath, directory)
     if (!isSameFileId(receipt.inode, current.status.ino))
-      throw new Error(
-        'The Cursor skill was replaced after setup; Codebook preserved it.',
-      )
+      throw new Error(SKILL_REPLACED_BEFORE_REMOVAL)
     if (sha256(current.bytes) !== receipt.skillSha256)
-      throw new Error(
-        'The Cursor skill was edited after setup; Codebook preserved it.',
-      )
+      throw new Error(SKILL_EDITED_BEFORE_REMOVAL)
     const retiredDirectory =
       (await lstat(receiptDirectory, { bigint: true })).dev ===
       (await lstat(directory, { bigint: true })).dev
@@ -1332,10 +1386,7 @@ export async function removeManagedCursorSkill(
       CURSOR_SKILL_RECEIPT_LIMIT_BYTES,
     )
     await retireDisplaced(displacedPath, retiredPath, receipt, removalPath)
-    // Remove only an empty Codebook directory; leave any user-added files in place.
-    await rmdir(directory).catch((error) => {
-      if (!['ENOTEMPTY', 'EEXIST', 'ENOENT'].includes(error.code)) throw error
-    })
+    await removeEmptySkillFolder(directory)
     await unlink(removalPath)
     return {
       status: 'removed',
