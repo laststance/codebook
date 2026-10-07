@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 
+import type * as lookModule from '../utils/isFolderOfItsOwn'
+import type * as placedClaimsModule from '../utils/listPlacedClaims'
 import {
   readProcessStart,
   type ProcessStartReader,
@@ -208,5 +210,59 @@ test('a link where a prepared claim folder would lie, which the system refuses t
       linkedFolder: ['left', 'notes.txt'],
       listedBelowTheLink: [],
     },
+  )
+})
+
+// Value: protects=the files behind an entry at the claim folder's path that the look without following calls a directory although it leads elsewhere (on Windows a junction whose target is a volume); fails_when=the sweep lists whatever that look calls a directory and judges the files of the folder behind it as claims: a file without content and a record of a gone process are unlinked there (row 227); why_new=Cycle 0046 row 227: the claim folder is listed only as its parent's own entry; seam=a file system whose lstat calls a link a directory
+test('an entry at the claim folder’s path that the look calls a directory although it leads elsewhere is not listed by the sweep: the file without content and the record of a gone process behind it stay', async (context) => {
+  // Arrange: as in the test of a link at the claim folder's path, on a file system whose look is wrong about the link.
+  const directory = await storageDirectory(context)
+  const linkedFolder = join(directory, 'a-folder-of-the-project')
+  await mkdir(linkedFolder)
+  await writeFile(join(linkedFolder, '.gitkeep'), '')
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
+  await utimes(join(linkedFolder, '.gitkeep'), twoMinutesAgo, twoMinutesAgo)
+  await writeFile(
+    join(linkedFolder, 'record.json'),
+    `{"pid":${ID_OF_NO_PROCESS},"hostname":"workstation"}`,
+  )
+  await symlink(
+    linkedFolder,
+    join(directory, 'wiki.update-run.json.takeover'),
+    'junction',
+  )
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+  })
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const placedClaims = await loadModule<typeof placedClaimsModule>(
+    resolve(__dirname, '../utils/listPlacedClaims.js'),
+    { 'node:fs/promises': wrongLook.fileSystem, './isFolderOfItsOwn': look },
+  )
+  const { removeStaleStorageClaims: sweepWhereTheLookIsWrong } =
+    await loadModule<typeof sweepModule>(
+      resolve(__dirname, '../utils/removeStaleStorageClaims.js'),
+      {
+        'node:fs/promises': wrongLook.fileSystem,
+        './listPlacedClaims': placedClaims,
+        './isFolderOfItsOwn': look,
+      },
+    )
+
+  // Act
+  await sweepWhereTheLookIsWrong(join(directory, 'wiki.update-run.json'), {
+    hostname: 'workstation',
+  })
+
+  // Assert
+  assert.deepEqual(
+    {
+      linkedFolder: (await readdir(linkedFolder)).sort(),
+      listedBelowTheLink: wrongLook.listed.filter((path) => path !== directory),
+    },
+    { linkedFolder: ['.gitkeep', 'record.json'], listedBelowTheLink: [] },
   )
 })

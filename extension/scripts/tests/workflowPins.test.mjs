@@ -631,6 +631,7 @@ test('the Windows storage lock job runs the lock test files on windows-latest an
     'extension/src/utils/deriveMachineKeys.ts',
     'extension/src/utils/dropSecondNameOfMovedFile.ts',
     'extension/src/utils/hashFileSha256.ts',
+    'extension/src/utils/isFolderOfItsOwn.ts',
     'extension/src/utils/isFromEarlierBoot.ts',
     'extension/src/utils/isLeftEmpty.ts',
     'extension/src/utils/isProcessGone.ts',
