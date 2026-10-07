@@ -1,7 +1,7 @@
 # Cycle 0046 — Every defect Cycle 0045 left is fixed
 
 Type: bug-fix cycle\
-Status: implementing\
+Status: validating\
 Result: pending\
 Delivery: PR-open (draft pull request #88; nothing is delivered yet)\
 Goal version: 10 (9 until the owner's direction of 2026-10-05 on the target systems)\
@@ -642,6 +642,12 @@ Task 367 is fixed in MKS `9beaa4e5` and merged as `59ee86cb`: the README disting
 
 SPC `7f12190c` is merged as `9e63b78b`, closing 364/365. Both named regressions were red on `9777b5ae` before production changes: late window-focus loss still sent the focus command/notice, and an old two-group reply hid the learner's newly opened third group. The fixes recheck current focus after tab closure and reuse `sameEditorGroups` over the complete group/column snapshot across the layout await. Each disabled-fix control fails the corresponding assertion without syntax/load failure and restores compiled SHA-256 `63c443a01d651f86fda81b613cb6718ed54ab8bfe3f619ec55da48e039343986`. Every Study partition plus viewport/playback passed 1,218 of 1,218; type/lint/format/dupes/dead-code pass, with no changed-file health increase or baseline change. No new actual defect found. Private evidence: `impl/scratch-spc/codex-review-fixes/`; authoritative closure rows 364/365. Root has not rerun its complete suite/package gates on this changed source. WUB 366 remains required; all 49 original native obligations remain open. Table: 367 tasks, 317 closed.
 
+### Pixel-retry guard and partition integration (2026-10-08)
+
+WUB `1923909f` is merged as `4126d879`, closing 366. A valid public-Open test first observed main Study pixels replacing the existing Cursor chat part's 743 px single group; the prior green and timeout attempts were fixture diagnostics (a wrapper lost its original receiver and held an earlier read), not defect proof. The final regression holds the actual `rememberLayout` reply and changes only focus. The one-condition `isMainEditorLayout` guard makes the chat's layout/groups stay unchanged; normal later main-editor work is permitted and only chat-routed mutations are forbidden. Guard-only control parses, fails the same named chat-layout assertion and restores SHA-256 `c59abf1aa695b199d4f2f9d2dbae1836fe6f43d1179ece4ea6a5071925dd405e`. All Study partitions and six related suites pass 1,168 of 1,168; type/lint/format/Fallow gates pass with no increased finding count. No new product defect found. Private evidence: `impl/scratch-wub/codex-review-fixes/`, authoritative closure 366.
+
+The new partition also exposed the existing guide/pin's thirteen-file inventory, task 368. Fixed in `26719f19`: all fourteen names remain hard-coded in the pin and the guide adds pixel retry. The existing check was first red; all 16 document checks pass after correction, and restoring only the old guide makes the named assertion red before equal-hash restoration. Table: 368 tasks, 319 closed, only the original 49 native tasks remain open. All repair agents have finished. Selected next action: record current timings, commit, verify the unchanged integrated tree and repaired delta, then build/install its identified candidate and execute every mapped native check. No repaired-root full-suite/native PASS is claimed yet; the last complete root receipt remains `0eb53b02`.
+
 ## Result and decision
 
 - Result: pending
@@ -660,8 +666,8 @@ SPC `7f12190c` is merged as `9e63b78b`, closing 364/365. Both named regressions 
 
 ## Next action
 
-- Exact next action: finish WUB task 366 with valid regression-first and disabled-fix proof. SPC 364/365 and MKS 367 are verified and integrated. Task 361 is fixed and 362/363 have source-evidence closure. Integrate only verified clean commits, re-review the repaired delta and refresh affected/integrated proof; then install the identified 0.2.30 candidate and finish all 49 mapped native tasks with current image comparisons, videos and inspected frames. Deliver through `/ship` and PR #88, required CI and the separate exact-HEAD gate; close Issue #87 with nothing carried and then pause. No next cycle starts.
-- Source / branch / processes: `0eb53b02` is the last fully verified product source (4,068 pass, one existing skip, 338 package/scripts, all five browser reports); root `9777b5ae` adds only records. `origin`/draft PR #88 remain at `59fdb96`. All review readers finished before the repair assignments; the three implementers merge that recorded base into their own worktrees and preserve the shared locks/quiet flag. No native QA process runs. Both profiles still hold candidate 4 (0.2.29); no new installed/native proof is claimed. The main checkout stays unchanged during any integrated/package run, and every actual new defect is a task of this cycle.
+- Exact next action: refresh timings on the fully repaired tree, commit, then verify the complete extension/static/script/package/hook/browser gates with the main checkout unchanged and complete the repaired-delta review. Build/install the identified 0.2.30 candidate and finish every mapped native task with current image comparisons, videos and inspected frames. Deliver through `/ship` and PR #88, required CI and exact-HEAD merge gate; close Issue #87 with nothing carried, then pause. No next cycle starts.
+- Source / branch / processes: latest production integration `4126d879`, after SPC `9e63b78b` and MKS `59ee86cb`; task 368's guide/pin fix `26719f19`. Last fully verified root source `0eb53b02`. All agents finished and their worktrees are clean; no native QA process runs. Both profiles still hold candidate 4 (0.2.29). `origin`/draft PR #88 remain at `59fdb96`. All 368 tasks are retained and all 49 native obligations remain open; no current installed or final-acceptance proof is inferred.
 - State updated in PROJECT_STATE.md: yes (with this record's commit).
 - Owner rules stated in the required reads this cycle, four: a pull request's description carries no `@coderabbitai ignore`, and a cycle may be delivered in up to three pull requests (both in DEVELOPMENT.md); the product targets macOS, Windows and Ubuntu (PRODUCT_GOAL.md, goal version 10; IMPLEMENTATION.md and AGENTS.md name the operating system among the proof's fields); PROJECT_STATE.md is overwritten and kept short (DEVELOPMENT.md, held by a test).
 - Defects this cycle leaves unfixed (all go to the next cycle's Issue): none; a bug-fix cycle carries nothing.
