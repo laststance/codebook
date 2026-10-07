@@ -920,6 +920,40 @@ test('an action whose page stays paused at a server stop’s breakpoint because 
   )
 })
 
+// Cycle 0046 (row 268, a resume the debugger answered): the deadline's sentence says only what was observed; red if a request the debugger answered, while the page reported no resume, were said to have had no answer.
+test('an action whose page stays paused at a server stop’s breakpoint although the debugger answered Codebook’s resume ends at its deadline saying that the debugger answered and the page reported no resume', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the browser adapter answers the run's resume, and the page does not go on. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.answerStubResumeWithoutResuming()
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length,
+    'the debugger answered the run’s resume',
+  )
+  // Act: the 20 s of the action's deadline pass.
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the action’s deadline ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository input reached no verified pause. The page paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 1:1, at the breakpoint of declared server stop src/mode.ts:1, which the debugger also sets in the page's copy of that module. Codebook asked the debugger to resume the page and the debugger answered, but the page reported no resume. Keep the declaration and start a new run.",
+  )
+})
+
 // Cycle 0046 (row 268, the refused resume of a pause the run has read): red while the run ended with the adapter's bare text, "Error: Thread is not paused".
 test('a page pause at a server stop’s breakpoint after the action was accepted whose resume the adapter refuses ends the run naming the place of that pause, the declared stop and the refusal', async (context) => {
   // Arrange: the action is accepted and the server stop has not paused yet; the browser's adapter will refuse the run's resume.

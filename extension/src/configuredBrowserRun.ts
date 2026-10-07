@@ -239,6 +239,13 @@ type DebugParticipant = {
   }
   expectedResumeRequests: number
 }
+/** One resume of a page pause at a server stop's breakpoint that the run itself sent ({@link ConfiguredBrowserRun.resumeServerBreakpointInBrowser}) and the page's runtime has not reported yet. */
+type PageResumeUnderWay = {
+  /** The declared server stop whose breakpoint the page paused at. */
+  stop: PreparedStop
+  /** Whether the debugger answered the run's `continue`; a failure that names the pause says "no answer" only while it did not. */
+  isAnswered: boolean
+}
 /** A server debug session whose native proxy was verified to inspect the launched worker; {@link ConfiguredBrowserRun.selectServer} collects them and selects one. */
 type ServerMatch = {
   session: vscode.DebugSession
@@ -328,8 +335,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     event: Protocol.Debugger.PausedEvent
     journaled: boolean
   }
-  /** The resumes of a page pause at a server stop's breakpoint the run itself has under way, oldest first, each by the declared server stop its pause named: one more for each `continue` the run sends ({@link resumeServerBreakpointInBrowser}), one fewer for each resume the page's runtime reports and for a request that failed ({@link pageResumeEnded}). While one is under way a page pause read meanwhile is such a pause, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}); one flag could not say that, because the resume of an earlier pause cleared it while a later pause's resume was still under way. A failure that ends the run meanwhile names the oldest ({@link pagePauseOf}). */
-  private readonly pageResumesUnderWay: PreparedStop[] = []
+  /** The resumes of a page pause at a server stop's breakpoint the run itself has under way, oldest first: one more for each `continue` the run sends ({@link resumeServerBreakpointInBrowser}), one fewer for each resume the page's runtime reports and for a request that failed ({@link pageResumeEnded}). While one is under way a page pause read meanwhile is such a pause, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}); one flag could not say that, because the resume of an earlier pause cleared it while a later pause's resume was still under way. A failure that ends the run meanwhile names the oldest ({@link pagePauseOf}). */
+  private readonly pageResumesUnderWay: PageResumeUnderWay[] = []
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
   /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
@@ -3848,7 +3855,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   ): Promise<void> {
     this.participants.browser.expectedResumeRequests++
     // From here on the page's pause is the run's own to resume, also when its runtime event is read only later.
-    this.pageResumesUnderWay.push(stop)
+    const resume: PageResumeUnderWay = { stop, isAnswered: false }
+    this.pageResumesUnderWay.push(resume)
     this.ownPagePauseUnderResume()
     const detail = {
       participant: 'browser',
@@ -3869,41 +3877,47 @@ export class ConfiguredBrowserRun implements StudyRuntime {
         this.abort.signal,
       )
     } catch (error) {
-      throw this.pageResumeFailure(stop, error)
+      throw this.pageResumeFailure(resume, error)
     }
+    resume.isAnswered = true
     this.evidence.record('dap.server-breakpoint-browser-stop-resumed', detail)
   }
 
   /**
    * Takes one resume of the run's own off those under way ({@link pageResumesUnderWay}); called by {@link onCdpResumed} for every resume the page's runtime reports and by {@link pageResumeFailure} when a request failed.
    * Nothing is taken when none is under way: the page also resumes pauses the run did not ask to resume, and a request can fail after the page already reported its resume.
-   * @param failedFor - The declared server stop of the request that failed, whose own entry ends; left out for a resume the page reported, which ends the oldest.
+   * @param failed - The resume whose request failed, which ends itself; left out for a resume the page reported, which ends the oldest.
    * @example
    * ```ts
    * this.pageResumeEnded() // 2 resumes under way become 1; none stays none
    * ```
    */
-  private pageResumeEnded(failedFor?: PreparedStop): void {
-    const ended = failedFor ? this.pageResumesUnderWay.indexOf(failedFor) : 0
+  private pageResumeEnded(failed?: PageResumeUnderWay): void {
+    const ended = failed ? this.pageResumesUnderWay.indexOf(failed) : 0
     if (ended >= 0) this.pageResumesUnderWay.splice(ended, 1)
   }
 
   /**
    * Words the failure of the run's own resume of a page pause at a server stop's breakpoint, for {@link resumeServerBreakpointInBrowser} when the debugger refused its request or did not answer it within the bound: the debugger's bare text ("Thread is not paused") says neither what was paused nor that the stop's declaration is not the reason.
    * The request is no longer under way afterwards ({@link pageResumeEnded}).
-   * @param stop - The declared server stop whose breakpoint the page paused at.
+   * @param resume - The resume whose request failed.
    * @param error - What the request failed with.
    * @returns `error` itself for a cancelled run, otherwise the error that names the page's pause, the declared stop and the failure in quotation marks ({@link pagePauseUnderResumeText}); {@link track} ends the run with it.
    * @example
    * ```ts
-   * throw this.pageResumeFailure(stop, new Error('Thread is not paused')) // 'The page paused at …, at the breakpoint of declared server stop app/lib/actions.ts:27, …. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.'
+   * throw this.pageResumeFailure(resume, new Error('Thread is not paused')) // 'The page paused at …, at the breakpoint of declared server stop app/lib/actions.ts:27, …. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.'
    * ```
    */
-  private pageResumeFailure(stop: PreparedStop, error: unknown): unknown {
-    const pause = this.pagePauseOf(stop)
-    this.pageResumeEnded(stop)
+  private pageResumeFailure(
+    resume: PageResumeUnderWay,
+    error: unknown,
+  ): unknown {
+    const pause = this.pagePauseOf(resume.stop)
+    this.pageResumeEnded(resume)
     if (this.abort.signal.aborted) return error
-    return new Error(pagePauseUnderResumeText(pause, thrownMessage(error)))
+    return new Error(
+      pagePauseUnderResumeText(pause, { failure: thrownMessage(error) }),
+    )
   }
 
   /**
@@ -5667,17 +5681,18 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Adds to an expired deadline's text the page pause the run itself is still resuming, for {@link expiredDeadlineText}: once the run sent its resume nothing else names that pause, and a deadline that expires while the debugger has not answered would read as if a declared stop's line had not run.
    * @param text - The deadline's text so far.
-   * @returns The text itself while no resume of the run's own is under way; otherwise the text, a period, and the sentences of {@link pagePauseUnderResumeText} for the oldest such resume.
+   * @returns The text itself while no resume of the run's own is under way; otherwise the text, a period, and the sentences of {@link pagePauseUnderResumeText} for the oldest such resume, which say that the request has no answer, or that the debugger answered it and the page reported no resume.
    * @example
    * ```ts
    * this.withPagePauseUnderResume('Repository input reached no verified pause') // '… pause. The page paused at …, at the breakpoint of declared server stop app/lib/actions.ts:27, …. Codebook asked the debugger to resume the page and got no answer, so the page stayed paused. Keep the declaration and start a new run.'
    * ```
    */
   private withPagePauseUnderResume(text: string): string {
-    const stop = this.pageResumesUnderWay[0]
-    return stop
-      ? `${withFinalPeriod(text)} ${pagePauseUnderResumeText(this.pagePauseOf(stop))}`
-      : text
+    const resume = this.pageResumesUnderWay[0]
+    if (!resume) return text
+    const pause = this.pagePauseOf(resume.stop),
+      outcome = resume.isAnswered ? 'answered' : 'unanswered'
+    return `${withFinalPeriod(text)} ${pagePauseUnderResumeText(pause, outcome)}`
   }
   /** Rejects work after cancellation, source authority failure or trusted-workspace replacement. @example this.alive() */
   private alive(): void {

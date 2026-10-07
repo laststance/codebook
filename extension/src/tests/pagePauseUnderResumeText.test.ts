@@ -12,7 +12,7 @@ test('the text of a page pause at a server stop’s breakpoint whose resume has 
       'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts 11:116',
   }
   // Act
-  const text = pagePauseUnderResumeText(pause)
+  const text = pagePauseUnderResumeText(pause, 'unanswered')
   // Assert
   assert.equal(
     text,
@@ -25,10 +25,29 @@ test('the text of a page pause whose resume the debugger refused quotes the refu
   // Arrange
   const pause = { declared: 'app/lib/actions.ts:27', place: undefined }
   // Act
-  const text = pagePauseUnderResumeText(pause, 'Thread is not paused')
+  const text = pagePauseUnderResumeText(pause, {
+    failure: 'Thread is not paused',
+  })
   // Assert
   assert.equal(
     text,
     'The debugger reported that the page paused at the breakpoint of declared server stop app/lib/actions.ts:27, which it also sets in the page\'s copy of that module. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.',
+  )
+})
+
+// Cycle 0046 (row 268): a request the debugger answered is never said to have had no answer; red if the text of a pause whose resume was answered, while the page reported no resume, said "got no answer".
+test('the text of a page pause whose resume the debugger answered while the page reported no resume says both, and not that the request had no answer', () => {
+  // Arrange
+  const pause = {
+    declared: 'app/lib/actions.ts:27',
+    place:
+      'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts 11:116',
+  }
+  // Act
+  const text = pagePauseUnderResumeText(pause, 'answered')
+  // Assert
+  assert.equal(
+    text,
+    "The page paused at webpack-internal:///(app-pages-browser)/./app/lib/actions.ts 11:116, at the breakpoint of declared server stop app/lib/actions.ts:27, which the debugger also sets in the page's copy of that module. Codebook asked the debugger to resume the page and the debugger answered, but the page reported no resume. Keep the declaration and start a new run.",
   )
 })
