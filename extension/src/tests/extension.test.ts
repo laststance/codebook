@@ -2135,6 +2135,149 @@ test('a Cursor chat registration that fails with an error quoting a command link
   }
 })
 
+// Value: protects=a learner whose Cursor is too old to let an extension register an MCP server, at the start that restores a saved setup and at the setup after the update; fails_when=the sentence says "use the public manual connection setup", which the README does not have, or the notice adds "Run Codebook: Set Up AI Chat to repair the connection." after it, although that setup ends the same way until Cursor is updated; or the setup in the updated Cursor does not finish; why_new=Cycle 0046 row 303; seam=the editor's `cursor.mcp`, which gets its `registerServer` between the start and the setup, as an update of Cursor gives it
+test('a Cursor that exposes no MCP registration is answered with what works, to update Cursor and run the setup again or to connect an external client as the README says, without a second setup step; in the updated Cursor the setup registers the server and finishes', async () => {
+  // Arrange: a saved Cursor setup reconnects at activation in a Cursor whose `cursor.mcp` has no `registerServer`.
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-no-registration-')),
+  )
+  const commands = new Map<string, () => Promise<unknown>>(),
+    warnings: string[] = [],
+    informations: string[] = [],
+    registeredServers: string[] = []
+  let reportWarning!: () => void
+  const warned = new Promise<void>((resolveWarned) => {
+    reportWarning = resolveWarned
+  })
+  const cursorMcp: {
+    registerServer?: (definition: { name: string }) => void
+    unregisterServer: () => void
+  } = { unregisterServer(): void {} }
+  const boundary = await loadModule<typeof ExtensionModule>(
+    resolve(__dirname, '../extension.js'),
+    {
+      vscode: {
+        env: { appName: 'Cursor' },
+        commands: {
+          registerCommand(name: string, action: () => Promise<unknown>) {
+            commands.set(name, action)
+            return { dispose(): void {} }
+          },
+        },
+        workspace: {
+          onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
+          getConfiguration: () => ({
+            get: (_setting: string, fallback: string) => fallback,
+          }),
+        },
+        window: {
+          showWarningMessage(message: string) {
+            warnings.push(message)
+            reportWarning()
+            return Promise.resolve(undefined)
+          },
+          showInformationMessage(message: string) {
+            informations.push(message)
+            return Promise.resolve(undefined)
+          },
+        },
+        cursor: { mcp: cursorMcp },
+      },
+      './service': {
+        StudyService: class {
+          instanceId = 'instance-1'
+        },
+      },
+      './environment': {
+        requireWorkspace: () => directory,
+        createEnvironment: async () => ({
+          workspace: directory,
+          dispose(): void {},
+        }),
+      },
+      './server': {
+        startServer: async () => ({
+          listening: true,
+          resourcesReleased: true,
+          descriptor: {
+            url: 'http://127.0.0.1/instance-1/mcp',
+            token: 'token-instance-1',
+            instanceId: 'instance-1',
+            workspace: directory,
+            apiVersion: '1.5',
+          },
+          close: async (): Promise<void> => {},
+        }),
+      },
+      './studyWorkspace': {
+        StudyWorkspace: class {
+          presentation = undefined
+          async attach(): Promise<void> {}
+          async retire(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './repositoryReader': {
+        RepositoryReader: class {
+          async storage(): Promise<void> {}
+          async dispose(): Promise<void> {}
+        },
+      },
+      './cursorSkillDeployment': {
+        deployCursorSkill: async () => ({ status: 'current' }),
+        verifyManagedCursorSkill: async () => ({ status: 'current' }),
+      },
+      './utils/refreshCursorMcpCatalog': {
+        refreshCursorMcpCatalog: async () => 'generation-1',
+      },
+      './utils/resolveExternalNodeExecutable': {
+        resolveExternalNodeExecutable: async () => '/usr/local/bin/node',
+      },
+    },
+  )
+  try {
+    // Act: the start that restores the saved setup, and then the sentence to the letter: Cursor is updated and the setup is run again.
+    boundary.activate({
+      extensionPath: directory,
+      globalStorageUri: { fsPath: directory },
+      subscriptions: [],
+      workspaceState: {
+        get: () => ({ workspace: directory }),
+        update: async () => {},
+      },
+    })
+    await warned
+    cursorMcp.registerServer = (definition): void => {
+      registeredServers.push(definition.name)
+    }
+    const setupInTheUpdatedCursor = await commands.get(
+      'codebook.setupAiChat',
+    )!().then(
+      () => 'finished',
+      (error: unknown) =>
+        error instanceof Error ? error.message : String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      { warnings, setupInTheUpdatedCursor, registeredServers, informations },
+      {
+        warnings: [
+          'Codebook agent server started, but Cursor MCP registration failed: This Cursor version does not expose MCP registration to Codebook. Update Cursor, then run Codebook: Set Up AI Chat again. For an external MCP client, run Codebook: Start Agent Server and Codebook: Copy Agent Connection.',
+        ],
+        setupInTheUpdatedCursor: 'finished',
+        registeredServers: ['codebook-instance-1'],
+        informations: [
+          'Codebook skill and workspace setup saved. Check Cursor Customize > MCPs for Codebook before using /codebook; if absent, close and reopen this work window.',
+        ],
+      },
+    )
+  } finally {
+    await boundary.deactivate()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('Update LLM Wiki without a Wiki, in an output folder named like a command link, shows no clickable link', async () => {
   // Arrange: the setting `codebook.wikiOutputDirectory` carries link syntax and the folder holds no manifest.
   const projectRoot = await realpath(

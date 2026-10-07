@@ -123,8 +123,7 @@ test('a Cursor MCP config that is removed right after Codebook published it ends
       config: await readFile(folders.configPath, 'utf8'),
     },
     {
-      refresh:
-        'refused: Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.',
+      refresh: `refused: Cursor MCP config changed while Codebook refreshed it: ${folders.configPath}. Codebook left it unchanged. Run Codebook: Set Up AI Chat again.`,
       nextRefreshGaveAGeneration: true,
       config: EMPTY_CONFIG,
     },
@@ -166,8 +165,7 @@ test('a config that another window published first and that is removed before Co
       entriesOfTheCursorFolder: await readdir(folders.cursorDirectory),
     },
     {
-      refresh:
-        'refused: Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.',
+      refresh: `refused: Cursor MCP config changed while Codebook refreshed it: ${folders.configPath}. Codebook left it unchanged. Run Codebook: Set Up AI Chat again.`,
       entriesOfTheCursorFolder: ['storage'],
     },
   )

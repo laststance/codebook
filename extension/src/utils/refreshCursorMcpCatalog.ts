@@ -376,13 +376,25 @@ const CONFIG_GONE_CODES: ReadonlySet<string> = new Set([
   'EREPLACED',
 ])
 
-/** What the learner reads when the config's time cannot be set because this user may not write the file. */
-const CONFIG_NOT_WRITABLE_SENTENCE =
-  'Cursor MCP config cannot be refreshed because this user may not change it (the file may be read-only or belong to another user); Codebook left it unchanged. Allow writing to this file, then run Codebook: Set Up AI Chat again.'
+/**
+ * Words what the learner reads when the config's time cannot be set because this user may not write the file; for {@link refusalOfConfigTimes}.
+ * @param targetPath - The config's path, which the sentence names.
+ * @returns The sentence, with the step after which a setup's refresh finishes.
+ * @example configNotWritableSentence('/home/user/.cursor/mcp.json')
+ */
+function configNotWritableSentence(targetPath: string): string {
+  return `Cursor MCP config cannot be refreshed because this user may not change it (the file may be read-only or belong to another user): ${targetPath}. Codebook left it unchanged. Allow writing to this file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+}
 
-/** What the learner reads when the config path came to hold another entry while the refresh opened the config, or between its read and the setting of its time. */
-const CONFIG_CHANGED_SENTENCE =
-  'Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.'
+/**
+ * Words what the learner reads when the config path came to hold another entry while the refresh opened the config, or between its read and the setting of its time; for {@link refusalOfConfigOpen}, {@link openPublishedConfig}, {@link refusalOfConfigTimes} and {@link setTimesThroughWritableFile}.
+ * @param targetPath - The config's path, which the sentence names.
+ * @returns The sentence; the setup run again refreshes the config as it stands then.
+ * @example configChangedSentence('/home/user/.cursor/mcp.json')
+ */
+function configChangedSentence(targetPath: string): string {
+  return `Cursor MCP config changed while Codebook refreshed it: ${targetPath}. Codebook left it unchanged. Run ${SET_UP_AI_CHAT_COMMAND} again.`
+}
 
 /**
  * Words what the learner reads for a config path that holds a pipe, a device or a folder; for {@link refusalOfConfigOpen} where the opener looks at the path first, and for {@link refreshCursorMcpCatalog} where the open lets such a path through and its status tells it.
@@ -440,7 +452,7 @@ const CONFIG_OPEN_SENTENCES: ReadonlyMap<
 > = new Map([
   ['ELOOP', configLinkSentence],
   ['ENOTREG', configNotRegularSentence],
-  ['EREPLACED', (): string => CONFIG_CHANGED_SENTENCE],
+  ['EREPLACED', configChangedSentence],
 ])
 
 /**
@@ -479,13 +491,13 @@ async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
  * Opens the config right after Codebook published it, or after another writer's file took its path, for {@link refreshCursorMcpCatalog}; a config that is gone by then changed while it was refreshed.
  * @param targetPath - The config's path.
  * @returns The open file ({@link openConfigForRefresh}).
- * @throws With {@link CONFIG_CHANGED_SENTENCE} when the path holds nothing any more, and with the sentence {@link openConfigForRefresh} gives for a link, a path that is no regular file or a replaced file.
+ * @throws With {@link configChangedSentence} when the path holds nothing any more, and with the sentence {@link openConfigForRefresh} gives for a link, a path that is no regular file or a replaced file.
  * @example const handle = await openPublishedConfig('/home/user/.cursor/mcp.json')
  */
 async function openPublishedConfig(targetPath: string): Promise<FileHandle> {
   return openConfigForRefresh(targetPath).catch((error: unknown) => {
     throw isMissing(error)
-      ? new Error(CONFIG_CHANGED_SENTENCE, { cause: error })
+      ? new Error(configChangedSentence(targetPath), { cause: error })
       : error
   })
 }
@@ -510,15 +522,16 @@ function refusalOfConfigLink(error: unknown, targetPath: string): unknown {
 /**
  * Turns a failure to open or change the config for its times into the sentence that fits it, for {@link openConfigForItsTimes} and {@link setTimesThroughWritableFile}.
  * @param error - What the open or the change threw.
- * @returns An error with {@link CONFIG_NOT_WRITABLE_SENTENCE} for a file this user may not write, one with {@link CONFIG_CHANGED_SENTENCE} for a path that no longer holds the file, each with the failure as its cause; every other failure itself.
- * @example throw refusalOfConfigTimes(Object.assign(new Error('EPERM'), { code: 'EPERM' }))
+ * @param targetPath - The config's path, which both sentences name.
+ * @returns An error with {@link configNotWritableSentence} for a file this user may not write, one with {@link configChangedSentence} for a path that no longer holds the file, each with the failure as its cause; every other failure itself.
+ * @example throw refusalOfConfigTimes(Object.assign(new Error('EPERM'), { code: 'EPERM' }), '/home/user/.cursor/mcp.json')
  */
-function refusalOfConfigTimes(error: unknown): unknown {
+function refusalOfConfigTimes(error: unknown, targetPath: string): unknown {
   const code = systemErrorCode(error)
   if (WRITE_REFUSED_CODES.has(code))
-    return new Error(CONFIG_NOT_WRITABLE_SENTENCE, { cause: error })
+    return new Error(configNotWritableSentence(targetPath), { cause: error })
   return CONFIG_GONE_CODES.has(code)
-    ? new Error(CONFIG_CHANGED_SENTENCE, { cause: error })
+    ? new Error(configChangedSentence(targetPath), { cause: error })
     : error
 }
 
@@ -533,7 +546,7 @@ async function openConfigForItsTimes(targetPath: string): Promise<FileHandle> {
   try {
     return await openWithoutFollowing(targetPath, undefined, 'read-write')
   } catch (error) {
-    throw refusalOfConfigTimes(error)
+    throw refusalOfConfigTimes(error, targetPath)
   }
 }
 
@@ -543,7 +556,7 @@ async function openConfigForItsTimes(targetPath: string): Promise<FileHandle> {
  * @param targetPath - The config's path.
  * @param accessedAt - The access time to keep.
  * @param modifiedAt - The new modification time.
- * @throws With {@link CONFIG_CHANGED_SENTENCE} when the second file is not the first by device and inode number, and with the sentence that fits when the file cannot be opened or changed ({@link refusalOfConfigTimes}). Nothing is created, truncated or written.
+ * @throws With {@link configChangedSentence} when the second file is not the first by device and inode number, and with the sentence that fits when the file cannot be opened or changed ({@link refusalOfConfigTimes}). Nothing is created, truncated or written.
  * @example await setTimesThroughWritableFile(await handle.stat({ bigint: true }), targetPath, status.atime, new Date())
  */
 async function setTimesThroughWritableFile(
@@ -557,9 +570,9 @@ async function setTimesThroughWritableFile(
     const reopened = await writable.stat({ bigint: true })
     // The time is set only on the file that was looked at and read.
     if (reopened.dev !== opened.dev || reopened.ino !== opened.ino)
-      throw new Error(CONFIG_CHANGED_SENTENCE)
+      throw new Error(configChangedSentence(targetPath))
     await writable.utimes(accessedAt, modifiedAt).catch((error: unknown) => {
-      throw refusalOfConfigTimes(error)
+      throw refusalOfConfigTimes(error, targetPath)
     })
   } finally {
     await writable.close()

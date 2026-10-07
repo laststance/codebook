@@ -452,7 +452,7 @@ export function activate(
     const cursorMcp = vscode.cursor?.mcp
     if (!cursorMcp?.registerServer)
       throw new Error(
-        'This Cursor version does not expose MCP registration to Codebook. Update Cursor or use the public manual connection setup.',
+        'This Cursor version does not expose MCP registration to Codebook. Update Cursor, then run Codebook: Set Up AI Chat again. For an external MCP client, run Codebook: Start Agent Server and Codebook: Copy Agent Connection.',
       )
     const previous = cursorRegistration
     if (previous?.server === server) return previous.attempt
