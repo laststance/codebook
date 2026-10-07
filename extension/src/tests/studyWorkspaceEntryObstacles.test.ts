@@ -1299,6 +1299,544 @@ test("a Read in the live arrangement that the editor refuses after its Expand ra
   }
 })
 
+for (const arrangement of ['live', 'replay'] as const)
+  // Value: protects=the learner's own editor groups after Enlarge application and a Close in an arrangement whose top level is rows: the Close ends the maximization the Enlarge left and gives the groups the sizes they had before it; fails_when=the Enlarge begins with the editor's Expand, keeps no sizes, and the Close ends nothing, so one of the learner's two groups stays maximized over the other after the workspace is closed, at the sizes the Expand left; why_new=Cycle 0046 row 334 (read in the source beside row 328, produced here); seam=the workspace harness with the controlled runtime or a saved recording, a native layout of two rows, the fake editor's Expand (top-level proportions 0.8 and 0.2) and maximized group, command log and layout read
+  test(`Close Study Workspace after Enlarge application in the ${arrangement} arrangement leaves the learner's two editor groups at the sizes they had before the Enlarge, and none of them maximized`, async () => {
+    // Arrange: the learner has two editor groups, one above the other; the arrangement puts the Application pane and the captured source into them, and the learner enlarges the application.
+    const recorded =
+      arrangement === 'replay' ? await recordedReaderHarness(true) : undefined
+    const harness = recorded ?? (await workspaceHarness())
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    let live: { close(): void } | undefined
+    try {
+      if (recorded) {
+        await recorded.reader.openRecording(recorded.studyId)
+        await recorded.controller.settle()
+      } else {
+        const receipt = harness.service.start({
+          instanceId: harness.service.instanceId,
+          profile: 'repository-browser',
+          configuration: harness.configuration,
+          key: randomUUID(),
+        })
+        await harness.service.record(receipt).preparation
+        await harness.reader.open()
+        live = harness.reader.presentation.createViewport(
+          receipt.runId,
+          () => {},
+          () => {},
+          'normal',
+        )
+      }
+      await harness.reader.action('enlarge-app')
+      const duringEnlarge = {
+        maximized: harness.maximizedEditorGroup(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      }
+      const commandsBefore = harness.commands.length
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.deepEqual(duringEnlarge, {
+        maximized: true,
+        layout: { orientation: 1, groups: [{ size: 0.8 }, { size: 0.2 }] },
+      })
+      assert.deepEqual(
+        {
+          gridCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) =>
+              /minimizeOtherEditors|toggleMaximizeEditorGroup|setEditorLayout/.test(
+                command,
+              ),
+            ),
+          maximized: harness.maximizedEditorGroup(),
+          layout: await harness.editor.commands.executeCommand(
+            'vscode.getEditorLayout',
+          ),
+          learnersTabs: harness.groups.map((group) => group.tabs.length),
+        },
+        {
+          gridCommands: [
+            'workbench.action.minimizeOtherEditors',
+            'vscode.setEditorLayout',
+          ],
+          maximized: false,
+          layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+          learnersTabs: [1, 1],
+        },
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the sizes of the learner's own editor groups after Enlarge application and a Restore in the live arrangement beside a third group of the learner's, where the Restore arranges nothing: the groups have the sizes they had before the Enlarge; fails_when=the Enlarge keeps no sizes, the Restore ends the maximization with the editor's Expand and applies no arrangement there, so the groups stay at the expanded sizes; why_new=Cycle 0046 row 334; seam=the workspace harness with the controlled runtime, a native layout of three rows, the arrange action, command log and layout read
+test("a Restore after Enlarge application in the live arrangement beside a third group of the learner's gives every group the size it had before the Enlarge, also where it arranges nothing", async () => {
+  // Arrange: the learner has three editor groups, one above the other; a live run puts its panes into the first two, and the learner enlarges the application.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    await harness.reader.action('enlarge-app')
+    const duringEnlarge = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Act: Arrange Study Workspace, which is the Restore of the Study pane.
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(duringEnlarge, {
+      orientation: 1,
+      groups: [{ size: 0.8 }, { size: 0.1 }, { size: 0.1 }],
+    })
+    assert.deepEqual(
+      {
+        maximized: harness.maximizedEditorGroup(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      },
+      {
+        maximized: false,
+        layout: {
+          orientation: 1,
+          groups: [{ size: 1 }, { size: 1 }, { size: 1 }],
+        },
+      },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the one layout a Restore applies: after Enlarge application in the three-pane Study workspace the Restore gives the measured layout back with one layout command, and the Close that follows runs no command that changes a group's size; fails_when=the sizes kept at the Enlarge are applied beside the Restore's own layout, or stay kept after it and are applied again at the Close, over sizes the learner may have set since; why_new=Cycle 0046 row 334 (the Enlarge's own way back and the sizes kept for a Close are one account: what the Restore gives back is no longer owed); seam=the workspace harness, the three-pane columns, the arrange action, command log and layout read
+test('the Restore of Enlarge application in the three-pane Study workspace applies one layout, the measured one, and the Close afterwards runs no Expand and applies no layout', async () => {
+  // Arrange: the three-pane Study workspace is confirmed, and the learner enlarges the application.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    const beforeEnlarge = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await harness.reader.action('enlarge-app')
+    const commandsBeforeRestore = harness.commands.length
+
+    // Act: Arrange Study Workspace, then Close Study Workspace.
+    await harness.reader.action('arrange')
+    const afterRestore = {
+      layoutsApplied: harness.commands
+        .slice(commandsBeforeRestore)
+        .filter((command) => command === 'vscode.setEditorLayout').length,
+      maximized: harness.maximizedEditorGroup(),
+      layout: await harness.editor.commands.executeCommand(
+        'vscode.getEditorLayout',
+      ),
+    }
+    const commandsBeforeClose = harness.commands.length
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(afterRestore, {
+      layoutsApplied: 1,
+      maximized: false,
+      layout: beforeEnlarge,
+    })
+    assert.deepEqual(
+      harness.commands
+        .slice(commandsBeforeClose)
+        .filter((command) =>
+          /minimizeOtherEditors|toggleMaximizeEditorGroup|setEditorLayout/.test(
+            command,
+          ),
+        ),
+      [],
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const order of [
+  {
+    first: 'enlarge-app',
+    second: 'read-app',
+    name: 'Enlarge application and then a Read of the application',
+  },
+  {
+    first: 'read-app',
+    second: 'enlarge-app',
+    name: 'a Read of the application and then Enlarge application',
+  },
+  {
+    first: 'enlarge-app',
+    second: 'enlarge-app',
+    name: 'Enlarge application twice',
+  },
+] as const)
+  // Value: protects=the sizes of the learner's own editor groups after an Enlarge and a Read of one sitting, in either order, or two Enlarges, and a Close in the live arrangement: the groups have the sizes they had before the first of them, and the maximization the second left is ended before the layout is applied; fails_when=the second of them, which runs the editor's Expand again, replaces the kept sizes with the expanded ones, or the Close applies the layout to a grid an Enlarge left maximized without ending the maximization first; why_new=Cycle 0046 row 334 (one account of kept sizes for a Read and an Enlarge); seam=the workspace harness with the controlled runtime, a native layout of two rows, command log and layout read
+  test(`Close Study Workspace after ${order.name} in the live arrangement leaves the learner's two editor groups at the sizes they had before the first of them`, async () => {
+    // Arrange: the learner has two editor groups; a live run puts its panes into them.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await harness.service.record(receipt).preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      await harness.reader.action(order.first)
+      await harness.reader.action(order.second)
+      const commandsBefore = harness.commands.length
+
+      // Act
+      await harness.reader.close()
+
+      // Assert
+      assert.deepEqual(
+        {
+          gridCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) =>
+              /minimizeOtherEditors|toggleMaximizeEditorGroup|setEditorLayout/.test(
+                command,
+              ),
+            ),
+          maximized: harness.maximizedEditorGroup(),
+          layout: await harness.editor.commands.executeCommand(
+            'vscode.getEditorLayout',
+          ),
+        },
+        {
+          gridCommands: [
+            'workbench.action.minimizeOtherEditors',
+            'vscode.setEditorLayout',
+          ],
+          maximized: false,
+          layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        },
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the widths of the three-pane columns after a Read of the explanation, which hides the side bars and resizes no group, followed by Enlarge application and a Close: the columns have the widths they had before the Read; fails_when=the Enlarge, which begins while the Read's maximization is on, keeps no sizes or keeps those the maximized grid answers, so the Close leaves the columns as the Enlarge's Expand left them; why_new=Cycle 0046 row 334 (an Enlarge during a reading keeps the layout the reading began with); seam=the workspace harness's side bar model and three-pane columns in pixels, command log and layout read
+test('Close Study Workspace after a Read of the explanation and then Enlarge application in the three-pane Study workspace leaves the columns at the widths they had before the Read', async () => {
+  // Arrange: the primary side bar is open; the learner reads the explanation enlarged, which hides the bar, and then enlarges the application, which shows it again.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    await harness.reader.open()
+    const beforeRead = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await harness.reader.action('read-context')
+    await harness.reader.action('enlarge-app')
+    const duringEnlarge = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(beforeRead, {
+      orientation: 0,
+      groups: [
+        { size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 504 },
+      ],
+    })
+    assert.deepEqual(duringEnlarge, {
+      orientation: 0,
+      groups: [
+        { size: 1121, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 224 },
+      ],
+    })
+    assert.deepEqual(
+      {
+        maximized: harness.maximizedEditorGroup(),
+        sideBars: harness.sideBars(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      },
+      {
+        maximized: false,
+        sideBars: { primary: true, auxiliary: false, hasKeyboard: false },
+        layout: {
+          orientation: 0,
+          groups: [
+            { size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] },
+            { size: 504 },
+          ],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the sizes of the learner's own editor groups after Enlarge application that the editor refused once its Expand had run: the groups have the sizes they had before; fails_when=a refused Enlarge leaves the groups at the sizes the Expand gave them, and nothing gives them back; why_new=Cycle 0046 row 334 (the Enlarge's Expand and its maximize are two commands, and the second can fail, as at a Read); seam=the workspace harness with the controlled runtime, failNextCommand for the editor's maximize toggle, command log and layout read
+test("Enlarge application in the live arrangement that the editor refuses after its Expand ran leaves the learner's editor groups at the sizes they had before", async () => {
+  // Arrange: the learner has two editor groups; a live run puts its panes into them; the editor refuses the maximize toggle of the next Enlarge.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.failNextCommand('workbench.action.toggleMaximizeEditorGroup')
+
+    // Act
+    const refused = await harness.reader.action('enlarge-app').then(
+      () => false,
+      () => true,
+    )
+
+    // Assert
+    assert.equal(refused, true)
+    assert.deepEqual(
+      {
+        maximized: harness.maximizedEditorGroup(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      },
+      {
+        maximized: false,
+        layout: { orientation: 1, groups: [{ size: 0.5 }, { size: 0.5 }] },
+      },
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who changes the focus while a Restore that arranged nothing reads the layout to give the sizes of before an Enlarge back: no layout is applied over that change, the Restore is refused, and the Close that follows gives the sizes back; fails_when=the give-back asks nobody and applies the kept layout over the learner's newer choice, or the refused Restore forgets the sizes; why_new=Cycle 0046 row 334 (the guard of row 328, asked where the give-back now runs: after an arrangement that applied nothing); seam=the workspace harness with the controlled runtime, a native layout of three rows, holdNextCommand for the two layout reads of the Restore, focusMutableDraft as the learner's change, command log and layout read
+test("a Restore after Enlarge application that arranges nothing applies no layout once the learner changed the focus during its layout read, and the Close afterwards gives the learner's groups the sizes they had before the Enlarge", async () => {
+  // Arrange: the learner has three editor groups; a live run puts its panes into the first two, and the learner enlarges the application. The editor holds the layout read of the arrangement, and then the one that follows it.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 1, groups: [{}, {}, {}] })
+  let live: { close(): void } | undefined
+  let release = (): void => {}
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    await harness.reader.action('enlarge-app')
+    const state = harness.reader.presentationState()
+    const arrangementRead = harness.holdNextCommand('vscode.getEditorLayout')
+    release = arrangementRead.release
+    const commandsBefore = harness.commands.length
+    const restoring = harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'restore',
+      })
+      .then(
+        () => 'restored',
+        () => 'refused',
+      )
+    await arrangementRead.started
+    const giveBackRead = harness.holdNextCommand('vscode.getEditorLayout')
+    release = giveBackRead.release
+    arrangementRead.release()
+    // A Restore that reads no second layout ends here by itself, and the assertions below say so.
+    await Promise.race([giveBackRead.started, restoring])
+
+    // Act: the learner goes to a draft of their own while the editor answers; the Restore is refused; then the learner closes the Study workspace.
+    harness.focusMutableDraft()
+    giveBackRead.release()
+    const restore = await restoring
+    const layoutsAppliedByRestore = harness.commands
+      .slice(commandsBefore)
+      .filter((command) => command === 'vscode.setEditorLayout').length
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(
+      { restore, layoutsAppliedByRestore },
+      { restore: 'refused', layoutsAppliedByRestore: 0 },
+    )
+    assert.deepEqual(
+      await harness.editor.commands.executeCommand('vscode.getEditorLayout'),
+      { orientation: 1, groups: [{ size: 1 }, { size: 1 }, { size: 1 }] },
+    )
+  } finally {
+    release()
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the widths of the three-pane columns after a Read and a Close in an editor that keeps a group its last tab left (the learner turned workbench.editor.closeEmptyGroups off), where the Close has to end the maximization with the editor's Expand: the columns have the widths they had before the Read; fails_when=that Expand leaves every other group at its minimum size and nothing gives the sizes back, because a Read that hid the side bars kept none; why_new=Cycle 0046 row 334 (the audit of every command of the reader that resizes a group: the Close's own Expand, the limit row 323 stated); seam=the workspace harness's side bar model and three-pane columns in pixels, the fake editor that keeps emptied groups, command log and layout read
+test('Close Study Workspace after a Read of the explanation in an editor that keeps emptied groups leaves the three-pane columns at the widths they had before the Read', async () => {
+  // Arrange: the primary side bar is open and the editor keeps a group its last tab left; the learner reads the explanation enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    await harness.reader.open()
+    const beforeRead = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await harness.reader.action('read-context')
+    const commandsBefore = harness.commands.length
+
+    // Act
+    await harness.reader.close()
+
+    // Assert
+    assert.deepEqual(beforeRead, {
+      orientation: 0,
+      groups: [
+        { size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] },
+        { size: 504 },
+      ],
+    })
+    assert.deepEqual(
+      {
+        gridCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) =>
+            /minimizeOtherEditors|toggleMaximizeEditorGroup|setEditorLayout/.test(
+              command,
+            ),
+          ),
+        maximized: harness.maximizedEditorGroup(),
+        sideBars: harness.sideBars(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      },
+      {
+        gridCommands: [
+          'workbench.action.minimizeOtherEditors',
+          'vscode.setEditorLayout',
+        ],
+        maximized: false,
+        sideBars: { primary: true, auxiliary: false, hasKeyboard: false },
+        layout: {
+          orientation: 0,
+          groups: [
+            { size: 617, groups: [{ size: 0.5 }, { size: 0.5 }] },
+            { size: 504 },
+          ],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the widths of the learner's editor groups after a Read and a Restore of the three-pane Study workspace beside a fourth group of the learner's, where the Restore arranges nothing: every group has the width it had before the Read; fails_when=the Restore ends the Read with the editor's Expand, which leaves every other group at its minimum size, and its arrangement, which would give sizes, preserves the learner's groups and applies nothing; why_new=Cycle 0046 row 334 (the audit: the Restore's own Expand after a Read that resized nothing); seam=the workspace harness's side bar model, a native layout of four columns, the arrange action, the reader's layout line, command log and layout read
+test("a Restore after a Read of the application beside a fourth group of the learner's gives every group the width it had before the Read, also where it arranges nothing", async () => {
+  // Arrange: the learner has four editor groups side by side and the primary side bar open; the Study panes share the first three, and the learner reads the application enlarged.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}, {}, {}] })
+  harness.modelSideBars({ primary: true, auxiliary: false })
+  try {
+    await harness.reader.open()
+    const beforeRead = await harness.editor.commands.executeCommand(
+      'vscode.getEditorLayout',
+    )
+    await harness.reader.action('read-app')
+
+    // Act: Arrange Study Workspace, which is the Restore of the Study pane.
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(beforeRead, {
+      orientation: 0,
+      groups: [{ size: 280 }, { size: 280 }, { size: 280 }, { size: 280 }],
+    })
+    assert.deepEqual(
+      {
+        maximized: harness.maximizedEditorGroup(),
+        sideBars: harness.sideBars(),
+        layout: await harness.editor.commands.executeCommand(
+          'vscode.getEditorLayout',
+        ),
+      },
+      {
+        maximized: false,
+        sideBars: { primary: true, auxiliary: false, hasKeyboard: false },
+        layout: {
+          orientation: 0,
+          groups: [{ size: 280 }, { size: 280 }, { size: 280 }, { size: 280 }],
+        },
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner's primary side bar when the editor answers the Read's first layout read and refuses the one after the measurement hid that bar: the Restore shows it again; fails_when=the reading keeps no record that its measurement hid the bar, so the Restore, Close and a refused Read show nothing and the file explorer stays away; why_new=Cycle 0046 row 33 (PL-25 of Cycle 0045: the second read's failure left the measurement undefined); seam=the workspace harness's side bar model, holdNextCommand on the measurement's close command and failNextCommand on the layout read after it
 test('a Restore after a Read whose layout read failed once the primary side bar was hidden for the measurement shows the primary side bar again', async () => {
   // Arrange: both side bars are open; the editor answers the Read's first layout read and rejects the one after the primary side bar was hidden.
