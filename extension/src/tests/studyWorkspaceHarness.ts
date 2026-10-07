@@ -3047,7 +3047,6 @@ export async function workspaceHarness(
   const articleOpens: RepositorySelection[] = [],
     articleReturns: RepositorySelection[] = []
   const controls = {
-    start: async () => harness.service,
     connect: async (): Promise<void> => {},
     returnToRepository: async (
       selection: RepositorySelection,
@@ -3083,7 +3082,13 @@ export async function workspaceHarness(
       presentationPreferences.set(key, structuredClone(value))
     },
   }
-  const createReader = (extensionPath = join(harness.directory, 'extension')) =>
+  /** Makes one more reader over the same fake editor and storage, as the extension does after a change of the workspace's folders; `handedOverArchives` are the study archives the reader before it could not save and released. @example const replacement = harness.createReader(undefined, harness.reader.releaseUnsavedStudies()) */
+  const createReader = (
+    extensionPath = join(harness.directory, 'extension'),
+    handedOverArchives: ReturnType<
+      WorkspaceReader['releaseUnsavedStudies']
+    > = [],
+  ) =>
     new boundary.StudyWorkspace(
       {
         extensionPath,
@@ -3092,6 +3097,7 @@ export async function workspaceHarness(
         workspaceState,
       },
       controls,
+      handedOverArchives,
     )
   const reader = createReader()
   if (attach) {
@@ -4957,6 +4963,13 @@ export function readerSeams(harness: {
     checkpoint: (
       ...input: Parameters<WorkspaceReader['checkpoint']>
     ): Promise<void> => reader['checkpoint'](...input),
+    /** The reader's checkpoint of one run; a test replaces it to fail a forced checkpoint before anything is written, as a capture that changed under it does. */
+    get checkpointStep(): WorkspaceReader['checkpoint'] {
+      return reader['checkpoint'].bind(reader)
+    },
+    set checkpointStep(step: WorkspaceReader['checkpoint']) {
+      reader['checkpoint'] = step
+    },
     readSavedArchive: (studyId: string) => reader['readSavedArchive'](studyId),
     saveSelection: (): Promise<void> => reader['saveSelection'](),
     /** The reader's step that starts or replaces the historical debugger before a recording load; a test replaces it to hold or fail that load. */

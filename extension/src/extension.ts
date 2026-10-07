@@ -49,7 +49,7 @@ import { RepositoryReader } from './repositoryReader'
 import { repositoryActionSchema } from './repositoryView'
 import { startServer } from './server'
 import { StudyService } from './service'
-import { StudyWorkspace } from './studyWorkspace'
+import { StudyWorkspace, type UnsavedStudyArchive } from './studyWorkspace'
 import { aiChatReadyMessage } from './utils/aiChatReadyMessage'
 import {
   answerDeepWikiQuestion,
@@ -186,7 +186,11 @@ export function activate(
     }
   }
   let reader: StudyWorkspace | undefined
+  /** The study archives a disposed Study reader could not save, from the moment that reader hands them on until a new reader has taken them: the archive of a run whose service has ended exists nowhere else. */
+  const unsavedStudies: UnsavedStudyArchive[] = []
   let repositoryReader: RepositoryReader | undefined
+  /** Set while a change of the workspace's folders is handled, and settled when the readers have been replaced; it never rejects. Each change is handled after the one before it, and {@link start} waits for it: a server made meanwhile would be attached to the Study reader that is being disposed. */
+  let replacingReaders: Promise<void> | undefined
   let deepWikiReader: DeepWikiReader | undefined
   let wikiUpdate: Promise<void> | undefined
   // One update run per window, shared by the command, the `/update` link and the browser button.
@@ -240,19 +244,24 @@ export function activate(
     /** Stops the run: the learner's Cancel and the closing window both abort it. */
     controller: AbortController
   }
-  const workspace = (): StudyWorkspace =>
-    (reader ??= new StudyWorkspace(context, {
-      start: async () => {
-        await start()
-        if (!running) throw new Error('Study server did not start.')
-        return running.service
+  /** Answers this window's Study reader and makes it when there is none: at activation, and after a change of the workspace's folders disposed the one before it. A reader that is made is given the study archives the disposed one could not save. @example await workspace().action('retry') */
+  const workspace = (): StudyWorkspace => {
+    if (reader) return reader
+    reader = new StudyWorkspace(
+      context,
+      {
+        connect,
+        returnToRepository: (selection) =>
+          repository().open(selection, undefined, true),
+        openArticle: (selection) => repository().open(selection),
+        repositoryWikiOpen: () => Boolean(repositoryReader?.panelOpen()),
       },
-      connect,
-      returnToRepository: (selection) =>
-        repository().open(selection, undefined, true),
-      openArticle: (selection) => repository().open(selection),
-      repositoryWikiOpen: () => Boolean(repositoryReader?.panelOpen()),
-    }))
+      [...unsavedStudies],
+    )
+    // Only a reader that was made has taken them: a constructor that throws leaves them for the next reader.
+    unsavedStudies.length = 0
+    return reader
+  }
   const repository = (): RepositoryReader =>
     (repositoryReader ??= new RepositoryReader({
       storage: () => workspace().learningStorage(),
@@ -263,6 +272,8 @@ export function activate(
         workspace().openRepositoryEvidence(binding, recording, signal, origin),
     }))
   const start = async () => {
+    // A start asked for while the readers are replaced waits for the reader that will live; nothing is awaited otherwise, so a stop that follows a start at once still finds it.
+    while (replacingReaders) await replacingReaders
     requireWorkspace()
     if (stopping)
       throw new Error(
@@ -1733,26 +1744,48 @@ export function activate(
       ),
     ),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      void (async () => {
-        try {
-          await context.workspaceState.update('codebook.aiChatSetup', undefined)
-        } finally {
-          const closingReader = deepWikiReader
-          deepWikiReader = undefined
+      // One change is handled after the one before it: handled at once, the second would clear the readers the first had just made, without disposing them.
+      const replacement = (replacingReaders ?? Promise.resolve()).then(
+        async () => {
           try {
-            await stop()
-            await repositoryReader?.dispose()
-            repositoryReader = undefined
-            await reader?.dispose()
-            reader = undefined
-            repository()
+            await context.workspaceState.update(
+              'codebook.aiChatSetup',
+              undefined,
+            )
           } finally {
-            await closingReader?.close()
+            const closingReader = deepWikiReader
+            deepWikiReader = undefined
+            try {
+              await stop()
+              await repositoryReader?.dispose()
+              repositoryReader = undefined
+              // What the reader could not save is taken before its dispose, so a dispose that throws loses none of it.
+              unsavedStudies.push(...(reader?.releaseUnsavedStudies() ?? []))
+              await reader?.dispose()
+              reader = undefined
+              // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
+              workspace()
+              repository()
+            } finally {
+              await closingReader?.close()
+            }
           }
-        }
-      })().catch((error) =>
-        showNotice('error', `Codebook cleanup incomplete: ${String(error)}`),
+        },
       )
+      /** Ends the mark of this change, unless a later change has chained itself to it and keeps the mark. */
+      const endReplacement = (): void => {
+        if (replacingReaders === settled) replacingReaders = undefined
+      }
+      const settled: Promise<void> = replacement
+        .catch((error: unknown) => {
+          // The notice stays until the learner closes it, so it is not waited for.
+          void showNotice(
+            'error',
+            `Codebook cleanup incomplete: ${String(error)}`,
+          )
+        })
+        .then(endReplacement, endReplacement)
+      replacingReaders = settled
     }),
   )
   // Register lazy readers before restored captured documents or contributed views request their providers.

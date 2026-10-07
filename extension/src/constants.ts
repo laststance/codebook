@@ -178,6 +178,9 @@ export const CONTROL_RETIRING_MESSAGE_TYPES: ReadonlySet<string> = new Set([
 export const MAX_DEFERRED_OPEN_REPLIES = 32
 // The one sentence for a saved study whose archive is gone or on its way to the Trash: read by the library, the reader and the removal refusals.
 export const STUDY_ARCHIVE_UNAVAILABLE_MESSAGE = 'Study archive is unavailable.'
+// What the reader made after a change of the workspace's folders says after "History not saved: " for a study archive the reader before it handed over without a reason of its own: its write had not ended when the readers were replaced.
+export const UNSAVED_STUDY_HANDED_OVER_REASON =
+  "a study of an earlier run was still being written when the workspace's folders changed. Press Retry storage / refresh to write it."
 // Why a saved study cannot be removed right now; the Study pane shows them beside its button and the host repeats them when it refuses.
 export const STUDY_REMOVAL_REFUSALS = {
   nothingChosen: 'Choose a saved study to delete.',
