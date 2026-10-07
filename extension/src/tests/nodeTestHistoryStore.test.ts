@@ -952,6 +952,45 @@ test('a Node test asked for while another window holds the storage lock is refus
   assert.equal(await readFile(lockPath, 'utf8'), lockBytes)
 })
 
+// Value: protects=the sentence a learner or an agent reads when a Node test is asked for under a study id that already has a history; fails_when=the start ends with the file system's own text, which names the path of the private storage; why_new=Cycle 0046 row 208: the start made its folder without telling an id that is taken, as a recording's start tells it; seam=none, a real store in a temporary folder
+test('a Node test asked for under a study id that already has a history is refused with a sentence that names no storage path, and that history stays as it is', async () => {
+  // Arrange
+  const directory = await mkdtemp(
+    join(tmpdir(), 'codebook-node-history-same-id-'),
+  )
+  const workspaceKey = createWorkspaceKey()
+  const store = new NodeTestHistoryStore(
+    directory,
+    workspaceKey,
+    () => 5,
+    async () => 0,
+  )
+  const header = nodeTestHistoryHeader(workspaceKey)
+  try {
+    const writer = await store.start(header)
+    await writer.finish('partial', 'The learner stopped this run.')
+
+    // Act
+    const secondStart = await store.start(header).then(
+      () => 'admitted',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.equal(
+      secondStart,
+      'Error: A Node test history already exists for this study.',
+    )
+    assert.deepEqual(
+      (await store.list()).map((entry) => entry.studyId),
+      [header.studyId],
+    )
+    assert.equal((await store.read(header.studyId)).status, 'partial')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('a refused history entry still lets the run seal its verified prefix as partial history', async () => {
   // Arrange
   const directory = await mkdtemp(

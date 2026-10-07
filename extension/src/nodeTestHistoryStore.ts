@@ -43,6 +43,7 @@ import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
   ? Entry extends NodeTestHistoryEntry
@@ -85,7 +86,7 @@ export class NodeTestHistoryStore {
    * The admission and the creation of the history's folder with its header run under the storage lock of the learning directory ({@link withStorageLock}), as the start of a recording does, so two starts never both take the last place, in one window or in two: the lock is held from the count until the header is written, so every other start is decided either before this folder exists or when its header does. No start is noted beside the lock. Under the lock the start reads the directory and the headers of the histories and writes one header and one empty journal, all on the local disk; it waits for nothing else.
    * @param input - The history's header without its version; its study id names the history's folder.
    * @returns The writer of the reserved history.
-   * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, and when the history's first files cannot be written; "Learning storage is locked …", naming the lock file, while another window holds the storage lock or a lock stays that cannot be judged: nothing was written then. Only a history the list shows counts ({@link listedHistoryCount}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
+   * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, when the study id already has a history, and when the history's first files cannot be written; "Learning storage is locked …", naming the lock file, while another window holds the storage lock or a lock stays that cannot be judged: nothing was written then. Only a history the list shows counts ({@link listedHistoryCount}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
    * @example const writer = await store.start(header)
    */
   async start(
@@ -135,7 +136,7 @@ export class NodeTestHistoryStore {
    * A folder without a header is shown by no list and would take a place of the saved study limit for good.
    * @param runDirectory - The history's folder; it must not exist yet.
    * @param headerBytes - The header as it is stored.
-   * @throws What making the folder throws (a folder that exists is left as it is), and what writing its files throws, after the folder was removed again.
+   * @throws "A Node test history already exists for this study." when the folder exists, which is left as it is; what else making the folder throws; and what writing its files throws, after the folder was removed again.
    * @example
    * await this.createHistoryFolder('/…/node-tests.v1/<study id>', Buffer.from(JSON.stringify(header)))
    */
@@ -143,7 +144,17 @@ export class NodeTestHistoryStore {
     runDirectory: string,
     headerBytes: Buffer,
   ): Promise<void> {
-    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE })
+    await mkdir(runDirectory, { mode: PRIVATE_DIRECTORY_MODE }).catch(
+      (error: unknown) => {
+        // A study id that already has a history is told as such: the file system's own text would name the path of the private storage.
+        if (systemErrorCode(error) === 'EEXIST')
+          throw new Error(
+            'A Node test history already exists for this study.',
+            { cause: error },
+          )
+        throw error
+      },
+    )
     try {
       await this.createHistoryFiles(runDirectory, headerBytes)
     } catch (error) {
