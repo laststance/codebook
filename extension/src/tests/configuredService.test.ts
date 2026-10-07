@@ -1314,12 +1314,12 @@ test('configured help tells an agent that only the learner removes a saved study
   )
 })
 
-// Cycle 0046 (row 314): red while neither help said that a start saves no document of the learner and that a cited source open in the editor with other text refuses the start before anything runs.
-test('the repository-browser help and the node-test help tell an agent that a start saves no document of the learner, that a cited source open in the editor with other text refuses the start, and what the learner and the agent do then', async (context) => {
+// Cycle 0046 (rows 314 and 322): red while neither help said that a start saves no document of the learner, that a cited source open in the editor with other text refuses the start before anything runs, and that it ends a run that is already going at its next stop.
+test('the repository-browser help and the node-test help tell an agent that a start saves no document of the learner, that a cited source open in the editor with other text refuses the start and ends a run that is already going, and what the learner and the agent do then', async (context) => {
   // Arrange
   const { service } = await configuredServiceHarness(context)
   const sentence =
-    'Codebook starts its debuggers without saving a document of the learner, and a start is refused with SOURCE_CHANGED, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with text that differs from the text the article cites (a document that is only marked as modified and holds the cited text refuses nothing): the message names the file, so ask the learner to save it, then read the source again and publish the article again, or to revert it, and start a new run.'
+    'Codebook starts its debuggers without saving a document of the learner, and a start is refused with SOURCE_CHANGED, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with text that differs from the text the article cites, and a run that is already going ends with it at its next stop at the latest (a document that is only marked as modified and holds the cited text refuses and ends nothing): the message names the file, so ask the learner to save it, then read the source again and publish the article again, or to revert it, and start a new run.'
   // Act
   const recoveries: string[] = []
   for (const uri of [
