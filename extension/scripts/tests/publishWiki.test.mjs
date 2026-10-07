@@ -2563,6 +2563,174 @@ for (const [label, content, error] of [
   })
 }
 
+// Value: protects=the rule that a page handed in as an article holds no document, form, script or authored SVG, which the publisher checks on the raw text of the page on purpose; fails_when=the check starts to skip comments or attribute values, so that a place it takes for a comment where a browser reads none could hide a real element from it, or the rule changes unnoticed in the other direction; why_new=Cycle 0046 row 192 (the rule was decided and is stated at the check; this pins it); seam=none
+for (const [place, content, sentence] of [
+  [
+    'a comment that shows a script',
+    '<h2 id="flow">Source flow</h2><!-- <script>track()</script> -->',
+    'Wiki page index.html must contain article sections, not a document, form or script.',
+  ],
+  [
+    'an attribute value that shows a form',
+    '<h2 id="flow">Source flow</h2><p title="put it into a <form> element">Where the question goes.</p>',
+    'Wiki page index.html must contain article sections, not a document, form or script.',
+  ],
+  [
+    'a comment that shows authored SVG',
+    '<h2 id="flow">Source flow</h2><!-- <svg><text>An old graph</text></svg> -->',
+    'Wiki page index.html must use diagram records and figure slots instead of authored SVG.',
+  ],
+])
+  test(`a page with ${place} is refused like a page that holds the element: the publisher reads the page as raw text`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-raw-text-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a page that writes about such elements in an escaped code example, as the bundled skill asks for source code; fails_when=the raw-text check takes escaped text for a tag, so an article about a form or a script can no longer be published; why_new=Cycle 0046 row 192; seam=none
+test('a page that shows a form, a script and authored SVG as escaped text is published with the text as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-escaped-text-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><pre><code>&lt;form&gt;&lt;script&gt;send()&lt;/script&gt;&lt;/form&gt;&lt;svg&gt;&lt;/svg&gt;</code></pre>'
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<h2 id="flow">Source flow</h2><pre><code>&lt;form&gt;&lt;script&gt;send()&lt;/script&gt;&lt;/form&gt;&lt;svg&gt;&lt;/svg&gt;</code></pre>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the ids of a page after an attribute whose bare value holds "<!--", which a browser reads as a character of the tag; fails_when=the publisher takes that place for the start of a comment again, so every id after it is unseen: an outline anchor there is refused although the heading is in the page, and an id of the reader there is published a second time; why_new=Cycle 0046 row 193 (a start tag was read up to the next "<"); seam=none
+test('after a bare attribute value that holds <!-- the ids of the page are read as a browser reads them: an outline anchor is accepted and an id of the reader is renamed', async () => {
+  // Arrange: a paragraph whose title is the bare value <!--, then a heading that carries qa-form and one that carries flow; the outline names both.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-bare-value-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<p title=<!-- >A note</p><h2 id="qa-form">The form</h2><h3 id="flow">Flow</h3>'
+    manifest.pages[0].outline = [
+      { id: 'qa-form', label: 'The form' },
+      { id: 'flow', label: 'Flow' },
+    ]
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<p title=<!-- >A note</p><h2 id="page-qa-form">The form</h2><h3 id="flow">Flow</h3>',
+      ),
+    )
+    assert.ok(
+      html.includes(
+        '<ul class="outline"><li><a href="#page-qa-form">The form</a></li><li><a href="#flow">Flow</a></li></ul>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the ids a diagram generates on a page with such an attribute; fails_when=an element after a bare attribute value "<!--" that carries a generated diagram id is unseen and the page is published with the id twice; why_new=Cycle 0046 row 193; seam=none
+test('after a bare attribute value that holds <!-- an element that carries a generated diagram id is seen and the page is refused', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-diagram-bare-value-')),
+  )
+  try {
+    const manifest = await diagramInput(root)
+    manifest.pages[0].contentHtml +=
+      '<p title=<!-- >A note</p><p id="codebook-diagram-4-flow">Another note</p>'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      { message: 'Article IDs must not collide with generated diagram IDs.' },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page, whose tags and ids the publisher and a browser must read alike, and the reader's own form, rail and script after the article; fails_when=a page with an element whose content a browser reads as text (or keeps out of the document, as a template's) is published: the publisher reads tags in that content that are none, and one such element that is never closed takes everything after it; why_new=Cycle 0046 row 193; seam=none
+for (const element of [
+  '<textarea>Notes</textarea>',
+  '<xmp><b>shown as text</b></xmp>',
+  '<noembed>No plug-in</noembed>',
+  '<noframes>No frames</noframes>',
+  '<plaintext>',
+  '<noscript><p>No script</p></noscript>',
+  '<template><h3 id="hidden">Not in the page</h3></template>',
+])
+  test(`a page that holds ${element.slice(0, element.indexOf('>') + 1)} is refused like a page that holds a form or a script`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-text-element-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html must contain article sections, not a document, form or script.',
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
 // Value: protects=a page that explains the reader's own markup, for example a section about how diagrams are published; fails_when=the diagram renderer reads the page's text again, so a page that only shows a generated diagram id in an escaped code example or inside a comment is refused as if an element carried it; why_new=Cycle 0046 row 184 (the check looked for the text id="codebook-diagram-…" anywhere in the page's content); seam=none
 test('a page that only shows a generated diagram id in an escaped code example or inside a comment is published', async () => {
   // Arrange: the diagram "flow" generates the ids codebook-diagram-4-flow, …-title and …-arrow; the page shows two of them as text and none on an element.
@@ -2631,8 +2799,8 @@ for (const [form, element] of [
     }
   })
 
-// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot again, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only); seam=none
-test('reader refuses a slot inside a comment that never ends instead of generating the figure into the comment', async () => {
+// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only), and row 194, since which such a page is refused for its comment before any diagram is read; seam=none
+test('a slot inside a comment that never ends is not rendered into the comment: the page is refused for its comment', async () => {
   // Arrange: the page's only slot stands after the start of a comment that has no end.
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-open-comment-')),
@@ -2648,7 +2816,78 @@ test('reader refuses a slot inside a comment that never ends instead of generati
         projectRoot: root,
         outputDirectory: join(root, '.codebook/wiki'),
       }),
-      { message: 'Diagram figure slots must not be inside HTML comments.' },
+      {
+        message:
+          'Wiki page index.html has a comment that never ends; close it with -->.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page's question form, rail and script, which stand after the article; fails_when=a page whose content holds a comment that never ends is published: a browser reads the rest of the article and everything after it as comment, so the page has no question form, no rail and runs no script (observed in the DOM check's browser on the page as published before); why_new=Cycle 0046 row 194; seam=none
+for (const [form, comment] of [
+  ['has no end', '<!-- to do'],
+  ['has a space inside its end', '<!-- to do -- >'],
+  ['has another character inside its end', '<!-- to do --!->'],
+])
+  test(`a page whose comment ${form} is refused with the sentence that says how to close it`, async () => {
+    // Arrange: the comment stands after the page's last paragraph.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-endless-comment-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2><p>Explained from source.</p>${comment}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html has a comment that never ends; close it with -->.',
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a page with comments in every form a browser ends, and the headings after them; fails_when=the publisher takes a comment that ends with "--!>", or the comments "<!-->" and "<!--->", or a "<!--" inside an attribute value for a comment that runs on, so it refuses a page a browser reads whole, or no longer sees the anchors after such a place; why_new=Cycle 0046 row 194 (each form was run in the DOM check's browser); seam=none
+test('a page whose comments end is published in every form a browser takes for the end of a comment, and the anchors after each are read', async () => {
+  // Arrange: a comment that ends with -->, one that ends with --!>, the comments <!--> and <!--->, and a title that only shows the start of a comment; a heading follows each.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-closed-comments-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<!-- one --><h2 id="one">One</h2><!-- two --!><h2 id="two">Two</h2>' +
+      '<!--><h2 id="three">Three</h2><!---><h2 id="four">Four</h2>' +
+      '<p title="<!--">A title that shows the start of a comment.</p><h2 id="five">Five</h2>'
+    manifest.pages[0].contentHtml = content
+    manifest.pages[0].outline = ['one', 'two', 'three', 'four', 'five'].map(
+      (id) => ({ id, label: `Part ${id}` }),
+    )
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+    assert.ok(
+      html.includes(
+        '<ul class="outline"><li><a href="#one">Part one</a></li><li><a href="#two">Part two</a></li><li><a href="#three">Part three</a></li><li><a href="#four">Part four</a></li><li><a href="#five">Part five</a></li></ul>',
+      ),
     )
   } finally {
     await rm(root, { recursive: true, force: true })
