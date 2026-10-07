@@ -124,27 +124,30 @@ async function check(page, options, collected) {
         .join(','),
     )
   /**
-   * Presses the summary of a disclosure by keyboard and waits for its toggle event, at which the pane acts on the opened or closed disclosure.
+   * Presses the summary of a disclosure by keyboard and waits until the disclosure has changed its open state and told so with a toggle event, at which the pane acts on the opened or closed disclosure.
+   * A toggle event alone is no sign of the press: the browser tells a change of the open state later, so a render before the press (the pane closes the disclosure for another study) can still owe one. The helper therefore reads the state before the press and waits for the other state together with an event that reports it; its own handler runs after the pane's.
    * The wait is bounded: a disclosure that does not toggle rejects after five seconds with a sentence that names it, which ends the flow as one failed case, instead of holding the flow until the limit of its one browser call.
    */
   const toggleByKeyboard = async (disclosureId, key = 'Enter') => {
     const toggleWaitMs = 5_000
-    await page.evaluate((id) => {
-      window.disclosureToggled = false
-      document.getElementById(id).addEventListener(
-        'toggle',
-        () => {
-          window.disclosureToggled = true
-        },
-        { once: true },
-      )
+    const wasOpen = await page.evaluate((id) => {
+      const disclosure = document.getElementById(id)
+      window.disclosureToggledTo = undefined
+      disclosure.ontoggle = () => {
+        window.disclosureToggledTo = disclosure.open
+      }
+      return disclosure.open
     }, disclosureId)
     await page.locator(`#${disclosureId} > summary`).focus()
     await page.keyboard.press(key)
     await page
-      .waitForFunction(() => window.disclosureToggled, undefined, {
-        timeout: toggleWaitMs,
-      })
+      .waitForFunction(
+        ({ id, wasOpen }) =>
+          document.getElementById(id).open !== wasOpen &&
+          window.disclosureToggledTo === !wasOpen,
+        { id: disclosureId, wasOpen },
+        { timeout: toggleWaitMs },
+      )
       .catch((error) => {
         throw new Error(
           `The disclosure #${disclosureId} did not toggle within ${toggleWaitMs} ms of ${key} on its summary (${error.message})`,
@@ -161,6 +164,17 @@ async function check(page, options, collected) {
         focused.dataset.action ||
         `${focused.tagName.toLowerCase()}: ${focused.textContent.trim()}`
       )
+    })
+  /** Takes the focus from the pane the way the editor does while the learner works in another part of it: the document reports that it has none. */
+  const leavePane = () =>
+    page.evaluate(() => {
+      document.hasFocus = () => false
+    })
+  /** Gives the pane the focus back and tells it so with the window's focus event. */
+  const returnToPane = () =>
+    page.evaluate(() => {
+      delete document.hasFocus
+      window.dispatchEvent(new Event('focus'))
     })
   /** Reads one status region of the pane: its role, its text and whether it is rendered. `checkVisibility` is false when the region or an ancestor has the `hidden` attribute or `display:none`, and when a closed disclosure holds it; a region that is rendered exists for assistive technology before its first text. */
   const statusRegion = (id) =>
@@ -1401,6 +1415,26 @@ async function check(page, options, collected) {
           afterInspect.focusedIsInspect === true &&
           afterInspect.label === 'Debugger stop selected' &&
           stopRequestsAfter === stopRequestsBefore + 1,
+      })
+      // Arrange: the same stop's Inspect holds the focus, and the learner has left the pane for another part of the editor (row 172).
+      await publish({
+        ...nodeReader,
+        nodeHistoryPosition: { ...nodeStop, debuggerAvailable: false },
+      })
+      await nodeInspect.focus()
+      await leavePane()
+      // Act: the native session shows the stop, so the list is rendered again; later the learner returns to the pane.
+      await publish({ ...nodeReader, nodeHistoryPosition: nodeStop })
+      const nodeFocusWhileAway = await focusName()
+      await returnToPane()
+      const nodeFocusOnReturn = await focusName()
+      // Assert
+      cases.push({
+        name: 'when the Node event list is rendered again while the pane does not have the focus, the pane takes none, and the same stop’s control has it when the learner returns',
+        actual: { nodeFocusWhileAway, nodeFocusOnReturn },
+        passed:
+          nodeFocusWhileAway === 'body' &&
+          nodeFocusOnReturn === 'button: Debugger stop selected',
       })
       // Arrange: a Node playhead scrub that ends without a change event (Cycle 0044, 0031-U6).
       const nodeTimeline = {
@@ -3096,6 +3130,74 @@ async function check(page, options, collected) {
           JSON.stringify(panelStatusWithNotice) ===
             JSON.stringify(panelStatusBeforeNotice),
       })
+
+      // Arrange: the bottom panel during a replay, which shows the transport alone; no run is live and no study is shown (row 176).
+      await publish(panelReplay)
+      /** Reads the two status regions the bottom panel leaves out during a replay, the strip's height and whether the panel looks as it does without each of them. */
+      const leftOutDuringReplay = async () => ({
+        runtime: await statusRegion('runtime'),
+        saveState: await statusRegion('recording-save-state'),
+        stripHeight: await page
+          .locator('.live-strip')
+          .evaluate((strip) =>
+            Math.round(strip.getBoundingClientRect().height),
+          ),
+        looksWithoutStrip: await looksAsWithout('.live-strip'),
+        looksWithoutSaveState: await looksAsWithout('#recording-save-state'),
+      })
+      const replayAlone = await leftOutDuringReplay()
+      // Act: a run starts during the replay and the shown study's recording is saved; then the replay is left while the run goes on.
+      const runAndSavedStudy = {
+        liveState: 'running',
+        liveTitle: 'Repository operation',
+        study: {
+          terminal: true,
+          studyOutcome: 'demonstrated',
+          historyOutcome: 'saved',
+          finalOutcome: 'demonstrated',
+          recordingSave: { status: 'finalized', contextStatus: 'saved' },
+        },
+      }
+      await publish({ ...panelReplay, ...runAndSavedStudy })
+      const runStartedDuringReplay = await leftOutDuringReplay()
+      await publish({
+        ...options.message,
+        revision: revisionAt(8),
+        ...runAndSavedStudy,
+      })
+      const replayLeft = {
+        runtime: await statusRegion('runtime'),
+        saveState: await statusRegion('recording-save-state'),
+        stopShown: await page.locator('[data-action="stop"]').isVisible(),
+      }
+      // Assert
+      const emptyAndUnseen = {
+        runtime: emptyRegion('runtime'),
+        saveState: emptyRegion('recording-save-state'),
+        stripHeight: 0,
+        looksWithoutStrip: { moved: [], samePixels: true },
+        looksWithoutSaveState: { moved: [], samePixels: true },
+      }
+      cases.push({
+        name: 'in the bottom panel during a replay the live strip’s status and the recording’s save state are in the page, rendered and empty, and the panel looks as it does without them, also when a run starts and the recording is saved meanwhile; when the replay is left, the run’s state and the save state are their first texts',
+        actual: { replayAlone, runStartedDuringReplay, replayLeft },
+        passed:
+          JSON.stringify(replayAlone) === JSON.stringify(emptyAndUnseen) &&
+          JSON.stringify(runStartedDuringReplay) ===
+            JSON.stringify(emptyAndUnseen) &&
+          JSON.stringify(replayLeft) ===
+            JSON.stringify({
+              runtime: {
+                ...emptyRegion('runtime'),
+                text: 'Repository operation — running',
+              },
+              saveState: {
+                ...emptyRegion('recording-save-state'),
+                text: 'Recording saved.',
+              },
+              stopShown: true,
+            }),
+      })
     }
   }
   // The keyboard focus when a part of the pane leaves while it holds it (row 85): each case puts the focus on a control of that part, publishes the Study message under which the part leaves, and reads where the focus is; the same step with the focus on a control that stays must move nothing.
@@ -3788,18 +3890,25 @@ async function check(page, options, collected) {
       metadata: 'unavailable',
     })
   let savedRevision = 100
-  /** Publishes one Study message for the Saved studies cases; `chosen` is the study the reader shows. */
-  const library = (studies, chosen, extra = {}) =>
-    publish({
-      ...options.message,
-      revision: ++savedRevision,
-      studies,
-      model: {
-        ...options.message.model,
-        selection: { ...options.message.model.selection, studyId: chosen },
-      },
-      ...extra,
-    })
+  /** Builds one Study message for the Saved studies cases under the counter's revision; `chosen` is the study the reader shows. */
+  const libraryMessage = (studies, chosen, extra) => ({
+    ...options.message,
+    revision: savedRevision,
+    studies,
+    model: {
+      ...options.message.model,
+      selection: { ...options.message.model.selection, studyId: chosen },
+    },
+    ...extra,
+  })
+  /** Publishes one Study message for the Saved studies cases under a new revision, as the host does when it renders: it shows another study, or the Study workspace is open while Retry storage / refresh ends. */
+  const library = (studies, chosen, extra = {}) => {
+    savedRevision += 1
+    return publish(libraryMessage(studies, chosen, extra))
+  }
+  /** Publishes one Study message under the revision of the message before it, as the host does when it answers a pane's request (a removal's state, a study's files, a refusal) or reports its own progress: its revision changes only with a render, a navigation or a close, so an answer carries the revision the request was sent with. */
+  const libraryAnswer = (studies, chosen, extra = {}) =>
+    publish(libraryMessage(studies, chosen, extra))
   const removalControl = () =>
     page.evaluate(() => {
       const visible = (id) =>
@@ -3889,6 +3998,22 @@ async function check(page, options, collected) {
     ...removal,
     request: await lastRemovalRequest(),
   })
+  /** Opens "Remove by hand" by keyboard where the pane then asks the host for the chosen study's files, and waits until that request is sent, five seconds at most. A request that does not come is left to the case, which counts the requests and fails on its own comparison. */
+  const openRemoveByHandAndAwaitRequest = async () => {
+    const requestCount = () =>
+      window.sent.filter((message) => message.type === 'delete-study').length
+    const requestsBefore = await page.evaluate(requestCount)
+    await toggleByKeyboard('study-files')
+    await page
+      .waitForFunction(
+        (requestsBefore) =>
+          window.sent.filter((message) => message.type === 'delete-study')
+            .length > requestsBefore,
+        requestsBefore,
+        { timeout: 5_000 },
+      )
+      .catch(() => undefined)
+  }
   const deleteButton = page.getByRole('button', {
     name: 'Delete saved study…',
     exact: true,
@@ -4729,7 +4854,7 @@ async function check(page, options, collected) {
   // Act: the host shows a study, which asks for nothing; the learner opens Remove by hand by keyboard, and the host answers.
   await library([shownStudy, otherStudy], shownStudy.id, withoutTrash)
   const studyChosen = await removalControl()
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   const askedForFiles = await removalControl()
   const filesAnswer = await answering({
     status: 'refused',
@@ -4737,12 +4862,12 @@ async function check(page, options, collected) {
     text: listedSentence,
     files: studyFiles,
   })
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
     studyFiles: { [shownStudy.id]: studyFiles },
   })
-  await library([shownStudy, otherStudy], shownStudy.id, {
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, {
     ...withoutTrash,
     studyRemoval: filesAnswer,
     studyFiles: { [shownStudy.id]: studyFiles },
@@ -4764,7 +4889,7 @@ async function check(page, options, collected) {
       [otherStudy.id]: [otherStudyFile],
     },
   }
-  await library([shownStudy, otherStudy], shownStudy.id, bothListed)
+  await libraryAnswer([shownStudy, otherStudy], shownStudy.id, bothListed)
   const besideAnotherPanesAnswer = await removalControl()
   const removeByHandSummary = await page
     .locator('#study-files > summary')
@@ -4848,6 +4973,60 @@ async function check(page, options, collected) {
       otherChosen.removeByHand.open === false &&
       otherChosen.removeByHand.files.length === 0 &&
       otherChosen.deletes.length === askedForFiles.deletes.length,
+  })
+
+  // Arrange: Remove by hand is offered closed for the other study, whose file the host already lists; its note is a status region (row 175).
+  await library([shownStudy, otherStudy], otherStudy.id, bothListed)
+  /** Reads the note of Remove by hand as the page holds it: its text, whether it is rendered, and how many paths the list holds. */
+  const filesNote = () =>
+    page.evaluate(() => {
+      const note = document.getElementById('study-files-note')
+      return {
+        text: note.textContent,
+        isRendered: note.checkVisibility(),
+        paths: document.querySelectorAll('#study-files-list li').length,
+      }
+    })
+  const noteWhileClosed = await filesNote()
+  // The note is read once more at the toggle event that reports the opened disclosure, ahead of the pane's own handler: a capturing listener of the document runs before the listeners of the disclosure.
+  await page.evaluate(() => {
+    window.noteAtOpening = undefined
+    document.addEventListener(
+      'toggle',
+      (event) => {
+        if (
+          event.target.id !== 'study-files' ||
+          !event.target.open ||
+          window.noteAtOpening
+        )
+          return
+        const note = document.getElementById('study-files-note')
+        window.noteAtOpening = {
+          text: note.textContent,
+          isRendered: note.checkVisibility(),
+        }
+      },
+      { capture: true },
+    )
+  })
+  // Act: the learner opens the disclosure by keyboard and closes it again.
+  await toggleByKeyboard('study-files')
+  const noteAtOpening = await page.evaluate(() => window.noteAtOpening)
+  const noteWhileOpen = await filesNote()
+  await toggleByKeyboard('study-files')
+  const noteAfterClosing = await filesNote()
+  // Assert
+  cases.push({
+    name: 'the note of Remove by hand is empty while the disclosure is closed, also when the host already lists the study’s files, is rendered and still empty when the disclosure has opened, and gets its sentence then, as a change of a status region that exists; closing empties it again',
+    actual: { noteWhileClosed, noteAtOpening, noteWhileOpen, noteAfterClosing },
+    passed:
+      JSON.stringify(noteWhileClosed) ===
+        JSON.stringify({ text: '', isRendered: false, paths: 0 }) &&
+      JSON.stringify(noteAtOpening) ===
+        JSON.stringify({ text: '', isRendered: true }) &&
+      JSON.stringify(noteWhileOpen) ===
+        JSON.stringify({ text: listedSentence, isRendered: true, paths: 1 }) &&
+      JSON.stringify(noteAfterClosing) === JSON.stringify(noteWhileClosed),
   })
 
   // Arrange: the same window with the shown study's four files listed and Remove by hand open (row 27, DR-6).
@@ -4954,9 +5133,9 @@ async function check(page, options, collected) {
     emptiedStudy = savedStudy('window_run-empty10'),
     threeStudies = [shownStudy, thirdStudy, emptiedStudy]
   await library(threeStudies, emptiedStudy.id, withoutTrash)
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   // Act: the host answers with a list that holds no file.
-  await library(threeStudies, emptiedStudy.id, {
+  await libraryAnswer(threeStudies, emptiedStudy.id, {
     ...withoutTrash,
     studyRemoval: await answering({
       status: 'refused',
@@ -4971,7 +5150,7 @@ async function check(page, options, collected) {
   const refusalSentence =
     "Choose Overview or Live to leave Recording before removing this study's files by hand."
   await library(threeStudies, thirdStudy.id, withoutTrash)
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   const beforeRefusal = await removalControl()
   const refusedFiles = {
     ...withoutTrash,
@@ -4981,16 +5160,19 @@ async function check(page, options, collected) {
       text: refusalSentence,
     }),
   }
-  await library(threeStudies, thirdStudy.id, refusedFiles)
+  await libraryAnswer(threeStudies, thirdStudy.id, refusedFiles)
   const filesRefused = await removalControl()
   // A later Study message that still carries the refusal asks nothing again.
-  await library(threeStudies, thirdStudy.id, { ...refusedFiles, busy: true })
+  await libraryAnswer(threeStudies, thirdStudy.id, {
+    ...refusedFiles,
+    busy: true,
+  })
   const afterRefusalStayed = await removalControl()
   // The learner closes the disclosure and opens it again: that asks the host once more, and this time it lists the files.
   await toggleByKeyboard('study-files')
-  await toggleByKeyboard('study-files')
+  await openRemoveByHandAndAwaitRequest()
   const askedAgain = await removalControl()
-  await library(threeStudies, thirdStudy.id, {
+  await libraryAnswer(threeStudies, thirdStudy.id, {
     ...withoutTrash,
     studyRemoval: await answering({
       status: 'refused',
@@ -5088,19 +5270,27 @@ async function check(page, options, collected) {
       tag: document.activeElement.tagName,
       within: document.activeElement.parentElement?.id,
     }))
-  await library(threeStudies, thirdStudy.id, {
+  await library(threeStudies, thirdStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  await libraryAnswer(threeStudies, thirdStudy.id, {
     ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: thirdStudy.id,
+      text: listedSentence,
+      files: threeListedFiles,
+    }),
     studyFiles: { [thirdStudy.id]: threeListedFiles },
   })
-  await toggleByKeyboard('study-files')
   const threeListed = await removalControl()
   await page.locator('#study-files [data-action="retry"]').focus()
   // Act: the learner, who removed two of the files by hand, presses Retry storage / refresh; the host forgets its lists and names no files for the study, and then answers the pane's new request.
   await page.keyboard.press('Enter')
-  await library(threeStudies, thirdStudy.id, withoutTrash)
+  // The Study workspace is closed (Saved studies stand in the bottom panel), so Retry ends without a render and its message carries the revision before it.
+  await libraryAnswer(threeStudies, thirdStudy.id, withoutTrash)
   const askedAfterRetry = await removalControl(),
     focusWhileListing = await focusInRemoveByHand()
-  await library(threeStudies, thirdStudy.id, {
+  await libraryAnswer(threeStudies, thirdStudy.id, {
     ...withoutTrash,
     studyRemoval: await answering({
       status: 'refused',
@@ -5123,7 +5313,7 @@ async function check(page, options, collected) {
       focusAfterAnswer,
     },
     passed:
-      // The host already held the list when the disclosure was opened: nothing was asked.
+      // The pane asked for the list under the revision every later message of this case carries.
       threeListed.removeByHand.open &&
       JSON.stringify(threeListed.removeByHand.files) ===
         JSON.stringify(threeListedFiles) &&
@@ -5147,6 +5337,208 @@ async function check(page, options, collected) {
       oneLeft.deletes.length === askedAfterRetry.deletes.length &&
       JSON.stringify(focusAfterAnswer) ===
         JSON.stringify({ tag: 'SUMMARY', within: 'study-files' }),
+  })
+
+  // Arrange: the parts of Saved studies that name the place of a lost focus themselves, each with the pane out of focus: the learner works in another part of the editor while the host's message arrives (row 172).
+  await library(threeStudies, thirdStudy.id, thirdListed)
+  await copyButton.focus()
+  await leavePane()
+  // Act: another pane makes the host show another study, so Remove by hand closes under the focused button; later the learner returns.
+  await library(threeStudies, shownStudy.id, thirdListed)
+  const disclosureFocusWhileAway = await focusName()
+  await returnToPane()
+  const disclosureFocusOnReturn = await focusName()
+  // The repair button leaves under the focus because the host repaired the entry.
+  const libraryToRepair = [shownStudy, repairableStudy, legacyStudy]
+  await library(libraryToRepair, shownStudy.id)
+  await page.selectOption('#studies', repairableStudy.id)
+  await page.locator('#repair-study').focus()
+  await leavePane()
+  await library(
+    [
+      shownStudy,
+      { ...repairableStudy, metadata: 'validated', reason: undefined },
+      legacyStudy,
+    ],
+    shownStudy.id,
+  )
+  const repairFocusWhileAway = await focusName()
+  await returnToPane()
+  const repairFocusOnReturn = await focusName()
+  // An observed moment's control is rendered again because another moment was observed.
+  const observedMoment = (id) => ({
+    id,
+    itemId: options.message.model.selection.itemId,
+    title: 'Observed stop',
+    at: '2026-09-27T00:00:00.000Z',
+  })
+  await library([shownStudy], shownStudy.id, {
+    moments: [observedMoment('observed-1')],
+  })
+  await page.locator('#moments button').first().focus()
+  await leavePane()
+  await library([shownStudy], shownStudy.id, {
+    moments: [observedMoment('observed-1'), observedMoment('observed-2')],
+  })
+  const momentFocusWhileAway = await focusName()
+  await returnToPane()
+  const momentFocusOnReturn = await page.evaluate(
+    () => document.activeElement.dataset.observation,
+  )
+  // Assert
+  cases.push({
+    name: 'while the pane does not have the focus, a part of it that leaves or is rendered again under the control the learner left takes no focus, and when the learner returns the focus is where that part puts it: on the summary of Remove by hand, on the Saved studies list after a repair, on the same item of the observed moments',
+    actual: {
+      disclosureFocusWhileAway,
+      disclosureFocusOnReturn,
+      repairFocusWhileAway,
+      repairFocusOnReturn,
+      momentFocusWhileAway,
+      momentFocusOnReturn,
+    },
+    passed:
+      disclosureFocusWhileAway === 'body' &&
+      disclosureFocusOnReturn === 'summary: Remove by hand' &&
+      repairFocusWhileAway === 'body' &&
+      repairFocusOnReturn === 'studies' &&
+      momentFocusWhileAway === 'body' &&
+      momentFocusOnReturn === 'observed-1',
+  })
+
+  // Arrange: Remove by hand opened for the other study, whose files the host has not listed; every message until the host renders again carries the revision the pane asked under (row 168).
+  const othersFiles = { [shownStudy.id]: studyFiles },
+    studiesWithOther = [shownStudy, otherStudy, thirdStudy]
+  /** The state of the host's removal that answers another pane's request for the shown study's files. */
+  const anotherPanesAnswer = (request) => ({
+    status: 'refused',
+    studyId: shownStudy.id,
+    text: listedSentence,
+    files: studyFiles,
+    request,
+  })
+  await library(studiesWithOther, otherStudy.id, withoutTrash)
+  await openRemoveByHandAndAwaitRequest()
+  const askedFirst = await removalControl()
+  // Act: a run of this study turns out not to have stopped, so the disclosure leaves beside that reason, and the host's refusal of the request arrives while the disclosure is not offered; then the run has stopped and another pane's answer stands in the message.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    unstoppedStudyId: otherStudy.id,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: "Stop the run before removing its study's files by hand.",
+    }),
+  })
+  const besideReason = await removalControl()
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(1),
+    studyFiles: othersFiles,
+  })
+  // The learner opens the disclosure that is offered again: the request before is nobody's any more, so the pane asks anew.
+  await openRemoveByHandAndAwaitRequest()
+  const answerOwed = await removalControl()
+  // The host answers another pane's request first.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(1),
+    studyFiles: othersFiles,
+  })
+  const besideForeignAnswer = await removalControl()
+  // The host refuses this pane's request.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: refusalSentence,
+    }),
+    studyFiles: othersFiles,
+  })
+  const ownRefusal = await removalControl()
+  // The answer to another pane's next request takes the refusal's place in the host's message.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const refusalAfterForeignAnswer = await removalControl()
+  // The learner presses Retry storage / refresh beside the refusal, and the host reports that it is working.
+  await page.locator('#study-files [data-action="retry"]').focus()
+  await page.keyboard.press('Enter')
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    saving: true,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const askedAtRetry = await removalControl()
+  // The host renders again before it answers: it refuses a request of a revision it has left, and answers nothing.
+  await library(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: anotherPanesAnswer(2),
+    studyFiles: othersFiles,
+  })
+  const askedUnderNewRevision = await removalControl()
+  // The host lists the study's file for that request.
+  await libraryAnswer(studiesWithOther, otherStudy.id, {
+    ...withoutTrash,
+    studyRemoval: await answering({
+      status: 'refused',
+      studyId: otherStudy.id,
+      text: listedSentence,
+      files: [otherStudyFile],
+    }),
+    studyFiles: { ...othersFiles, [otherStudy.id]: [otherStudyFile] },
+  })
+  const listedAtLast = await removalControl()
+  // Assert
+  const requests = (control) => control.deletes.length
+  cases.push({
+    name: 'Remove by hand knows the host’s answer to its request by the request’s number, under a revision the host does not change: another pane’s answer is not taken for it and nothing is asked twice while it is owed; a refusal stays when another pane’s answer takes its place in the message; Retry storage / refresh beside a refusal asks again; a disclosure that left beside a reason asks anew when it is opened again; and a request the host left behind with a new revision is sent again',
+    actual: {
+      askedFirst,
+      besideReason,
+      answerOwed,
+      besideForeignAnswer,
+      ownRefusal,
+      refusalAfterForeignAnswer,
+      askedAtRetry,
+      askedUnderNewRevision,
+      listedAtLast,
+    },
+    passed:
+      // A disclosure that left beside a reason and is offered again asks anew when it is opened, under the same revision.
+      besideReason.removeByHand === null &&
+      requests(besideReason) === requests(askedFirst) &&
+      requests(answerOwed) === requests(askedFirst) + 1 &&
+      answerOwed.removeByHand.note === "Listing this study's files…" &&
+      // Another pane's answer under the same revision: still listing, nothing asked again.
+      besideForeignAnswer.removeByHand.note === "Listing this study's files…" &&
+      !besideForeignAnswer.removeByHand.retryVisible &&
+      requests(besideForeignAnswer) === requests(answerOwed) &&
+      // The answer with this pane's number under the same revision is shown.
+      ownRefusal.removeByHand.note === refusalSentence &&
+      ownRefusal.removeByHand.noteIsError &&
+      ownRefusal.removeByHand.retryVisible &&
+      requests(ownRefusal) === requests(answerOwed) &&
+      // It stays, and the pane does not ask again, when the host's message no longer carries it.
+      refusalAfterForeignAnswer.removeByHand.note === refusalSentence &&
+      refusalAfterForeignAnswer.removeByHand.retryVisible &&
+      requests(refusalAfterForeignAnswer) === requests(answerOwed) &&
+      // Retry storage / refresh beside it: one new request with the next message, and the disclosure lists again.
+      requests(askedAtRetry) === requests(answerOwed) + 1 &&
+      askedAtRetry.deletes.at(-1)[0] === otherStudy.id &&
+      askedAtRetry.removeByHand.note === "Listing this study's files…" &&
+      !askedAtRetry.removeByHand.noteIsError &&
+      // A new revision without an answer: the request is sent again, once.
+      requests(askedUnderNewRevision) === requests(answerOwed) + 2 &&
+      askedUnderNewRevision.removeByHand.note ===
+        "Listing this study's files…" &&
+      listedAtLast.removeByHand.note === listedSentence &&
+      JSON.stringify(listedAtLast.removeByHand.files) ===
+        JSON.stringify([otherStudyFile]) &&
+      requests(listedAtLast) === requests(askedUnderNewRevision),
   })
 
   // Arrange: a window without a Trash and the states in which a study cannot be removed (row 59, ND-1).
@@ -5300,6 +5692,65 @@ async function check(page, options, collected) {
           shown.repairBackground === shown.playBackground &&
           shown.repairBackground !== shown.deleteBackground,
       ),
+  })
+
+  // Arrange: what is left of a study without its archive, as the library lists it since it lists such rests: an entry that cannot be opened and has no reason, because nothing Retry storage does brings the archive back (row 181).
+  const restOfStudy = savedStudy('window_run-rest0011', {
+    profile: undefined,
+    format: 'archive-missing',
+    outcome: 'Archive missing; remaining files kept',
+    metadata: 'unavailable',
+  })
+  await library([shownStudy, restOfStudy], shownStudy.id)
+  const opensBeforeRest = (await removalControl()).histories
+  // Act: the learner chooses the rest in a window with a Trash and presses the delete button by keyboard; then the same entry in a window without a Trash, where the learner opens Remove by hand.
+  await page.selectOption('#studies', restOfStudy.id)
+  const restWithTrash = await removalControl()
+  await deleteButton.focus()
+  await page.keyboard.press('Enter')
+  const askedToDeleteRest = await removalControl()
+  await library([shownStudy, restOfStudy], shownStudy.id, withoutTrash)
+  const restWithoutTrash = await removalControl()
+  await openRemoveByHandAndAwaitRequest()
+  const askedForRestFiles = await removalControl()
+  // Assert
+  cases.push({
+    name: 'what is left of a saved study without its archive is listed as an entry that cannot be opened: it is chosen without asking the host to open it, its note says that it can still be deleted where the window has a Trash and that it can only be removed by hand where it has none, no repair is offered, and the delete button or Remove by hand asks the host for that entry',
+    actual: {
+      restWithTrash,
+      askedToDeleteRest,
+      restWithoutTrash,
+      askedForRestFiles,
+    },
+    passed:
+      restWithTrash.chosen === restOfStudy.id &&
+      restWithTrash.shownText.includes(
+        ' · Archive missing; remaining files kept · rest0011',
+      ) &&
+      restWithTrash.histories === opensBeforeRest &&
+      restWithTrash.note ===
+        'This saved study cannot be opened. It can still be deleted.' &&
+      restWithTrash.repairNote === null &&
+      !restWithTrash.repairVisible &&
+      restWithTrash.buttonVisible &&
+      restWithTrash.ariaDisabled === null &&
+      restWithTrash.reason === null &&
+      askedToDeleteRest.deletes.length === restWithTrash.deletes.length + 1 &&
+      askedToDeleteRest.deletes.at(-1)[0] === restOfStudy.id &&
+      // Without a Trash the same entry stays chosen and offers the removal by hand in place of the delete button.
+      restWithoutTrash.chosen === restOfStudy.id &&
+      restWithoutTrash.note ===
+        'This saved study cannot be opened. This window has no Trash, so it can only be removed by hand.' &&
+      !restWithoutTrash.repairVisible &&
+      !restWithoutTrash.buttonVisible &&
+      restWithoutTrash.reason === null &&
+      restWithoutTrash.removeByHand.open === false &&
+      restWithoutTrash.removeByHand.summary === 'Remove by hand' &&
+      askedForRestFiles.deletes.length ===
+        askedToDeleteRest.deletes.length + 1 &&
+      askedForRestFiles.deletes.at(-1)[0] === restOfStudy.id &&
+      askedForRestFiles.removeByHand.note === "Listing this study's files…" &&
+      askedForRestFiles.histories === opensBeforeRest,
   })
 
   // Retry storage is offered for what it can answer: not for a layout notice or a refused control alone.
