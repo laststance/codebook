@@ -1,4 +1,4 @@
-import { MS_PER_MINUTE } from '../constants'
+import { MS_PER_MINUTE, WIKI_REFUSED_STEP_ADVICE } from '../constants'
 
 import {
   NEW_CHAT_PLACE,
@@ -20,7 +20,7 @@ const WATCHED_REQUEST_PLACES: Record<WikiChatSession, string> = {
  *
  * @param session - Where the request was sent: a chat session of Codebook's own, or the one the learner had open.
  * @param timeoutMs - The bound of the watch, named in whole minutes.
- * @returns The title: that Codebook watches for the update and where the request is; when the watch ends, and that Cancel stops the watch and not the chat; and to press Cancel after a refused step.
+ * @returns The title: that Codebook watches for the update and where the request is; when the watch ends, and that Cancel stops the watch and not the chat; and to press Cancel after a refused step, in the words the page's running line gives the same advice with ({@link WIKI_REFUSED_STEP_ADVICE}).
  * @example
  * describeWikiChatWatch('own', 900_000)
  * // => 'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.'
@@ -32,5 +32,5 @@ export function describeWikiChatWatch(
   timeoutMs: number,
 ): string {
   const minutes = Math.round(timeoutMs / MS_PER_MINUTE)
-  return `Watching for the LLM Wiki update ${WATCHED_REQUEST_PLACES[session]}. The watch ends when the new Wiki is published, after ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.`
+  return `Watching for the LLM Wiki update ${WATCHED_REQUEST_PLACES[session]}. The watch ends when the new Wiki is published, after ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}, or with Cancel, which stops watching, not the chat. ${WIKI_REFUSED_STEP_ADVICE}.`
 }

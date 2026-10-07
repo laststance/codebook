@@ -18,6 +18,7 @@ const wording = {
     '/codebook Recover the unfinished LLM Wiki publish for this project',
   outsideOutputApprovalsNote:
     'This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+  refusedStepAdvice: 'If you refuse a step of the chat, press Cancel',
   freshnessLabelPlace: 'above',
 }
 
@@ -35,6 +36,50 @@ test('an idle Wiki shows no update sentence', () => {
 
   // Assert
   assert.equal(described, undefined)
+})
+
+// Value: protects=the learner who started an update from the browser, stays on the page and refuses a step of the chat in the editor; fails_when=the running line says only to approve the steps, so nothing on the page tells them that Codebook goes on watching until Cancel is pressed in the editor's notification; why_new=Cycle 0046 row 223; seam=none
+test('the running line of a VS Code update ends with what to do after a refused step, in the advice it is handed and with the watch’s own bound, also once a candidate is staged; Cursor’s line has no such sentence', () => {
+  // Arrange: a watch of 10 minutes, so the bound in the sentence is seen to be the run's.
+  const running = {
+    state: 'running',
+    startedAt: '2026-10-03T12:03:00.000Z',
+    timeoutMs: 600_000,
+    ...place,
+  } as const
+  const editorWording = {
+    ...wording,
+    formatTime: (): string => '21:03',
+    refusedStepAdvice: 'After a refused step press Cancel',
+  }
+
+  // Act
+  const requested = describeWikiUpdate(
+    { ...running, host: 'vscode', candidateStaged: false },
+    editorWording,
+  )
+  const staged = describeWikiUpdate(
+    { ...running, host: 'vscode', candidateStaged: true },
+    editorWording,
+  )
+  const inCursor = describeWikiUpdate(
+    { ...running, host: 'cursor', candidateStaged: false },
+    editorWording,
+  )
+
+  // Assert
+  assert.equal(
+    sentenceOf(requested),
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 10 minutes.',
+  )
+  assert.equal(
+    sentenceOf(staged),
+    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 10 minutes. This site stays readable. After a refused step press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 10 minutes.',
+  )
+  assert.equal(
+    sentenceOf(inCursor),
+    'Updating LLM Wiki… Cursor Agent started at 21:03 and may take up to 10 minutes. Cancel it from the notification in Cursor. This site stays readable.',
+  )
 })
 
 test('a running VS Code update sends the learner to the chat and names the 15 minute watch', () => {
@@ -57,7 +102,7 @@ test('a running VS Code update sends the learner to the chat and names the 15 mi
   // Assert
   assert.deepEqual(described, {
     lead: 'Updating LLM Wiki…',
-    rest: ' The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable.',
+    rest: ' The request went to the VS Code chat at 21:03. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
     detail: [],
     output: 'Output: .codebook/wiki',
     offerReload: false,
@@ -82,7 +127,7 @@ test('a running update whose agent has staged a candidate says a new site is bei
   // Assert
   assert.equal(
     sentenceOf(inVsCode),
-    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 15 minutes. This site stays readable.',
+    'Updating LLM Wiki… The VS Code chat is preparing a new site (request sent 21:03). Approve the steps it asks for. Codebook watches for the publish for up to 15 minutes. This site stays readable. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
   assert.equal(
     sentenceOf(inCursor),
@@ -841,6 +886,6 @@ test('the running line of a VS Code update whose output lies outside the project
   // Assert
   assert.equal(
     sentenceOf(described),
-    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none.',
+    'Updating LLM Wiki… The request went to the VS Code chat at 21:10. Follow it there and approve the steps it asks for. Codebook watches for the new site for up to 15 minutes. This site stays readable. This Wiki’s output lies outside the project, so the chat will ask to approve each step there; an output inside the project (codebook.wikiOutputDirectory) needs none. If you refuse a step of the chat, press Cancel in the editor’s notification; otherwise Codebook keeps watching for the whole 15 minutes.',
   )
 })
