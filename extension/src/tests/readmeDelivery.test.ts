@@ -444,11 +444,12 @@ test('the packaged README quotes the two-line title of the notification that wat
     "The editor shows the Chat view there too by default, so the title is kept to two lines: the buttons of a step the chat asks you to approve then stay free. The chat's Stop button and the bottom of its input can still lie under the notification; that placement is the editor's.",
     'Hide the notification when it is in the way: the watch goes on, and its Cancel is in the notification list behind the bell in the status bar.',
     "The title says the same wherever the request went (a new chat, the chat the Chat view restored, or the chat that was open); where it went is said by the confirmation and above, and when the watch ends and what to do after a refused step by the page's running line and the table.",
+    "Where the Wiki's output folder lies outside the project, the chat asks you to approve each step there (an output inside the project, `codebook.wikiOutputDirectory`, needs none); the confirmation and the page's running line say so, the notification does not.",
     'The command starts at once and asks nothing: its request goes into a new chat in the same way (into the chat the Chat view restores, if that view opens only now) and replaces a draft in an empty chat in the same way; the Chat view shows the chat with the request. When the watch ends and what to do after you refused a step of the chat are in the row **Updating LLM Wiki…** below.',
   ])
 
   // Assert: the README holds each sentence, and the title it quotes is the editor's.
-  assert.deepEqual(delivered, [true, true, true, true, true])
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
   assert.equal(
     WIKI_CHAT_WATCH_TITLE,
     'Watching the editor chat for the LLM Wiki update. Cancel stops watching, not the chat.',
