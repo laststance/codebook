@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { deployCursorSkill } from '../cursorSkillDeployment'
 import {
   captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
@@ -491,4 +492,242 @@ test('restoring chat setup first resolves an interrupted catalog retirement', as
   )
   await assert.rejects(lstat(configPath), { code: 'ENOENT' })
   assert.equal(await readFile(retiredPath, 'utf8'), '{"mcpServers":{}}\n')
+})
+
+/**
+ * Says in one text what a call of the Cursor MCP catalog ended with, so a test compares one value.
+ * @returns The answer as JSON text, or the sentence of the refusal.
+ */
+async function answerOrRefusalOf(calling: Promise<unknown>): Promise<string> {
+  return calling.then(
+    (answer) => JSON.stringify(answer),
+    (error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+  )
+}
+
+// Value: protects=a learner whose ~/.cursor is a link, at the setup's refresh of the Cursor MCP config and at the removal's two steps; fails_when=the refusal reads "Cursor MCP directory is not a regular directory; Codebook left its settings unchanged." and names neither the folder nor a step, or names the setup to a learner who ran the removal, or the step does not end in a created and a retired config; why_new=Cycle 0046 row 277; seam=none, the real link
+test('a link at Cursor’s settings folder is refused by the setup’s refresh and by both steps of the removal with a sentence that names the folder, says what to do and names the command that was run: after the learner puts the folder in the link’s place, the refresh creates the config and the removal retires it', async (context) => {
+  // Arrange: Cursor's settings folder is kept elsewhere and a link stands in its place.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    cursorPath = join(directory, 'home', '.cursor'),
+    keptCursorPath = join(directory, 'home', 'dotfiles-cursor')
+  await mkdir(keptCursorPath, { recursive: true })
+  await symlink(keptCursorPath, cursorPath)
+
+  // Act
+  const refusals = {
+    refresh: await answerOrRefusalOf(
+      refreshCursorMcpCatalog(storageRoot, cursorPath),
+    ),
+    firstStepOfTheRemoval: await answerOrRefusalOf(
+      captureOwnedCursorMcpCatalogGeneration(
+        storageRoot,
+        cursorPath,
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+    secondStepOfTheRemoval: await answerOrRefusalOf(
+      removeOwnedCursorMcpCatalog(
+        storageRoot,
+        cursorPath,
+        undefined,
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+  }
+  const foldersBehindTheLinkAfterTheRefusals = await readdir(keptCursorPath)
+  // The sentences are followed to the letter: the folder the link points to takes the link's place.
+  await unlink(cursorPath)
+  await rename(keptCursorPath, cursorPath)
+  const refreshId = await refreshCursorMcpCatalog(storageRoot, cursorPath)
+  const configAfterTheRefresh = await readFile(
+    join(cursorPath, 'mcp.json'),
+    'utf8',
+  )
+  const removal = await answerOrRefusalOf(
+    removeOwnedCursorMcpCatalog(
+      storageRoot,
+      cursorPath,
+      refreshId,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      foldersBehindTheLinkAfterTheRefusals,
+      configAfterTheRefresh,
+      removal,
+      cursorFolderAfterTheRemoval: await readdir(cursorPath),
+    },
+    {
+      refusals: {
+        refresh: `Cursor MCP directory is not a regular directory: ${cursorPath}. Codebook left its settings unchanged. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.`,
+        firstStepOfTheRemoval: `Cursor MCP directory is not a regular directory: ${cursorPath}. Codebook left its settings unchanged. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+        secondStepOfTheRemoval: `Cursor MCP directory is not a regular directory: ${cursorPath}. Codebook left its settings unchanged. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      foldersBehindTheLinkAfterTheRefusals: [],
+      configAfterTheRefresh: '{"mcpServers":{}}\n',
+      removal: '"removed"',
+      cursorFolderAfterTheRemoval: [],
+    },
+  )
+})
+
+// Value: protects=the learner who removes a refused link at ~/.cursor instead, or who has a file of that name and renames it; fails_when=the step the refusal names does not end in a finished removal and a finished setup: the removal refuses the missing folder, or the setup, which makes the folder with the skill before it refreshes the config, does not create the config; or the refusal tells the learner to delete their file; why_new=Cycle 0046 row 277: each step a sentence names is followed to a finished command; seam=none, the real link and file, with the skill's setup before the refresh as the setup command runs them
+test('after the learner removes a link at Cursor’s settings folder, or renames a file that stands there as its refusal says, a removal run again has nothing to retire, and a setup run again makes the folder and its refresh creates the config', async (context) => {
+  // Arrange: an installed extension, one home whose ~/.cursor is a link and one where a note of the learner stands at that path.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const extensionPath = join(directory, 'extension')
+  await mkdir(join(extensionPath, 'skills', 'codebook'), { recursive: true })
+  await writeFile(
+    join(extensionPath, 'skills', 'codebook', 'SKILL.md'),
+    '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n',
+  )
+  const homeWithLink = join(directory, 'home-with-link'),
+    homeWithFile = join(directory, 'home-with-file')
+  await mkdir(join(homeWithLink, 'dotfiles-cursor'), { recursive: true })
+  await symlink(
+    join(homeWithLink, 'dotfiles-cursor'),
+    join(homeWithLink, '.cursor'),
+  )
+  await mkdir(homeWithFile)
+  await writeFile(join(homeWithFile, '.cursor'), 'A note of the learner.\n')
+
+  // Act
+  const refusalOfTheFile = await answerOrRefusalOf(
+    refreshCursorMcpCatalog(
+      join(homeWithFile, 'storage'),
+      join(homeWithFile, '.cursor'),
+    ),
+  )
+  // The sentences are followed to the letter: the link is removed, the file gets another name.
+  await unlink(join(homeWithLink, '.cursor'))
+  await rename(join(homeWithFile, '.cursor'), join(homeWithFile, 'cursor-note'))
+  const removals = {
+    afterTheLinkWasRemoved: await answerOrRefusalOf(
+      captureOwnedCursorMcpCatalogGeneration(
+        join(homeWithLink, 'storage'),
+        join(homeWithLink, '.cursor'),
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+    afterTheFileWasRenamed: await answerOrRefusalOf(
+      captureOwnedCursorMcpCatalogGeneration(
+        join(homeWithFile, 'storage'),
+        join(homeWithFile, '.cursor'),
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+  }
+  // The setup command installs the skill first, which makes the folder, and refreshes the config after it.
+  await deployCursorSkill(
+    extensionPath,
+    join(homeWithLink, 'storage'),
+    homeWithLink,
+  )
+  await refreshCursorMcpCatalog(
+    join(homeWithLink, 'storage'),
+    join(homeWithLink, '.cursor'),
+  )
+  await deployCursorSkill(
+    extensionPath,
+    join(homeWithFile, 'storage'),
+    homeWithFile,
+  )
+  await refreshCursorMcpCatalog(
+    join(homeWithFile, 'storage'),
+    join(homeWithFile, '.cursor'),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusalOfTheFile,
+      removals,
+      configs: [
+        await readFile(join(homeWithLink, '.cursor', 'mcp.json'), 'utf8'),
+        await readFile(join(homeWithFile, '.cursor', 'mcp.json'), 'utf8'),
+      ],
+      folderTheLinkPointedTo: await readdir(
+        join(homeWithLink, 'dotfiles-cursor'),
+      ),
+      note: await readFile(join(homeWithFile, 'cursor-note'), 'utf8'),
+    },
+    {
+      refusalOfTheFile: `Cursor MCP directory is not a regular directory: ${join(homeWithFile, '.cursor')}. Codebook left its settings unchanged. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+      removals: {
+        afterTheLinkWasRemoved: '{"unowned":"not-owned"}',
+        afterTheFileWasRenamed: '{"unowned":"not-owned"}',
+      },
+      configs: ['{"mcpServers":{}}\n', '{"mcpServers":{}}\n'],
+      folderTheLinkPointedTo: [],
+      note: 'A note of the learner.\n',
+    },
+  )
+})
+
+// Value: protects=a learner whose ~/.cursor is taken away between the setup's skill step and its refresh of the config, or between the two steps of a removal; fails_when=the refusal is the file system's own text ("ENOENT: no such file or directory, lstat …"), which names no cause and no step; why_new=Cycle 0046 row 277, found beside it in the check the row changes; seam=none, a home without the folder
+test('a refresh and a removal of the Cursor MCP config that find no Cursor settings folder say that nothing stands at that path and name the command to run again, not the file system’s text: the setup run again creates the config, and the removal run again has nothing to retire', async (context) => {
+  // Arrange: an installed extension and a home without ~/.cursor.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const extensionPath = join(directory, 'extension'),
+    storageRoot = join(directory, 'storage'),
+    homeRoot = join(directory, 'home'),
+    cursorPath = join(homeRoot, '.cursor')
+  await mkdir(join(extensionPath, 'skills', 'codebook'), { recursive: true })
+  await writeFile(
+    join(extensionPath, 'skills', 'codebook', 'SKILL.md'),
+    '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n',
+  )
+  await mkdir(homeRoot)
+
+  // Act
+  const refusals = {
+    refresh: await answerOrRefusalOf(
+      refreshCursorMcpCatalog(storageRoot, cursorPath),
+    ),
+    secondStepOfTheRemoval: await answerOrRefusalOf(
+      removeOwnedCursorMcpCatalog(
+        storageRoot,
+        cursorPath,
+        undefined,
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+  }
+  // The sentences are followed to the letter: the removal's first step, and the setup's skill step before its refresh.
+  const removalRunAgain = await answerOrRefusalOf(
+    captureOwnedCursorMcpCatalogGeneration(
+      storageRoot,
+      cursorPath,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+  await deployCursorSkill(extensionPath, storageRoot, homeRoot)
+  await refreshCursorMcpCatalog(storageRoot, cursorPath)
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      removalRunAgain,
+      config: await readFile(join(cursorPath, 'mcp.json'), 'utf8'),
+    },
+    {
+      refusals: {
+        refresh: `Cursor MCP directory is not a regular directory: ${cursorPath}. Codebook left its settings unchanged. Nothing stands at that path. Run Codebook: Set Up AI Chat again.`,
+        secondStepOfTheRemoval: `Cursor MCP directory is not a regular directory: ${cursorPath}. Codebook left its settings unchanged. Nothing stands at that path. Run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      removalRunAgain: '{"unowned":"not-owned"}',
+      config: '{"mcpServers":{}}\n',
+    },
+  )
 })

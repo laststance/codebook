@@ -38,6 +38,11 @@ import { isSameFileId } from './utils/isSameFileId'
 import { openWithoutFollowing } from './utils/openWithoutFollowing'
 import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
 import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './utils/startOverBy'
+import {
+  PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
+  REMOVE_LINK_OR_RENAME_IT,
+  stepPastNoRealFolder,
+} from './utils/stepPastNoRealFolder'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
 
@@ -90,6 +95,19 @@ const SKILL_REPLACED_BEFORE_REMOVAL = `The Cursor skill was replaced after setup
 
 /** What removal answers for the installed skill file with other bytes than Codebook wrote. */
 const SKILL_EDITED_BEFORE_REMOVAL = `The Cursor skill was edited after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
+
+/** What removal answers while a setup's record stands in Codebook's storage: only a setup settles what that setup had staged or moved, so the sentence names the setup first and the removal, which the learner asked for, after it. */
+const SETUP_INTERRUPTED_BEFORE_REMOVAL = `Cursor skill setup is interrupted. Run ${SET_UP_AI_CHAT_COMMAND} to recover, then run ${REMOVE_MANAGED_CURSOR_SKILL_COMMAND} again.`
+
+/**
+ * Says how a setup finishes while a skill folder that Codebook has no receipt for stands under the name `codebook`; the end of both refusals of {@link deploySkill} for such a folder. What is in it is the learner's: the sentence says how to keep it beside Codebook's skill, how to make room without it, and that Codebook leaves it alone where it stays, never to delete it.
+ * @param folder - The folder as the sentence names it: "that folder" where the refusal named its path before, or "its folder <path>".
+ * @returns The sentences, the first with its capital.
+ * @example makeRoomForCodebooksSkill('that folder') // => "To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill."
+ */
+function makeRoomForCodebooksSkill(folder: string): string {
+  return `To keep it beside Codebook's skill, rename ${folder}; to make room without it, move the folder elsewhere. Then run ${SET_UP_AI_CHAT_COMMAND} again. If you keep it where it is, Codebook leaves it alone and installs no skill.`
+}
 
 /** The name of a file a setup stages its new skill in, beside the skill folder ({@link writeStagedBytes}); a setup's record is valid only with such a name, and only such a name is looked at as a staged file no record names ({@link removeUnrecordedStages}). */
 const STAGED_NAME_PATTERN = /^\.codebook-stage-[a-f0-9-]+\.tmp$/
@@ -297,30 +315,110 @@ async function regularFile(path: string): Promise<Buffer | undefined> {
   return (await readRegularFile(path, UNREAD_SKILL_FILE_SENTENCES))?.bytes
 }
 
-/** Creates or verifies a private parent when {@link deployCursorSkill} prepares its owned paths. @param path - Directory to inspect. @returns After a regular directory exists. @example await ensureDirectory('/private/cursor-skill') // => resolves */
-async function ensureDirectory(path: string): Promise<void> {
-  const existing = await inspectedPath(path)
-  if (!existing) await mkdir(path, { mode: PRIVATE_DIRECTORY_MODE })
-  const status = await lstat(path)
-  if (!status.isDirectory() || status.isSymbolicLink())
-    throw new Error(
-      `Codebook will not follow a non-directory skill path: ${path}`,
+/** How the refusal begins for a folder of the skill's path that a setup or a removal found as a link or as no folder; the path and the step follow ({@link refuseUnlessRealFolder}). */
+const NOT_A_FOLDER_REFUSAL =
+  'Codebook will not follow a non-directory skill path'
+
+/** How the refusal begins for a folder of the skill's path that a reconnect or a removal needs and that is gone, a link or no folder; the path and the step follow ({@link refuseUnlessRealFolder}). */
+const MISSING_OR_REDIRECTED_REFUSAL =
+  'Codebook will not follow a missing or redirected skill directory'
+
+/** A folder on the way to the managed skill, with the way a link at it is taken out of the way ({@link stepPastNoRealFolder}). */
+type SkillPathFolder = { path: string; linkStep: string }
+
+/**
+ * Names the two folders above the skill folder, `~/.cursor` and `~/.cursor/skills`, for {@link deploySkill}, {@link assertSkillParents} and {@link assertSkillParentsOfRemoval}: what a link at one of them points to holds the learner's other settings and skills.
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @returns Both folders, the upper one first.
+ * @example foldersAboveSkillFolder('/home/user') // => [{ path: '/home/user/.cursor', … }, { path: '/home/user/.cursor/skills', … }]
+ */
+function foldersAboveSkillFolder(homeRoot: string): SkillPathFolder[] {
+  return [join(homeRoot, '.cursor'), join(homeRoot, '.cursor', 'skills')].map(
+    (path) => ({ path, linkStep: PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK }),
+  )
+}
+
+/**
+ * Names the skill folder itself, `~/.cursor/skills/codebook`, for {@link deploySkill}, {@link assertSkillParents} and {@link assertSkillFolderNotRedirected}: what a link there points to may be a skill of the learner's own, so only the link is taken out of the way.
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @returns The folder.
+ * @example skillFolderOf('/home/user') // => { path: '/home/user/.cursor/skills/codebook', … }
+ */
+function skillFolderOf(homeRoot: string): SkillPathFolder {
+  return {
+    path: join(homeRoot, '.cursor', 'skills', 'codebook'),
+    linkStep: REMOVE_LINK_OR_RENAME_IT,
+  }
+}
+
+/**
+ * Refuses a folder of the skill's path that is no real folder, with the step after which the command that was run finishes; every such refusal of {@link deploySkill}, {@link verifyManagedCursorSkill} and {@link removeManagedCursorSkill} goes through it.
+ * @param status - What stands at the folder's path, looked at without following a link; `undefined` for a path that holds nothing, which is refused too (a caller for which that is no refusal does not ask).
+ * @param folder - The folder and how a link at it is taken out of the way.
+ * @param refusal - How the sentence begins: {@link NOT_A_FOLDER_REFUSAL} or {@link MISSING_OR_REDIRECTED_REFUSAL}.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
+ * @throws For everything but a real folder: the beginning, the path and the step ({@link stepPastNoRealFolder}).
+ * @example refuseUnlessRealFolder(await inspectedPath(folder.path), folder, NOT_A_FOLDER_REFUSAL, 'Codebook: Set Up AI Chat')
+ */
+function refuseUnlessRealFolder(
+  status: Pick<BigIntStats, 'isDirectory' | 'isSymbolicLink'> | undefined,
+  folder: SkillPathFolder,
+  refusal: string,
+  commandToRunAgain: string,
+): void {
+  const step = stepPastNoRealFolder(status, folder.linkStep, commandToRunAgain)
+  if (step) throw new Error(`${refusal}: ${folder.path}. ${step}`)
+}
+
+/** Creates or verifies a folder of the skill's path when {@link deploySkill} prepares its owned paths. @param folder - The folder to make or to verify, and how a link at it is taken out of the way. @returns After a real folder exists. @throws For a link and for anything that is no folder, with the step after which a setup finishes ({@link refuseUnlessRealFolder}). @example await ensureDirectory(skillFolderOf('/home/user')) // => resolves */
+async function ensureDirectory(folder: SkillPathFolder): Promise<void> {
+  const existing = await inspectedPath(folder.path)
+  if (!existing) await mkdir(folder.path, { mode: PRIVATE_DIRECTORY_MODE })
+  refuseUnlessRealFolder(
+    await lstat(folder.path),
+    folder,
+    NOT_A_FOLDER_REFUSAL,
+    SET_UP_AI_CHAT_COMMAND,
+  )
+}
+
+/** Rejects a missing or redirected folder of the skill's path before a reconnect ({@link verifyManagedCursorSkill}) or a removal ({@link removeManagedCursorSkill}) reads the skill. @param homeRoot - Cursor user home. @param commandToRunAgain - The command the refusal names as the one to run again: the setup for a reconnect, the removal for a removal. @returns After `.cursor`, `.cursor/skills` and the skill folder are real folders. @throws For the first of them that is gone, a link or no folder ({@link refuseUnlessRealFolder}). @example await assertSkillParents('/home/user', 'Codebook: Set Up AI Chat') // => resolves */
+async function assertSkillParents(
+  homeRoot: string,
+  commandToRunAgain: string,
+): Promise<void> {
+  for (const folder of [
+    ...foldersAboveSkillFolder(homeRoot),
+    skillFolderOf(homeRoot),
+  ])
+    refuseUnlessRealFolder(
+      await inspectedPath(folder.path),
+      folder,
+      MISSING_OR_REDIRECTED_REFUSAL,
+      commandToRunAgain,
     )
 }
 
-/** Rejects redirected skill parents before {@link deployCursorSkill} reads or replaces a body. @param homeRoot - Cursor user home. @returns After all parents are regular directories. @example await assertSkillParents('/home/user') // => resolves */
-async function assertSkillParents(homeRoot: string): Promise<void> {
-  for (const path of [
-    join(homeRoot, '.cursor'),
-    join(homeRoot, '.cursor', 'skills'),
-    join(homeRoot, '.cursor', 'skills', 'codebook'),
-  ]) {
-    const status = await inspectedPath(path)
-    if (!status?.isDirectory() || status.isSymbolicLink())
-      throw new Error(
-        `Codebook will not follow a missing or redirected skill directory: ${path}`,
-      )
-  }
+/**
+ * Refuses a skill folder that is a link or no folder, for {@link deploySkill} and {@link removeManagedCursorSkill} before either reads below it; a folder that is not there is no refusal (a setup makes it, a removal has nothing to remove).
+ * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
+ * @throws For a link and for anything that is no folder, with the step that frees the path ({@link refuseUnlessRealFolder}).
+ * @example await assertSkillFolderNotRedirected('/home/user', 'Codebook: Remove Managed Cursor Skill') // resolves, also without /home/user/.cursor/skills/codebook
+ */
+async function assertSkillFolderNotRedirected(
+  homeRoot: string,
+  commandToRunAgain: string,
+): Promise<void> {
+  const folder = skillFolderOf(homeRoot)
+  const status = await inspectedPath(folder.path)
+  if (status)
+    refuseUnlessRealFolder(
+      status,
+      folder,
+      NOT_A_FOLDER_REFUSAL,
+      commandToRunAgain,
+    )
 }
 
 /**
@@ -1367,16 +1465,10 @@ async function deploySkill(
           version: held.receipt.skillVersion,
         }
     }
-    await ensureDirectory(join(homeRoot, '.cursor'))
-    await ensureDirectory(skillParent)
-    const initialDirectory = await inspectedPath(targetDirectory)
-    if (
-      initialDirectory &&
-      (!initialDirectory.isDirectory() || initialDirectory.isSymbolicLink())
-    )
-      throw new Error(
-        `Codebook will not follow a non-directory skill path: ${targetDirectory}`,
-      )
+    // A setup makes the two folders above the skill folder where they are missing.
+    for (const folder of foldersAboveSkillFolder(homeRoot))
+      await ensureDirectory(folder)
+    await assertSkillFolderNotRedirected(homeRoot, SET_UP_AI_CHAT_COMMAND)
     await recoverRemoval(
       removalPath,
       receiptPath,
@@ -1447,7 +1539,7 @@ async function deploySkill(
         (await readdir(targetDirectory)).length !== 0
       )
         throw new Error(
-          'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
+          `A codebook skill directory already exists in Cursor: ${targetDirectory}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. ${makeRoomForCodebooksSkill('that folder')}`,
         )
     }
     // The bytes and the inode number that are compared with the receipt are of one open file.
@@ -1457,7 +1549,7 @@ async function deploySkill(
     )
     if (!receipt && current)
       throw new Error(
-        'An existing codebook skill is not owned by this installation; no file was changed.',
+        `An existing codebook skill is not owned by this installation; no file was changed. Codebook has no record of having installed ${targetPath}, so it treats that file as yours. ${makeRoomForCodebooksSkill(`its folder ${targetDirectory}`)}`,
       )
     if (receipt && current && !isSameFileId(receipt.inode, current.status.ino))
       throw new Error(SKILL_REPLACED_AFTER_SETUP)
@@ -1499,7 +1591,7 @@ async function deploySkill(
         }
       }
     }
-    await ensureDirectory(targetDirectory)
+    await ensureDirectory(skillFolderOf(homeRoot))
     const retiredDirectory =
       (await lstat(receiptDirectory, { bigint: true })).dev ===
       (await lstat(targetDirectory, { bigint: true })).dev
@@ -1608,7 +1700,7 @@ export async function verifyManagedCursorSkill(
   homeRoot = homedir(),
 ): Promise<CursorSkillResult> {
   const targetPath = join(homeRoot, '.cursor', 'skills', 'codebook', 'SKILL.md')
-  await assertSkillParents(homeRoot)
+  await assertSkillParents(homeRoot, SET_UP_AI_CHAT_COMMAND)
   const receiptPath = join(storageRoot, 'cursor-skill', 'receipt.json')
   const packaged = await packageSkill(extensionPath)
   for (let attempt = 1; ; attempt += 1) {
@@ -1741,38 +1833,26 @@ async function finishRemovalOfMissingSkill(
 /**
  * Refuses a removal whose way to the skill folder is redirected, for {@link removeManagedCursorSkill}; a folder that is not there is no refusal: nothing of the skill can stand under it, as for a learner who never set Cursor chat up.
  * @param homeRoot - The home folder whose `.cursor/skills` holds the skill folder.
- * @throws When `.cursor` or `.cursor/skills` is a link or no folder.
+ * @throws When `.cursor` or `.cursor/skills` is a link or no folder, with the step after which the removal finishes ({@link refuseUnlessRealFolder}).
  * @example await assertSkillParentsOfRemoval('/home/user') // resolves, also without /home/user/.cursor/skills
  */
 async function assertSkillParentsOfRemoval(homeRoot: string): Promise<void> {
-  for (const path of [
-    join(homeRoot, '.cursor'),
-    join(homeRoot, '.cursor', 'skills'),
-  ]) {
-    const status = await inspectedPath(path)
+  for (const folder of foldersAboveSkillFolder(homeRoot)) {
+    const status = await inspectedPath(folder.path)
     // Nothing is below a folder that is not there.
     if (!status) return
-    assertNotRedirected(status, path)
+    refuseUnlessRealFolder(
+      status,
+      folder,
+      MISSING_OR_REDIRECTED_REFUSAL,
+      REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+    )
   }
 }
 
 /**
- * Refuses a path on the way to the skill folder that is a link or no folder, for {@link assertSkillParentsOfRemoval}.
- * @param status - What stands at the path, looked at without following a link.
- * @param path - The path, which the refusal names.
- * @throws For a link and for anything that is no folder.
- * @example assertNotRedirected(await lstat('/home/user/.cursor', { bigint: true }), '/home/user/.cursor')
- */
-function assertNotRedirected(status: BigIntStats, path: string): void {
-  if (!status.isDirectory() || status.isSymbolicLink())
-    throw new Error(
-      `Codebook will not follow a missing or redirected skill directory: ${path}`,
-    )
-}
-
-/**
  * Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. Called by the removal command of {@link activate}, which then goes on to Codebook's empty Cursor MCP config, whatever the answer.
- * Every refusal that names a command to run again names the removal ({@link REMOVE_MANAGED_CURSOR_SKILL_COMMAND}), but the one of an interrupted setup, which the setup recovers.
+ * Every refusal that names a command to run again names the removal ({@link REMOVE_MANAGED_CURSOR_SKILL_COMMAND}); the one of an interrupted setup names the setup, which recovers it, and the removal after it ({@link SETUP_INTERRUPTED_BEFORE_REMOVAL}).
  * @param storageRoot - Codebook's private storage, which holds the receipt and the storage lock.
  * @param homeRoot - The home folder whose `.cursor/skills/codebook/SKILL.md` is managed; tests pass a temporary one.
  * @returns
@@ -1793,18 +1873,12 @@ export async function removeManagedCursorSkill(
   return withStorageLock(receiptDirectory, async () => {
     const directory = join(homeRoot, '.cursor', 'skills', 'codebook')
     await assertSkillParentsOfRemoval(homeRoot)
-    const targetDirectory = await inspectedPath(directory)
-    if (
-      targetDirectory &&
-      (!targetDirectory.isDirectory() || targetDirectory.isSymbolicLink())
+    await assertSkillFolderNotRedirected(
+      homeRoot,
+      REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
     )
-      throw new Error(
-        `Codebook will not follow a non-directory skill path: ${directory}`,
-      )
     if (await inspectedPath(join(receiptDirectory, 'pending.json')))
-      throw new Error(
-        'Cursor skill setup is interrupted. Run Codebook: Set Up AI Chat to recover before removal.',
-      )
+      throw new Error(SETUP_INTERRUPTED_BEFORE_REMOVAL)
     const recovered = await recoverRemoval(
       removalPath,
       receiptPath,
@@ -1836,7 +1910,7 @@ export async function removeManagedCursorSkill(
     // The skill's folder is gone (the learner took it away): nothing is left to remove, and the receipt says so.
     if (!(await inspectedPath(directory)))
       return finishRemovalOfMissingSkill(receipt, receiptPath, directory)
-    await assertSkillParents(homeRoot)
+    await assertSkillParents(homeRoot, REMOVE_MANAGED_CURSOR_SKILL_COMMAND)
     // The bytes and the inode number that are compared with the receipt are of one open file.
     const current = await readRegularFile(
       targetPath,

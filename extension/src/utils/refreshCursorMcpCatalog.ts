@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as fileFlags, type BigIntStats } from 'node:fs'
+import { constants as fileFlags, type BigIntStats, type Stats } from 'node:fs'
 import {
   link,
   lstat,
@@ -29,6 +29,10 @@ import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { recordedFileId, type RecordedFileId } from './recordedFileId'
 import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './startOverBy'
+import {
+  PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
+  stepPastNoRealFolder,
+} from './stepPastNoRealFolder'
 import { systemErrorCode } from './systemErrorCode'
 import { withStorageLock } from './withStorageLock'
 
@@ -83,13 +87,42 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
-/** Rejects a redirected Cursor settings parent before setup or cleanup touches its config. @example await regularDirectory('/home/user/.cursor') */
-async function regularDirectory(path: string): Promise<void> {
-  const status = await lstat(path)
-  if (!status.isDirectory() || status.isSymbolicLink())
+/**
+ * Rejects a Cursor settings folder that is no real folder before a setup or a cleanup touches the config in it; called by {@link refreshCursorMcpCatalog}, {@link captureOwnedCursorMcpCatalogGeneration} and {@link removeOwnedCursorMcpCatalog} under the storage lock.
+ * @param path - Cursor's settings folder, `~/.cursor`.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
+ * @throws For a link, for anything that is no folder and for a path that holds nothing: the sentence names the path, what stands there and the step after which the command finishes ({@link stepPastNoRealFolder}). Every other failure of the look: itself.
+ * @example await regularDirectory('/home/user/.cursor', 'Codebook: Set Up AI Chat')
+ */
+async function regularDirectory(
+  path: string,
+  commandToRunAgain: string,
+): Promise<void> {
+  const step = stepPastNoRealFolder(
+    await lookAtFolder(path),
+    PUT_FOLDER_IN_PLACE_OR_REMOVE_LINK,
+    commandToRunAgain,
+  )
+  if (step)
     throw new Error(
-      'Cursor MCP directory is not a regular directory; Codebook left its settings unchanged.',
+      `Cursor MCP directory is not a regular directory: ${path}. Codebook left its settings unchanged. ${step}`,
     )
+}
+
+/**
+ * Looks at Cursor's settings folder without following a link, for {@link regularDirectory}: a path that holds nothing is an answer, which the refusal words, and not the file system's own text.
+ * @param path - Cursor's settings folder.
+ * @returns What stands at the path, or `undefined` when nothing does.
+ * @throws Every failure of the look but a missing path.
+ * @example await lookAtFolder('/home/user/.cursor') // => undefined in a home without Cursor's settings folder
+ */
+async function lookAtFolder(path: string): Promise<Stats | undefined> {
+  try {
+    return await lstat(path)
+  } catch (error) {
+    if (isMissing(error)) return undefined
+    throw error
+  }
 }
 
 /**
@@ -766,7 +799,7 @@ export async function refreshCursorMcpCatalog(
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
   return withCatalogLockRetry(() =>
     withStorageLock(storageDirectory, async () => {
-      await regularDirectory(cursorDirectory)
+      await regularDirectory(cursorDirectory, SET_UP_AI_CHAT_COMMAND)
       const targetPath = join(cursorDirectory, 'mcp.json'),
         receiptPath = join(storageDirectory, 'receipt.json')
       const pendingCreationPath = join(
@@ -911,7 +944,7 @@ export async function captureOwnedCursorMcpCatalogGeneration(
             commandToRunAgain,
           ),
         }
-      await regularDirectory(cursorDirectory)
+      await regularDirectory(cursorDirectory, commandToRunAgain)
       await recoverCreation(
         join(storageDirectory, 'pending-creation.json'),
         receiptPath,
@@ -955,7 +988,7 @@ export async function removeOwnedCursorMcpCatalog(
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
   return withCatalogLockRetry(() =>
     withStorageLock(storageDirectory, async () => {
-      await regularDirectory(cursorDirectory)
+      await regularDirectory(cursorDirectory, commandToRunAgain)
       const targetPath = join(cursorDirectory, 'mcp.json'),
         receiptPath = join(storageDirectory, 'receipt.json')
       const pendingPath = join(storageDirectory, 'pending-removal.json')

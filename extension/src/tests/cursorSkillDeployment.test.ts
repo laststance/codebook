@@ -1592,8 +1592,7 @@ test('the published skill of an interrupted setup that a link replaces while Cod
       ),
     },
     {
-      setup:
-        'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
+      setup: `A codebook skill directory already exists in Cursor: ${join(paths.homeRoot, '.cursor', 'skills', 'codebook')}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
       readsByNameAfterTheSwap: [],
       recordsLeft: [],
     },
@@ -2349,8 +2348,7 @@ test('a Cursor skill that is edited right after a first setup published it is ke
         temporaryNames: [],
         records: [],
       },
-      nextSetup:
-        'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
+      nextSetup: `A codebook skill directory already exists in Cursor: ${join(paths.homeRoot, '.cursor', 'skills', 'codebook')}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
       skillAfterTheRefusals: EDITED_SKILL,
       setupAfterTheFileWasDeleted: 'installed',
       skill: INITIAL_SKILL,
@@ -2947,8 +2945,7 @@ test('a Cursor skill receipt that was edited by hand is refused by setup, reconn
         ),
       },
       skillAfterTheRefusals: INITIAL_SKILL,
-      setupAfterTheReceiptAloneWasDeleted:
-        'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
+      setupAfterTheReceiptAloneWasDeleted: `A codebook skill directory already exists in Cursor: ${join(paths.homeRoot, '.cursor', 'skills', 'codebook')}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
       setupAfterBothWereDeleted: 'installed',
       skill: INITIAL_SKILL,
     },
@@ -4080,6 +4077,952 @@ test('setup says what to do about a skill file that is back after a removal, and
       setupOfTheDamagedCopy: `The copy of the installed Cursor skill that Codebook keeps as ${copyPath} differs from its receipt; no skill file was changed. Delete that copy, then run Codebook: Set Up AI Chat again.`,
       skillAfterTheRefusal: INITIAL_SKILL,
       setupAfterTheCopyWasDeleted: 'updated',
+    },
+  )
+})
+
+// Value: protects=a learner whose ~/.cursor/skills is a link (a dotfiles manager keeps the skills elsewhere), at setup, at editor start and at removal; fails_when=the three refusals name the path and no step ("Codebook will not follow a missing or redirected skill directory: …"), or the step they name does not end in a finished setup and a finished removal; why_new=Cycle 0046 row 277; seam=none, the real link
+test('a link at ~/.cursor/skills is refused by setup, reconnect and removal with a sentence that says what to do and names the command to run again: after the learner puts the folder in the link’s place, setup finds the skill current and the removal removes it', async (context) => {
+  // Arrange: the installed skill; then the skills folder is kept elsewhere and a link stands in its place.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const skillsPath = join(paths.homeRoot, '.cursor', 'skills'),
+    keptSkillsPath = join(paths.homeRoot, 'dotfiles-cursor-skills')
+  await rename(skillsPath, keptSkillsPath)
+  if (!(await createLinkIfAllowed(keptSkillsPath, skillsPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+  }
+  const skillBehindTheLinkAfterTheRefusals = await readFile(
+    join(keptSkillsPath, 'codebook', 'SKILL.md'),
+    'utf8',
+  )
+  // The sentences are followed to the letter: the folder the link points to takes the link's place.
+  await unlink(skillsPath)
+  await rename(keptSkillsPath, skillsPath)
+  const afterTheFolderTookTheLinksPlace = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      skillBehindTheLinkAfterTheRefusals,
+      afterTheFolderTookTheLinksPlace,
+      skillsFolderAfterTheRemoval: await readdir(skillsPath),
+    },
+    {
+      refusals: {
+        setup: `Codebook will not follow a non-directory skill path: ${skillsPath}. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.`,
+        reconnect: `Codebook will not follow a missing or redirected skill directory: ${skillsPath}. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.`,
+        removal: `Codebook will not follow a missing or redirected skill directory: ${skillsPath}. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      skillBehindTheLinkAfterTheRefusals: INITIAL_SKILL,
+      afterTheFolderTookTheLinksPlace: {
+        setup: 'current',
+        reconnect: 'current',
+        removal: 'removed',
+      },
+      skillsFolderAfterTheRemoval: [],
+    },
+  )
+})
+
+// Value: protects=the learner who takes the other way a refused link at ~/.cursor/skills offers and removes the link; fails_when=that way does not end in a finished setup or removal (setup does not make the folder, or the removal refuses the missing folder), or Codebook changes something in the folder the link pointed to; why_new=Cycle 0046 row 277: each step a sentence names is followed to a finished command; seam=none, the real link
+test('after the learner removes a link at ~/.cursor/skills, as its refusal offers, setup makes the folder and restores the skill, a removal finishes, and what the link pointed to stays as it is', async (context) => {
+  // Arrange: two homes with an installed skill whose skills folder is kept elsewhere behind a link.
+  const homeOfTheSetup = await fixture(context),
+    homeOfTheRemoval = await fixture(context)
+  for (const paths of [homeOfTheSetup, homeOfTheRemoval]) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    const skillsPath = join(paths.homeRoot, '.cursor', 'skills')
+    await rename(skillsPath, join(paths.homeRoot, 'dotfiles-cursor-skills'))
+    if (
+      !(await createLinkIfAllowed(
+        join(paths.homeRoot, 'dotfiles-cursor-skills'),
+        skillsPath,
+      ))
+    )
+      return context.skip(LINK_NOT_ALLOWED)
+  }
+
+  // Act: the link is removed, and the command that was refused is run again.
+  await unlink(join(homeOfTheSetup.homeRoot, '.cursor', 'skills'))
+  const setup = await statusOrRefusalOf(
+    deployCursorSkill(
+      homeOfTheSetup.extensionPath,
+      homeOfTheSetup.storageRoot,
+      homeOfTheSetup.homeRoot,
+    ),
+  )
+  await unlink(join(homeOfTheRemoval.homeRoot, '.cursor', 'skills'))
+  const removal = await statusOrRefusalOf(
+    removeManagedCursorSkill(
+      homeOfTheRemoval.storageRoot,
+      homeOfTheRemoval.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      skillAfterTheSetup: await readFile(homeOfTheSetup.targetPath, 'utf8'),
+      skillTheLinkPointedToAfterTheSetup: await readFile(
+        join(
+          homeOfTheSetup.homeRoot,
+          'dotfiles-cursor-skills',
+          'codebook',
+          'SKILL.md',
+        ),
+        'utf8',
+      ),
+      removal,
+      cursorFolderAfterTheRemoval: await readdir(
+        join(homeOfTheRemoval.homeRoot, '.cursor'),
+      ),
+      skillTheLinkPointedToAfterTheRemoval: await readFile(
+        join(
+          homeOfTheRemoval.homeRoot,
+          'dotfiles-cursor-skills',
+          'codebook',
+          'SKILL.md',
+        ),
+        'utf8',
+      ),
+    },
+    {
+      setup: 'restored',
+      skillAfterTheSetup: INITIAL_SKILL,
+      skillTheLinkPointedToAfterTheSetup: INITIAL_SKILL,
+      removal: 'removed',
+      cursorFolderAfterTheRemoval: [],
+      skillTheLinkPointedToAfterTheRemoval: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=a learner whose whole ~/.cursor is a link; fails_when=setup, reconnect and removal end with a sentence that names the path and no step, or the step does not end in a finished setup and removal; why_new=Cycle 0046 row 277 (the upper of the two folders above the skill folder); seam=none, the real link
+test('a link at ~/.cursor is refused by setup, reconnect and removal with a sentence that says what to do and names the command to run again: after the learner puts the folder in the link’s place, setup finds the skill current and the removal removes it', async (context) => {
+  // Arrange: the installed skill; then Cursor's settings folder is kept elsewhere and a link stands in its place.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const cursorPath = join(paths.homeRoot, '.cursor'),
+    keptCursorPath = join(paths.homeRoot, 'dotfiles-cursor')
+  await rename(cursorPath, keptCursorPath)
+  if (!(await createLinkIfAllowed(keptCursorPath, cursorPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        paths.extensionPath,
+        paths.storageRoot,
+        paths.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+  }
+  // The sentences are followed to the letter: the folder the link points to takes the link's place.
+  await unlink(cursorPath)
+  await rename(keptCursorPath, cursorPath)
+  const afterTheFolderTookTheLinksPlace = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    { refusals, afterTheFolderTookTheLinksPlace },
+    {
+      refusals: {
+        setup: `Codebook will not follow a non-directory skill path: ${cursorPath}. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.`,
+        reconnect: `Codebook will not follow a missing or redirected skill directory: ${cursorPath}. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.`,
+        removal: `Codebook will not follow a missing or redirected skill directory: ${cursorPath}. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      afterTheFolderTookTheLinksPlace: { setup: 'current', removal: 'removed' },
+    },
+  )
+})
+
+// Value: protects=a learner who has a file named skills in ~/.cursor; fails_when=the refusals name no step, tell the learner to delete a file of their own, or the step (rename it or move it) does not end in a finished setup and removal; why_new=Cycle 0046 row 277 (what is no folder, above the skill folder); seam=none, the real file
+test('a file where ~/.cursor/skills should be is refused by setup, reconnect and removal as the learner’s own, to rename or to move: after the learner renames it, setup installs the skill, a removal finishes, and the file is unchanged', async (context) => {
+  // Arrange: two homes where Cursor chat was never set up and a note of the learner stands at the skills folder's path.
+  const homeOfTheSetup = await fixture(context),
+    homeOfTheRemoval = await fixture(context)
+  for (const paths of [homeOfTheSetup, homeOfTheRemoval]) {
+    await mkdir(join(paths.homeRoot, '.cursor'))
+    await writeFile(
+      join(paths.homeRoot, '.cursor', 'skills'),
+      'A note of the learner.\n',
+    )
+  }
+  const skillsPath = join(homeOfTheSetup.homeRoot, '.cursor', 'skills')
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeOfTheSetup.extensionPath,
+        homeOfTheSetup.storageRoot,
+        homeOfTheSetup.homeRoot,
+      ),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        homeOfTheSetup.extensionPath,
+        homeOfTheSetup.storageRoot,
+        homeOfTheSetup.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(
+        homeOfTheSetup.storageRoot,
+        homeOfTheSetup.homeRoot,
+      ),
+    ),
+  }
+  // The sentences are followed to the letter: the file gets another name, and the command is run again.
+  await rename(skillsPath, join(homeOfTheSetup.homeRoot, '.cursor', 'notes'))
+  const setupAfterTheRename = await statusOrRefusalOf(
+    deployCursorSkill(
+      homeOfTheSetup.extensionPath,
+      homeOfTheSetup.storageRoot,
+      homeOfTheSetup.homeRoot,
+    ),
+  )
+  await rename(
+    join(homeOfTheRemoval.homeRoot, '.cursor', 'skills'),
+    join(homeOfTheRemoval.homeRoot, '.cursor', 'notes'),
+  )
+  const removalAfterTheRename = await statusOrRefusalOf(
+    removeManagedCursorSkill(
+      homeOfTheRemoval.storageRoot,
+      homeOfTheRemoval.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      setupAfterTheRename,
+      skill: await readFile(homeOfTheSetup.targetPath, 'utf8'),
+      noteAfterTheSetup: await readFile(
+        join(homeOfTheSetup.homeRoot, '.cursor', 'notes'),
+        'utf8',
+      ),
+      removalAfterTheRename,
+      noteAfterTheRemoval: await readFile(
+        join(homeOfTheRemoval.homeRoot, '.cursor', 'notes'),
+        'utf8',
+      ),
+    },
+    {
+      refusals: {
+        setup: `Codebook will not follow a non-directory skill path: ${skillsPath}. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+        reconnect: `Codebook will not follow a missing or redirected skill directory: ${skillsPath}. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+        removal: `Codebook will not follow a missing or redirected skill directory: ${skillsPath}. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      setupAfterTheRename: 'installed',
+      skill: INITIAL_SKILL,
+      noteAfterTheSetup: 'A note of the learner.\n',
+      removalAfterTheRename: 'not-installed',
+      noteAfterTheRemoval: 'A note of the learner.\n',
+    },
+  )
+})
+
+// Value: protects=a learner whose ~/.cursor/skills/codebook is a link, to a skill of their own or to Codebook's skill folder that they keep elsewhere; fails_when=the refusals name no step, send the learner to put the linked folder in place (which a setup refuses as a skill it has no receipt for), or change what the link points to; why_new=Cycle 0046 row 277 (the skill folder itself); seam=none, the real links
+test('a link at the skill folder ~/.cursor/skills/codebook is refused by setup, reconnect and removal with a sentence that says to remove the link or to rename it: after the learner renames it, setup installs the skill beside it, and after the learner removes it, a removal finishes; what the link points to is unchanged', async (context) => {
+  // Arrange: one home whose codebook entry links to a skill of the learner's own, and one whose installed skill folder is kept elsewhere behind a link.
+  const homeWithOwnSkill = await fixture(context),
+    homeWithMovedSkill = await fixture(context)
+  const ownSkillFolder = join(
+      homeWithOwnSkill.homeRoot,
+      'my-skills',
+      'codebook',
+    ),
+    linkToOwnSkill = join(
+      homeWithOwnSkill.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    )
+  await mkdir(ownSkillFolder, { recursive: true })
+  await writeFile(join(ownSkillFolder, 'SKILL.md'), 'My own codebook skill\n')
+  await mkdir(join(homeWithOwnSkill.homeRoot, '.cursor', 'skills'), {
+    recursive: true,
+  })
+  if (!(await createLinkIfAllowed(ownSkillFolder, linkToOwnSkill)))
+    return context.skip(LINK_NOT_ALLOWED)
+  await deployCursorSkill(
+    homeWithMovedSkill.extensionPath,
+    homeWithMovedSkill.storageRoot,
+    homeWithMovedSkill.homeRoot,
+  )
+  const movedSkillFolder = join(homeWithMovedSkill.homeRoot, 'kept-codebook'),
+    linkToMovedSkill = join(
+      homeWithMovedSkill.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    )
+  await rename(linkToMovedSkill, movedSkillFolder)
+  await symlink(movedSkillFolder, linkToMovedSkill)
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeWithOwnSkill.extensionPath,
+        homeWithOwnSkill.storageRoot,
+        homeWithOwnSkill.homeRoot,
+      ),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        homeWithOwnSkill.extensionPath,
+        homeWithOwnSkill.storageRoot,
+        homeWithOwnSkill.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(
+        homeWithMovedSkill.storageRoot,
+        homeWithMovedSkill.homeRoot,
+      ),
+    ),
+  }
+  // The setup's sentence is followed to the letter: the link gets another name.
+  await rename(
+    linkToOwnSkill,
+    join(homeWithOwnSkill.homeRoot, '.cursor', 'skills', 'codebook-of-mine'),
+  )
+  const setupAfterTheLinkWasRenamed = await statusOrRefusalOf(
+    deployCursorSkill(
+      homeWithOwnSkill.extensionPath,
+      homeWithOwnSkill.storageRoot,
+      homeWithOwnSkill.homeRoot,
+    ),
+  )
+  // The removal's sentence is followed to the letter: the link is removed.
+  await unlink(linkToMovedSkill)
+  const removalAfterTheLinkWasRemoved = await statusOrRefusalOf(
+    removeManagedCursorSkill(
+      homeWithMovedSkill.storageRoot,
+      homeWithMovedSkill.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      setupAfterTheLinkWasRenamed,
+      skill: await readFile(homeWithOwnSkill.targetPath, 'utf8'),
+      ownSkillThroughTheRenamedLink: await readFile(
+        join(
+          homeWithOwnSkill.homeRoot,
+          '.cursor',
+          'skills',
+          'codebook-of-mine',
+          'SKILL.md',
+        ),
+        'utf8',
+      ),
+      removalAfterTheLinkWasRemoved,
+      skillTheRemovedLinkPointedTo: await readFile(
+        join(movedSkillFolder, 'SKILL.md'),
+        'utf8',
+      ),
+    },
+    {
+      refusals: {
+        setup: `Codebook will not follow a non-directory skill path: ${linkToOwnSkill}. That path is a link, and Codebook leaves what it points to as it is. Remove the link or give it another name, then run Codebook: Set Up AI Chat again.`,
+        reconnect: `Codebook will not follow a missing or redirected skill directory: ${linkToOwnSkill}. That path is a link, and Codebook leaves what it points to as it is. Remove the link or give it another name, then run Codebook: Set Up AI Chat again.`,
+        removal: `Codebook will not follow a non-directory skill path: ${linkToMovedSkill}. That path is a link, and Codebook leaves what it points to as it is. Remove the link or give it another name, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      setupAfterTheLinkWasRenamed: 'installed',
+      skill: INITIAL_SKILL,
+      ownSkillThroughTheRenamedLink: 'My own codebook skill\n',
+      removalAfterTheLinkWasRemoved: 'removed',
+      skillTheRemovedLinkPointedTo: INITIAL_SKILL,
+    },
+  )
+})
+
+// Value: protects=a learner who has a file named codebook in ~/.cursor/skills; fails_when=setup and removal end with a sentence that names the path and no step, or tell the learner to delete the file; why_new=Cycle 0046 row 277 (what is no folder, at the skill folder's path); seam=none, the real file
+test('a file where the skill folder ~/.cursor/skills/codebook should be is refused by setup, reconnect and removal as the learner’s own, to rename or to move: after the learner renames it, setup installs the skill, a removal finishes, and the file is unchanged', async (context) => {
+  // Arrange: two homes where Cursor chat was never set up and a note of the learner stands at the skill folder's path.
+  const homeOfTheSetup = await fixture(context),
+    homeOfTheRemoval = await fixture(context)
+  for (const paths of [homeOfTheSetup, homeOfTheRemoval]) {
+    await mkdir(join(paths.homeRoot, '.cursor', 'skills'), { recursive: true })
+    await writeFile(
+      join(paths.homeRoot, '.cursor', 'skills', 'codebook'),
+      'A note of the learner.\n',
+    )
+  }
+  const skillFolderPath = join(
+      homeOfTheSetup.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    ),
+    skillFolderPathOfTheRemoval = join(
+      homeOfTheRemoval.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    )
+
+  // Act
+  const refusals = {
+    setup: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeOfTheSetup.extensionPath,
+        homeOfTheSetup.storageRoot,
+        homeOfTheSetup.homeRoot,
+      ),
+    ),
+    reconnect: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        homeOfTheSetup.extensionPath,
+        homeOfTheSetup.storageRoot,
+        homeOfTheSetup.homeRoot,
+      ),
+    ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(
+        homeOfTheRemoval.storageRoot,
+        homeOfTheRemoval.homeRoot,
+      ),
+    ),
+  }
+  // The sentences are followed to the letter: the file gets another name, and the command is run again.
+  await rename(skillFolderPath, `${skillFolderPath}-note`)
+  const setupAfterTheRename = await statusOrRefusalOf(
+    deployCursorSkill(
+      homeOfTheSetup.extensionPath,
+      homeOfTheSetup.storageRoot,
+      homeOfTheSetup.homeRoot,
+    ),
+  )
+  await rename(
+    skillFolderPathOfTheRemoval,
+    `${skillFolderPathOfTheRemoval}-note`,
+  )
+  const removalAfterTheRename = await statusOrRefusalOf(
+    removeManagedCursorSkill(
+      homeOfTheRemoval.storageRoot,
+      homeOfTheRemoval.homeRoot,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      setupAfterTheRename,
+      skill: await readFile(homeOfTheSetup.targetPath, 'utf8'),
+      noteAfterTheSetup: await readFile(`${skillFolderPath}-note`, 'utf8'),
+      removalAfterTheRename,
+      noteAfterTheRemoval: await readFile(
+        `${skillFolderPathOfTheRemoval}-note`,
+        'utf8',
+      ),
+    },
+    {
+      refusals: {
+        setup: `Codebook will not follow a non-directory skill path: ${skillFolderPath}. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+        reconnect: `Codebook will not follow a missing or redirected skill directory: ${skillFolderPath}. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+        removal: `Codebook will not follow a non-directory skill path: ${skillFolderPathOfTheRemoval}. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      setupAfterTheRename: 'installed',
+      skill: INITIAL_SKILL,
+      noteAfterTheSetup: 'A note of the learner.\n',
+      removalAfterTheRename: 'not-installed',
+      noteAfterTheRemoval: 'A note of the learner.\n',
+    },
+  )
+})
+
+// Value: protects=a learner whose skill folder, or whose whole ~/.cursor, is gone when the editor starts (deleted by hand, or by a cleanup tool); fails_when=the reconnect ends with "Codebook will not follow a missing or redirected skill directory: …" and neither says that nothing is there nor names a step, or the step does not restore the skill; why_new=Cycle 0046 row 277 (the missing folder, which only a reconnect and a removal's second look refuse); seam=none, the real files
+test('a reconnect whose skill folder, or whose whole Cursor folder, is gone says that nothing stands at that path and names the setup, and that setup restores the skill', async (context) => {
+  // Arrange: two homes with an installed skill; in one the skill folder is deleted, in the other Cursor's whole settings folder.
+  const homeWithoutSkillFolder = await fixture(context),
+    homeWithoutCursorFolder = await fixture(context)
+  for (const paths of [homeWithoutSkillFolder, homeWithoutCursorFolder])
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+  const skillFolderPath = join(
+      homeWithoutSkillFolder.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    ),
+    cursorPath = join(homeWithoutCursorFolder.homeRoot, '.cursor')
+  await rm(skillFolderPath, { recursive: true })
+  await rm(cursorPath, { recursive: true })
+
+  // Act
+  const reconnects = {
+    withoutSkillFolder: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        homeWithoutSkillFolder.extensionPath,
+        homeWithoutSkillFolder.storageRoot,
+        homeWithoutSkillFolder.homeRoot,
+      ),
+    ),
+    withoutCursorFolder: await statusOrRefusalOf(
+      verifyManagedCursorSkill(
+        homeWithoutCursorFolder.extensionPath,
+        homeWithoutCursorFolder.storageRoot,
+        homeWithoutCursorFolder.homeRoot,
+      ),
+    ),
+  }
+  // The sentences are followed to the letter.
+  const setups = {
+    withoutSkillFolder: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeWithoutSkillFolder.extensionPath,
+        homeWithoutSkillFolder.storageRoot,
+        homeWithoutSkillFolder.homeRoot,
+      ),
+    ),
+    withoutCursorFolder: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeWithoutCursorFolder.extensionPath,
+        homeWithoutCursorFolder.storageRoot,
+        homeWithoutCursorFolder.homeRoot,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      reconnects,
+      setups,
+      skills: [
+        await readFile(homeWithoutSkillFolder.targetPath, 'utf8'),
+        await readFile(homeWithoutCursorFolder.targetPath, 'utf8'),
+      ],
+    },
+    {
+      reconnects: {
+        withoutSkillFolder: `Codebook will not follow a missing or redirected skill directory: ${skillFolderPath}. Nothing stands at that path. Run Codebook: Set Up AI Chat again.`,
+        withoutCursorFolder: `Codebook will not follow a missing or redirected skill directory: ${cursorPath}. Nothing stands at that path. Run Codebook: Set Up AI Chat again.`,
+      },
+      setups: {
+        withoutSkillFolder: 'restored',
+        withoutCursorFolder: 'restored',
+      },
+      skills: [INITIAL_SKILL, INITIAL_SKILL],
+    },
+  )
+})
+
+// Value: protects=a learner whose skill folder is taken away (by a sync tool, or by hand) in the instant a removal runs; fails_when=the removal's second look at the skill's folders answers without a step, or names the setup to a learner who ran the removal; why_new=Cycle 0046 row 277: the check the reconnect and the removal share takes the command as a parameter; seam=node:fs/promises lstat of the loaded deployment, after whose second look at the skill folder the folder is removed
+test('a skill folder that is taken away while a removal runs is answered with the removal as the command to run again, and that removal finishes', async (context) => {
+  // Arrange: the installed skill, and a window whose removal loses the skill folder right after it found the folder in place twice.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const skillFolderPath = join(paths.homeRoot, '.cursor', 'skills', 'codebook')
+  let looksAtTheSkillFolder = 0
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      lstat: async (path: string, options?: StatOptions) => {
+        const look = await fileSystem.lstat(path, options)
+        if (path === skillFolderPath) {
+          looksAtTheSkillFolder += 1
+          if (looksAtTheSkillFolder === 2)
+            await rm(skillFolderPath, { recursive: true })
+        }
+        return look
+      },
+    },
+  })
+
+  // Act
+  const removal = await statusOrRefusalOf(
+    window.removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+  // The sentence is followed to the letter.
+  const removalRunAgain = await statusOrRefusalOf(
+    removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { removal, removalRunAgain },
+    {
+      removal: `Codebook will not follow a missing or redirected skill directory: ${skillFolderPath}. Nothing stands at that path. Run Codebook: Remove Managed Cursor Skill again.`,
+      removalRunAgain: 'removed',
+    },
+  )
+})
+
+// Value: protects=a learner who has a skill of their own named codebook in Cursor; fails_when=setup ends with "resolve the name conflict before setup", which names no step, or tells the learner to delete their skill, or a step it names does not end in a finished setup, or the skill is changed; why_new=Cycle 0046 row 277; seam=none, the real files
+test('a skill folder named codebook that Codebook has no receipt for is left untouched by setup, which says how to keep it beside Codebook’s skill or to make room: after the learner renames the folder, or moves it elsewhere, setup installs the skill and the learner’s skill is unchanged; kept where it is, it is refused again and nothing is installed', async (context) => {
+  // Arrange: three homes with a skill of the learner's own under the name codebook; Cursor chat was never set up.
+  const homeThatRenames = await fixture(context),
+    homeThatMoves = await fixture(context),
+    homeThatKeeps = await fixture(context)
+  for (const paths of [homeThatRenames, homeThatMoves, homeThatKeeps]) {
+    await mkdir(join(paths.homeRoot, '.cursor', 'skills', 'codebook'), {
+      recursive: true,
+    })
+    await writeFile(paths.targetPath, 'My own codebook skill\n')
+  }
+  const skillFolderThatIsRenamed = join(
+      homeThatRenames.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    ),
+    skillFolderThatIsMoved = join(
+      homeThatMoves.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    ),
+    skillFolderThatIsKept = join(
+      homeThatKeeps.homeRoot,
+      '.cursor',
+      'skills',
+      'codebook',
+    )
+
+  // Act
+  const refusals = {
+    renames: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeThatRenames.extensionPath,
+        homeThatRenames.storageRoot,
+        homeThatRenames.homeRoot,
+      ),
+    ),
+    moves: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeThatMoves.extensionPath,
+        homeThatMoves.storageRoot,
+        homeThatMoves.homeRoot,
+      ),
+    ),
+    keeps: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeThatKeeps.extensionPath,
+        homeThatKeeps.storageRoot,
+        homeThatKeeps.homeRoot,
+      ),
+    ),
+  }
+  // The sentence is followed to the letter, each of its three ways in one home.
+  await rename(skillFolderThatIsRenamed, `${skillFolderThatIsRenamed}-of-mine`)
+  await rename(
+    skillFolderThatIsMoved,
+    join(homeThatMoves.homeRoot, 'codebook-of-mine'),
+  )
+  const setupsAgain = {
+    renames: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeThatRenames.extensionPath,
+        homeThatRenames.storageRoot,
+        homeThatRenames.homeRoot,
+      ),
+    ),
+    moves: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeThatMoves.extensionPath,
+        homeThatMoves.storageRoot,
+        homeThatMoves.homeRoot,
+      ),
+    ),
+    keeps: await statusOrRefusalOf(
+      deployCursorSkill(
+        homeThatKeeps.extensionPath,
+        homeThatKeeps.storageRoot,
+        homeThatKeeps.homeRoot,
+      ),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      setupsAgain,
+      renames: {
+        skill: await readFile(homeThatRenames.targetPath, 'utf8'),
+        ownSkill: await readFile(
+          join(`${skillFolderThatIsRenamed}-of-mine`, 'SKILL.md'),
+          'utf8',
+        ),
+      },
+      moves: {
+        skill: await readFile(homeThatMoves.targetPath, 'utf8'),
+        ownSkill: await readFile(
+          join(homeThatMoves.homeRoot, 'codebook-of-mine', 'SKILL.md'),
+          'utf8',
+        ),
+      },
+      keeps: {
+        ownSkill: await readFile(homeThatKeeps.targetPath, 'utf8'),
+        skillsFolder: await readdir(
+          join(homeThatKeeps.homeRoot, '.cursor', 'skills'),
+        ),
+        skillFolder: await readdir(skillFolderThatIsKept),
+      },
+    },
+    {
+      refusals: {
+        renames: `A codebook skill directory already exists in Cursor: ${skillFolderThatIsRenamed}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
+        moves: `A codebook skill directory already exists in Cursor: ${skillFolderThatIsMoved}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
+        keeps: `A codebook skill directory already exists in Cursor: ${skillFolderThatIsKept}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
+      },
+      setupsAgain: {
+        renames: 'installed',
+        moves: 'installed',
+        keeps: `A codebook skill directory already exists in Cursor: ${skillFolderThatIsKept}. Codebook left it untouched: it has no record of having installed that folder, so it treats what is in it as yours. To keep it beside Codebook's skill, rename that folder; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
+      },
+      renames: { skill: INITIAL_SKILL, ownSkill: 'My own codebook skill\n' },
+      moves: { skill: INITIAL_SKILL, ownSkill: 'My own codebook skill\n' },
+      keeps: {
+        ownSkill: 'My own codebook skill\n',
+        skillsFolder: ['codebook'],
+        skillFolder: ['SKILL.md'],
+      },
+    },
+  )
+})
+
+// Value: protects=a learner whose own skill file appears in an empty codebook folder in the instant a first setup looks at that folder; fails_when=setup ends with "An existing codebook skill is not owned by this installation; no file was changed.", which names no step, or the step does not end in a finished setup, or the file is changed; why_new=Cycle 0046 row 277: this refusal had no test, it is reached only between setup's look at the folder and its read of the skill file; seam=node:fs/promises readdir of the loaded deployment, after whose look at the skill folder the file is written
+test('a skill file that appears in the empty codebook folder while a first setup looks at it is answered as a skill Codebook does not own, with its folder to rename or to move: after the learner renames the folder, setup installs the skill and the file is unchanged', async (context) => {
+  // Arrange: an empty codebook folder, no receipt, and a window in which the learner's skill file is written right after setup found the folder empty.
+  const paths = await fixture(context)
+  const skillFolderPath = join(paths.homeRoot, '.cursor', 'skills', 'codebook')
+  await mkdir(skillFolderPath, { recursive: true })
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      readdir: async (path: string) => {
+        const names = await fileSystem.readdir(path)
+        if (path === skillFolderPath)
+          await writeFile(paths.targetPath, 'My own codebook skill\n')
+        return names
+      },
+    },
+  })
+
+  // Act
+  const setup = await statusOrRefusalOf(
+    window.deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    ),
+  )
+  const filesAfterTheSetup = await filesOfTheSetup(paths)
+  // The sentence is followed to the letter: the folder gets another name.
+  await rename(skillFolderPath, `${skillFolderPath}-of-mine`)
+  const setupAfterTheRename = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      setup,
+      filesAfterTheSetup,
+      setupAfterTheRename,
+      skill: await readFile(paths.targetPath, 'utf8'),
+      ownSkill: await readFile(
+        join(`${skillFolderPath}-of-mine`, 'SKILL.md'),
+        'utf8',
+      ),
+    },
+    {
+      setup: `An existing codebook skill is not owned by this installation; no file was changed. Codebook has no record of having installed ${paths.targetPath}, so it treats that file as yours. To keep it beside Codebook's skill, rename its folder ${skillFolderPath}; to make room without it, move the folder elsewhere. Then run Codebook: Set Up AI Chat again. If you keep it where it is, Codebook leaves it alone and installs no skill.`,
+      filesAfterTheSetup: {
+        skillFolder: ['SKILL.md'],
+        temporaryNames: [],
+        records: [],
+      },
+      setupAfterTheRename: 'installed',
+      skill: INITIAL_SKILL,
+      ownSkill: 'My own codebook skill\n',
+    },
+  )
+})
+
+// Value: protects=a learner who runs the removal while the record of an interrupted setup stands in Codebook's storage; fails_when=the removal says "Run Codebook: Set Up AI Chat to recover before removal." and does not say to run the removal again, so the learner who wanted the skill gone ends with it installed; or the two steps do not end in a finished removal; why_new=Cycle 0046 row 277; seam=none, the records as an interrupted update and an interrupted first installation leave them
+test('a removal that finds the record of an interrupted setup names the setup to recover and the removal to run again after it: for an interrupted update and for an interrupted first installation, that setup finishes and the removal then removes the skill', async (context) => {
+  // Arrange: one home whose update of the installed skill stopped after it staged the new skill, and one whose first installation stopped there.
+  const homeOfTheUpdate = await fixture(context),
+    homeOfTheFirstInstall = await fixture(context)
+  await deployCursorSkill(
+    homeOfTheUpdate.extensionPath,
+    homeOfTheUpdate.storageRoot,
+    homeOfTheUpdate.homeRoot,
+  )
+  await writeUpdateRecord(homeOfTheUpdate)
+  const skillsPath = join(homeOfTheFirstInstall.homeRoot, '.cursor', 'skills'),
+    receiptDirectory = join(homeOfTheFirstInstall.storageRoot, 'cursor-skill')
+  await mkdir(skillsPath, { recursive: true })
+  await mkdir(receiptDirectory)
+  const stagedPath = join(
+    skillsPath,
+    '.codebook-stage-00000000-0000-0000-0000-000000000277.tmp',
+  )
+  await writeFile(stagedPath, INITIAL_SKILL)
+  const staged = await lstat(stagedPath)
+  await writeFile(
+    join(receiptDirectory, 'pending.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      targetPath: homeOfTheFirstInstall.targetPath,
+      stagedPath,
+      skillSha256: createHash('sha256').update(INITIAL_SKILL).digest('hex'),
+      skillVersion: '1.0.0',
+      extensionVersion: '0.2.3',
+      device: staged.dev,
+      inode: staged.ino,
+    }),
+  )
+
+  // Act: the removal, then its sentence to the letter: the setup, and the removal again.
+  const outcomes = {
+    update: {
+      removal: await statusOrRefusalOf(
+        removeManagedCursorSkill(
+          homeOfTheUpdate.storageRoot,
+          homeOfTheUpdate.homeRoot,
+        ),
+      ),
+      setup: await statusOrRefusalOf(
+        deployCursorSkill(
+          homeOfTheUpdate.extensionPath,
+          homeOfTheUpdate.storageRoot,
+          homeOfTheUpdate.homeRoot,
+        ),
+      ),
+      removalRunAgain: await statusOrRefusalOf(
+        removeManagedCursorSkill(
+          homeOfTheUpdate.storageRoot,
+          homeOfTheUpdate.homeRoot,
+        ),
+      ),
+    },
+    firstInstall: {
+      removal: await statusOrRefusalOf(
+        removeManagedCursorSkill(
+          homeOfTheFirstInstall.storageRoot,
+          homeOfTheFirstInstall.homeRoot,
+        ),
+      ),
+      setup: await statusOrRefusalOf(
+        deployCursorSkill(
+          homeOfTheFirstInstall.extensionPath,
+          homeOfTheFirstInstall.storageRoot,
+          homeOfTheFirstInstall.homeRoot,
+        ),
+      ),
+      removalRunAgain: await statusOrRefusalOf(
+        removeManagedCursorSkill(
+          homeOfTheFirstInstall.storageRoot,
+          homeOfTheFirstInstall.homeRoot,
+        ),
+      ),
+    },
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      outcomes,
+      skillsFolderOfTheUpdate: await readdir(
+        join(homeOfTheUpdate.homeRoot, '.cursor', 'skills'),
+      ),
+      skillsFolderOfTheFirstInstall: await readdir(skillsPath),
+    },
+    {
+      outcomes: {
+        update: {
+          removal:
+            'Cursor skill setup is interrupted. Run Codebook: Set Up AI Chat to recover, then run Codebook: Remove Managed Cursor Skill again.',
+          setup: 'current',
+          removalRunAgain: 'removed',
+        },
+        firstInstall: {
+          removal:
+            'Cursor skill setup is interrupted. Run Codebook: Set Up AI Chat to recover, then run Codebook: Remove Managed Cursor Skill again.',
+          setup: 'installed',
+          removalRunAgain: 'removed',
+        },
+      },
+      skillsFolderOfTheUpdate: [],
+      skillsFolderOfTheFirstInstall: [],
     },
   )
 })

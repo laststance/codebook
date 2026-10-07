@@ -627,7 +627,7 @@ test('the packaged README says that Cursor setup needs a file system with hard l
 })
 
 // Value: protects=a learner who follows the README after a Cursor setup or removal was refused; fails_when=the README still forbids deleting a record that a refusal now tells the learner to delete, still sends a learner whose config cleanup failed through Restore Managed Cursor Skill, which installs again the skill that was just removed, or does not say what to do about a skill file that was edited or replaced; why_new=Cycle 0046 rows 188, 211 to 213 and 222 changed what these refusals say and what the removal command does; seam=none
-test('the packaged README agrees with the refusals of a Cursor setup or removal: a record a refusal names may be deleted as the refusal says, a failed config cleanup is finished by the removal command itself, and an edited or replaced skill file is deleted or renamed', async () => {
+test('the packaged README agrees with the refusals of a Cursor setup or removal: a record a refusal names may be deleted as the refusal says, a failed config cleanup is finished by the removal command itself, an edited or replaced skill file is deleted or renamed, and the folder of another skill named codebook is renamed or moved', async () => {
   // Arrange
   const readme = await readPackagedReadme()
   const endOfTheCleanupWarning = cursorCatalogCleanupNotice(
@@ -637,6 +637,7 @@ test('the packaged README agrees with the refusals of a Cursor setup or removal:
 
   // Act
   const delivered = heldSentences(readme, [
+    "If another skill is present under the name `codebook`, Codebook will not replace it: the refusal names its folder, and that folder is yours to keep. Rename that folder to keep the skill beside Codebook's, or move it elsewhere, then run **Codebook: Set Up AI Chat** again; as long as it stays where it is, Codebook installs no skill.",
     "A skill file that was edited or replaced after setup is left alone too, as long as it is there: delete or rename that file, then run the command again; setup then installs Codebook's skill again, and the removal finishes.",
     "Do not delete a pending or removal record, a retained file or another user's skill/config on your own to force setup through.",
     `The one exception is a record that a refusal names: where Codebook can neither finish nor undo an interrupted step by itself, or cannot read a record, the refusal names what to delete and ends with how to start over, for example \`${startOverBy('<record path>').trim()}\``,
@@ -647,10 +648,11 @@ test('the packaged README agrees with the refusals of a Cursor setup or removal:
     'Never delete a pending/removal record, retained file or another user',
     'If catalog cleanup alone failed after skill removal, run **Codebook: Restore Managed Cursor Skill**',
     'If another skill or a manual edit is present, leave it in place and resolve that conflict yourself',
+    'leave it in place and resolve that name conflict yourself',
   ].filter((sentence) => readme.includes(sentence))
 
   // Assert: the README holds each sentence and none of the earlier ones, and the two quotations are the product's words.
-  assert.deepEqual(delivered, [true, true, true, true, true])
+  assert.deepEqual(delivered, [true, true, true, true, true, true])
   assert.deepEqual(retired, [])
   assert.equal(
     startOverBy('<record path>').trim(),

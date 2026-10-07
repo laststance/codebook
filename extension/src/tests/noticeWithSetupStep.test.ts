@@ -106,7 +106,7 @@ test('a failed Cursor registration whose reason has no full stop gets exactly on
   const notice = noticeWithSetupStep(
     'Codebook agent server started, but Cursor MCP registration failed',
     new Error(
-      'Codebook will not follow a missing or redirected skill directory: /home/user/.cursor',
+      'Codebook will not change a non-regular skill file: /home/user/.cursor/extensions/laststance.codebook-0.2.30/skills/codebook/SKILL.md',
     ),
     'Run Codebook: Set Up AI Chat to repair the connection.',
   )
@@ -114,6 +114,24 @@ test('a failed Cursor registration whose reason has no full stop gets exactly on
   // Assert
   assert.equal(
     notice,
-    'Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/user/.cursor. Run Codebook: Set Up AI Chat to repair the connection.',
+    'Codebook agent server started, but Cursor MCP registration failed: Codebook will not change a non-regular skill file: /home/user/.cursor/extensions/laststance.codebook-0.2.30/skills/codebook/SKILL.md. Run Codebook: Set Up AI Chat to repair the connection.',
+  )
+})
+
+// Value: protects=the notice a learner reads at editor start when Cursor's settings folder is gone; fails_when=the refusal of the skill check, which names the setup as its own step since Cycle 0046 row 277, is followed by the setup step a second time; why_new=Cycle 0046 row 277: the refusal this file quoted before had no step and no full stop; seam=none
+test('a reconnect refusal for a missing Cursor folder, which ends with its own setup step, is shown without a second setup step', () => {
+  // Act
+  const notice = noticeWithSetupStep(
+    'Codebook AI chat did not reconnect',
+    new Error(
+      'Codebook will not follow a missing or redirected skill directory: /home/user/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
+    ),
+    'Run Codebook: Set Up AI Chat.',
+  )
+
+  // Assert
+  assert.equal(
+    notice,
+    'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/user/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
   )
 })
