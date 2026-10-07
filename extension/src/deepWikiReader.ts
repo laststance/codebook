@@ -46,6 +46,7 @@ import {
 } from './utils/installWikiUpdateStatus'
 import { isWikiSourceCandidate } from './utils/isWikiSourceCandidate'
 import { labelQuestionField } from './utils/labelQuestionField'
+import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishedAt } from './utils/readWikiPublishedAt'
 import { rebindDeepWikiEditorLinks } from './utils/rebindDeepWikiEditorLinks'
@@ -121,7 +122,7 @@ const qaClient = `(function () {
   }, true);
 })();`
 
-/** Validates the generated output owner before the reader serves files or accepts repository questions. @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
+/** Validates the generated output owner before the reader serves files or accepts repository questions; the manifest is read as a regular file of bounded size and never through a link ({@link readWikiFileToOpen}). @param outputDirectory - Resolved Wiki output. @param projectRoot - Canonical opened repository. @returns The published file allowlist and included sources. @throws When the manifest is missing, no regular file, no JSON or does not identify a complete Wiki of this project. @example await readDeepWikiManifest('/repo/.codebook/wiki', '/repo') */
 export async function readDeepWikiManifest(
   outputDirectory: string,
   projectRoot: string,
@@ -131,9 +132,12 @@ export async function readDeepWikiManifest(
   revision?: string
   excludedPaths: string[]
 }> {
-  const manifest: unknown = JSON.parse(
-    await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
+  // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
+  const manifestBytes = await readWikiFileToOpen(
+    join(outputDirectory, WIKI_MANIFEST_FILE),
+    'manifest',
   )
+  const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'))
   if (
     typeof manifest !== 'object' ||
     manifest === null ||

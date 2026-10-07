@@ -2001,7 +2001,7 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
     assert.ok(rejection instanceof Error)
     assert.equal(
       rejection.message,
-      `ENOENT: no such file or directory, open '${projectRoot}/[Open] (command:x)/codebook-wiki.json'`,
+      `The Wiki’s manifest (${projectRoot}/[Open] (command:x)/codebook-wiki.json) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
     )
     assert.equal(rejection.message.includes(']('), false)
   } finally {
@@ -2374,7 +2374,7 @@ test('a failed Open DeepWiki in Browser whose error quotes a command link shows 
 
     // Assert
     assert.deepEqual(errors, [
-      `Codebook could not open DeepWiki: Error: ENOENT: no such file or directory, open '${projectRoot}/[Open] (command:x)/codebook-wiki.json'. Generate it through /codebook in this project, then retry.`,
+      `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${projectRoot}/[Open] (command:x)/codebook-wiki.json) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
     ])
     assert.equal(errors[0]!.includes(']('), false)
   } finally {

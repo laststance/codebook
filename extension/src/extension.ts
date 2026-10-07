@@ -83,6 +83,7 @@ import { listWikiCandidates } from './utils/listWikiCandidates'
 import { mayWikiChatStillPublish } from './utils/mayWikiChatStillPublish'
 import { noticeWithSetupStep } from './utils/noticeWithSetupStep'
 import { readLiveWikiUpdateMarker } from './utils/readLiveWikiUpdateMarker'
+import { readWikiFileToOpen } from './utils/readWikiFileToOpen'
 import { readWikiPublicationIdentity } from './utils/readWikiPublicationIdentity'
 import { readWikiPublishToken } from './utils/readWikiPublishToken'
 import { readWikiWatchStamp } from './utils/readWikiWatchStamp'
@@ -684,26 +685,29 @@ export function activate(
       outputDirectory: resolveDeepWikiDirectory(projectRoot, setting),
     }
   }
-  /** Checks that the manifest of the Wiki folder names this opened project, before the browser entry or an update uses the folder. @throws When the manifest is no JSON object of this schema or names another checkout. @example await assertWikiOwner('/repo', '/repo/.codebook/wiki') */
+  /** Checks that the manifest of the Wiki folder names this opened project, before the browser entry or an update uses the folder. @throws When the manifest is missing or no regular file ({@link readWikiFileToOpen}), is no JSON object of this schema or names another checkout. @example await assertWikiOwner('/repo', '/repo/.codebook/wiki') */
   const assertWikiOwner = async (
     projectRoot: string,
     outputDirectory: string,
   ): Promise<void> => {
-    const manifest: unknown = JSON.parse(
-      await readFile(join(outputDirectory, WIKI_MANIFEST_FILE), 'utf8'),
+    // The manifest is read as a file of the Wiki folder, never through a link and never past its bound.
+    const manifestBytes = await readWikiFileToOpen(
+      join(outputDirectory, WIKI_MANIFEST_FILE),
+      'manifest',
     )
+    const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'))
     // A generated page from another checkout must not masquerade as this project's Wiki.
     if (!isWikiManifestOf(manifest, projectRoot))
       throw new Error(
         'The DeepWiki manifest does not identify this opened project.',
       )
   }
-  /** Checks the generated Wiki's owner and its entry page before the browser entry opens it; an update checks the owner alone, so a deleted entry page reaches its start check. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
+  /** Checks the generated Wiki's owner and its entry page before the browser entry opens it, each read as a file of the Wiki folder and never through a link ({@link readWikiFileToOpen}); an update checks the owner alone, so a deleted entry page reaches its start check. @example await currentDeepWiki() // => { projectRoot, outputDirectory, entry } */
   const currentDeepWiki = async () => {
     const { projectRoot, outputDirectory } = await wikiLocation()
     await assertWikiOwner(projectRoot, outputDirectory)
     const entry = join(outputDirectory, WIKI_ENTRY_FILE)
-    await readFile(entry)
+    await readWikiFileToOpen(entry, 'entry page')
     return { projectRoot, outputDirectory, entry }
   }
   /** Reads the published manifest's identity and its freshness against the project; undefined while it is missing, mid-replacement or invalid. @example await inspectPublishedWiki('/repo', '/repo/.codebook/wiki') // => { identity: 'a1b2c3d4e5f6+0f9e8d7c', revision: 'a1b2c3d4e5f6', index: '0f9e8d7c', freshness: { status: 'current', changedPaths: [], addedPaths: [] } } */
