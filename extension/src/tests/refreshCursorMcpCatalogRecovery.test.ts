@@ -26,6 +26,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
 
 /** The config Codebook creates for a first-time Cursor user. */
@@ -696,4 +697,67 @@ test('before a removal the Cursor MCP catalog says why there is no config to ret
     changed: { unowned: 'preserved' },
     retiredAndRemovedAgain: 'already-retired',
   })
+})
+
+// Value: protects=a learner on a file system that refuses hard links whose Cursor MCP config is edited in the instant before a removal moves it away; fails_when=the removal cannot put the config back and ends with the file system's text ("EPERM: operation not permitted, link …"), while Cursor's config stands under a name in Codebook's storage that nothing tells the learner; why_new=Cycle 0046 row 243; seam=node:fs/promises rename of the loaded catalog, before whose move the config is edited, and its utility for the link back loaded over a file system that refuses links with EPERM
+test('a Cursor MCP config that is edited right before a removal moves it, on a file system that refuses to link it back, is kept under its retired name: the removal says where it is and names the command that was run, and after the learner moves it back, a removal leaves it in place and drops the record', async (context) => {
+  // Arrange: the config Codebook created; the learner's editor writes it right before the removal's move.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        rename: async (from: string, to: string) => {
+          if (from === folders.configPath) await writeFile(from, EDITED_CONFIG)
+          return fileSystem.rename(from, to)
+        },
+      },
+      './dropSecondNameOfMovedFile':
+        await loadDropSecondNameWhoseLinkIsRefused('EPERM'),
+    },
+    { Error },
+  )
+
+  // Act: the refusal, and then its sentence followed to the letter on a file system that links.
+  const removal = await outcomeOf(
+    catalog.removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+      undefined,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+  const retiredName = (await readdir(folders.recordDirectory)).find((name) =>
+    name.startsWith('retired-'),
+  )
+  const retiredPath = join(folders.recordDirectory, retiredName ?? 'none')
+  await rename(retiredPath, folders.configPath)
+  const removalAfterTheMoveBack = await outcomeOf(
+    removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+      undefined,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      removalAfterTheMoveBack,
+      config: await readFile(folders.configPath, 'utf8'),
+      records: (await readdir(folders.recordDirectory)).filter((name) =>
+        name.startsWith('pending-'),
+      ),
+    },
+    {
+      removal: `refused: The Cursor MCP config changed while Codebook had moved it away, and the file system refused to put it back as ${folders.configPath} (EPERM). The file is kept as ${retiredPath}; move it back to ${folders.configPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+      removalAfterTheMoveBack: 'answered preserved',
+      config: EDITED_CONFIG,
+      records: [],
+    },
+  )
 })

@@ -26,6 +26,7 @@ import {
 import { areNamesOfOneFile } from './utils/areNamesOfOneFile'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { REMOVE_MANAGED_CURSOR_SKILL_COMMAND } from './utils/cursorCatalogCleanupNotice'
+import { describeRefusedLinkBack } from './utils/describeRefusedLinkBack'
 import {
   ALLOW_LINKS_THEN_SET_UP_AGAIN,
   describeRefusedSkillLink,
@@ -701,6 +702,63 @@ async function removeOwnedDisplacement(
 }
 
 /**
+ * Gives {@link dropSecondNameOfMovedFile} the sentence for a refused link back of the skill file, for the setup's and the removal's recoveries: the learner's changed file stays under the displaced name, and the sentence says where and what to do.
+ * @param targetPath - The managed skill path.
+ * @param displacedPath - The name the move gave the file.
+ * @param commandToRunAgain - The command the learner ran.
+ * @returns The wording for a code ({@link describeRefusedLinkBack}).
+ * @example refusedSkillLinkBack(targetPath, displacedPath, 'Codebook: Set Up AI Chat')('EPERM')
+ */
+function refusedSkillLinkBack(
+  targetPath: string,
+  displacedPath: string,
+  commandToRunAgain: string,
+): (code: string) => string {
+  return (code) =>
+    describeRefusedLinkBack(
+      'The Cursor skill',
+      targetPath,
+      code,
+      displacedPath,
+      commandToRunAgain,
+    )
+}
+
+/**
+ * Puts Codebook's previous skill back at the skill's path, for {@link deploySkill} when it recovers an update that stopped after its move (a crash, or a link the file system refused): the previous skill stands under its displaced name and the skill's path holds nothing.
+ * The link never replaces a file. A file system that refuses it refuses it at every try, so the refusal is the sentence the first try ended with, which names where the previous skill is kept ({@link describeRefusedSkillLink}).
+ * @param pending - The setup's record; its displaced name holds the previous skill.
+ * @param displacedPath - That name.
+ * @param targetPath - The managed skill path.
+ * @param pendingPath - The record's path.
+ * @throws
+ * - Every code but `EEXIST`: the sentence of a refused link with the kept path, with the refusal as its cause; the previous skill and the record stay
+ * - A failure without a code: itself
+ * @example await restorePreviousSkill(pending, pending.displacedPath, targetPath, pendingPath)
+ */
+async function restorePreviousSkill(
+  pending: PendingSkill,
+  displacedPath: string,
+  targetPath: string,
+  pendingPath: string,
+): Promise<void> {
+  try {
+    await link(displacedPath, targetPath)
+  } catch (error) {
+    const code = systemErrorCode(error)
+    // A file that took the path in this instant is the learner's: the previous skill is retained as for a changed skill.
+    if (code === 'EEXIST')
+      return settleChangedSkill(pending, targetPath, pendingPath)
+    throw code
+      ? new Error(describeRefusedSkillLink(targetPath, code, displacedPath), {
+          cause: error,
+        })
+      : error
+  }
+  await removeOwnedDisplacement(pending, pendingPath)
+}
+
+/**
  * Takes away what a setup's move left of a skill file that is not Codebook's any more, for {@link deploySkill}: at once when the file changed while setup ran, and at the next setup after a refusal or a crash left the setup's record.
  * Codebook's own previous skill, which the setup had moved away, is retained privately as after a finished update. A file that is not that skill is the learner's: it is linked back where the skill's path holds nothing, and its second name is removed once it stands at the skill's path ({@link dropSecondNameOfMovedFile}). A skill that was edited in place right after its publication still has the staged name as a second name, which is removed too.
  * @param pending - The setup's record.
@@ -756,7 +814,13 @@ async function settleDisplacedName(
   if (await holdsPreviousSkill(pending, displacedPath))
     return removeOwnedDisplacement(pending, pendingPath)
   // Any other file there is the learner's: it goes back to the skill's path, or stays where another file took that path.
-  if ((await dropSecondNameOfMovedFile(targetPath, displacedPath)) === 'kept')
+  if (
+    (await dropSecondNameOfMovedFile(
+      targetPath,
+      displacedPath,
+      refusedSkillLinkBack(targetPath, displacedPath, SET_UP_AI_CHAT_COMMAND),
+    )) === 'kept'
+  )
     throw new Error(
       `Cursor skill changed during an interrupted setup; Codebook preserved it and its recovery record. The file Codebook had moved away is kept as ${displacedPath}.${startOverBy(pendingPath)}`,
     )
@@ -878,6 +942,7 @@ async function publishStagedSkill(
  * Says whether a removal's move was of a skill file that is not Codebook's, and undoes what is left of it, for {@link recoverRemoval} and for {@link removeManagedCursorSkill} when the file changed between its check and its move.
  * @param pending - The removal's record.
  * @param targetPath - The managed skill path.
+ * @param commandToRunAgain - The command the learner ran (the setup or the removal), which the refusal of a link back names.
  * @returns
  * - `true`: neither the skill's path nor the displaced name holds Codebook's skill, and no second name is left (the file was linked back where the path held nothing, and its displaced name is removed; or nothing had been moved): the caller drops the record and goes on as for a file that was edited or replaced
  * - `false`: one of the two names holds Codebook's skill, both hold nothing, or they hold two different files: the removal's own recovery decides
@@ -886,11 +951,19 @@ async function publishStagedSkill(
 async function isRemovalOfChangedSkillUndone(
   pending: PendingRemoval,
   targetPath: string,
+  commandToRunAgain: string,
 ): Promise<boolean> {
   if (await holdsSkillOfRemoval(pending, targetPath)) return false
   return (
-    (await dropSecondNameOfMovedFile(targetPath, pending.displacedPath)) ===
-    'dropped'
+    (await dropSecondNameOfMovedFile(
+      targetPath,
+      pending.displacedPath,
+      refusedSkillLinkBack(
+        targetPath,
+        pending.displacedPath,
+        commandToRunAgain,
+      ),
+    )) === 'dropped'
   )
 }
 
@@ -924,7 +997,9 @@ async function recoverRemoval(
   const pending = await readPendingRemoval(path, targetPath, commandToRunAgain)
   if (!pending) return undefined
   // A skill file that changed under the removal is the learner's: it stays in place, and the record is dropped.
-  if (await isRemovalOfChangedSkillUndone(pending, targetPath)) {
+  if (
+    await isRemovalOfChangedSkillUndone(pending, targetPath, commandToRunAgain)
+  ) {
     await unlink(path)
     return undefined
   }
@@ -1276,8 +1351,12 @@ async function deploySkill(
         (await matchesOwnedFile(pending.displacedPath, pending.previous))
       ) {
         // A crash after displacement left the owned prior body intact; restore it without overwriting new content.
-        await link(pending.displacedPath, targetPath)
-        await removeOwnedDisplacement(pending, pendingPath)
+        await restorePreviousSkill(
+          pending,
+          pending.displacedPath,
+          targetPath,
+          pendingPath,
+        )
       } else {
         // The skill file is not Codebook's (it changed while a setup ran) or is gone: what the setup's move left is settled, and this setup answers for the file as it stands.
         await settleChangedSkill(pending, targetPath, pendingPath)
@@ -1725,7 +1804,15 @@ export async function removeManagedCursorSkill(
     if (!(await matchesOwnedFile(displacedPath, receipt))) {
       // The file changed between the check and the move: it goes back to its place and stays the learner's.
       if (
-        (await dropSecondNameOfMovedFile(targetPath, displacedPath)) === 'kept'
+        (await dropSecondNameOfMovedFile(
+          targetPath,
+          displacedPath,
+          refusedSkillLinkBack(
+            targetPath,
+            displacedPath,
+            REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+          ),
+        )) === 'kept'
       )
         throw new Error(
           `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${displacedPath}).${startOverBy(removalPath, REMOVE_MANAGED_CURSOR_SKILL_COMMAND)}`,

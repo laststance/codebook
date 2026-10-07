@@ -22,6 +22,7 @@ import {
 
 import { areNamesOfOneFile } from './areNamesOfOneFile'
 import { atomicPrivateWrite } from './atomicPrivateWrite'
+import { describeRefusedLinkBack } from './describeRefusedLinkBack'
 import { dropSecondNameOfMovedFile } from './dropSecondNameOfMovedFile'
 import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
@@ -634,7 +635,7 @@ async function recoverCreation(
  * @param retiredPath - The name in Codebook's storage that the removal moved the config to.
  * @param pendingPath - The removal's recovery record, which the caller removes afterwards.
  * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
- * @throws When the config's path holds another file than the one that was moved away: both files and the record stay, and the sentence names the kept file and what the learner does next.
+ * @throws When the config's path holds another file than the one that was moved away: both files and the record stay, and the sentence names the kept file and what the learner does next. Also when the file system refuses to put the config back ({@link describeRefusedLinkBack}): the config stays under its retired name with the record.
  * @example await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath, 'Codebook: Remove Managed Cursor Skill')
  */
 async function leaveChangedConfigInPlace(
@@ -643,7 +644,21 @@ async function leaveChangedConfigInPlace(
   pendingPath: string,
   commandToRunAgain: string,
 ): Promise<void> {
-  if ((await dropSecondNameOfMovedFile(targetPath, retiredPath)) === 'kept')
+  const describeRefusal = (code: string): string =>
+    describeRefusedLinkBack(
+      'The Cursor MCP config',
+      targetPath,
+      code,
+      retiredPath,
+      commandToRunAgain,
+    )
+  if (
+    (await dropSecondNameOfMovedFile(
+      targetPath,
+      retiredPath,
+      describeRefusal,
+    )) === 'kept'
+  )
     throw new Error(
       `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath, commandToRunAgain)}`,
     )

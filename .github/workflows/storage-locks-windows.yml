@@ -49,6 +49,7 @@ on:
       - extension/src/tests/utils/idOfNoProcess.ts
       - extension/src/tests/utils/idleChild.ts
       - extension/src/tests/utils/isFileIdExactAsANumber.ts
+      - extension/src/tests/utils/loadDropSecondNameWhoseLinkIsRefused.ts
       - extension/src/tests/utils/loadModule.ts
       - extension/src/tests/utils/loadOpenWithoutFollowing.ts
       - extension/src/tests/utils/realProcessStart.ts
@@ -65,6 +66,7 @@ on:
       - extension/src/utils/claimWikiUpdateMarker.ts
       - extension/src/utils/currentStorageOwner.ts
       - extension/src/utils/deriveMachineKeys.ts
+      - extension/src/utils/describeRefusedLinkBack.ts
       - extension/src/utils/dropSecondNameOfMovedFile.ts
       - extension/src/utils/hashFileSha256.ts
       - extension/src/utils/isFromEarlierBoot.ts
