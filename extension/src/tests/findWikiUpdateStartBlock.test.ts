@@ -7,6 +7,7 @@ import {
   open,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -320,6 +321,49 @@ test('a journal that is still there at the second look, and one written long ago
     })
     // Only the fresh journal got a second look.
     assert.deepEqual(waits, [2_000])
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner who presses Update in a checkout whose repository carries the Wiki folder itself as a link (`.codebook/wiki` to another folder); fails_when=the start check lists through the link, so it walks the folder the link leads to before any timeout or cancel exists and tells the learner to move that folder's files out of the Wiki folder, or passes and asks an agent whose publisher refuses at its first step (row 185); why_new=Cycle 0046 row 185: the listings refused a link inside the Wiki folder and followed one at the folder's own path; seam=none (a junction on Windows, which needs no right)
+test('a link at the Wiki folder’s own path refuses the update at its start with a cause of its own that names the folder, the folder it leads to is not listed, and the real publisher refuses it too', async () => {
+  // Arrange: the published Wiki is moved aside and a link to it stands at the Wiki folder's path; the folder it leads to holds a link of its own, which a listing through the first link would report.
+  const wiki = await publishedWikiFixture()
+  const movedAside = join(wiki.projectRoot, 'wiki-moved-aside')
+  try {
+    await rename(wiki.outputDirectory, movedAside)
+    await symlink(
+      wiki.projectRoot,
+      join(movedAside, 'a-link-inside'),
+      'junction',
+    )
+    await symlink(movedAside, wiki.outputDirectory, 'junction')
+
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
+    await assert.rejects(wiki.prepare(), /The Wiki directory must be regular/)
+  } finally {
+    await wiki.cleanup()
+  }
+})
+
+// Value: protects=the learner whose Wiki folder's path holds a file (a leftover of a tool, a checkout on a system without links, where Git writes a link as a small file); fails_when=the start check takes the path for a project without a Wiki and says "no LLM Wiki found", although the publisher refuses the entry and generating again would fail the same way (row 185); why_new=Cycle 0046 row 185: "a link, or anything else that is no folder"; seam=none
+test('a file at the Wiki folder’s own path refuses the update at its start with the same cause', async () => {
+  // Arrange
+  const wiki = await publishedWikiFixture()
+  try {
+    await rm(wiki.outputDirectory, { recursive: true })
+    await writeFile(wiki.outputDirectory, '../elsewhere/wiki')
+
+    // Act
+    const block = await findWikiUpdateStartBlock(wiki.outputDirectory)
+
+    // Assert
+    assert.deepEqual(block, { cause: 'not-a-folder', paths: ['wiki'] })
   } finally {
     await wiki.cleanup()
   }

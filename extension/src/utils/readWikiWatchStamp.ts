@@ -8,18 +8,19 @@ import {
   WIKI_PUBLISH_BACKUP_INFIX,
 } from '../constants'
 
+import { listFolderTreeWithoutFollowing } from './listFolderTreeWithoutFollowing'
+
 /** Names one file by inode number, modification time in nanoseconds and size, all read exactly (a number would round an inode number above 2^53, which a file id on NTFS can be); `-` when it is missing. */
 async function fileStamp(path: string): Promise<string> {
   const fileStat = await stat(path, { bigint: true }).catch(() => undefined)
   return fileStat ? `${fileStat.ino}:${fileStat.mtimeNs}:${fileStat.size}` : '-'
 }
 
-/** Counts the output folder and its subfolders and names the latest modification time among them; creating, removing or renaming a file changes its folder's time. `0:0` while the folder cannot be listed. */
+/** Counts the output folder and its subfolders and names the latest modification time among them; creating, removing or renaming a file changes its folder's time. `0:0` while the folder cannot be listed, and for a path that holds a link or a file instead of a folder of its own, which is never listed through ({@link listFolderTreeWithoutFollowing}). */
 async function folderTreeStamp(outputDirectory: string): Promise<string> {
-  const entries = await readdir(outputDirectory, {
-    recursive: true,
-    withFileTypes: true,
-  }).catch(() => undefined)
+  const entries = await listFolderTreeWithoutFollowing(outputDirectory).catch(
+    () => undefined,
+  )
   if (!entries) return '0:0'
   const folders = [
     outputDirectory,
