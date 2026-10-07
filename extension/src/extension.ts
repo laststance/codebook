@@ -1455,10 +1455,10 @@ export function activate(
             undefined,
             REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
           ).catch((refusal: unknown) => ({ refusal }))
-          // A skill an earlier removal took away is no refusal: this removal goes on to what that one could not finish.
-          const wasSkillAlreadyRemoved =
-            (await removeManagedCursorSkill(context.globalStorageUri.fsPath))
-              .status === 'already-removed'
+          // A skill an earlier removal took away, or none that Codebook knows as its own, is no refusal: this removal goes on to the config.
+          const skillRemoval = (
+            await removeManagedCursorSkill(context.globalStorageUri.fsPath)
+          ).status
           await context.workspaceState.update('codebook.aiChatSetup', undefined)
           if (registeredCursorServer) {
             vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
@@ -1478,12 +1478,12 @@ export function activate(
                 : catalogCapture.unowned
             void showNotice(
               'information',
-              cursorRemovalNotice(wasSkillAlreadyRemoved, catalogCleanup),
+              cursorRemovalNotice(skillRemoval, catalogCleanup),
             )
           } catch (error) {
             void showNotice(
               'warning',
-              cursorCatalogCleanupNotice(error, wasSkillAlreadyRemoved),
+              cursorCatalogCleanupNotice(error, skillRemoval),
             )
           }
         } finally {

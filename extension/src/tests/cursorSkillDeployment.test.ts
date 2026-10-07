@@ -1427,7 +1427,9 @@ async function skillWindowWhosePathIsSwapped(swapped: {
  * @returns The status of the result, or the sentence of the refusal.
  */
 async function statusOrRefusalOf(
-  calling: Promise<CursorSkillModule.CursorSkillResult>,
+  calling: Promise<
+    CursorSkillModule.CursorSkillResult | CursorSkillModule.CursorSkillRemoval
+  >,
 ): Promise<string> {
   return calling.then(
     (result) => result.status,
@@ -1475,7 +1477,7 @@ test('a link that takes the managed Cursor skill’s path while setup reads it i
       skillPathHoldsTheLink: (await lstat(paths.targetPath)).isSymbolicLink(),
     },
     {
-      setup: `Codebook will not read through a link: ${paths.targetPath}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+      setup: `Codebook will not read through a link: ${paths.targetPath}. Remove the link, then run Codebook: Set Up AI Chat again.`,
       readsByNameAfterTheSwap: [],
       note: 'A note of the learner.\n',
       skillPathHoldsTheLink: true,
@@ -1662,7 +1664,7 @@ test('a reconnect whose look at the skill is overtaken by another window’s upd
 })
 
 // Value: protects=the sentence a learner reads for a link at the managed Cursor skill's path, from each of the three entries; fails_when=a link is answered as "a non-regular skill file", which does not say that a link is there or what to do; why_new=Cycle 0046 row 142: the refusal of a link, of what is no regular file and of a replaced file each got its sentence; seam=the open flags of the opener the loaded deployment reads through
-test('a link at the managed Cursor skill’s path is refused by setup, reconnect and removal with the sentence of a link, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
+test('a link at the managed Cursor skill’s path is refused by setup, reconnect and removal with the sentence of a link, which names the command that was run as the one to run again, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
   // Arrange: the installed skill is moved away and a link to it stands at its path.
   const paths = await fixture(context)
   await deployCursorSkill(
@@ -1679,7 +1681,8 @@ test('a link at the managed Cursor skill’s path is refused by setup, reconnect
       openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
     }),
   })
-  const refusalOfALink = `Codebook will not read through a link: ${paths.targetPath}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`
+  const refusalOfALink = `Codebook will not read through a link: ${paths.targetPath}. Remove the link, then run Codebook: Set Up AI Chat again.`
+  const refusalOfALinkUnderARemoval = `Codebook will not read through a link: ${paths.targetPath}. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.`
 
   // Act
   const refusals = {
@@ -1725,10 +1728,10 @@ test('a link at the managed Cursor skill’s path is refused by setup, reconnect
       refusals: {
         setup: refusalOfALink,
         reconnect: refusalOfALink,
-        removal: refusalOfALink,
+        removal: refusalOfALinkUnderARemoval,
         setupAsOnWindows: refusalOfALink,
         reconnectAsOnWindows: refusalOfALink,
-        removalAsOnWindows: refusalOfALink,
+        removalAsOnWindows: refusalOfALinkUnderARemoval,
       },
       movedSkill: INITIAL_SKILL,
     },
@@ -1736,7 +1739,7 @@ test('a link at the managed Cursor skill’s path is refused by setup, reconnect
 })
 
 // Value: protects=the sentence for a skill path that holds a folder, in a Windows editor as elsewhere; fails_when=the refusal of the look, which keeps a folder from being opened where the open cannot refuse a link, reaches the learner as a bare file error instead of the sentence setup gives where the folder is opened and told by its status; why_new=Cycle 0046 row 142; seam=the open flags of the opener the loaded deployment reads through
-test('a folder at the managed Cursor skill’s path is refused by setup with the sentence of a non-regular skill file, with the system’s flags and where the system’s open cannot refuse a link', async (context) => {
+test('a folder at the managed Cursor skill’s path is refused by setup and by removal with the sentence of a non-regular skill file, which says what to do and names the command that was run, with the system’s flags and where the system’s open cannot refuse a link; after the learner deletes the folder, setup restores the skill', async (context) => {
   // Arrange: the installed skill is replaced by a folder.
   const paths = await fixture(context)
   await deployCursorSkill(
@@ -1764,13 +1767,28 @@ test('a folder at the managed Cursor skill’s path is refused by setup with the
         paths.homeRoot,
       ),
     ),
+    removal: await statusOrRefusalOf(
+      removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    ),
   }
+  // The setup's sentence is followed to the letter.
+  await rm(paths.targetPath, { recursive: true })
+  const setupAfterTheFolderWasDeleted = await statusOrRefusalOf(
+    deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+  )
 
   // Assert
-  assert.deepEqual(refusals, {
-    setup: `Codebook will not change a non-regular skill file: ${paths.targetPath}`,
-    setupAsOnWindows: `Codebook will not change a non-regular skill file: ${paths.targetPath}`,
-  })
+  assert.deepEqual(
+    { refusals, setupAfterTheFolderWasDeleted },
+    {
+      refusals: {
+        setup: `Codebook will not change a non-regular skill file: ${paths.targetPath}. Delete or rename what stands at that path, then run Codebook: Set Up AI Chat again.`,
+        setupAsOnWindows: `Codebook will not change a non-regular skill file: ${paths.targetPath}. Delete or rename what stands at that path, then run Codebook: Set Up AI Chat again.`,
+        removal: `Codebook will not change a non-regular skill file: ${paths.targetPath}. To finish the removal, delete or rename what stands at that path, then run Codebook: Remove Managed Cursor Skill again.`,
+      },
+      setupAfterTheFolderWasDeleted: 'restored',
+    },
+  )
 })
 
 // Value: protects=the sentence for an ownership receipt that was replaced by a link, which named a "skill file" although the receipt is Codebook's record; fails_when=the receipt is read through the link, or the refusal does not say that a link stands at the receipt's path; why_new=Cycle 0046 row 142: every read of the skill setup goes through one reader; seam=none
@@ -2268,12 +2286,13 @@ test('the record and the second name that a refused removal of an edited Cursor 
 })
 
 // Value: protects=the learner who meets one of the states a removal's record is kept for; fails_when=the refusal names no file and no next step, so the learner cannot tell what to delete to get setup and removal back; why_new=Cycle 0046 row 188: every sentence of a record that is kept says what the learner does next; seam=none, the files as each state leaves them
-test('each refusal that keeps a removal’s record of the Cursor skill names the record and how to start over: two different files at the two names, a foreign file at the displaced name, and a skill that is gone before its receipt said so', async (context) => {
-  // Arrange: three setups, each with a removal's record. First: an edited skill under the displaced name and another file at the skill's path. Second: Codebook's skill at its path and a foreign file at the displaced name. Third: neither name holds anything, and the receipt still says installed.
+test('each refusal that keeps a removal’s record of the Cursor skill names the record and how to start over, with the removal as the command to run again: two different files at the two names, a foreign file at the displaced name, a skill that is gone before its receipt said so, and a moved skill whose retained name is taken', async (context) => {
+  // Arrange: four setups, each with a removal's record. First: an edited skill under the displaced name and another file at the skill's path. Second: Codebook's skill at its path and a foreign file at the displaced name. Third: neither name holds anything, and the receipt still says installed. Fourth: Codebook's skill under the displaced name, and a file under the retained name too.
   const twoFiles = await fixture(context),
     foreignFile = await fixture(context),
-    goneSkill = await fixture(context)
-  for (const paths of [twoFiles, foreignFile, goneSkill])
+    goneSkill = await fixture(context),
+    retainedNameTaken = await fixture(context)
+  for (const paths of [twoFiles, foreignFile, goneSkill, retainedNameTaken])
     await deployCursorSkill(
       paths.extensionPath,
       paths.storageRoot,
@@ -2287,6 +2306,16 @@ test('each refusal that keeps a removal’s record of the Cursor skill names the
   await writeFile(second.displacedPath, 'A foreign file.\n')
   const third = await writeRemovalRecord(goneSkill)
   await rm(goneSkill.targetPath)
+  const fourth = await writeRemovalRecord(retainedNameTaken)
+  await rename(retainedNameTaken.targetPath, fourth.displacedPath)
+  await writeFile(
+    join(
+      retainedNameTaken.storageRoot,
+      'cursor-skill',
+      'retired-00000000-0000-0000-0000-000000000189.SKILL.md',
+    ),
+    'A file under the retained name.\n',
+  )
 
   // Act
   const refusals = {
@@ -2299,6 +2328,12 @@ test('each refusal that keeps a removal’s record of the Cursor skill names the
     goneSkill: await statusOrRefusalOf(
       removeManagedCursorSkill(goneSkill.storageRoot, goneSkill.homeRoot),
     ),
+    retainedNameTaken: await statusOrRefusalOf(
+      removeManagedCursorSkill(
+        retainedNameTaken.storageRoot,
+        retainedNameTaken.homeRoot,
+      ),
+    ),
   }
 
   // Assert
@@ -2309,9 +2344,10 @@ test('each refusal that keeps a removal’s record of the Cursor skill names the
     },
     {
       refusals: {
-        twoFiles: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${first.displacedPath}). To start over, delete ${first.removalPath}, then run Codebook: Set Up AI Chat again.`,
-        foreignFile: `The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record. To start over, delete ${second.removalPath}, then run Codebook: Set Up AI Chat again.`,
-        goneSkill: `Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record. To start over, delete ${third.removalPath}, then run Codebook: Set Up AI Chat again.`,
+        twoFiles: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${first.displacedPath}). To start over, delete ${first.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+        foreignFile: `The displaced Cursor skill changed during removal; Codebook preserved it and its recovery record. To start over, delete ${second.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+        goneSkill: `Removed Cursor skill is missing before its receipt was updated; Codebook preserved the recovery record. To start over, delete ${third.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+        retainedNameTaken: `Cursor skill displacement and private retention both exist; Codebook preserved both for inspection. To start over, delete ${fourth.removalPath}, then run Codebook: Remove Managed Cursor Skill again.`,
       },
       movedAwayOfTheFirst: EDITED_SKILL,
     },
@@ -2641,8 +2677,9 @@ function sentenceOfAnInvalidRecord(
   subject: string,
   recordPath: string,
   paths: { homeRoot: string },
+  commandToRunAgain = 'Codebook: Set Up AI Chat',
 ): string {
-  return `${subject} is invalid; no skill file was changed. To start over, delete ${recordPath} and the folder ${join(paths.homeRoot, '.cursor', 'skills', 'codebook')} (first copy anything of yours out of that folder), then run Codebook: Set Up AI Chat again.`
+  return `${subject} is invalid; no skill file was changed. To start over, delete ${recordPath} and the folder ${join(paths.homeRoot, '.cursor', 'skills', 'codebook')} (first copy anything of yours out of that folder), then run ${commandToRunAgain} again.`
 }
 
 // Value: protects=a learner whose receipt of the Cursor skill was edited by hand or damaged; fails_when=setup, reconnect and removal are refused for good with a sentence that names no file and no way out, or the way out it names does not end in a finished setup (deleting the receipt alone leads to "A codebook skill directory already exists in Cursor. …"); why_new=Cycle 0046 row 212 (the receipt); seam=none, the real files
@@ -2702,7 +2739,16 @@ test('a Cursor skill receipt that was edited by hand is refused by setup, reconn
       skill: await readFile(paths.targetPath, 'utf8'),
     },
     {
-      refusals: { setup: refusal, reconnect: refusal, removal: refusal },
+      refusals: {
+        setup: refusal,
+        reconnect: refusal,
+        removal: sentenceOfAnInvalidRecord(
+          'Cursor skill ownership receipt',
+          receiptPath,
+          paths,
+          'Codebook: Remove Managed Cursor Skill',
+        ),
+      },
       skillAfterTheRefusals: INITIAL_SKILL,
       setupAfterTheReceiptAloneWasDeleted:
         'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
@@ -3060,6 +3106,100 @@ test('a file that takes the Cursor skill’s path in the instant before a first 
         'The Cursor skill changed during setup; Codebook preserved it. Restore or remove that change, then run Codebook: Set Up AI Chat again.',
       files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
       fileAtTheSkillPath: 'A file of the learner.\n',
+    },
+  )
+})
+
+// Value: protects=a learner who runs the removal where the receipt of the skill is gone, or where Cursor never had a skills folder; fails_when=the removal throws "No installed Codebook-owned Cursor skill was found; no file was changed." or refuses the missing skills folder, so the removal command never goes on to the Cursor MCP config; why_new=Cycle 0046 row 244; seam=none, the real files
+test('a removal of the Cursor skill without a receipt answers that no skill of Codebook’s is installed and changes no file: after the learner deleted the receipt of an installed skill, and in a home that has no skills folder', async (context) => {
+  // Arrange: one home whose receipt the learner deleted, and one where Cursor chat was never set up.
+  const withoutReceipt = await fixture(context),
+    neverSetUp = await fixture(context)
+  await deployCursorSkill(
+    withoutReceipt.extensionPath,
+    withoutReceipt.storageRoot,
+    withoutReceipt.homeRoot,
+  )
+  await rm(join(withoutReceipt.storageRoot, 'cursor-skill', 'receipt.json'))
+  await mkdir(join(neverSetUp.homeRoot, '.cursor'))
+
+  // Act
+  const removals = {
+    withoutReceipt: await removeManagedCursorSkill(
+      withoutReceipt.storageRoot,
+      withoutReceipt.homeRoot,
+    ),
+    neverSetUp: await removeManagedCursorSkill(
+      neverSetUp.storageRoot,
+      neverSetUp.homeRoot,
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      removals,
+      skillWithoutReceipt: await readFile(withoutReceipt.targetPath, 'utf8'),
+      cursorFolderNeverSetUp: await readdir(
+        join(neverSetUp.homeRoot, '.cursor'),
+      ),
+    },
+    {
+      removals: {
+        withoutReceipt: {
+          status: 'not-installed',
+          path: withoutReceipt.targetPath,
+        },
+        neverSetUp: { status: 'not-installed', path: neverSetUp.targetPath },
+      },
+      skillWithoutReceipt: INITIAL_SKILL,
+      cursorFolderNeverSetUp: [],
+    },
+  )
+})
+
+// Value: protects=a learner whose editor saves the skill file right before the removal moves it, while another file takes the skill's path before Codebook can put the edit back; fails_when=the refusal that keeps the removal's record says "then run Codebook: Set Up AI Chat again" to a learner who ran the removal; why_new=Cycle 0046 row 244: the removal's own kept-record sentence names the removal; seam=node:fs/promises rename of the loaded deployment, before whose move the skill file is edited and after whose move another file takes its path
+test('a removal whose skill file was edited before its move, and whose path another file took before the edit could be put back, keeps both files and its record and names the removal as the command to run again', async (context) => {
+  // Arrange
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const window = await skillWindow(constants.EXTENSION_VERSION, {
+    'node:fs/promises': {
+      ...fileSystem,
+      rename: async (from: string, to: string) => {
+        if (from !== paths.targetPath) return fileSystem.rename(from, to)
+        await writeFile(from, EDITED_SKILL)
+        await fileSystem.rename(from, to)
+        await writeFile(from, 'A newer file of the learner.\n')
+      },
+    },
+  })
+
+  // Act
+  const refusal = await statusOrRefusalOf(
+    window.removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+  )
+
+  // Assert
+  const skillFolder = join(paths.homeRoot, '.cursor', 'skills', 'codebook')
+  const displacedName = (await readdir(skillFolder)).find((name) =>
+    name.startsWith('.codebook-displaced-'),
+  )
+  assert.ok(displacedName)
+  assert.deepEqual(
+    {
+      refusal,
+      displaced: await readFile(join(skillFolder, displacedName), 'utf8'),
+      skill: await readFile(paths.targetPath, 'utf8'),
+    },
+    {
+      refusal: `Cursor skill changed during interrupted removal; Codebook preserved it and the displaced file (${join(skillFolder, displacedName)}). To start over, delete ${join(paths.storageRoot, 'cursor-skill', 'removal.json')}, then run Codebook: Remove Managed Cursor Skill again.`,
+      displaced: EDITED_SKILL,
+      skill: 'A newer file of the learner.\n',
     },
   )
 })

@@ -11,7 +11,7 @@ test('the warning after a removal whose Cursor MCP config cleanup was refused le
   )
 
   // Act
-  const notice = cursorCatalogCleanupNotice(refusal, false)
+  const notice = cursorCatalogCleanupNotice(refusal, 'removed')
 
   // Assert
   assert.equal(
@@ -31,7 +31,7 @@ test('the warning after a removal whose Cursor MCP config cleanup failed with a 
   )
 
   // Act
-  const notice = cursorCatalogCleanupNotice(refusal, false)
+  const notice = cursorCatalogCleanupNotice(refusal, 'removed')
 
   // Assert
   assert.equal(
@@ -48,11 +48,28 @@ test('the warning after a second removal whose Cursor MCP config cleanup was ref
   )
 
   // Act
-  const notice = cursorCatalogCleanupNotice(refusal, true)
+  const notice = cursorCatalogCleanupNotice(refusal, 'already-removed')
 
   // Assert
   assert.equal(
     notice,
     'Learning storage is locked by another writer or an interrupted session (lock file: /storage/cursor-mcp-catalog/writer.lock). No data changed; retry after resolving the lock. The managed Cursor skill was already removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
+  )
+})
+
+// Value: protects=the learner whose removal found no skill of Codebook's (the receipt was deleted as an invalid record's sentence says) and whose Cursor MCP config cleanup was then refused; fails_when=the warning says a skill was removed that this removal never found; why_new=Cycle 0046 row 244: a removal without a receipt goes on to the config; seam=none
+test('the warning after a removal that found no Codebook-owned skill and whose Cursor MCP config cleanup was refused says that no skill was found', () => {
+  // Arrange
+  const refusal = new Error(
+    'Cursor MCP directory is not a regular directory; Codebook left its settings unchanged.',
+  )
+
+  // Act
+  const notice = cursorCatalogCleanupNotice(refusal, 'not-installed')
+
+  // Assert
+  assert.equal(
+    notice,
+    'Cursor MCP directory is not a regular directory; Codebook left its settings unchanged. No Codebook-owned Cursor skill was found; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
   )
 })
