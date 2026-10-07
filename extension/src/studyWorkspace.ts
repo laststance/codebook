@@ -7002,6 +7002,7 @@ export class StudyWorkspace {
 
   /**
    * Ends the Read {@link close} finds on, so that a closed workspace leaves no maximized group and no hidden side bar behind; called by {@link close} once its writes are drained, before it closes the captured source and the panes.
+   * The maximization is left to the editor where it ends it by itself as the panes' groups go, because that keeps every group at the size it had before the Read ({@link editorEndsReadMaximizationAtClose}); elsewhere the editor's Expand ends it.
    * The bars the Read hid are shown again while the panes still give the editor area its columns. The editor shows a bar only with a command that gives that bar the keyboard ({@link showSideBarsHiddenByRead}), in a window without the focus too, so this step moves the keyboard: the chat that had it gets it back ({@link returnsKeyboardToChatAfterSideBars}), and otherwise {@link movesKeyboardAfterClose} lets the active editor group take it at the end of the close, and the learner is told.
    * @param giveKeyboardBackToChat - What {@link retainForeignTabFocus} answered when the close began: the return to the tab outside the text editors and the Study panes that the editor named as active then, `undefined` when a text editor or a Study pane was active.
    * @returns `true` when a side bar was shown again and the keyboard was not given back to the chat; `false` when no Read was on, when the Read hid no bar that is to be shown, and when the chat has the keyboard again.
@@ -7012,15 +7013,70 @@ export class StudyWorkspace {
   ): Promise<boolean> {
     if (!this.maximizedByRead) return false
     this.maximizedByRead = false
-    await vscode.commands
-      .executeCommand('workbench.action.minimizeOtherEditors')
-      .then(undefined, () => undefined)
+    // The editor's Expand ends a maximization whatever its state, and leaves every other group at its minimum size: it is run only where the editor will not end the maximization by itself.
+    if (!this.editorEndsReadMaximizationAtClose())
+      await vscode.commands
+        .executeCommand('workbench.action.minimizeOtherEditors')
+        .then(undefined, () => undefined)
     // The Read also hid the side bars; the bars it hid are shown again while the panes still give the editor area its columns.
     if (!(await this.showSideBarsHiddenByRead())) return false
     // A bar that was shown took the keyboard: the chat that had it gets it back, and then nothing more is moved or told.
     return !(await this.returnsKeyboardToChatAfterSideBars(
       giveKeyboardBackToChat,
     ))
+  }
+
+  /**
+   * Says whether the editor ends a Read's maximization by itself while {@link close} closes the panes, so that no command has to end it; asked by {@link endReadAtClose}.
+   * Both editors leave a maximization when a group is removed from their grid and show the hidden groups again at the sizes they had before it (VS Code 1.140 and Cursor 3.23, the grid's `removeView`: `this.hasMaximizedView()&&this.exitMaximizedView()`), without moving the keyboard. The one command that ends a maximization whatever its state is the editor's Expand, which then gives the active group all the room and leaves every other group at its minimum size: after it the learner's own groups stay that way when the panes are gone (344 and 343 px before the Study workspace, 617 and 70 px after a Read and Close; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). A Restore runs Expand too, and gets its sizes from the arrangement it applies afterwards, which a Close has not. The editor's toggle would leave the sizes alone, but it maximizes a group when the learner or the editor has ended the Read's maximization already, which the editor does not report.
+   * @returns `true` when this close empties an editor group that the editor then removes ({@link emptiesEditorGroupAtClose}) and the side bars are not measured at the end of the Read; `false` when no group will go, so that the maximization would stay, and when {@link sideBarShowCommands} has to read the editor area, which it reads from a grid that is not maximized.
+   * @example if (!this.editorEndsReadMaximizationAtClose()) await vscode.commands.executeCommand('workbench.action.minimizeOtherEditors')
+   */
+  private editorEndsReadMaximizationAtClose(): boolean {
+    const before = this.sideBarsBeforeRead
+    // A reading whose secondary bar could not be measured at the Read measures it now, from the columns of a grid that is not maximized.
+    const measuresSideBars =
+      before?.widthWithoutPrimaryPx !== undefined &&
+      before.auxiliaryVisible === undefined
+    return !measuresSideBars && this.emptiesEditorGroupAtClose()
+  }
+
+  /**
+   * Says whether {@link close} leaves an editor group empty that the editor then removes; asked by {@link editorEndsReadMaximizationAtClose} before anything is closed.
+   * @returns `true` when the learner has not turned `workbench.editor.closeEmptyGroups` off and a group holds nothing but this reader's panes and captured sources; `false` when every such tab shares its group with a tab that stays, when the setting is off (an emptied group then stays), and for a group whose only tabs are panes of an earlier extension host, which this close does not close.
+   * @example this.emptiesEditorGroupAtClose() // => true for the three-pane Study workspace, whose Study pane has a group of its own
+   */
+  private emptiesEditorGroupAtClose(): boolean {
+    return (
+      this.closesEmptyEditorGroups() &&
+      vscode.window.tabGroups.all.some(
+        (group) =>
+          group.tabs.length > 0 &&
+          group.tabs.every(
+            (tab) =>
+              this.ownsCapturedSourceTab(tab) ||
+              (this.isCodebookPaneInput(
+                tab.input,
+                'codebook.scopedBrowser',
+                'codebook.studyContext',
+              ) &&
+                !this.inheritedPaneTabs.has(tab)),
+          ),
+      )
+    )
+  }
+
+  /**
+   * Reads whether the editor removes a group its last tab left; asked by {@link emptiesEditorGroupAtClose} and {@link emptiedGroupsClosed}.
+   * @returns `true` unless the learner turned `workbench.editor.closeEmptyGroups` off.
+   * @example if (!this.closesEmptyEditorGroups()) return
+   */
+  private closesEmptyEditorGroups(): boolean {
+    return (
+      vscode.workspace
+        .getConfiguration('workbench.editor')
+        .get<boolean>('closeEmptyGroups') !== false
+    )
   }
 
   /**
@@ -7068,11 +7124,7 @@ export class StudyWorkspace {
    * @example await this.emptiedGroupsClosed()
    */
   private async emptiedGroupsClosed(): Promise<void> {
-    const closesEmptyGroups =
-      vscode.workspace
-        .getConfiguration('workbench.editor')
-        .get<boolean>('closeEmptyGroups') !== false
-    if (!closesEmptyGroups) return
+    if (!this.closesEmptyEditorGroups()) return
     await waitUntil(
       () =>
         vscode.window.tabGroups.all.length <= 1 ||

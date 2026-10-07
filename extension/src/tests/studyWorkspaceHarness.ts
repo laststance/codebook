@@ -1155,6 +1155,8 @@ export async function workspaceHarness(
         activeTabGroup.activeTab?.input instanceof TabInputUnknown)
     )
       keyboardOnBody = true
+    // Both editors leave a maximization when a group is removed from their grid, and the groups that remain have the sizes they had before it (the grid's `removeView` exits the maximized view first).
+    maximizedEditorGroup = false
     editorLayout = layoutWithoutLeaf(editorLayout, main.indexOf(emptied))
     groups.splice(groups.indexOf(emptied), 1)
     for (const remaining of groups)
