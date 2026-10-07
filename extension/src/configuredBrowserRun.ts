@@ -108,6 +108,7 @@ import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
+import { isModuleEntryPause } from './utils/isModuleEntryPause'
 import { isPageStubOfSource } from './utils/isPageStubOfSource'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
@@ -332,6 +333,8 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   }
   /** The resumes of a page pause at a server stop's breakpoint the run itself has under way, oldest first, each by the declared server stop its `stopped` named: one more for each `continue` the run sends, one fewer once the debugger answered that request or the request failed ({@link resumeServerBreakpointInBrowser}, {@link pageResumeEnded}). While one is under way a page pause read meanwhile is taken as the run's own, whichever of the two channels was read first, and is not bounded as a pause nobody owns ({@link ownPagePauseUnderResume}). A resume of the page does not end one: the debugger pauses the page at the first position of the module for itself and resumes it before the pause at the breakpoint, so the page's next resume need not be the one the run asked for. */
   private readonly pageResumesUnderWay: PreparedStop[] = []
+  /** The last resume of a page pause at a server stop's breakpoint that the debugger answered, with the run clock at that answer: the page's own events can be read after the answer, so a page pause in the stub of that stop's module that is read within the debugger's bound of the answer is still taken as that resume's ({@link answeredResumeOfOpenPause}). */
+  private answeredPageResume?: { stop: PreparedStop; answeredAtMs: number }
   /** How many pauses away from the expected stop were observed; the journal names only the first {@link REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT} of them. */
   private offStopPauseCount = 0
   /** How many instrumentation pauses of the runtime were observed; they are journaled under the same limit, counted apart, so they leave the pauses the debugger makes for itself their room in the journal. */
@@ -2755,8 +2758,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Chooses how long a page pause may last in a run that declares no browser stop, for the timer {@link onCdpPaused} starts for it.
    * The debugger also sets a server stop's breakpoint in the page, and the page pauses there in its stub of the server module. The debug adapter reports that pause as a stop that names the server breakpoint, which the run then resumes itself ({@link resumeServerBreakpointInBrowser}); it may first resolve which breakpoints were hit, so that report can come later than the short bound of a pause nobody owns. Such a pause is known by its place before the report arrives, and has the bound of a pause of the adapter's own until then.
+   * The adapter's own breakpoint at a module's first position is set by the bare base name of the declared stop's file, so the page also pauses for a moment at the first position of every other script whose address contains that name, until the adapter has read that script's source map; such a pause is known by its one breakpoint ({@link isModuleEntryPause}) and has the adapter's bound too.
    * @param event - The page's pause.
-   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageStubOfSource}); {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
+   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageStubOfSource}) and for the adapter's own pause at the first position of a module named like a declared stop's file; {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
    * @example
    * ```ts
    * this.unownedPagePauseLimitMs(event) // 3000 for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts, otherwise 250
@@ -2765,23 +2769,28 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private unownedPagePauseLimitMs(
     event: Protocol.Debugger.PausedEvent,
   ): number {
-    const scriptId = event.callFrames[0]?.location.scriptId,
-      scriptUrl =
-        scriptId === undefined
-          ? undefined
-          : this.participants.browser.scriptUrls.get(scriptId)
-    const isInServerStub = this.stops.some(
-      (stop) =>
-        stop.participant === 'server' &&
-        isPageStubOfSource(scriptUrl, stop.source.path),
-    )
-    return isInServerStub
+    const scriptUrl = this.pageScriptUrlOf(event),
+      sourcePaths = this.stops.map((stop) => stop.source.path)
+    const isAdaptersOwn =
+      sourcePaths.some((path) => isPageStubOfSource(scriptUrl, path)) ||
+      isModuleEntryPause(event, scriptUrl, sourcePaths)
+    return isAdaptersOwn
       ? REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
       : REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS
   }
 
+  /** Gives the address the page's runtime announced for the script a page pause is in, for {@link unownedPagePauseLimitMs}; `undefined` for a pause without a frame and for a script the page never announced. @example this.pageScriptUrlOf(event) // 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts' */
+  private pageScriptUrlOf(
+    event: Protocol.Debugger.PausedEvent,
+  ): string | undefined {
+    const scriptId = event.callFrames[0]?.location.scriptId
+    return scriptId === undefined
+      ? undefined
+      : this.participants.browser.scriptUrls.get(scriptId)
+  }
+
   /**
-   * Takes the page pause the run itself is resuming out of the bounds of a pause nobody owns and marks it with the declared server stop of the oldest resume under way; called by {@link resumeServerBreakpointInBrowser} when it sends that resume and by {@link onCdpPaused} for a page pause read while a resume has no answer yet. Such a pause can also be the one the debugger makes for itself at the module's first position before the pause at the breakpoint; it resumes that one within milliseconds, and the mark goes with the pause.
+   * Takes the page pause the run itself is resuming out of the bounds of a pause nobody owns and marks it with the declared server stop of that resume ({@link stopOfPageResume}); called by {@link resumeServerBreakpointInBrowser} when it sends that resume and by {@link onCdpPaused} for a page pause read while a resume has no answer yet, or in that stop's stub shortly after the debugger answered one. Such a pause can also be the one the debugger makes for itself at the module's first position before the pause at the breakpoint; it resumes that one within milliseconds, and the mark goes with the pause.
    * In a run without browser stops such a pause runs against the short bound of an unowned page pause, and in a run with browser stops a held pause that is resumed late is taken for a competing resume. Neither holds for a pause the run resumes itself: it is bounded by the request the run sent (the adapter's answer within the active bound) and by the action's own deadline, and either end names the pause and what became of the resume ({@link pageResumeFailure}, {@link withPagePauseUnderResume}).
    * @example
    * ```ts
@@ -2789,7 +2798,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
    * ```
    */
   private ownPagePauseUnderResume(): void {
-    const stop = this.pageResumesUnderWay[0],
+    const stop = this.stopOfPageResume(),
       transient = this.transientBrowserPause,
       held = this.participants.browser.unannouncedPause
     if (!stop) return
@@ -2799,6 +2808,50 @@ export class ConfiguredBrowserRun implements StudyRuntime {
       transient.resumedByRun = stop
     }
     if (held) held.resumedByRun = stop
+  }
+
+  /** Gives {@link ownPagePauseUnderResume} the declared server stop whose resume the page's open pause belongs to: the oldest resume without an answer, otherwise the one the debugger just answered when that pause lies in its stub ({@link answeredResumeOfOpenPause}); `undefined` when the pause is nobody's. @example this.stopOfPageResume() // the server stop declared at app/lib/actions.ts:27 */
+  private stopOfPageResume(): PreparedStop | undefined {
+    return this.pageResumesUnderWay[0] ?? this.answeredResumeOfOpenPause()
+  }
+
+  /**
+   * Finds the answered resume the page's open pause belongs to, for {@link stopOfPageResume}: the debugger's answer can be read before the page's own events (240 ms before them in a native run), so a pause that is read after the answer is not known as the run's own by a request under way. Within the debugger's bound of the answer, a pause in the stub of that stop's module is taken as the one the debugger answered for: when the debugger resumes it, as it does, it is retired like every pause; when the page never reports that resume, the run ends naming the pause and saying that the debugger answered ({@link openPageResume}).
+   * @returns The declared server stop of the last answered resume, when it was answered at most {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} ago and the page's open pause lies in the page's stub of that stop's module ({@link isPageStubOfSource}); `undefined` otherwise, also for a pause in any other script.
+   * @example
+   * ```ts
+   * this.answeredResumeOfOpenPause() // the stop declared at app/lib/actions.ts:27 for a pause in (app-pages-browser)/./app/lib/actions.ts read 240 ms after the debugger's answer
+   * ```
+   */
+  private answeredResumeOfOpenPause(): PreparedStop | undefined {
+    const answered = this.recentlyAnsweredPageResume(),
+      open = this.openPagePause()
+    if (!answered || !open) return undefined
+    return isPageStubOfSource(
+      this.pageScriptUrlOf(open.event),
+      answered.source.path,
+    )
+      ? answered
+      : undefined
+  }
+
+  /** Gives {@link answeredResumeOfOpenPause} the declared server stop of the last resume the debugger answered, while that answer is no older than the debugger's bound for a pause of its own; `undefined` afterwards and before any answer. @example this.recentlyAnsweredPageResume() // undefined 3,001 ms after the answer */
+  private recentlyAnsweredPageResume(): PreparedStop | undefined {
+    const answered = this.answeredPageResume
+    return answered &&
+      performance.now() - answered.answeredAtMs <=
+        REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
+      ? answered.stop
+      : undefined
+  }
+
+  /** Gives the page's pause that is open and that no declared stop owns: the timed one of a run that declares no browser stop, or the held one of a run that declares one; {@link answeredResumeOfOpenPause} and {@link pagePauseTakenUnderResume} read it. @example this.openPagePause()?.event // the paused event in the page's copy of app/lib/actions.ts */
+  private openPagePause():
+    | { event: Protocol.Debugger.PausedEvent; resumedByRun?: PreparedStop }
+    | undefined {
+    return (
+      this.transientBrowserPause ?? this.participants.browser.unannouncedPause
+    )
   }
 
   /** Tells whether a pause is at a declared stop's bound place: on its line by {@link isPauseAtStop}, asked with {@link pauseTarget} so a server stop the adapter already verified is compared with that line, and, once the run knows the binding, at its column by {@link isPauseAtBoundColumn}. @example this.isPauseOfStop(event, this.expectedStop('server')) // false for the adapter's entry breakpoint */
@@ -3878,8 +3931,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     } catch (error) {
       throw this.pageResumeFailure(stop, error)
     }
-    // The debugger answered: the request is no longer under way, whatever resumes of the page were read meanwhile.
+    // The debugger answered: the request is no longer under way, whatever resumes of the page were read meanwhile; a pause of the page that is read only now is still this resume's for the debugger's bound.
     this.pageResumeEnded(stop)
+    this.answeredPageResume = { stop, answeredAtMs: performance.now() }
     this.evidence.record('dap.server-breakpoint-browser-stop-resumed', detail)
   }
 
@@ -3938,8 +3992,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private pagePauseTakenUnderResume():
     | { event: Protocol.Debugger.PausedEvent; resumedByRun: PreparedStop }
     | undefined {
-    const taken =
-      this.transientBrowserPause ?? this.participants.browser.unannouncedPause
+    const taken = this.openPagePause()
     if (!taken?.resumedByRun) return undefined
     return { event: taken.event, resumedByRun: taken.resumedByRun }
   }
