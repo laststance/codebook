@@ -7508,7 +7508,9 @@ export class StudyWorkspace {
               this.selectedArchive = archive
             if (this.pendingArchives.get(id) === checkpoint)
               this.pendingArchives.delete(id)
-            if (current) this.errors.delete('archive')
+            // The line stays while another archive still waits: retired by this save, it would take Retry storage / refresh from the pane although a study is unsaved.
+            if (current && this.pendingArchives.size === 0)
+              this.errors.delete('archive')
             this.publish()
           } catch (error) {
             this.reportCheckpoint(

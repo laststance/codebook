@@ -4972,6 +4972,130 @@ test('a Stop whose last checkpoint fails before anything is written stops the ru
   }
 })
 
+/**
+ * Makes every save of a study fail on the reader's library while `refusesEveryStudy` is set, and afterwards the saves of the studies named in `refusedStudyIds`; every other save reaches the disk.
+ * @param context - The test whose mocks the caller restores.
+ * @returns The switch and the set a test changes as the disk recovers.
+ * @example
+ * const disk = refuseStudySaves(context)
+ * disk.refusesEveryStudy = false
+ * disk.refusedStudyIds.add(firstStudyId) // only that study still cannot be saved
+ */
+function refuseStudySaves(context: TestContext) {
+  const saveStudy = LearningLibrary.prototype.saveStudy
+  const disk = { refusesEveryStudy: true, refusedStudyIds: new Set<string>() }
+  context.mock.method(
+    LearningLibrary.prototype,
+    'saveStudy',
+    function (
+      this: LearningLibrary,
+      study: Parameters<LearningLibrary['saveStudy']>[0],
+    ) {
+      return disk.refusesEveryStudy || disk.refusedStudyIds.has(study.id)
+        ? Promise.reject(new Error('disk is read-only'))
+        : saveStudy.call(this, study)
+    },
+  )
+  return disk
+}
+
+// Value: protects=the line "History not saved: …" and the Retry button beside it while a study still waits to be saved, also when another study is saved meanwhile; fails_when=the successful save of one study retires the archive line although the archive of another study still waits, so the pane offers no Retry while a study is unsaved; why_new=Cycle 0046 row 300 (read in the code while working on row 278); seam=the library's study save, which refuses the first study only once the disk writes again, and the reader's own refresh, which saves the second run
+test('the line “History not saved: …” of a study that still waits stays, with Retry storage / refresh beside it, when another study is saved meanwhile, and is gone once Retry wrote the waiting one', async (context) => {
+  // Arrange: the study of a first, stopped run could not be saved. The disk writes again, but not that study, and a second run of the same server has started.
+  const disk = refuseStudySaves(context)
+  const harness = await workspaceHarness()
+  try {
+    const first = await startRun(harness)
+    await harness.reader.action('stop')
+    disk.refusesEveryStudy = false
+    disk.refusedStudyIds.add(`${harness.service.instanceId}_${first.record.id}`)
+    const second = await startRun(harness)
+    // Act: the reader's refresh saves the second run's study; then the disk writes every study and the learner presses Retry storage / refresh.
+    await readerSeams(harness).refresh()
+    await waitUntil(
+      () =>
+        harness.service.state(second.record).historyOutcome.status === 'saved',
+      'the save of the second run',
+      1_000,
+    )
+    const afterOtherSave = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    disk.refusedStudyIds.clear()
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(afterOtherSave, {
+      queued: 1,
+      errors: ['Error: History not saved: Error: disk is read-only'],
+      // Retry storage / refresh is still offered.
+      unretryableErrorCount: 0,
+    })
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(first.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line and the Retry button while one of two studies whose saves failed is still unsaved after a Retry that wrote the other; fails_when=the Retry that wrote one study leaves no line although the other still waits; why_new=Cycle 0046 row 300 (the row's own order of events; it holds without the row's change as well, because Retry tries every waiting archive in turn and tells the failure of the second again); seam=the library's study save, which refuses one study by its id
+test('a Retry storage / refresh that writes one of two studies whose saves failed leaves the line and Retry for the other, and the Retry that writes that one leaves no line', async (context) => {
+  // Arrange: the studies of two stopped runs of one server could not be saved.
+  const disk = refuseStudySaves(context)
+  const harness = await workspaceHarness()
+  try {
+    const first = await startRun(harness)
+    await harness.reader.action('stop')
+    const second = await startRun(harness)
+    await harness.reader.action('stop')
+    const queuedBeforeRetry = readerSeams(harness).queuedStudyWrites()
+    // Act: the disk writes the first study only, and the learner presses Retry storage / refresh; then it writes both, and the learner presses again.
+    disk.refusesEveryStudy = false
+    disk.refusedStudyIds.add(
+      `${harness.service.instanceId}_${second.record.id}`,
+    )
+    await harness.reader.action('retry')
+    const afterFirstRetry = structuredClone({
+      queued: readerSeams(harness).queuedStudyWrites(),
+      histories: [first.record, second.record].map(
+        (record) => harness.service.state(record).historyOutcome.status,
+      ),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    disk.refusedStudyIds.clear()
+    await harness.reader.action('retry')
+    // Assert
+    assert.equal(queuedBeforeRetry, 2)
+    assert.deepEqual(afterFirstRetry, {
+      queued: 1,
+      histories: ['saved', 'failed'],
+      // The line of the Retry whose second write failed, and the line of the selection, which names the second study and cannot be written before its archive exists. Retry storage / refresh answers both.
+      errors: [
+        'Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+      ],
+      unretryableErrorCount: 0,
+    })
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.equal(
+      harness.service.state(second.record).historyOutcome.status,
+      'saved',
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the study of a stopped run whose archive could not be saved when a new reader is attached to the same service: Retry storage / refresh in the new reader saves the study, and it opens; fails_when=the new reader no longer captures the run again from the service, so the archive that waits in the disposed reader is the only copy of the study, or the new reader takes the run's recording without an archive for a study removed by hand; either way the press writes nothing and the study can no longer be saved; why_new=Cycle 0046 row 267 (named while working on row 248, not stated by a test until now; the extension stops its service before it replaces its reader after a change of the workspace's folders, so the product attaches no second reader to a living service today, and this states what holds if it ever does); seam=the workspace harness's createReader (a second reader from the same loaded module, attached to the same service) and the library's study save, which fails until the disk is writable again
 test('after the archive of a stopped run could not be saved, a reader made again over the same service writes it at Retry storage / refresh without the archive the disposed reader held, and the study opens with the run’s history saved', async (context) => {
   // Arrange: a stopped run whose archive waits in the reader that could not save it; that reader is disposed and a new one is attached to the same service.
