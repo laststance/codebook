@@ -66,6 +66,7 @@ import {
   UNMAXIMIZE_FOCUS_SETTLE_MS,
   UNRETRYABLE_READER_ERROR_KINDS,
   UNSAVED_STUDY_HANDED_OVER_REASON,
+  UNSAVED_UNDERSTANDING_WAITS_MESSAGE,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
 import { StudyError } from './errors'
@@ -6674,7 +6675,17 @@ export class StudyWorkspace {
     this.selection = selectStudy(archive, this.selection)
   }
 
-  /** Saves explicit reader/outline choices to their displayed source context, retaining the saved value on failure. @example await workspace.understand(true) */
+  /**
+   * Saves an explicit understanding choice of the learner to its displayed source context; called for the Study pane's checkbox, the Learning outline's checkbox and the Mark Understanding command.
+   * A choice the ledger refuses is kept as it was made and waits for Retry storage / refresh, which the progress line "Not saved: …" offers; the saved value stays as it is until then. While one waits, another choice is not taken and the progress line says so: taken, it would replace the one that waits.
+   * @param understood - The learner's choice; omitted, the opposite of the saved value.
+   * @param itemId - The learning item; omitted, the selected one.
+   * @param sourceHash - The source the choice was made on; omitted, the displayed source.
+   * @param scope - `current` for the outline, whose choices apply to the current citations only.
+   * @returns Nothing, also when the ledger refused the write or an earlier choice still waits: both are told by the progress line and not by a rejection, which a pane would show as a control line that no Retry answers.
+   * @throws When the choice cannot be made at all: a write or a load is in progress, the source or the storage is unreadable, or the choice does not belong to the displayed article.
+   * @example await workspace.understand(true)
+   */
   async understand(
     understood?: boolean,
     itemId?: RetainedStudySelection['itemId'],
@@ -6696,6 +6707,11 @@ export class StudyWorkspace {
       throw new Error(
         'Understanding requires readable source and learning storage.',
       )
+    // A choice that still waits is never replaced by a later one: the learner's earlier decision would be lost.
+    if (this.pendingDecision) {
+      this.report('progress', new Error(UNSAVED_UNDERSTANDING_WAITS_MESSAGE))
+      return
+    }
     const decision = {
       id: randomUUID(),
       sourceHash: sourceHash ?? selected.source.hash,
@@ -6731,8 +6747,8 @@ export class StudyWorkspace {
       this.pendingDecision = undefined
       this.errors.delete('progress')
     } catch (error) {
+      // The choice waits for Retry storage / refresh, which this line offers. Thrown on, the failure became a control line beside which no Retry is offered and which outlived the Retry that wrote the choice.
       this.report('progress', new Error(`Not saved: ${String(error)}`))
-      throw error
     } finally {
       this.saving = false
       this.publish()
@@ -8446,7 +8462,8 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       this.progress = progress
       this.repositoryOrigin = progress.repositoryReturn
-      this.errors.delete('progress')
+      // A ledger that can be read again has not written the understanding choice that waits: its line, and Retry with it, stay until it is written.
+      if (!this.pendingDecision) this.errors.delete('progress')
     } catch (error) {
       if (!this.closing && !this.disposed && lifetime === this.lifetime)
         this.report('progress', error)
