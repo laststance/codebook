@@ -12079,6 +12079,8 @@ export class StudyWorkspace {
       } else {
         const wasRecording = this.recordingActive
         this.leavePlayback()
+        // Leaving Recording retires the line of a finished removal, as choosing another entry does: a refusal that told the learner to leave Recording first is no longer true under a delete button that can be used again.
+        if (wasRecording) this.dismissStudyRemoval()
         if (this.selection.tab !== message.tab || wasRecording)
           this.readerSelectionRevision++
         this.selection = { ...this.selection, tab: message.tab }
