@@ -227,7 +227,7 @@ export async function nativeParticipantsHarness(
   let earlyBrowserPause: 'pending' | 'sent' | undefined
   // How many pauses of the page at a server stop's breakpoint, in its stub of the server module, the adapter has reported and nobody resumed yet; each of the next browser continues resumes only one of them.
   let stubPausesAwaitingResume = 0
-  // How the browser's adapter answers the run's resume of that pause: at once, at once while the page does not go on, only once the test releases it, or with a refusal.
+  // How the browser's adapter answers the run's next resume of such a pause: at once, at once while the page does not go on, only once the test releases it, or with a refusal. That resume uses the answer up, and the one after it is answered at once again.
   let stubResume: 'answered' | 'unresumed' | 'refused' | Promise<void> =
     'answered'
   // The editor breakpoints, by participant session, that the adapter sent `changed` news about: the editor keeps no column of such news for a breakpoint that has none of its own.
@@ -341,6 +341,9 @@ export async function nativeParticipantsHarness(
       // The run resumes the page's pause at a server stop's breakpoint: the adapter resumes it and no declared stop follows.
       if (command === 'continue' && stubPausesAwaitingResume > 0) {
         stubPausesAwaitingResume--
+        // What a test configured is for this resume alone: the resume of the next such pause is answered at once again unless the test configures it too.
+        const resumeOfThisPause = stubResume
+        stubResume = 'answered'
         run.onRequest(sessions[name], {
           type: 'request',
           seq: ++sequence,
@@ -348,10 +351,11 @@ export async function nativeParticipantsHarness(
           arguments: args,
         })
         // The adapter refuses the resume, or answers it only after the test let it: the page stays paused meanwhile.
-        if (stubResume === 'refused') throw new Error('Thread is not paused')
+        if (resumeOfThisPause === 'refused')
+          throw new Error('Thread is not paused')
         // The adapter answers and the page stays paused: no `continued` and no resume of the runtime follow.
-        if (stubResume === 'unresumed') return {}
-        if (stubResume !== 'answered') await stubResume
+        if (resumeOfThisPause === 'unresumed') return {}
+        if (resumeOfThisPause !== 'answered') await resumeOfThisPause
         run.onEvent(sessions[name], {
           type: 'event',
           seq: ++sequence,

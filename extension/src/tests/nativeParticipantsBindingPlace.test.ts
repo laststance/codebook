@@ -1121,6 +1121,113 @@ test('a second page pause at a server stop’s breakpoint, whose stopped event w
   assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 2)
 })
 
+// Cycle 0046 (row 351), a case of the harness: what a test tells the adapter stand-in about the resume of a page pause at a server stop's breakpoint is for the next such resume alone. Red while the stand-in kept that answer for every later resume: the second pause's resume, for which the test configured nothing, waited for the first one's release too.
+test('the adapter stand-in holds back only the one resume of a page pause at a server stop’s breakpoint it was told to hold: the resume of a second such pause is answered at once while the first has no answer', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the stand-in keeps its answer to the next resume back.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const firstResume = harness.holdStubResume()
+  // Act: the adapter reports two pauses of the page at the server breakpoint, and nothing is configured for the second one's resume; the run is given a turn to read the answers that came.
+  harness.announceBrowserStopAtServerBreakpoint(harness.breakpoints[0]!)
+  harness.announceBrowserStopAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length === 2,
+    'the run sent both resumes of the page',
+  )
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve)
+  })
+  const answeredWhileTheFirstIsHeld = journaled(
+    harness,
+    'dap.server-breakpoint-browser-stop-resumed',
+  ).length
+  firstResume.release()
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+        .length === 2 || harness.run.view().failures.length,
+    'the adapter answered the first resume too',
+  )
+  // Assert
+  assert.equal(answeredWhileTheFirstIsHeld, 1)
+  assert.equal(harness.run.view().failures.join('; '), '')
+})
+
+// Cycle 0046 (row 351), the same for an answer that leaves the page paused: red while the stand-in answered every later resume without resuming the page too, so the page's pause was never retired.
+test('the adapter stand-in leaves the page paused only at the one answered resume it was told to: the resume of a second pause at the server stop’s breakpoint resumes the page, and its open pause is retired', async (context) => {
+  // Arrange: the stand-in answers the next resume without resuming the page; the page's pause at the breakpoint is read after that answer and stays open.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.answerStubResumeWithoutResuming()
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length,
+    'the debugger answered the run’s first resume',
+  )
+  stub.pausedAtBreakpoint(10, 115)
+  const retiredBeforeTheSecondResume = journaled(
+    harness,
+    'cdp.browser-adapter-pause-retired',
+  ).length
+  // Act: the adapter reports the pause once more, and nothing is configured for this resume.
+  harness.announceBrowserStopAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+        .length === 2 || harness.run.view().failures.length,
+    'the debugger answered the run’s second resume',
+  )
+  // Assert
+  assert.equal(retiredBeforeTheSecondResume, 0)
+  assert.equal(
+    journaled(harness, 'cdp.browser-adapter-pause-retired').length,
+    1,
+  )
+  assert.equal(harness.run.view().failures.join('; '), '')
+})
+
+// Cycle 0046 (row 351), the same for a refusal: the run ends at the first refused resume and sends no second one, so the test asks the stand-in itself. Red while the stand-in refused every later resume too.
+test('the adapter stand-in refuses only the one resume of a page pause at a server stop’s breakpoint it was told to refuse: the resume of a second such pause is answered', async (context) => {
+  // Arrange: the stand-in refuses the next resume, and the run ends with that refusal.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  const serverBreakpoint = harness.breakpoints[0]!
+  harness.refuseStubResume()
+  harness.pauseBrowserAtServerBreakpoint(serverBreakpoint)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the run ended with the adapter’s refusal',
+  )
+  await harness.run.stop()
+  // Act: the adapter reports a second pause, and the resume the run would send is sent to the stand-in.
+  harness.pauseBrowserAtServerBreakpoint(serverBreakpoint)
+  const secondResume = await harness.sessions.browser
+    .customRequest('continue', { threadId: 1 })
+    .then(
+      () => 'answered',
+      (refusal: unknown) => String(refusal),
+    )
+  // Assert
+  assert.equal(secondResume, 'answered')
+})
+
 // Cycle 0046 (row 282, the order of the native journal f21a: one `stopped`, then the debugger's own pause at the module's first position, its resume, and only then the pause at the breakpoint): red while every resume of the page took one resume of the run's own off those under way: the resume of the debugger's own pause ended the run's one resume, the pause at the breakpoint got the timer of a pause nobody owns, and an adapter that answered later than 3 s ended the run with "Unowned browser stop remained paused".
 test('a page pause at a server stop’s breakpoint that follows the debugger’s own pause at the module’s first position is not ended by the bound of an unowned page pause while the run’s resume has no answer, and the run goes on to its server stop', async (context) => {
   // Arrange: the action is accepted and the server stop has not paused yet. The adapter's `stopped` names the server breakpoint, the run sends its resume, and the adapter answers it only when the test lets it. The run's clock moves only when the test advances it.
