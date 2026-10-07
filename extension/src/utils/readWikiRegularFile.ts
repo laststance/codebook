@@ -55,6 +55,33 @@ async function readUpToLimit(
 }
 
 /**
+ * Reads an opened file when it is a regular file within the limit; called by {@link readWikiRegularFile} between the open and the close.
+ * @param file - The open file.
+ * @returns Its bytes, inode number and modification time, all from the one open file; `undefined` for what is no regular file and for a file larger than {@link WIKI_METADATA_FILE_LIMIT_BYTES}.
+ * @throws What the status or a read throws, and the `RangeError` of {@link readUpToLimit} for a file that grew past the limit after its `stat`.
+ * @example
+ * await readOpenedFile(file) // => { bytes, inode: '1837462', modifiedAtMs: 1790000000000 }
+ */
+async function readOpenedFile(
+  file: FileHandle,
+): Promise<WikiRegularFile | undefined> {
+  // The status is read with exact numbers for the inode number.
+  const fileStat = await file.stat({ bigint: true })
+  const sizeAtStat = Number(fileStat.size)
+  if (!fileStat.isFile() || sizeAtStat > WIKI_METADATA_FILE_LIMIT_BYTES)
+    return undefined
+  return {
+    bytes: await readUpToLimit(
+      file,
+      sizeAtStat,
+      WIKI_METADATA_FILE_LIMIT_BYTES,
+    ),
+    inode: fileStat.ino.toString(),
+    modifiedAtMs: modifiedAtMsOf(fileStat),
+  }
+}
+
+/**
  * Reads a manifest or a publication receipt of a Wiki or candidate folder only when it is a regular file of bounded size, without following a link and without waiting on a pipe.
  * A link is refused on every system ({@link openWithoutFollowing}): where the system has `O_NOFOLLOW` (Linux, macOS) by the open itself; where it has not (Windows) by a look at the path that does not follow it, after which the opened file must be the file that look found.
  *
@@ -65,7 +92,7 @@ async function readUpToLimit(
  * @param openConstants - The open flags this system defines; `fs.constants` unless a test takes one away.
  * @returns
  * - A regular file of at most {@link WIKI_METADATA_FILE_LIMIT_BYTES}: its bytes, inode number and modification time, all from one open file
- * - A missing file, a link, a pipe, a device, a folder, a larger file, one that grew past the limit while it was read, one that was replaced between the look and the open, or one that cannot be read: undefined
+ * - A missing file, a link, a pipe, a device, a folder, a larger file, one that grew past the limit while it was read, one that was replaced between the look and the open, one that cannot be read, or one whose handle cannot be closed: undefined. It never rejects.
  *
  * @example
  * ```ts
@@ -78,27 +105,16 @@ export async function readWikiRegularFile(
   path: string,
   openConstants?: NoFollowOpenConstants,
 ): Promise<WikiRegularFile | undefined> {
-  let file: FileHandle | undefined
-  try {
-    file = await openWithoutFollowing(path, openConstants)
-    // The status is read with exact numbers for the inode number.
-    const fileStat = await file.stat({ bigint: true })
-    const sizeAtStat = Number(fileStat.size)
-    if (!fileStat.isFile() || sizeAtStat > WIKI_METADATA_FILE_LIMIT_BYTES)
-      return undefined
-    return {
-      // A file that grew past the limit after its stat rejects here and is refused below.
-      bytes: await readUpToLimit(
-        file,
-        sizeAtStat,
-        WIKI_METADATA_FILE_LIMIT_BYTES,
-      ),
-      inode: fileStat.ino.toString(),
-      modifiedAtMs: modifiedAtMsOf(fileStat),
-    }
-  } catch {
-    return undefined
-  } finally {
-    await file?.close()
-  }
+  const file = await openWithoutFollowing(path, openConstants).catch(
+    () => undefined,
+  )
+  if (!file) return undefined
+  // A file that cannot be read, also one that grew past the limit after its stat, is refused.
+  const read = await readOpenedFile(file).catch(() => undefined)
+  // The close is part of the read: a handle whose close fails is answered as a file that could not be read, never as a rejection, which would end a watch or leave a run without its end.
+  const didClose = await file.close().then(
+    () => true,
+    () => false,
+  )
+  return didClose ? read : undefined
 }

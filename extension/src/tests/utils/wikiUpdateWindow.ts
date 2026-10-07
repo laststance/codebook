@@ -144,6 +144,8 @@ export async function openWikiUpdateWindow(options: {
   runUpdateCommand(): Promise<void>
   status(): WikiUpdateStatus
   setFreshness(freshness: WikiFreshness): void
+  /** Makes every read of the publish token reject with the message from now on, the start checks' and the one a run's end begins with; `undefined` mends the read. */
+  breakPublishTokenRead(message: string | undefined): void
   hold(step: HeldUpdateStep): { started: Promise<void>; release(): void }
   close(): Promise<void>
 }> {
@@ -157,6 +159,8 @@ export async function openWikiUpdateWindow(options: {
     changedPaths: ['src/a.ts'],
     addedPaths: [],
   }
+  // The message the read of the publish token rejects with, or none; a test can break and mend the read while the window is open.
+  let publishTokenReadFailure = options.publishTokenReadFails
   const chatRequests: Array<{ name: string; query: string }> = []
   const executedCommands: string[] = []
   const notices: string[] = []
@@ -378,8 +382,8 @@ export async function openWikiUpdateWindow(options: {
       },
       './utils/readWikiPublishToken': {
         readWikiPublishToken: async (outputDirectory: string) => {
-          if (options.publishTokenReadFails !== undefined)
-            throw new Error(options.publishTokenReadFails)
+          if (publishTokenReadFailure !== undefined)
+            throw new Error(publishTokenReadFailure)
           await passHold('publish-token-read')
           return readWikiPublishToken(outputDirectory)
         },
@@ -518,6 +522,9 @@ export async function openWikiUpdateWindow(options: {
     },
     setFreshness(next: WikiFreshness): void {
       freshness = next
+    },
+    breakPublishTokenRead(message: string | undefined): void {
+      publishTokenReadFailure = message
     },
     hold(step: HeldUpdateStep): { started: Promise<void>; release(): void } {
       let reached = (): void => {}

@@ -129,6 +129,7 @@ import {
   type WikiChatStart,
 } from './utils/startWikiChatUpdate'
 import { thrownMessage } from './utils/thrownMessage'
+import { unreadWikiUpdateEnd } from './utils/unreadWikiUpdateEnd'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
 import { watchWikiUpdateSigns } from './utils/watchWikiUpdateSigns'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
@@ -136,6 +137,7 @@ import { wikiOutputLabel } from './utils/wikiOutputLabel'
 import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
 import {
   WikiUpdateRun,
+  type WikiUpdateEnd,
   type WikiUpdateHost,
   type WikiUpdateOutput,
 } from './utils/wikiUpdateRun'
@@ -896,54 +898,87 @@ export function activate(
       describeSecondWikiUpdateStart(wikiProgressPlace()),
     )
   }
-  /** Records how a run of either host ended: reads the publish token and the publication identity again, lets {@link classifyWikiUpdateEnd} decide, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. @example await finishWikiUpdate(run, { cancelled: true }) */
-  const finishWikiUpdate = async (
+  /** What a run hands to its end: what it observed itself, without a look at the disk. */
+  type ObservedWikiRunEnd = Partial<
+    Pick<
+      WikiUpdateEndFacts,
+      | 'cancelled'
+      | 'timedOut'
+      | 'blockingPaths'
+      | 'failure'
+      | 'isFailureCodebookSentence'
+      | 'mayBeReplacedLater'
+    >
+  > & {
+    publish?: { token: string; published: WikiUpdateEndFacts['published'] }
+    /** Set when the watch of a VS Code update threw while its chat worked: the chat was not stopped, so the run leaves the reservation a stopped watch leaves. */
+    didWatchBreak?: boolean
+  }
+  /** Reads the published manifest at a run's end, and only when the site on disk is not the one the run started from; called by {@link readWikiSiteAtEnd}. @example await readPublishedIfReplaced(run, 'a@1') // => undefined for a run that started from 'a@1' */
+  const readPublishedIfReplaced = async (
     run: WikiRun,
-    observed: Partial<
-      Pick<
-        WikiUpdateEndFacts,
-        | 'cancelled'
-        | 'timedOut'
-        | 'blockingPaths'
-        | 'failure'
-        | 'isFailureCodebookSentence'
-        | 'mayBeReplacedLater'
-      >
-    > & {
-      publish?: { token: string; published: WikiUpdateEndFacts['published'] }
-      /** Set when the watch of a VS Code update threw while its chat worked: the chat was not stopped, so the run leaves the reservation a stopped watch leaves. */
-      didWatchBreak?: boolean
-    },
-  ): Promise<void> => {
+    tokenAtEnd: string | undefined,
+  ): Promise<WikiUpdateEndFacts['published']> =>
+    tokenAtEnd === run.tokenAtStart
+      ? undefined
+      : inspectPublishedWiki(run.projectRoot, run.outputDirectory)
+  /** Reads what the disk says of a run that ended: the publish token, the publication identity and the published manifest, the last two as the watch saw them when it saw the publish; called by {@link readWikiUpdateEnd}. @throws What a read of the disk throws. @example await readWikiSiteAtEnd(run, undefined) // => { tokenAtEnd: 'a@1', publicationAtEnd: 'a@7', published: undefined } */
+  const readWikiSiteAtEnd = async (
+    run: WikiRun,
+    seenPublish: ObservedWikiRunEnd['publish'],
+  ): Promise<
+    Pick<WikiUpdateEndFacts, 'tokenAtEnd' | 'publicationAtEnd' | 'published'>
+  > => {
     const tokenAtEnd = await readWikiPublishToken(run.outputDirectory)
-    const end = classifyWikiUpdateEnd({
+    // A publish the watch saw is taken as it saw it.
+    if (seenPublish)
+      return {
+        tokenAtEnd,
+        publicationAtEnd: seenPublish.token,
+        published:
+          seenPublish.published ??
+          (await readPublishedIfReplaced(run, tokenAtEnd)),
+      }
+    return {
+      tokenAtEnd,
+      publicationAtEnd: await readWikiPublicationIdentity(run.outputDirectory),
+      published: await readPublishedIfReplaced(run, tokenAtEnd),
+    }
+  }
+  /** Decides how a run of either host ended from the disk: reads the site again ({@link readWikiSiteAtEnd}) and lets {@link classifyWikiUpdateEnd} decide; called by {@link finishWikiUpdate}. @throws What a read of the disk throws; the caller then ends the run without the disk. @example await readWikiUpdateEnd(run, { cancelled: true }) // => { state: 'cancelled', site: 'kept' } */
+  const readWikiUpdateEnd = async (
+    run: WikiRun,
+    observed: ObservedWikiRunEnd,
+  ): Promise<WikiUpdateEnd> =>
+    classifyWikiUpdateEnd({
       host: run.host,
       cancelled: observed.cancelled ?? false,
       timedOut: observed.timedOut ?? false,
       tokenAtStart: run.tokenAtStart,
-      tokenAtEnd,
       publicationAtStart: run.publicationAtStart,
-      publicationAtEnd:
-        observed.publish?.token ??
-        (await readWikiPublicationIdentity(run.outputDirectory)),
-      // The manifest is read only when the site on disk is not the one the run started from.
-      published:
-        observed.publish?.published ??
-        (tokenAtEnd === run.tokenAtStart
-          ? undefined
-          : await inspectPublishedWiki(run.projectRoot, run.outputDirectory)),
+      ...(await readWikiSiteAtEnd(run, observed.publish)),
       uncoveredAtStart: run.uncoveredAtStart,
       blockingPaths: observed.blockingPaths ?? [],
       failure: observed.failure,
       isFailureCodebookSentence: observed.isFailureCodebookSentence,
       mayBeReplacedLater: observed.mayBeReplacedLater,
     })
+  /** Records how a run of either host ended: lets {@link readWikiUpdateEnd} decide from the disk, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. It never rejects: a run whose end cannot be read from the disk is recorded as failed without a word about the site ({@link unreadWikiUpdateEnd}), so no window stays "already updating". @example await finishWikiUpdate(run, { cancelled: true }) */
+  const finishWikiUpdate = async (
+    run: WikiRun,
+    observed: ObservedWikiRunEnd,
+  ): Promise<void> => {
+    // The disk says how the run ended; when it cannot be read, what the run observed itself still says whether its chat goes on.
+    const { end, stoppedAs } = await readWikiUpdateEnd(run, observed).then(
+      (readEnd) => ({ end: readEnd, stoppedAs: readEnd.state }),
+      (error: unknown) => unreadWikiUpdateEnd(observed, thrownMessage(error)),
+    )
     wikiUpdateRun.end(end)
     const endedAtMs = Date.now()
     // Stopping a VS Code watch does not stop the chat, and neither does a watch that broke off; a Cursor agent is stopped with its run, and a closing window takes its chat with it.
     const mayAgentStillWork = mayWikiChatStillPublish(
       run.host,
-      end.state,
+      stoppedAs,
       isExtensionStopping,
       observed.didWatchBreak ?? false,
     )
