@@ -4917,6 +4917,82 @@ test('in a window without a Trash a request for a study’s files that the pane 
   }
 })
 
+// Value: protects=an open "Remove by hand" in a window without a Trash getting its files while a presentation changes, without an error line, and the change itself ending as it would have; fails_when=the reader refuses the pane's own request like a control pressed during the change, so the pane shows "Error: A presentation change or reader close is pending. …" for nothing the learner did and stays at "Listing this study's files…" until another message makes it ask again; or the answer disturbs the change; why_new=Cycle 0046 row 219 (row 202's branch stood ahead of that check untested); seam=a presentation change the harness holds half-way, and the Study pane's webview
+test('in a window without a Trash a request for a study’s files that the pane sent by itself is answered while a presentation changes, without an error line and without touching the change, and the same request made by the learner then keeps its sentence', async () => {
+  // Arrange: a WSL remote window with a saved study an older Codebook left; the Study workspace is open and a presentation change is held half-way.
+  const harness = await workspaceHarness(false, false, 'wsl')
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let release = (): void => {}
+  try {
+    await harness.reader.learningStorage()
+    const study = await writeHistoricalStudy(
+      harness.reader.inspect().libraryDirectory!,
+    )
+    await harness.reader.action('retry')
+    await harness.reader.open()
+    const held = harness.holdPresentationMessage()
+    release = held.release
+    const before = harness.reader.presentationState()
+    const change = harness.reader.changePresentation({
+      presentationId: before.presentationId,
+      expectedRevision: before.presentationControlRevision,
+      mode: 'living-book',
+      action: 'select',
+    })
+    await held.started
+    /** Sends the pane's request during the change and waits until the reader has answered it or told a line. */
+    const askDuringTheChange = async (
+      removalRequest: number,
+      mark: { unprompted?: true },
+    ) => {
+      harness.receive({
+        type: 'delete-study',
+        revision: harness.reader.inspect().view!.revision,
+        studyId: study.id,
+        removalRequest,
+        ...mark,
+      })
+      await waitUntil(
+        () =>
+          harness.reader.inspect().view!.studyRemoval?.request ===
+            removalRequest || readerSeams(harness).errorLines().length > 0,
+        'the answer to the files request or a line',
+        2_000,
+      )
+      return structuredClone({
+        answeredRequest: harness.reader.inspect().view!.studyRemoval?.request,
+        files: harness.reader.inspect().view!.studyFiles?.[study.id],
+        errorLines: readerSeams(harness).errorLines(),
+        presentation: harness.reader.presentationState().state,
+      })
+    }
+    // Act: the pane's own request, then the same request as the learner makes it; then the change is let go.
+    const sentByThePane = await askDuringTheChange(1, { unprompted: true })
+    const madeByTheLearner = await askDuringTheChange(2, {})
+    held.release()
+    const changed = await change
+    // Assert
+    assert.deepEqual(sentByThePane, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [],
+      presentation: 'applying',
+    })
+    assert.deepEqual(madeByTheLearner, {
+      answeredRequest: 1,
+      files: [study.archive],
+      errorLines: [
+        'Error: A presentation change or reader close is pending. Read its state before another control.',
+      ],
+      presentation: 'applying',
+    })
+    assert.deepEqual([changed.mode, changed.state], ['living-book', 'open'])
+  } finally {
+    release()
+    await harness.close()
+  }
+})
+
 // Value: protects=a saved study in a window with a Trash: no message can start its removal past the reader's checks by calling itself a request of the pane; fails_when=the reader answers every delete request marked `unprompted` whatever it shows, so a marked message under an old revision opens the removal dialog for a study the learner may no longer see; why_new=Cycle 0046 row 202 (the mark is honoured in a window without a Trash only); seam=the Study pane's webview and the editor's dialog, recorded by the harness
 test('in a window with a Trash a delete request marked as sent by the pane keeps every check: under an old revision it is refused with its sentence, and no dialog opens', async () => {
   // Arrange: a window with a Trash, one saved study, and a Study workspace that has rendered again since the pane read its revision.
