@@ -25,6 +25,7 @@ import {
   NATIVE_RUN_AND_DEBUG_VIEW_COMMAND,
   OPEN_REPLAY_RESULT_WAIT_MS,
   PAUSE_FOCUS_LOOKBACK_MS,
+  STOP_OWN_FOCUS_BOUND_MS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
   PRESENTATION_READY_TIMEOUT_MS,
@@ -123,6 +124,7 @@ import {
 } from './runtimeSupport/constants'
 import { awaitResponse } from './runtimeSupport/utils/awaitResponse'
 import { debugStopOf } from './runtimeSupport/utils/debugStopOf'
+import { isDebugResumeMessage } from './runtimeSupport/utils/isDebugResumeMessage'
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
@@ -412,6 +414,15 @@ interface LeftoverTabClose {
  * `state`: `'unsettled'` until the reader's first reveal at that pause, `'settling'` while its one return of the keyboard to the chat runs, `'settled'` after it: from then an editor that becomes active is the learner's choice or the next stop's paused file.
  * `returned`: that one return, from the moment it began: it resolves to whether the chat got the keyboard. Kept with the pause, because a second reveal of the same stop (the Application pane's, while the captured source's return runs) asks the same question and must get the same answer.
  */
+/**
+ * What {@link StudyWorkspace} notes of a stop a debug adapter reported, until the editor reports a stack frame of that session ({@link StudyWorkspace.cameWithStop}).
+ * `readAtMs` is the moment the adapter's `stopped` event was read. `isDoubtful` says that the editor's own handling of that stop may not bring it to the front: the adapter asked to keep the focus where it is, a frame of another session had the focus when the stop was read, or the session went on before a frame of it was reported. Such a stop counts only for a frame that arrives within {@link STOP_OWN_FOCUS_BOUND_MS}.
+ */
+interface StopNote {
+  readAtMs: number
+  isDoubtful: boolean
+}
+
 interface KeyboardPauseOfRecord {
   openedByDebugger: string | undefined
   state: 'unsettled' | 'settling' | 'settled'
@@ -570,9 +581,9 @@ export class StudyWorkspace {
     leftAtMs?: number
     pause?: KeyboardPauseOfRecord
   }
-  /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet; {@link followStopsOf} adds a session and {@link cameWithStop} takes it out again. */
-  private readonly announcedStops = new Set<string>()
-  /** The debug sessions that started while this reader existed, whose adapter's messages it therefore sees ({@link followStopsOf}). A session that started before has none to tell a stop from a selected frame. */
+  /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet, each with what {@link noteStopOf} noted of that stop; {@link cameWithStop} takes a session out again, and so does {@link forgetSession}. */
+  private readonly announcedStops = new Map<string, StopNote>()
+  /** The debug sessions that started while this reader existed and have not ended, whose adapter's messages it therefore sees ({@link followStopsOf}); {@link forgetSession} takes a session out when it ends. A session that started before the reader has none to tell a stop from a selected frame. */
   private readonly followedSessions = new Set<string>()
   /** Whether the stack frame the editor reports now came with a stop of the debugger, which opens the paused file with the keyboard; `false` for a frame the learner selected in the Call Stack view, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
   private frameCameWithStop = false
@@ -2640,9 +2651,9 @@ export class StudyWorkspace {
 
   /**
    * Follows the stops of one debug session for the reader; called by the editor through the tracker factory of {@link watchKeyboardOutsideEditors} when a session of any debug type starts.
-   * The adapter's `stopped` event reaches this tracker in the extension host before the editor opens the paused file and reports the stack frame, so {@link cameWithStop} finds it when that frame arrives.
+   * The adapter's `stopped` event reaches this tracker in the extension host before the editor opens the paused file and reports the stack frame, so {@link cameWithStop} finds it when that frame arrives. The editor makes a tracker for every adapter it starts, also for the new adapter of a session it restarts under the same id, and tells it when that adapter is stopped or exits.
    * @param session - The session that starts.
-   * @returns The tracker, which notes each `stopped` event of that session ({@link noteStopOf}).
+   * @returns The tracker, which notes each `stopped` event of that session ({@link noteStopOf}), doubts the note once the session goes on ({@link doubtStopOf}) and forgets the session when it ends ({@link forgetSession}).
    * @example vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: (session) => this.followStopsOf(session) })
    */
   private followStopsOf(
@@ -2652,22 +2663,71 @@ export class StudyWorkspace {
     return {
       onDidSendMessage: (message: unknown): void => {
         const stop = debugStopOf(message)
-        if (stop) this.noteStopOf(session.id, stop.reason)
+        if (stop) this.noteStopOf(session.id, stop)
+        else if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
       },
+      // An adapter need not send `continued` after the editor's own resume or step: the request says it too.
+      onWillReceiveMessage: (message: unknown): void => {
+        if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
+      },
+      // The editor stops the adapter, or the adapter exits by itself: either is the session's end, and both may come.
+      onWillStopSession: (): void => this.forgetSession(session.id),
+      onExit: (): void => this.forgetSession(session.id),
     }
+  }
+
+  /**
+   * Drops what the reader keeps of a debug session that ended; called by the tracker of {@link followStopsOf} when the editor stops that session's adapter and when the adapter exits.
+   * Without it the reader would keep the id of every debug session of the whole editor session, child sessions and every replay's sessions too, and a stop the editor never showed would stay noted for a session that is gone.
+   * @param sessionId - The session that ended.
+   * @example onWillStopSession: () => this.forgetSession(session.id)
+   */
+  private forgetSession(sessionId: string): void {
+    this.followedSessions.delete(sessionId)
+    this.announcedStops.delete(sessionId)
   }
 
   /**
    * Notes a stop a debug adapter reported, for the frame the editor reports next, and ends the chat's record when the learner started that stop from an editor; called by the tracker of {@link followStopsOf} for every `stopped` event.
    * A stop after a step ({@link LEARNER_STARTED_STOP_REASONS}) that is reported while a text editor has the keyboard was made by a learner who works in that editor: the keyboard is not to go to the chat at this stop, at a later render of it or when the run goes on, however short a time ago the learner came from the chat. While no text editor is active (the chat has the keyboard, and the step came from the debug toolbar) the record stays.
+   * The note says when the stop was read and whether the editor's own handling of it may leave it in the background ({@link StopNote}): both editors bring a stop to the front, with the keyboard into the paused file, only when the adapter did not ask to keep the focus and no frame of another session has it (VS Code 1.140 and Cursor 3.23, the stop handling of their debug sessions: `if(!p||p.thread.session===this)` for the view model's focused frame `p`).
    * @param sessionId - The session that stopped.
-   * @param reason - The reason the adapter gave, if any.
-   * @example this.noteStopOf(session.id, 'step')
+   * @param stop - What {@link debugStopOf} read: the reason the adapter gave, if any, and whether it asked to keep the focus.
+   * @example this.noteStopOf(session.id, { reason: 'step', keepsFocus: false })
    */
-  private noteStopOf(sessionId: string, reason: string | undefined): void {
-    this.announcedStops.add(sessionId)
-    if (this.isLearnersStopFromEditor(reason))
+  private noteStopOf(
+    sessionId: string,
+    stop: NonNullable<ReturnType<typeof debugStopOf>>,
+  ): void {
+    this.announcedStops.set(sessionId, {
+      readAtMs: performance.now(),
+      isDoubtful: stop.keepsFocus || this.showsFrameOfOtherSession(sessionId),
+    })
+    if (this.isLearnersStopFromEditor(stop.reason))
       this.keyboardOutsideEditors = undefined
+  }
+
+  /**
+   * Says whether Run and Debug shows a frame of another debug session than a given one; asked by {@link noteStopOf} when a stop is read.
+   * The editor keeps the frame of a session that went on as its focused one for about 200 ms, and that of a session that is still paused for as long as it is: a stop of another session that is read meanwhile is not brought to the front by its own handling.
+   * @param sessionId - The session that stopped.
+   * @returns `true` while the active stack item is a frame of another session; `false` for a frame of the same session, for a thread and without an item.
+   * @example this.showsFrameOfOtherSession('live-next-server') // => true while the browser session's frame is shown
+   */
+  private showsFrameOfOtherSession(sessionId: string): boolean {
+    const item = vscode.debug.activeStackItem
+    return isStackFrameItem(item) && item.session.id !== sessionId
+  }
+
+  /**
+   * Marks the noted stop of a session that goes on as doubtful; called by the tracker of {@link followStopsOf} for the adapter's `continued` event and for the editor's resume and step requests ({@link isDebugResumeMessage}).
+   * The note is not dropped there: a run that resumes its own stop at once does so before the editor reported that stop's frame, and the frame still arrives, with the keyboard in the paused file. A frame that arrives later than {@link STOP_OWN_FOCUS_BOUND_MS} after the stop was read is none of that stop: the learner selected it (another thread of the session is still paused), and it is not taken for a stop the editor never showed.
+   * @param sessionId - The session that goes on.
+   * @example if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
+   */
+  private doubtStopOf(sessionId: string): void {
+    const note = this.announcedStops.get(sessionId)
+    if (note) note.isDoubtful = true
   }
 
   /**
@@ -2687,13 +2747,27 @@ export class StudyWorkspace {
   /**
    * Says whether a stack frame the editor reports came with a stop of the debugger and not with the learner's choice of a frame in the Call Stack view, and takes the stop's note; asked by {@link judgeKeyboardAtStackItemChange} for every frame.
    * @param sessionId - The session of the frame.
-   * @returns `true` when that session's adapter reported a stop since its last frame, and for a session that started before this reader, whose adapter it does not hear: every frame of such a session counts as a stop, as nothing tells them apart. `false` for a frame without a stop: the learner selected it.
+   * @returns `true` when that session's adapter reported a stop since its last frame and the editor's own handling of that stop brought the frame ({@link wasShownByItsStop}), and for a session that started before this reader, whose adapter it does not hear: every frame of such a session counts as a stop, as nothing tells them apart. `false` for a frame without a stop (the learner selected it) and for a frame of a stop the editor brought to the front later and without the keyboard.
    * @example this.frameCameWithStop = this.cameWithStop(item.session.id)
    */
   private cameWithStop(sessionId: string): boolean {
+    if (!this.followedSessions.has(sessionId)) return true
+    const note = this.announcedStops.get(sessionId)
+    this.announcedStops.delete(sessionId)
+    return note !== undefined && this.wasShownByItsStop(note)
+  }
+
+  /**
+   * Says whether the frame that arrives now was brought to the front by the editor's own handling of the stop a note stands for, which opens the paused file with the keyboard; asked by {@link cameWithStop}.
+   * A stop the editor's handling may have left in the background ({@link StopNote}) reaches the front in two other ways, both without the keyboard: 800 ms after the session whose frame had the focus went on, the editor passes the focus to a session that is still stopped (`passFocusScheduler` of both editors, which focuses the frame preserving the focus), and the learner selects its frame in the Call Stack view. The first comes at least 600 ms after the stop was read, as the other session's frame is focused for only 200 ms of those 800; the stop's own handling, where it does run, takes the adapter's answer to two requests. {@link STOP_OWN_FOCUS_BOUND_MS} lies between the two. A stop nothing put in doubt has no bound: an adapter that is slow to answer delays the frame, and the keyboard is in the paused file all the same.
+   * @param note - What {@link noteStopOf} noted of the stop.
+   * @returns `true` for a stop that is not doubtful, and for a doubtful one whose frame arrives within the bound; `false` for a doubtful stop whose frame arrives later.
+   * @example return note !== undefined && this.wasShownByItsStop(note)
+   */
+  private wasShownByItsStop(note: StopNote): boolean {
     return (
-      !this.followedSessions.has(sessionId) ||
-      this.announcedStops.delete(sessionId)
+      !note.isDoubtful ||
+      performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS
     )
   }
 
@@ -2882,7 +2956,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether a live run of Codebook exists, which is the only time the reader gives the keyboard back to a chat; asked by {@link holdsKeyboardSinceBreak} for the return at a pause's end and by {@link owedPauseOf} for the return at a reveal.
+   * Says whether a live run of Codebook exists, which is the only time the reader gives the keyboard back to a chat; asked by {@link holdsKeyboardSinceBreak} for the return at a pause's end and by {@link isStoppedBesideLiveRun} for the return at a reveal.
    * A live run holds the lease of its Application pane from its start to its end, also while the Study workspace is closed. Without one, a paused debug session is the learner's own, or the reader shows a saved study: the reader moves no keyboard then.
    * @returns `true` while a run's viewport exists.
    * @example this.hasLiveRun() // => false while the Study workspace shows a saved study and no run was started
@@ -2915,7 +2989,7 @@ export class StudyWorkspace {
   }
 
   /**
-   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link owedPauseOf}, which also asks for a live run ({@link hasLiveRun}), and by {@link replacesEditorFocusedByPause}, which acts on the keyboard the editor's debugger gave the paused file whoever started that session.
+   * Says whether the debugger stopped and the frame of that stop is still the one the editor reports, while no recording is open; asked by {@link isStoppedBesideLiveRun}, which also asks for a live run ({@link hasLiveRun}), and by {@link replacesEditorFocusedByPause}, which acts on the keyboard the editor's debugger gave the paused file whoever started that session.
    * A pause is told by a stack frame ({@link isStackFrameItem}): once the session runs again the editor reports its thread, which is no pause. The frame must have come with a stop ({@link cameWithStop}): for a frame the learner selected in the Call Stack view the editor opened the file without the keyboard. While a recording is open the frame is the historical debugger's, which opens no file with the keyboard for a new pause.
    * @returns `true` while Run and Debug's active stack item is a frame that came with a stop and no recording is open.
    * @example this.isStoppedOutsideRecording() // => false while the debugged program runs, after the learner selected another frame, and while a recording is replayed
@@ -2996,11 +3070,25 @@ export class StudyWorkspace {
   private returnMadeAtPause(
     remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
   ): Promise<boolean> | false {
-    const pause = remembered.pause
-    if (!pause?.returned) return false
-    return pause.state === 'settling' || remembered.leftAtMs === undefined
-      ? pause.returned
+    const returned = remembered.pause?.returned
+    return returned !== undefined && this.holdsAnswerOfReturn(remembered)
+      ? returned
       : false
+  }
+
+  /**
+   * Says whether the answer of a pause's return still holds for another asker; the second half of {@link returnMadeAtPause}.
+   * @param remembered - The chat's record, whose pause began a return.
+   * @returns `true` while that return runs, and after it for as long as no editor became active; `false` once one did.
+   * @example returned !== undefined && this.holdsAnswerOfReturn(remembered)
+   */
+  private holdsAnswerOfReturn(
+    remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
+  ): boolean {
+    return (
+      remembered.pause?.state === 'settling' ||
+      remembered.leftAtMs === undefined
+    )
   }
 
   /**
@@ -3025,10 +3113,17 @@ export class StudyWorkspace {
     remembered: NonNullable<StudyWorkspace['keyboardOutsideEditors']>,
   ): KeyboardPauseOfRecord | undefined {
     const pause = remembered.pause
-    if (!pause || pause.state !== 'unsettled') return undefined
+    if (pause?.state !== 'unsettled') return undefined
+    return this.isStoppedBesideLiveRun() ? pause : undefined
+  }
+
+  /**
+   * Says whether the frame of a stop is shown beside a live run of Codebook, outside a recording; the second half of {@link owedPauseOf}.
+   * @returns `true` when {@link hasLiveRun} and {@link isStoppedOutsideRecording} both hold.
+   * @example return this.isStoppedBesideLiveRun() ? pause : undefined
+   */
+  private isStoppedBesideLiveRun(): boolean {
     return this.hasLiveRun() && this.isStoppedOutsideRecording()
-      ? pause
-      : undefined
   }
 
   /**

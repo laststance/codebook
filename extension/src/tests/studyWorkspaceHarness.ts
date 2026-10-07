@@ -65,6 +65,14 @@ interface FakeStackThread {
 interface FakeStackFrame extends FakeStackThread {
   frameId: number
 }
+/** What the fake editor calls of a debug adapter tracker: the adapter's messages to the editor, the editor's messages to the adapter, and the two ends of a session (the editor stops the adapter; the adapter exits), as the editor's extension host does. */
+interface FakeDebugAdapterTracker {
+  onDidSendMessage?(message: unknown): void
+  onWillReceiveMessage?(message: unknown): void
+  onWillStopSession?(): void
+  onExit?(code: number | undefined, signal: string | undefined): void
+}
+
 /** Tells a frame from a thread among the fake editor's stack items, as the frame id does in the editor's API. @example isFakeStackFrame({ session: { id: 'live-next-server' }, threadId: 1 }) // => false */
 function isFakeStackFrame(
   item: FakeStackFrame | FakeStackThread | undefined,
@@ -590,12 +598,12 @@ export async function workspaceHarness(
   const debugAdapterTrackerFactories = new Set<{
     createDebugAdapterTracker(session: {
       id: string
-    }): { onDidSendMessage?(message: unknown): void } | undefined
+    }): FakeDebugAdapterTracker | undefined
   }>()
-  /** The trackers the reader's factories made, by session: a session gets its tracker once, when it starts. */
+  /** The trackers the reader's factories made, by session: a session gets its tracker once, when it starts, and loses it when it ends (`endDebugSession`). */
   const debugAdapterTrackers = new Map<
     string,
-    ({ onDidSendMessage?(message: unknown): void } | undefined)[]
+    (FakeDebugAdapterTracker | undefined)[]
   >()
   // What the editor reports for Run and Debug: its active stack item, and the learner's `debug.focusEditorOnBreak` setting (unset: the editor's default, on).
   /** Run and Debug's active stack item as the fake editor reports it: a frame while a session is paused, its thread once it runs again, none before a first stop; see `pauseDebugger`. */
@@ -3671,7 +3679,7 @@ export async function workspaceHarness(
     },
     /**
      * Pauses the fake debugger: Run and Debug's active stack item is a stack frame, and the reader's listeners are told. Both editors report three states of that item, and this method with `resumeDebugger` is the only way to set them: none before a session's first stop (the state every harness starts in), a frame while the focused thread is stopped (this method), and that thread without a frame once the session runs again (`resumeDebugger`). Called again while a frame is active, it reports the next frame with no thread between the two, as an editor does for a thread that stops again within the 200 ms it waits before it reports a running session, and for a frame the learner selects in the Call Stack view. The editor has opened the paused file with the keyboard before it reports the frame (see `focusMutableDraft`; Cursor's and VS Code's debugger await that opening and select the frame after it), so a test focuses that file first.
-     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent).
+     * @param options - `focusesEditorOnBreak` is the learner's `debug.focusEditorOnBreak` setting (left out, the editor's default, on, holds); `session` names another debug session than the live run's server; `reason` is what the adapter's `stopped` event gives (left out, `breakpoint`; `step` for a stop after the learner's step); `startedBeforeTheReader` leaves that event out, for a session whose adapter the reader does not hear; `opensWithKeyboard` lets the debugger open the paused file with the keyboard between that event and the frame, which is the editor's order (a test that focuses the file itself before this call has it active already when the event is sent); `staysInBackground` sends that event and nothing more, for a stop the editor does not bring to the front itself (both editors skip a stop while a frame of another session has the focus, which a session that went on keeps for about 200 ms; see `passFocusToStoppedSession` for what follows); `keepsFocus` is the adapter's `preserveFocusHint` in that event, its wish that the editor leave the focus where it is, which a test gives together with `staysInBackground`.
      * @example
      * harness.focusMutableDraft('actions.ts', 2)
      * harness.pauseDebugger()
@@ -3683,6 +3691,8 @@ export async function workspaceHarness(
         startedBeforeTheReader?: boolean
         reason?: string
         opensWithKeyboard?: { filename: string; column: number }
+        staysInBackground?: boolean
+        keepsFocus?: boolean
       } = {},
     ): void {
       const session = { id: options.session ?? 'live-next-server' }
@@ -3692,8 +3702,14 @@ export async function workspaceHarness(
           tracker?.onDidSendMessage?.({
             type: 'event',
             event: 'stopped',
-            body: { reason: options.reason ?? 'breakpoint', threadId: 1 },
+            body: {
+              reason: options.reason ?? 'breakpoint',
+              threadId: 1,
+              ...(options.keepsFocus ? { preserveFocusHint: true } : {}),
+            },
           })
+      // A stop the editor leaves in the background ends here: it opens no file and reports no frame.
+      if (options.staysInBackground) return
       // The debugger opens the paused file with the keyboard after the adapter reported the stop and before the editor reports the frame.
       if (options.opensWithKeyboard)
         giveDraftKeyboard(
@@ -3727,6 +3743,63 @@ export async function workspaceHarness(
       activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
       for (const listener of [...activeStackItemListeners]) listener()
       return opened.document
+    },
+    /**
+     * Ends a debug session as the editor does when the learner stops it or the debugged program exits: the session's trackers are told that the adapter is stopped and that it exited, the editor forgets them, and Run and Debug has no active stack item any more when it showed that session.
+     * @param sessionId - The session; left out, the live run's server session.
+     * @example
+     * harness.pauseDebugger()
+     * harness.endDebugSession()
+     */
+    endDebugSession(sessionId = 'live-next-server'): void {
+      const trackers = debugAdapterTrackers.get(sessionId) ?? []
+      debugAdapterTrackers.delete(sessionId)
+      for (const tracker of trackers) {
+        tracker?.onWillStopSession?.()
+        tracker?.onExit?.(0, undefined)
+      }
+      if (activeStackItem?.session.id !== sessionId) return
+      activeStackItem = undefined
+      for (const listener of [...activeStackItemListeners]) listener()
+    },
+    /**
+     * Lets a paused session go on as the editor tells its adapter: the session's trackers see the `continue` request. Run and Debug's active stack item stays as it is: the editor keeps the frame for about 200 ms (`resumeDebugger` is what it reports then).
+     * @param sessionId - The session; left out, the live run's server session.
+     * @example
+     * harness.pauseDebugger({ session: 'live-next-browser' })
+     * harness.continueDebugSession('live-next-browser')
+     */
+    continueDebugSession(sessionId = 'live-next-server'): void {
+      for (const tracker of trackersOf({ id: sessionId }))
+        tracker?.onWillReceiveMessage?.({
+          type: 'request',
+          command: 'continue',
+          arguments: { threadId: 1 },
+        })
+    },
+    /**
+     * Brings a stopped session to the front as the editor does 800 ms after the session it showed went on (`passFocusScheduler` of VS Code 1.140 and Cursor 3.23, which focuses the frame preserving the focus): it opens the frame's file in front of a group without giving it the keyboard, and reports the frame of that session. No `stopped` event comes with it: the adapter sent that one when the session stopped (`pauseDebugger` with `staysInBackground`).
+     * @param sessionId - The stopped session.
+     * @param filename - The frame's file.
+     * @param column - The view column of the group the editor opens it in.
+     * @example
+     * harness.pauseDebugger({ staysInBackground: true })
+     * harness.passFocusToStoppedSession('live-next-server', 'actions.ts', 1)
+     */
+    passFocusToStoppedSession(
+      sessionId: string,
+      filename: string,
+      column: number,
+    ): void {
+      openDraftTab(filename, column)
+      // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
+      activeTextEditorChanged(focusedSourceEditor())
+      activeStackItem = {
+        session: { id: sessionId },
+        threadId: 1,
+        frameId: nextStackFrameId++,
+      }
+      for (const listener of [...activeStackItemListeners]) listener()
     },
     /**
      * Gives a view that is no editor the keyboard, as a learner's click into the Call Stack view of Run and Debug does. The editor reports nothing of it to an extension: the active tab group, its tab and the active text editor stay as they are; only the chat's own part loses the keyboard.
@@ -4769,6 +4842,8 @@ export function readerSeams(harness: {
         origin,
         panel,
       ]),
+    /** Names the debug sessions whose adapters the reader follows now: those that started while it existed and have not ended. @example readerSeams(harness).followedDebugSessions() // => ['live-next-server'] while that session lives */
+    followedDebugSessions: (): string[] => [...reader['followedSessions']],
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
     /** Asks the reader which command gives a remembered tab's group the keyboard back, as the function its focus return runs does once it may give the focus back: after an arrangement, or at a pause. @example await readerSeams(harness).focusReturnCommand(harness.groups[0], false) // => undefined while the group's editor part is not known */

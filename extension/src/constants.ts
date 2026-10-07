@@ -262,6 +262,12 @@ export const LEARNER_STARTED_STOP_REASONS: ReadonlySet<string> = new Set([
   'frame_entry',
 ])
 /**
+ * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling may have left in the background (a frame of another session had the focus, the adapter asked to keep the focus, or the session went on first); {@link StudyWorkspace} takes a later frame as brought to the front without the keyboard.
+ * The editor's handling of a stop takes the adapter's answers to a `threads` and a `stackTrace` request. Its pass of the focus to a session that is still stopped comes 800 ms after the session it showed went on, and it shows that session's frame for only 200 ms of them, so a stop read behind that frame is passed the focus at least 600 ms after it was read (VS Code 1.140 and Cursor 3.23).
+ * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a server stop the editor shows 800 ms after the browser session went on
+ */
+export const STOP_OWN_FOCUS_BOUND_MS = 500
+/**
  * How long "Codebook: Close Study Workspace" waits, once its panes' tabs are gone, for the editor to remove the groups those tabs left empty before it gives the active editor group the keyboard: the removal rebuilds the editor grid and takes the keyboard from the editor that had it (Cursor removed the captured source's group 57 ms after its tab, and the Study pane's 12 ms after its tab).
  * @example await waitUntil(() => hasNoEmptiedGroup(), 'the emptied editor groups to close', CLOSE_GROUP_SETTLE_MS)
  */
