@@ -1339,6 +1339,25 @@ test('the repository-browser help and the node-test help tell an agent that a st
   )
 })
 
+// Cycle 0046 (row 349): a source change can refuse a start before execution or end a running browser/Node test; help must distinguish those outcomes and preserve the earlier evidence instead of implying that nothing ran.
+test('the source-changed error help distinguishes a refused start from an ended browser or Node test, keeps earlier captured observations readable and forbids automatic input replay', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+
+  // Act
+  const help = await readResource(service, 'codebook://help/errors')
+  assert.ok('text' in help)
+  const recovery = z
+    .object({ SOURCE_CHANGED: z.string() })
+    .parse(JSON.parse(help.text)).SOURCE_CHANGED
+
+  // Assert
+  assert.equal(
+    recovery,
+    'At a start, a cited source open in the editor with text that differs from the article refuses the run before the application, test, browser or debugger starts; Codebook saves no document. During a repository-browser or node-test run, the same change ends the run at its next stop or before a continuation; that continuation sends no resume. Earlier committed observations and their captured source remain readable. Read the existing run and its captured source resources; ask the learner to save or revert the named file: after a save, read the source again and publish the article again; after a revert, change nothing. Then start a new deliberate run. Never retry application input automatically.',
+  )
+})
+
 // Value: protects=each observation of a multi-stop run reporting the position its own stop declared as requestedSource; fails_when=the inspection resource pairs a later observation with the first declared stop, or with a stop at another index; why_new=the only requestedSource test reads a single-stop run, where every index resolves to the same declared stop; seam=none
 test('the second observation of a two-stop run reports the position its own stop declared as requestedSource, not the first stop’s', async (context) => {
   // Arrange: the second stop is declared at 1:7 and the debugger committed it at 1:9 of the same line.
