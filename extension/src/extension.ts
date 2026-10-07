@@ -19,6 +19,8 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   WIKI_CHAT_OPEN_TIMEOUT_MS,
+  WIKI_CHAT_SESSION_START_TIMEOUT_MS,
+  WIKI_CHAT_WITHDRAW_SETTLE_MS,
   WIKI_CURSOR_TERMINATION_GRACE_MS,
   WIKI_CURSOR_UPDATE_TIMEOUT_MS,
   WIKI_ENTRY_FILE,
@@ -66,8 +68,8 @@ import {
   currentStorageOwner,
   useEditorMachineId,
 } from './utils/currentStorageOwner'
-import { describeWikiChatOpenFailure } from './utils/describeWikiChatOpenFailure'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
+import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
@@ -95,7 +97,6 @@ import { resolveDeepWikiDirectory } from './utils/resolveDeepWikiDirectory'
 import { resolveDeepWikiSource } from './utils/resolveDeepWikiSource'
 import { resolveExternalNodeExecutable } from './utils/resolveExternalNodeExecutable'
 import { runCursorWikiUpdate } from './utils/runCursorWikiUpdate'
-import { secondsText } from './utils/secondsText'
 import {
   selectActiveWikiCandidate,
   wikiLastRunSchema,
@@ -103,9 +104,10 @@ import {
 } from './utils/selectActiveWikiCandidate'
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
+import { startWikiChatUpdate } from './utils/startWikiChatUpdate'
 import { thrownMessage } from './utils/thrownMessage'
-import { waitForWikiChatAnswer } from './utils/waitForWikiChatAnswer'
 import { waitForWikiPublish } from './utils/waitForWikiPublish'
+import { watchWikiUpdateSigns } from './utils/watchWikiUpdateSigns'
 import { wikiManifestIdentity } from './utils/wikiManifestIdentity'
 import { wikiOutputLabel } from './utils/wikiOutputLabel'
 import { OPEN_WIKI_ACTION, wikiUpdateNotice } from './utils/wikiUpdateNotice'
@@ -1000,13 +1002,15 @@ export function activate(
           )
         })
     }
-    /** The sentence for another window's running update, or for the marker another window is writing at this moment because its update begins; nothing overrides it. */
+    /** The sentence for another window's running update, for the marker another window is writing at this moment because its update begins, or for the marker another window is removing or replacing at this moment; nothing overrides it. */
     const describeOtherWindow = (
       holder: Extract<WikiUpdateMarkerClaim, { heldBy: unknown }>['heldBy'],
     ): string =>
-      'beingWrittenSinceMs' in holder
-        ? 'Another editor window is starting an update of this Wiki. Wait a moment and try again.'
-        : `Another editor window is updating this Wiki (${holder.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(holder.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
+      'isMarkerInChange' in holder
+        ? 'Another editor window is starting or ending an update of this Wiki. Wait a moment and try again.'
+        : 'beingWrittenSinceMs' in holder
+          ? 'Another editor window is starting an update of this Wiki. Wait a moment and try again.'
+          : `Another editor window is updating this Wiki (${holder.host === 'cursor' ? 'Cursor' : 'VS Code'}, started ${formatClockTime(holder.startedAtMs, {})}). Wait for it to finish, then press Update LLM Wiki again.`
     for (const isLastAttempt of [false, true]) {
       // The publisher refuses each of these before it stages anything, so no agent could succeed: say why at once. It runs first: a journal without a folder is an unfinished publish, not a missing Wiki.
       const startBlock = await findWikiUpdateStartBlock(outputDirectory)
@@ -1207,22 +1211,27 @@ export function activate(
           if (activeWikiRun === tracked) activeWikiRun = undefined
         })
       }
-      wikiUpdateRun.begin(
-        run.host,
-        wikiOutput,
-        run.timeoutMs,
-        // Only VS Code's chat asks for approvals; the Cursor agent runs without prompts.
-        !isCursorHost && run.isOutputOutsideProject,
-      )
-      const query = buildWikiUpdatePrompt({
-        manifestPath: join(outputDirectory, WIKI_MANIFEST_FILE),
-        timeoutMs: run.timeoutMs,
-        // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
-        isReplyRead: !isCursorHost,
-        hasGitRepository: start.hasGitRepository,
-        uncoveredPaths: run.uncoveredAtStart,
-      })
-      if (!isCursorHost) {
+      // Every step from the run's begin to the hand-over is guarded: one that throws ends the run as failed with what was thrown, so this window does not stay "already updating" with its marker in place.
+      try {
+        wikiUpdateRun.begin(
+          run.host,
+          wikiOutput,
+          run.timeoutMs,
+          // Only VS Code's chat asks for approvals; the Cursor agent runs without prompts.
+          !isCursorHost && run.isOutputOutsideProject,
+        )
+        const query = buildWikiUpdatePrompt({
+          manifestPath: join(outputDirectory, WIKI_MANIFEST_FILE),
+          timeoutMs: run.timeoutMs,
+          // Nothing shows the Cursor CLI's reply to the learner, so its report is not asked for.
+          isReplyRead: !isCursorHost,
+          hasGitRepository: start.hasGitRepository,
+          uncoveredPaths: run.uncoveredAtStart,
+        })
+        if (isCursorHost) {
+          await track(runCursorWikiAgent(run, query))
+          return
+        }
         // Until the chat answers, the closing window finds this run, aborts it and waits until its end was recorded and its marker removed.
         let reportOpeningEnded = (): void => {}
         const opening = {
@@ -1232,66 +1241,60 @@ export function activate(
           }),
         }
         activeWikiRun = opening
-        // The first tool call the chat makes for the request without asking: a file it reads (the request names the manifest and the skill), a terminal it opens or a command it runs there.
-        const toolCallWatches: vscode.Disposable[] = []
-        const toolCall = new Promise<void>((reportToolCall) => {
-          toolCallWatches.push(
-            vscode.workspace.onDidOpenTextDocument((document) => {
-              if (document.uri.scheme === 'file') reportToolCall()
-            }),
-            vscode.window.onDidOpenTerminal(() => {
-              reportToolCall()
-            }),
-            vscode.window.onDidStartTerminalShellExecution(() => {
-              reportToolCall()
-            }),
-          )
-        })
         try {
-          // The bound starts when the request is handed over and ends at the chat's first answer, not when the command returns: a chat that cannot answer still takes the request.
-          const answer = await waitForWikiChatAnswer({
-            // With `blockOnResponse` the command settles when the chat's response completes or waits for a confirmation; a command that throws at once is a failed one too.
-            reply: Promise.resolve().then(() =>
-              vscode.commands.executeCommand('workbench.action.chat.open', {
-                query,
-                isPartialQuery: false,
-                blockOnResponse: true,
-              }),
-            ),
-            toolCall,
+          // The request gets a chat session of its own; only what the update's own steps name counts as a sign that the chat works on it, and a request without a sign within the bound is taken back.
+          const chatStart = await startWikiChatUpdate({
+            query,
+            // A command without an argument is run without one: the editor reads an argument that is `undefined` as a given one.
+            runCommand: (command, ...argument) =>
+              vscode.commands.executeCommand(command, ...argument),
+            watchSigns: (reportSign) =>
+              watchWikiUpdateSigns(
+                {
+                  onDidOpenTextDocument: vscode.workspace.onDidOpenTextDocument,
+                  onDidStartTerminalShellExecution:
+                    vscode.window.onDidStartTerminalShellExecution,
+                },
+                {
+                  outputDirectory,
+                  skillDirectory: join(
+                    context.extensionPath,
+                    'skills',
+                    'codebook',
+                  ),
+                },
+                reportSign,
+              ),
+            readOutputStamp: () => readWikiWatchStamp(outputDirectory),
             signal: run.controller.signal,
-            timeoutMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
+            bounds: {
+              sessionStartMs: WIKI_CHAT_SESSION_START_TIMEOUT_MS,
+              answerMs: WIKI_CHAT_OPEN_TIMEOUT_MS,
+              withdrawSettleMs: WIKI_CHAT_WITHDRAW_SETTLE_MS,
+              outputPollMs: WIKI_UPDATE_WATCH_POLL_MS,
+            },
           })
-          if (answer.outcome === 'failed') {
-            // Both sentences of a chat that did not answer end with the next step, so the page shows them whole.
-            await finishWikiUpdate(run, {
-              failure: describeWikiChatOpenFailure(thrownMessage(answer.error)),
-              isFailureCodebookSentence: true,
-            })
-            return
-          }
-          if (answer.outcome === 'unanswered') {
-            await finishWikiUpdate(run, {
-              failure: `The editor chat did not answer within ${secondsText(WIKI_CHAT_OPEN_TIMEOUT_MS)}, so the update was not started. Check that Copilot Chat is enabled and signed in, then retry.`,
-              isFailureCodebookSentence: true,
-            })
-            return
-          }
-          // The chat can take long to answer. A window that began to close meanwhile starts no watch that its shutdown no longer finds; the run ends as cancelled.
-          if (isExtensionStopping || run.controller.signal.aborted) {
-            await finishWikiUpdate(run, { cancelled: true })
+          // Only a chat that works on the request is watched; a window that began to close meanwhile starts no watch that its shutdown no longer finds.
+          const startEnd = endOfWikiChatStart(
+            chatStart,
+            WIKI_CHAT_OPEN_TIMEOUT_MS,
+            isExtensionStopping || run.controller.signal.aborted,
+          )
+          if (startEnd) {
+            await finishWikiUpdate(run, startEnd)
             return
           }
         } finally {
-          for (const watch of toolCallWatches) watch.dispose()
           if (activeWikiRun === opening) activeWikiRun = undefined
           reportOpeningEnded()
         }
-        // The chat API reports no result, so the extension watches for the publish itself; the watch outlives this call.
+        // The chat's command says nothing more once the chat works, so the extension watches for the publish itself; the watch outlives this call.
         void track(watchVsCodeWikiUpdate(run))
-        return
+      } catch (error) {
+        // A run whose end was recorded has nothing left to end; what was thrown is the caller's.
+        if (!wikiUpdateRun.isRunning()) throw error
+        await finishWikiUpdate(run, { failure: thrownMessage(error) })
       }
-      await track(runCursorWikiAgent(run, query))
     })()
     wikiUpdate = attempt
     try {

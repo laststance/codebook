@@ -15,7 +15,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { inspect } from 'node:util'
 
+import { assertStableCheckout } from '../utils/assertStableCheckout.mjs'
 import { buildPackage } from '../utils/buildPackage.mjs'
 import { cleanPackageOutputs } from '../utils/cleanPackageOutputs.mjs'
 import { inspectBundle } from '../utils/inspectBundle.mjs'
@@ -322,30 +324,176 @@ test('Windows package rejection preserves compiler outputs and the previous arch
   ])
 })
 
+/** The commit options of a fixture repository, which has no configured author. */
+const FIXTURE_AUTHOR = [
+  '-c',
+  'user.name=Codebook Test',
+  '-c',
+  'user.email=codebook-test@example.invalid',
+]
+
+/**
+ * Runs the package build on a fixture with a stand-in for its commands, during whose `pnpm build` the checkout is changed as the test says, and gives the failure the build ended with.
+ * @param fixture - The fixture of `sourceFixture`.
+ * @param changeDuringBuild - What another process does to the checkout while the stand-in build runs.
+ * @returns The error the build rejected with; `undefined` when it did not reject.
+ * @example
+ * const failure = await failureOfBuildDuringWhich(fixture, () => writeFile(join(fixture.repository, 'docs/state.md'), 'changed\n'))
+ */
+async function failureOfBuildDuringWhich(fixture, changeDuringBuild) {
+  return buildPackage(
+    fixture.repository,
+    fixture.output,
+    async (_executable, arguments_) => {
+      if (arguments_[0] === '--version')
+        return { stdout: '12.4.2\n', stderr: '' }
+      await changeDuringBuild()
+      return { stdout: '', stderr: '' }
+    },
+  ).then(
+    () => undefined,
+    (error) => error,
+  )
+}
+
 test('source changes during compilation invalidate the artifact instead of labeling it with an earlier snapshot', async (context) => {
   // Arrange
   const fixture = await sourceFixture(context)
-  // Act / Assert
-  await assert.rejects(
-    buildPackage(
-      fixture.repository,
-      fixture.output,
-      async (_executable, arguments_) => {
-        if (arguments_[0] === '--version')
-          return { stdout: '12.4.2\n', stderr: '' }
-        await writeFile(
-          join(fixture.repository, 'extension/src/main.ts'),
-          'export const source = 2;',
-        )
-      },
+  // Act: a source of the package gets other bytes while the stand-in build runs.
+  const failure = await failureOfBuildDuringWhich(fixture, () =>
+    writeFile(
+      join(fixture.repository, 'extension/src/main.ts'),
+      'export const source = 2;',
     ),
-    /Source inputs changed during compilation/,
+  )
+  // Assert: one sentence that names the file for Git's report and for the sources; the earlier artifact stays.
+  assert.equal(
+    failure?.message,
+    'The checkout changed during compilation: Git reported no change before and reports changes now ("extension/src/main.ts"); the package\'s sources changed ("extension/src/main.ts"). Retry from a stable checkout.',
   )
   assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact')
   assert.deepEqual((await readdir(fixture.directory)).sort(), [
     'existing.vsix',
     'repository',
   ])
+})
+
+// Value: protects=a maintainer or an agent who sees every test of package.test.mjs fail together finding the cause in one short sentence; fails_when=the guard says "Source inputs changed" for a document outside the extension again, or its failure carries the build's two identities (one hash per source), which filled about 750,000 bytes across the 32 tests of one shared build; why_new=Cycle 0046 row 179, found at row 124: a regenerated document flipped only the dirty state; seam=the package commands, replaced by a stand-in during which the document changes
+test('a tracked document outside the extension that changes during compilation refuses the package with one sentence that names the document, and the failure carries no build identity', async (context) => {
+  // Arrange: a committed document beside the extension folder.
+  const fixture = await sourceFixture(context)
+  await mkdir(join(fixture.repository, 'docs'))
+  await writeFile(join(fixture.repository, 'docs/state.md'), 'The state.\n')
+  await runPackageCommand('git', ['add', 'docs/state.md'], fixture.repository)
+  await runPackageCommand(
+    'git',
+    [...FIXTURE_AUTHOR, 'commit', '--quiet', '-m', 'state'],
+    fixture.repository,
+  )
+  const before = await readBuildIdentity(fixture.repository)
+  // Act: the document is written again while the stand-in build runs.
+  const failure = await failureOfBuildDuringWhich(fixture, () =>
+    writeFile(join(fixture.repository, 'docs/state.md'), 'Another state.\n'),
+  )
+  const printed = inspect(failure, { depth: null })
+  // Assert
+  assert.equal(before.dirty, false)
+  assert.equal(
+    failure?.message,
+    'The checkout changed during compilation: Git reported no change before and reports changes now ("docs/state.md"). Retry from a stable checkout.',
+  )
+  assert.deepEqual(Object.keys(failure), [])
+  assert.equal(printed.includes(before.sourceHash), false)
+  assert.equal(printed.includes(before.revision), false)
+  assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact')
+})
+
+test('a commit made during compilation refuses the package with one sentence that names the revision before and the revision now', async (context) => {
+  // Arrange
+  const fixture = await sourceFixture(context)
+  const revisionOf = () =>
+    execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: fixture.repository,
+      encoding: 'utf8',
+    }).trim()
+  const revisionBefore = revisionOf()
+  // Act: another process commits, without a change of any file, while the stand-in build runs.
+  const failure = await failureOfBuildDuringWhich(fixture, () =>
+    runPackageCommand(
+      'git',
+      [...FIXTURE_AUTHOR, 'commit', '--quiet', '--allow-empty', '-m', 'later'],
+      fixture.repository,
+    ),
+  )
+  const revisionNow = revisionOf()
+  // Assert: the two revisions are the fixture's own, so the sentence is built from them.
+  assert.notEqual(revisionNow, revisionBefore)
+  assert.equal(
+    failure?.message,
+    `The checkout changed during compilation: the revision went from ${revisionBefore} to ${revisionNow}. Retry from a stable checkout.`,
+  )
+})
+
+test('changed bytes of a package source in a checkout that was already changed refuse the package with one sentence that names the source alone', async (context) => {
+  // Arrange: an untracked note makes the checkout count as changed before the build begins.
+  const fixture = await sourceFixture(context)
+  await writeFile(join(fixture.repository, 'note.txt'), 'A note.\n')
+  // Act
+  const failure = await failureOfBuildDuringWhich(fixture, () =>
+    writeFile(
+      join(fixture.repository, 'extension/src/main.ts'),
+      'export const source = 2;',
+    ),
+  )
+  // Assert: Git reported changes before and after, so only the sources are named.
+  assert.equal(
+    failure?.message,
+    'The checkout changed during compilation: the package\'s sources changed ("extension/src/main.ts"). Retry from a stable checkout.',
+  )
+})
+
+test('the sentence of a checkout that changed during packaging names five of seven new files, cuts a path of 150 characters after 120 and counts the rest, and an unchanged checkout with the build’s own scratch folder passes', async (context) => {
+  // Arrange: the identity before, and the build's own scratch folder with a file in it.
+  const fixture = await sourceFixture(context),
+    before = await readBuildIdentity(fixture.repository),
+    scratch = join(fixture.repository, '.codebook-package-own')
+  await mkdir(scratch)
+  await writeFile(join(scratch, 'candidate.vsix'), 'candidate')
+  // Act: first nothing else changes; then seven untracked files appear, the first of them with a long name.
+  const unchanged = await assertStableCheckout(
+    fixture.repository,
+    before,
+    scratch,
+    'packaging',
+  ).then(
+    () => 'passed',
+    (error) => error.message,
+  )
+  for (const name of [
+    'a'.repeat(146) + '.txt',
+    'b.txt',
+    'c.txt',
+    'd.txt',
+    'e.txt',
+    'f.txt',
+    'g.txt',
+  ])
+    await writeFile(join(fixture.repository, name), 'new\n')
+  const changed = await assertStableCheckout(
+    fixture.repository,
+    before,
+    scratch,
+    'packaging',
+  ).then(
+    () => 'passed',
+    (error) => error.message,
+  )
+  // Assert
+  assert.equal(unchanged, 'passed')
+  assert.equal(
+    changed,
+    `The checkout changed during packaging: Git reported no change before and reports changes now ("${'a'.repeat(119)}…", "b.txt", "c.txt", "d.txt", "e.txt" and 2 more). Retry from a stable checkout.`,
+  )
 })
 
 test('clean packaging prevents a stale declaration from making absent source compile successfully', async (context) => {

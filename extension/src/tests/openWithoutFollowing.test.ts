@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { constants as flagsOfThisSystem } from 'node:fs'
 import * as fileSystem from 'node:fs/promises'
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -184,6 +192,59 @@ test('a path that holds nothing is reported as missing, with ENOENT, with the sy
     assert.deepEqual(outcomes, {
       withTheFlagsOfThisSystem: 'refused with ENOENT',
       whereTheOpenCannotRefuseALink: 'refused with ENOENT',
+    })
+  } finally {
+    await rm(folder, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=every change Codebook makes through a file it opened without following a link (the Cursor MCP catalog sets its config's times that way in a Windows editor, where times need write access); fails_when=the file asked for with write access is opened for reading alone, or the open creates a missing file or cuts an existing one; why_new=Cycle 0046 row 144: the opener got an access for a change through the file; seam=the open flags handed to the opener
+test('a file opened with write access can be written through, with the system’s flags and where its open cannot refuse a link, and the open neither cuts an existing file nor creates a missing one', async () => {
+  // Arrange
+  const folder = await mkdtemp(join(tmpdir(), 'codebook-open-no-follow-'))
+  const firstPath = join(folder, 'first.json')
+  const secondPath = join(folder, 'second.json')
+  const missingPath = join(folder, 'missing.json')
+  await writeFile(firstPath, 'abc')
+  await writeFile(secondPath, 'abc')
+  try {
+    // Act: one byte is written at the start of each opened file.
+    const first = await openWithoutFollowing(firstPath, undefined, 'read-write')
+    const textAfterTheFirstOpen = await readFile(firstPath, 'utf8')
+    await first.write('X', 0)
+    await first.close()
+    const second = await openWithoutFollowing(
+      secondPath,
+      OPEN_FLAGS_WITHOUT_NOFOLLOW,
+      'read-write',
+    )
+    await second.write('X', 0)
+    await second.close()
+    const outcomes = {
+      textAfterTheFirstOpen,
+      firstAfterTheWrite: await readFile(firstPath, 'utf8'),
+      secondAfterTheWrite: await readFile(secondPath, 'utf8'),
+      missingWithTheFlagsOfThisSystem: await outcomeOf(
+        openWithoutFollowing(missingPath, undefined, 'read-write'),
+      ),
+      missingWhereTheOpenCannotRefuseALink: await outcomeOf(
+        openWithoutFollowing(
+          missingPath,
+          OPEN_FLAGS_WITHOUT_NOFOLLOW,
+          'read-write',
+        ),
+      ),
+      entriesOfTheFolder: (await readdir(folder)).sort(),
+    }
+
+    // Assert
+    assert.deepEqual(outcomes, {
+      textAfterTheFirstOpen: 'abc',
+      firstAfterTheWrite: 'Xbc',
+      secondAfterTheWrite: 'Xbc',
+      missingWithTheFlagsOfThisSystem: 'refused with ENOENT',
+      missingWhereTheOpenCannotRefuseALink: 'refused with ENOENT',
+      entriesOfTheFolder: ['first.json', 'second.json'],
     })
   } finally {
     await rm(folder, { recursive: true, force: true })

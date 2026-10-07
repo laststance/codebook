@@ -875,16 +875,17 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
             commands.set(name, action)
             return { dispose(): void {} }
           },
-          // The chat answers the request at once: the command settles with a completed response's result.
+          // The reveal of the chat and New Chat carry no options; only the request does. The chat asks for a confirmation at once, so it works on the request and the run is watched.
           executeCommand: async (name: string, options: unknown) => {
+            if (options === undefined) return undefined
             submissions.push({ name, options })
-            return {}
+            return { type: 'confirmation', kind: 'toolInvocation' }
           },
         },
         workspace: {
           getConfiguration: () => ({ get: () => '.codebook/wiki' }),
           onDidChangeWorkspaceFolders: () => ({ dispose(): void {} }),
-          // The update watches for the chat's first tool call; this chat makes none.
+          // The update watches for signs of its own steps; this chat shows none.
           onDidOpenTextDocument: () => ({ dispose(): void {} }),
         },
         window: {

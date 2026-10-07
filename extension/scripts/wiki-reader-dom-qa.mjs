@@ -10,6 +10,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -40,16 +41,22 @@ const OPEN_TARGET = {
 }
 /** How many entries the sample overview's outline has: more than the outline shows at once where the rail is a row. */
 const OUTLINE_ENTRY_COUNT = 40
-/** The sentence of a refused update as the owned clone's native check W-3 showed it (336 characters): its lead words and the rest. */
-const REFUSAL = {
-  lead: 'Update failed',
-  rest: ' at 11:05 AM: An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification. The last usable site is kept.',
-}
-/** The files an open update detail lists in the check. */
-const DETAIL_PATHS = Array.from(
+/** Why a start was refused in the owned clone's native check W-3: another window appeared to be updating. The page words it into its longest sentence of a refused update (about 336 characters with its lead words and its end). */
+const REFUSAL_REASON =
+  'An earlier chat or another editor window appears to be updating this Wiki (candidate wiki.stage-c34c9bc0-55bd-4a45-9bc0-eecfaa647e2b, written 11:04 AM GMT+9). Codebook waits for it until 11:19 AM GMT+9. If that chat was stopped, choose Update anyway in the editor’s notification.'
+/** The pages a conflict names in the check: more than the sentence names, so the page offers the whole list. */
+const CONFLICT_PATHS = Array.from(
   { length: 12 },
   (_unused, index) => `pages/reference/changed-by-hand-${index + 1}.html`,
 )
+/** A source whose path is about 200 characters long, and the line a page cites: the first source of the sample page {@link LONG_SOURCE_PAGE}, whose rail entry names it. */
+const LONG_SOURCE = {
+  path: 'packages/learning-replay-workspace/src/runtimeSupport/browserRunPreparation/configuredBrowserRunPreparationForReplay/internal/profiles/removeAbandonedBrowserProfilesAfterAnInterruptedRecordingSession.ts',
+  line: 128,
+}
+const LONG_SOURCE_PAGE = 'pages/long-source.html'
+/** The sample page that is printed into the shell of 0.2.29.0 after the publish: the overview's content under the stylesheet a site of that build carries, with the rail's entry as that build printed it. */
+const PAGE_IN_THE_SHELL_OF_02290 = 'pages/shell-of-0.2.29.0.html'
 
 /** The question the check asks in the composer, and what the reader answers it: twelve lines, so the composer reaches its height limit and scrolls, and one cited line. */
 const QUESTION = 'How is a page rendered?'
@@ -192,6 +199,13 @@ function sampleManifest(projectRoot, sources) {
     // A title that cannot break, as a page about one function has.
     'createConfiguredBrowserRunPreparationForReplay',
   ]
+  const overviewContent = outline
+    .map(
+      (entry) =>
+        // Each paragraph starts with a link, so a link stands at the article's left edge wherever the article is scrolled to.
+        `<h2 id="${entry.id}">${entry.label}</h2><p><a href="#part-1">The first part</a> comes before how this part of a page is rendered.</p>`,
+    )
+    .join('')
   return {
     schemaVersion: 1,
     readerVersion: 2,
@@ -205,15 +219,28 @@ function sampleManifest(projectRoot, sources) {
         path: 'index.html',
         title: 'Overview',
         section: 'Guide',
-        contentHtml: outline
-          .map(
-            (entry) =>
-              // Each paragraph starts with a link, so a link stands at the article's left edge wherever the article is scrolled to.
-              `<h2 id="${entry.id}">${entry.label}</h2><p><a href="#part-1">The first part</a> comes before how this part of a page is rendered.</p>`,
-          )
-          .join(''),
+        contentHtml: overviewContent,
         sources: [OPEN_TARGET, { path: 'src/a.ts', line: 1 }],
         outline,
+      },
+      // The overview once more: this page is printed into the shell of 0.2.29.0 after the publish.
+      {
+        path: PAGE_IN_THE_SHELL_OF_02290,
+        title: 'Overview',
+        section: 'Guide',
+        contentHtml: overviewContent,
+        sources: [OPEN_TARGET, { path: 'src/a.ts', line: 1 }],
+        outline,
+      },
+      // A page whose rail entry names a path of about 200 characters.
+      {
+        path: LONG_SOURCE_PAGE,
+        title: 'A long source path',
+        section: 'Guide',
+        contentHtml:
+          '<h2 id="where">Where it lives</h2><p>Explained from source.</p>',
+        sources: [LONG_SOURCE],
+        outline: [{ id: 'where', label: 'Where it lives' }],
       },
       ...chapterTitles.map((title, index) => ({
         path: `pages/chapter-${index + 1}.html`,
@@ -246,6 +273,59 @@ function sampleManifest(projectRoot, sources) {
 }
 
 /**
+ * Reads what the publisher printed into each field of the shell when it rendered a page, by matching the page against the shell it was rendered from; called by {@link pageInTheShellOf02290}.
+ * @param page - A published page.
+ * @param shell - The text of the shell that page was rendered from, with its `{{FIELD}}` marks.
+ * @returns The value of every field of the shell, by its name.
+ * @throws When the page is no page of that shell.
+ * @example
+ * fieldValuesOf('<title>Overview</title>', '<title>{{TITLE}}</title>') // => { TITLE: 'Overview' }
+ */
+function fieldValuesOf(page, shell) {
+  const seenFields = new Set()
+  const pattern = shell
+    .split(/\{\{([A-Z_]+)\}\}/)
+    .map((part, index) => {
+      // Even parts are the shell's own text, odd parts the names of its fields.
+      if (index % 2 === 0) return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      // A field the shell prints twice has the same value both times.
+      if (seenFields.has(part)) return `\\k<${part}>`
+      seenFields.add(part)
+      return `(?<${part}>[\\s\\S]*?)`
+    })
+    .join('')
+  const match = new RegExp(`^${pattern}$`).exec(page)
+  assert.ok(match, 'the published page is not a page of the shipped shell')
+  return match.groups
+}
+
+/**
+ * Prints a page this publisher published into the shell of 0.2.29.0, as a site of that build carries it: the same content under that build's stylesheet and script, and the rail's entry as its link alone.
+ *
+ * The shell is the file `skills/codebook/reader-shell.html` of the tag v0.2.29.0 (`ae9c1f2`), kept beside this script because a CI checkout holds no tag; both shells have the same fields.
+ *
+ * @param page - The page as published today.
+ * @param shell - The shell the page was rendered from.
+ * @param shellOf02290 - The shell of 0.2.29.0.
+ * @returns The page in the shell of 0.2.29.0.
+ * @throws When the page is no page of `shell`, or the shell of 0.2.29.0 names a field today's shell has not.
+ * @example
+ * pageInTheShellOf02290(published, shell, shellOf02290).includes('<a href="vscode://…">Open in VS Code</a></p>') // => true
+ */
+function pageInTheShellOf02290(page, shell, shellOf02290) {
+  const values = fieldValuesOf(page, shell)
+  // 0.2.29.0 printed the entry as its link alone: no description and nothing beside the link.
+  values.OPEN_SOURCE = values.OPEN_SOURCE.replace(
+    / aria-describedby="codebook-open-target">Open in VS Code<\/a> <span class="open-target" id="codebook-open-target">.*?<\/span><\/p>/,
+    '>Open in VS Code</a></p>',
+  )
+  return shellOf02290.replace(/\{\{([A-Z_]+)\}\}/g, (field, name) => {
+    assert.ok(Object.hasOwn(values, name), `no value for the field ${field}`)
+    return values[name]
+  })
+}
+
+/**
  * Publishes the sample Wiki with the shipped publisher into a new temporary project and changes one cited source afterwards, so the served page settles on the freshness label of a changed source.
  * @returns The project's root, the Wiki's folder and a `remove` that deletes the temporary folder.
  * @throws When a file cannot be written or the publisher refuses the candidate; the temporary folder is removed first.
@@ -264,6 +344,10 @@ async function publishSampleWiki() {
     [OPEN_TARGET.path]: Array.from(
       { length: 100 },
       (_unused, index) => `export const line${index + 1} = ${index + 1}`,
+    ).join('\n'),
+    [LONG_SOURCE.path]: Array.from(
+      { length: 130 },
+      (_unused, index) => `export const row${index + 1} = ${index + 1}`,
     ).join('\n'),
     'src/a.ts': 'export const value = 1\n',
   }
@@ -298,6 +382,22 @@ async function publishSampleWiki() {
           '>Open in VS Code</a></p>',
         ),
     )
+    // One page is printed into the shell of 0.2.29.0, so the rules the reader injects are laid out against the stylesheet a site of that build carries.
+    const inTheShellOf02290 = join(outputDirectory, PAGE_IN_THE_SHELL_OF_02290)
+    await writeFile(
+      inTheShellOf02290,
+      pageInTheShellOf02290(
+        await readFile(inTheShellOf02290, 'utf8'),
+        await readFile(
+          new URL('../skills/codebook/reader-shell.html', import.meta.url),
+          'utf8',
+        ),
+        await readFile(
+          new URL('./fixtures/reader-shell-0.2.29.0.txt', import.meta.url),
+          'utf8',
+        ),
+      ),
+    )
     await appendFile(
       join(projectRoot, 'src/a.ts'),
       '// changed after the publish\n',
@@ -315,17 +415,24 @@ async function check(page, options, collected) {
   const { errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
+  /** The page of the sample Wiki the steps of a page open, and what the name of a case says of it: the overview as this publisher printed it, then the same content in the shell of 0.2.29.0. The stills of the second page go into a folder of their own. */
+  let wikiPage = 'index.html'
+  let caseSuffix = ''
+  const outputOfTheOverview = options.output
   /** Adds one case; it passed when every named check of it holds. @example record('the rail fits', { height: 216 }, { isShort: true }) */
   const record = (name, actual, checks) =>
     cases.push({
-      name,
+      name: `${name}${caseSuffix}`,
       actual: { ...actual, checks },
       passed: Object.values(checks).every(Boolean),
     })
-  /** Opens a page of the served Wiki at one viewport and waits until its script has written the freshness of the changed source. @example await openWiki(960, 600) */
-  const openWiki = async (width, height) => {
+  /** Makes the check's reader answer one update state from now on: `idle`, `refused` (a start refused because another window appears to be updating) or `conflict` (twelve pages changed by hand); the next page that is opened shows it as a learner's page does. @example await answerUpdateStatus('refused') */
+  const answerUpdateStatus = (name) =>
+    page.request.get(`${options.updateStatusControl}${name}`)
+  /** Opens a page of the served Wiki at one viewport and waits until its script has written the freshness of the changed source; the page of the running pass unless one is named. @example await openWiki(960, 600) */
+  const openWiki = async (width, height, pagePath = wikiPage) => {
     await page.setViewportSize({ width, height })
-    await page.goto(`${options.url}index.html`)
+    await page.goto(`${options.url}${pagePath}`)
     await page.waitForFunction(
       () =>
         document.querySelector('[data-codebook-freshness]').textContent ===
@@ -492,7 +599,7 @@ async function check(page, options, collected) {
         pageScrollWidth: document.documentElement.scrollWidth,
       }
     })
-  /** Reads the rail's parts against the rail's own box; the detail's sizes are null while the panel has none. @example (await measureRail()).railHeight // => 177.9 */
+  /** Reads the rail's parts against the rail's own box, and what the update panel says: its state, its sentence, its output line and the summary of its detail; the detail's sizes are null while the panel has none. @example (await measureRail()).rail.height // => 200.1 */
   const measureRail = () =>
     page.evaluate(() => {
       const heightOf = (element) =>
@@ -505,8 +612,17 @@ async function check(page, options, collected) {
       const rail = document.querySelector('.right-rail')
       const panel = document.querySelector('[data-codebook-update-group]')
       const detail = document.querySelector('[data-codebook-update-detail]')
+      const textOf = (element) => (element ? element.textContent : null)
+      const status = document.querySelector('[data-codebook-update-status]')
       return {
         railDisplay: getComputedStyle(rail).display,
+        statusState: status.getAttribute('data-state'),
+        statusText: status.textContent,
+        outputLine: textOf(
+          document.querySelector('[data-codebook-update-output]'),
+        ),
+        detailSummary: textOf(detail && detail.querySelector('summary')),
+        isDetailOpen: detail !== null && detail.open,
         rail: sizesOf(rail),
         panel: sizesOf(panel),
         panelWidth: Math.round(panel.getBoundingClientRect().width * 10) / 10,
@@ -1088,64 +1204,78 @@ async function check(page, options, collected) {
     )
   }
   const measureRailWithRefusal = async () => {
-    // Arrange: the overview at 960 x 600. Act: the sentence of a refused update is written into the panel as the page script writes one.
+    // Arrange: the check's reader answers a refused start, the state the owned clone's native check W-3 met. Act: the page is loaded at 960 x 600 and words that state itself, with its output line.
+    await answerUpdateStatus('refused')
     await openWiki(960, 600)
-    await page.evaluate((refusal) => {
-      const status = document.querySelector('[data-codebook-update-status]')
-      const lead = document.createElement('strong')
-      lead.textContent = refusal.lead
-      status.replaceChildren(lead, refusal.rest)
-      status.setAttribute('data-state', 'failed')
-    }, options.refusal)
+    await page.waitForSelector(
+      '[data-codebook-update-status][data-state=failed]',
+    )
     const measured = await measureRail()
     await page
       .locator('.right-rail')
       .screenshot({ path: `${options.output}/wiki-rail-refusal-960x600.png` })
     // Assert
     record(
-      'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a refused update without a scrollbar, while a long outline scrolls inside 160 px',
+      'in the Wiki reader at 960 x 600 the right rail is at most 45vh high and shows the whole sentence of a refused update and its output line without a scrollbar, while a long outline scrolls inside 160 px',
       measured,
       {
         ...railChecks(measured),
+        isSentenceOfTheRefusal:
+          measured.statusText.startsWith('Update failed at '),
+        doesSentenceSayWhatIsKept: measured.statusText.endsWith(
+          'choose Update anyway in the editor’s notification. The last usable site is kept.',
+        ),
+        doesPanelNameTheOutput:
+          measured.outputLine === 'Output: .codebook/wiki',
         isRailAtMost45vh:
           measured.rail.height <= measured.viewportHeight * 0.45,
       },
     )
   }
   const measureRailWithOpenDetail = async () => {
-    // Arrange: the same page with the sentence in its panel. Act: an open detail of twelve files is put under the sentence, as the page script builds one.
-    await page.evaluate((paths) => {
-      const detail = document.createElement('details')
-      detail.setAttribute('data-codebook-update-detail', '')
-      detail.setAttribute('open', '')
-      const summary = document.createElement('summary')
-      summary.textContent = `Show all ${paths.length} files`
-      const list = document.createElement('ul')
-      list.append(
-        ...paths.map((path) => {
-          const item = document.createElement('li')
-          item.textContent = path
-          return item
-        }),
-      )
-      detail.append(summary, list)
-      document.querySelector('[data-codebook-update-status]').after(detail)
-    }, options.detailPaths)
+    // Arrange: the check's reader answers a conflict of twelve pages changed by hand, and the page is loaded at 960 x 600. Act: a press opens the list of the files.
+    await answerUpdateStatus('conflict')
+    await openWiki(960, 600)
+    await page.waitForSelector(
+      '[data-codebook-update-status][data-state=conflict]',
+    )
+    const beforeThePress = await measureRail()
+    await page.click('[data-codebook-update-detail] > summary')
     const measured = await measureRail()
     await page.screenshot({
-      path: `${options.output}/wiki-page-refusal-detail-960x600.png`,
+      path: `${options.output}/wiki-page-conflict-detail-960x600.png`,
     })
-    // Assert
+    // Assert: the page as it shows the conflict keeps the bound of 45vh and the article's room. With the list open the rail is higher than 45vh: its height is recorded here and reported with the row (132), not asserted; what is asserted of the open list is what bounds it: 84 px, scrolling inside, and no more than that added to the rail.
     record(
-      'in the Wiki reader at 960 x 600 an open update detail of twelve files scrolls inside 84 px (14vh) under the whole sentence of the refused update, and the rail is at most 45vh high',
-      measured,
+      'in the Wiki reader at 960 x 600 the page of a conflict of twelve files shows its whole sentence and its output line in a rail of at most 45vh, and the list of the files, opened by a press, scrolls inside 84 px (14vh) and adds no more than that to the rail',
+      { beforeThePress, measured },
       {
-        ...railChecks(measured),
-        isRailAtMost45vh:
-          measured.rail.height <= measured.viewportHeight * 0.45,
+        ...railChecks(beforeThePress),
+        isSentenceOfTheConflict: beforeThePress.statusText.startsWith(
+          'Update not started (',
+        ),
+        doesSentenceNameThreeFilesAndCountTheRest:
+          beforeThePress.statusText.includes(
+            'pages/reference/changed-by-hand-3.html and 9 more',
+          ),
+        doesPanelNameTheOutput:
+          beforeThePress.outputLine === 'Output: .codebook/wiki',
+        doesDetailOfferEveryFile:
+          beforeThePress.detailSummary === 'Show all 12 files',
+        isDetailClosedBeforeThePress: !beforeThePress.isDetailOpen,
+        isRailAtMost45vhBeforeThePress:
+          beforeThePress.rail.height <= beforeThePress.viewportHeight * 0.45,
+        isDetailOpenedByThePress: measured.isDetailOpen,
         isDetailAtMost84: measured.detail.height <= 84,
         doesDetailScrollInside:
           measured.detail.scrollHeight > measured.detail.clientHeight,
+        doesTheOpenListAddAtMost84:
+          measured.rail.height - beforeThePress.rail.height <= 84,
+        hasRailNoScrollWithTheList:
+          measured.rail.scrollHeight <= measured.rail.clientHeight,
+        isPanelInsideRailWithTheList: measured.panelBottomBelowRailBottom <= 0,
+        isSentenceWholeWithTheList:
+          measured.status.scrollHeight <= measured.status.clientHeight,
       },
     )
   }
@@ -1189,8 +1319,69 @@ async function check(page, options, collected) {
       },
     )
   }
+  const measureLongTargetInRow = async () => {
+    // Arrange: a page whose rail entry names a path of about 200 characters, at 960 x 600, with no update result in the panel.
+    await openWiki(960, 600, options.longSourcePage)
+    /** Reads the entry and the rail as they stand: how high the rail and the entry are, how much of the target shows, and whether the pointer rests on the entry. */
+    const readEntry = () =>
+      page.evaluate(() => {
+        const tenths = (pixels) => Math.round(pixels * 10) / 10
+        const entry = document.querySelector('.open-in-editor')
+        const target = entry.querySelector('.open-target')
+        return {
+          railHeight: tenths(
+            document.querySelector('.right-rail').getBoundingClientRect()
+              .height,
+          ),
+          entryHeight: tenths(entry.getBoundingClientRect().height),
+          targetHeight: tenths(target.getBoundingClientRect().height),
+          targetContentHeight: target.scrollHeight,
+          isTargetShownWhole: target.scrollHeight <= target.clientHeight,
+          isPointerOnTheEntry: entry.matches(':hover'),
+          viewportHeight: window.innerHeight,
+        }
+      })
+    // Act: the page at rest, then the pointer on the entry, then the keyboard focus on its link.
+    await page.mouse.move(0, 0)
+    const atRest = await readEntry()
+    const description = await page.evaluate(() => {
+      const link = document.querySelector('.open-in-editor a')
+      const described = document.getElementById(
+        link.getAttribute('aria-describedby'),
+      )
+      return described ? described.textContent : null
+    })
+    await page
+      .locator('.right-rail')
+      .screenshot({ path: `${options.output}/wiki-rail-long-target-960.png` })
+    await page.hover('.open-in-editor a')
+    const underPointer = await readEntry()
+    await page.mouse.move(0, 0)
+    await focusWithKeyboard('.open-in-editor a')
+    const withKeyboardFocus = await readEntry()
+    await page.locator('.right-rail').screenshot({
+      path: `${options.output}/wiki-rail-long-target-focus-960.png`,
+    })
+    // Assert: eight lines of the target's 17.4 px are 139.2 px.
+    record(
+      'in the Wiki reader at 960 x 600 the rail entry of a source whose path is about 200 characters long shows eight lines of the path at rest, so the rail stays at most 45vh high, describes its link by the whole path, and shows the whole path while the pointer rests on it or its link has the keyboard focus',
+      { atRest, description, underPointer, withKeyboardFocus },
+      {
+        isRailAtMost45vhAtRest:
+          atRest.railHeight <= atRest.viewportHeight * 0.45,
+        isTargetAtMostEightLinesAtRest: atRest.targetHeight <= 139.2,
+        isTargetCutAtRest: !atRest.isTargetShownWhole,
+        isLinkDescribedByTheWholePath:
+          description === options.expectedLongTargetText,
+        isTargetWholeUnderPointer: underPointer.isTargetShownWhole,
+        doesPointerStayOnTheEntry: underPointer.isPointerOnTheEntry,
+        isTargetWholeWithKeyboardFocus: withKeyboardFocus.isTargetShownWhole,
+      },
+    )
+  }
   const measureSingleColumn = async () => {
-    // Arrange: the overview at 640 px, the single column, with an open detail in its panel. Act: the rail's rules are read.
+    // Arrange: the check's reader answers no update result again; the overview at 640 px, the single column, with an open detail in its panel. Act: the rail's rules are read.
+    await answerUpdateStatus('idle')
     await openWiki(640, 720)
     await page.evaluate(() => {
       const detail = document.createElement('details')
@@ -1433,9 +1624,9 @@ async function check(page, options, collected) {
   const usePagePublishedWithReaderIdsTwice = async () => {
     // Arrange: the same page as a publisher before this build printed it: each of the reader's ids also on a heading, and the rail's entry as its link alone. Act: the same use.
     const used = await useReaderOn(options.readerIdsPagePublishedBefore)
-    // Assert: the reader finds its own elements all the same. The keyboard help's title is recorded and not asserted: its dialog is named by id and stands after the article.
+    // Assert: the reader finds its own elements all the same. The keyboard help's heading takes a free id too, so its dialog is named by its own title and not by the heading of the article that carries `shortcut-title`.
     record(
-      'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, and the status region and the rail entry’s target get ids of their own',
+      'a page published with the reader’s ids also on its headings is served without an error and the reader still finds its own elements: the outline entry reaches its heading, the theme button works, a question is answered on the page and its answer shows, the question field is labelled, the status region and the rail entry’s target get ids of their own, and the keyboard help is named by its own title',
       used,
       {
         ...readerChecks(used),
@@ -1444,13 +1635,15 @@ async function check(page, options, collected) {
           used.statusRegionId === 'codebook-update-status-2',
         doesEntryTargetTakeAFreeId:
           used.entryTargetId === 'codebook-open-target-2',
+        isKeyboardHelpNamedByItsOwnTitle:
+          used.helpTitle === 'Keyboard shortcuts',
         doesQuestionStayOnThePage:
           used.address === 'reader-ids-published-before.html',
       },
     )
   }
-  // Each step leaves the page as the next one needs it: the three 1200 px steps of the rail share one load, and so do the 960 px steps; a step of the reading column loads the page itself, because it asks a question.
-  for (const step of [
+  // Each step leaves the page as the next one needs it: the three 1200 px steps of the rail share one load, and so do the two steps after the conflict at 960 px; a step of the reading column loads the page itself, because it asks a question.
+  const stepsOfAPage = [
     measureEntryInRow,
     measureNarrowestRow,
     measureReadingColumnInRow,
@@ -1465,6 +1658,18 @@ async function check(page, options, collected) {
     measureDetailSummaryRingInRow,
     measureOutlineRingInRow,
     measureSingleColumn,
+  ]
+  for (const step of stepsOfAPage) await step()
+  // The same steps once more on the same content in the shell of 0.2.29.0: there the article, the composer, the rail and the entry get their rules from the sheet the reader injects, laid over the stylesheet of that build.
+  wikiPage = options.pageInTheShellOf02290
+  caseSuffix = ' (on a page in the shell of 0.2.29.0)'
+  options.output = `${outputOfTheOverview}/shell-of-0.2.29.0`
+  for (const step of stepsOfAPage) await step()
+  wikiPage = 'index.html'
+  caseSuffix = ''
+  options.output = outputOfTheOverview
+  for (const step of [
+    measureLongTargetInRow,
     measureMissingPage,
     usePageWithReaderIds,
     usePagePublishedWithReaderIdsTwice,
@@ -1479,6 +1684,41 @@ const report = {
   cases: [],
 }
 const wiki = await publishSampleWiki()
+/** The update states the check's reader can answer, each as the extension's window would hold it when the page asks; an ended run ends at the moment it is chosen, after the sample Wiki was published. */
+const updateStatuses = {
+  idle: () => ({ state: 'idle' }),
+  refused: () => ({
+    state: 'failed',
+    host: 'vscode',
+    finishedAt: new Date().toISOString(),
+    reason: REFUSAL_REASON,
+    isCodebookSentence: true,
+    site: 'kept',
+    outputDirectory: wiki.outputDirectory,
+    outputLabel: '.codebook/wiki',
+  }),
+  conflict: () => ({
+    state: 'conflict',
+    host: 'vscode',
+    finishedAt: new Date().toISOString(),
+    paths: CONFLICT_PATHS,
+    cause: 'edited-page',
+    site: 'kept',
+    outputDirectory: wiki.outputDirectory,
+    outputLabel: '.codebook/wiki',
+  }),
+}
+let answeredUpdateStatus = updateStatuses.idle()
+// The flow runs in the browser CLI and cannot reach this process's variables, so it names the state the reader answers next through this address: `<address><name>`.
+const updateStatusControl = createServer((request, response) => {
+  const chosen = updateStatuses[String(request.url).slice(1)]
+  if (chosen) answeredUpdateStatus = chosen()
+  response.statusCode = chosen ? 204 : 404
+  response.end()
+})
+await new Promise((resolveListening) =>
+  updateStatusControl.listen(0, '127.0.0.1', resolveListening),
+)
 let reader
 let isBrowserOpen = false
 try {
@@ -1488,6 +1728,7 @@ try {
     // The reader answers the one question the check asks in the composer.
     async () => ANSWER,
     'vscode',
+    () => answeredUpdateStatus,
   )
   // The flow reaches `run-code` as one function in a file it loads itself, written by {@link readerDomFlowText}: a step that throws then ends as one failed case after the cases that passed.
   const flowPath = `${output}/flow.js`
@@ -1500,8 +1741,10 @@ try {
       expectedEntryText: `Open in VS Code ${OPEN_TARGET.path}:${OPEN_TARGET.line}`,
       expectedTargetText: `${OPEN_TARGET.path}:${OPEN_TARGET.line}`,
       question: QUESTION,
-      refusal: REFUSAL,
-      detailPaths: DETAIL_PATHS,
+      updateStatusControl: `http://127.0.0.1:${updateStatusControl.address().port}/`,
+      longSourcePage: LONG_SOURCE_PAGE,
+      expectedLongTargetText: `${LONG_SOURCE.path}:${LONG_SOURCE.line}`,
+      pageInTheShellOf02290: PAGE_IN_THE_SHELL_OF_02290,
       readerIds: READER_IDS,
       readerIdsPage: READER_IDS_PAGE,
       readerIdsPagePublishedBefore: READER_IDS_PAGE_PUBLISHED_BEFORE,
@@ -1524,6 +1767,8 @@ try {
     async () => {
       if (reader) await reader.close()
     },
+    () =>
+      new Promise((resolveClosed) => updateStatusControl.close(resolveClosed)),
     wiki.remove,
   ])
 }

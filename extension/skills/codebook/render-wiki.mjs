@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
-import { escapeHtml, renderWikiDiagrams } from './render-wiki-diagrams.mjs';
+import { contentIdsOf, escapeHtml, renderWikiDiagrams, withAttributeValues } from './render-wiki-diagrams.mjs';
 
 const READER_VERSION = 2;
 const MAX_PAGES = 256;
@@ -9,27 +9,7 @@ const MAX_SOURCE_QUOTE_LINES = 40;
 /** The ids the reader's own page scripts give an element of a served page, beside the ids the shell's template carries: the target of the rail's entry (the publisher prints it; the reader adds it to a site published without one), the region of the update status, and the heading and the tooltip of the keyboard help. A page's own content must not carry one of them a second time, so {@link contentIdRenames} gives such a content id another name. */
 const READER_ELEMENT_IDS = ['codebook-open-target', 'codebook-update-status', 'shortcut-title', 'shortcut-tooltip'];
 /** The attributes of authored HTML whose value is an id or a list of ids of the same page: the element's own `id` and the attributes that refer to elements by id; {@link withRenamedContentIds} renames an id in each of them. */
-const ID_ATTRIBUTES = new Set(['id', 'aria-activedescendant', 'aria-controls', 'aria-describedby', 'aria-details', 'aria-errormessage', 'aria-flowto', 'aria-labelledby', 'aria-owns', 'for', 'headers', 'list']);
-/** One start tag of authored HTML; a quoted attribute value may hold a `>`. Text and an escaped code example hold no `<` before a letter, so they are never read as a tag. */
-const START_TAG = /<[A-Za-z][^<>"']*(?:(?:"[^"]*"|'[^']*')[^<>"']*)*>/g;
-/** One attribute with a value inside a start tag: the space before it, its name, its equals sign, and its value in double quotes, in single quotes or bare. */
-const ATTRIBUTE = /(\s)([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g;
-/** The quote an attribute's value stands in, by which of the two quoted forms {@link ATTRIBUTE} matched; none for a bare value. Called by {@link withAttributeValues}. @example quoteOf(undefined, 'a') // => "'" */
-const quoteOf = (double, single) => double !== undefined ? '"' : single !== undefined ? "'" : '';
-/** Rewrites attribute values in the start tags of authored HTML and leaves its text alone, so an id a code example only mentions is not touched; called by {@link contentIdsOf} and {@link withRenamedContentIds}. `rewrite` gets the attribute's name in lower case and its value and returns the value to print. @example withAttributeValues('<h2 id="a">id="a"</h2>', (name, value) => name === 'id' ? 'b' : value) // => '<h2 id="b">id="a"</h2>' */
-const withAttributeValues = (html, rewrite) => html.replace(START_TAG, tag => tag.replace(ATTRIBUTE, (attribute, space, name, equals, double, single, bare) => {
-  const value = double ?? single ?? bare, rewritten = rewrite(name.toLowerCase(), value);
-  // An unchanged attribute keeps its exact text; a changed one keeps its own quotes.
-  if (rewritten === value) return attribute;
-  const quote = quoteOf(double, single);
-  return `${space}${name}${equals}${quote}${rewritten}${quote}`;
-}));
-/** Lists the ids the elements of authored HTML carry; called by {@link contentIdRenames}. @example contentIdsOf('<h2 id="flow">Flow</h2><p id="note">…</p>') // => Set { 'flow', 'note' } */
-const contentIdsOf = html => {
-  const ids = new Set();
-  withAttributeValues(html, (name, value) => { if (name === 'id') ids.add(value); return value; });
-  return ids;
-};
+const ID_ATTRIBUTES = new Set(['id', 'anchor', 'aria-activedescendant', 'aria-controls', 'aria-describedby', 'aria-details', 'aria-errormessage', 'aria-flowto', 'aria-labelledby', 'aria-owns', 'commandfor', 'for', 'form', 'headers', 'itemref', 'list', 'popovertarget']);
 /** Chooses another id for every id of a page's content that the reader uses itself: `page-` and the id, with a number where the page carries that one too. Called by {@link renderWikiPages} once per page, so the published page holds each id of the reader once and the agent's page data stay as authored. @example contentIdRenames('<h2 id="qa-form">The form</h2>', new Set(['qa-form'])) // => Map { 'qa-form' => 'page-qa-form' } */
 const contentIdRenames = (contentHtml, readerIds) => {
   const contentIds = contentIdsOf(contentHtml), taken = new Set([...contentIds, ...readerIds]), renames = new Map();
@@ -41,19 +21,26 @@ const contentIdRenames = (contentHtml, readerIds) => {
   }
   return renames;
 };
-/** Reads the path a link names as an author writes it into an address: percent-encoded; a text that is no valid encoding is taken as written. Called by {@link withRenamedContentIds}. @example writtenPath('my%20page.html') // => 'my page.html' */
-const writtenPath = path => { try { return decodeURIComponent(path); } catch { return path; } };
-/** Prints a page's content with every renamed id under its new name: on its element, in the id lists of this page, in a link of this page to it and in a link to a renamed id of another page of the Wiki. Called by {@link renderWikiPages} for each page with the renames of all pages. @example withRenamedContentIds({ path: 'index.html', contentHtml: '<h2 id="qa-form">The form</h2><a href="#qa-form">up</a>' }, new Map([['index.html', new Map([['qa-form', 'page-qa-form']])]])) // => '<h2 id="page-qa-form">The form</h2><a href="#page-qa-form">up</a>' */
+/** Reads a part of an address as an author writes it: percent-encoded; a text that is no valid encoding is taken as written. Called by {@link withRenamedContentIds} for the path and for the fragment of a link. @example writtenPart('my%20page.html') // => 'my page.html' */
+const writtenPart = part => { try { return decodeURIComponent(part); } catch { return part; } };
+/** An address that names its own place: one with a scheme, or one that starts at the root of its site. Where the root of a served or an opened Wiki lies is not the publisher's to know, so {@link withRenamedContentIds} leaves such a link alone. */
+const ABSOLUTE_ADDRESS = /^(?:[A-Za-z][A-Za-z0-9+.-]*:|\/)/;
+/** Prints a page's content with every renamed id under its new name: on its element, in the id lists of this page, in a link of this page to it and in a link to a renamed id of another page of the Wiki. A link is read as a browser reads it: the fragment after the first `#`, percent-decoded; the path before a query. Called by {@link renderWikiPages} for each page with the renames of all pages. @example withRenamedContentIds({ path: 'index.html', contentHtml: '<h2 id="qa-form">The form</h2><a href="#qa-form">up</a>' }, new Map([['index.html', new Map([['qa-form', 'page-qa-form']])]])) // => '<h2 id="page-qa-form">The form</h2><a href="#page-qa-form">up</a>' */
 const withRenamedContentIds = (page, renamesByPage) => {
   const ownRenames = renamesByPage.get(page.path);
-  /** The page of the Wiki a link's path names from this page; this page for a link that is a fragment alone. */
-  const linkedPage = path => path === '' ? page.path : posix.normalize(posix.join(posix.dirname(page.path), writtenPath(path)));
+  /** The page of the Wiki the part of a link before its fragment names from this page; this page for a link without a path. A query is no part of the path. */
+  const linkedPage = beforeFragment => {
+    const [path] = beforeFragment.split('?');
+    return path === '' ? page.path : posix.normalize(posix.join(posix.dirname(page.path), writtenPart(path)));
+  };
+  /** Whether a link can lead to an id of a page of this Wiki: it has a fragment and is written relative to its page. */
+  const isLinkToAnId = address => address.includes('#') && !ABSOLUTE_ADDRESS.test(address);
   /** A link's address with its fragment renamed, when the address names this page or another page of the Wiki and that page renamed the fragment's id. */
   const renamedLink = address => {
-    const fragmentStart = address.indexOf('#');
-    if (fragmentStart === -1) return address;
-    const path = address.slice(0, fragmentStart), renamed = renamesByPage.get(linkedPage(path))?.get(address.slice(fragmentStart + 1));
-    return renamed === undefined ? address : `${path}#${renamed}`;
+    if (!isLinkToAnId(address)) return address;
+    const fragmentStart = address.indexOf('#'), beforeFragment = address.slice(0, fragmentStart);
+    const renamed = renamesByPage.get(linkedPage(beforeFragment))?.get(writtenPart(address.slice(fragmentStart + 1)));
+    return renamed === undefined ? address : `${beforeFragment}#${renamed}`;
   };
   /** An id, or a list of ids with its spaces kept, with each renamed id of this page under its new name. */
   const renamedIds = ids => ids.split(/(\s+)/).map(part => ownRenames.get(part) ?? part).join('');
@@ -75,9 +62,10 @@ function validatePages(manifest) {
     if (/<\/?(?:html|head|body|main|article|form|script|style|iframe|object|embed|base|meta|link|title|h1)\b/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must contain article sections, not a document, form or script.`);
     if (/<\/?svg\b/i.test(page.contentHtml)) throw new Error(`Wiki page ${page.path} must use diagram records and figure slots instead of authored SVG.`);
     if (!Array.isArray(page.sources) || !page.sources.length || !Array.isArray(page.outline)) throw new Error(`Wiki page ${page.path} needs source references and an outline.`);
-    const anchors = new Set();
+    // An outline entry names an anchor of its page: an id an element of the content really carries, not one a code example or a comment only shows.
+    const anchors = new Set(), contentIds = contentIdsOf(page.contentHtml);
     for (const entry of page.outline) {
-      if (!entry || typeof entry.id !== 'string' || !/^[A-Za-z][\w-]*$/.test(entry.id) || anchors.has(entry.id) || typeof entry.label !== 'string' || !entry.label.trim() || !new RegExp(`\\bid\\s*=\\s*["']${entry.id}["']`).test(page.contentHtml)) throw new Error(`Wiki page ${page.path} has an invalid or missing outline anchor.`);
+      if (!entry || typeof entry.id !== 'string' || !/^[A-Za-z][\w-]*$/.test(entry.id) || anchors.has(entry.id) || typeof entry.label !== 'string' || !entry.label.trim() || !contentIds.has(entry.id)) throw new Error(`Wiki page ${page.path} has an invalid or missing outline anchor.`);
       anchors.add(entry.id);
     }
   }

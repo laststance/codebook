@@ -10,13 +10,17 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
+  unlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { test } from 'node:test'
+import { join, relative, resolve, sep } from 'node:path'
+import { test, type TestContext } from 'node:test'
 
+import type * as takeoverModule from '../utils/claimStorageLockTakeover'
+import { claimStorageLockTakeover } from '../utils/claimStorageLockTakeover'
 import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
@@ -37,19 +41,18 @@ import {
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
 import { idleChild } from './utils/idleChild'
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
-/** A process id that names no process on the machine the tests run on. */
-const PID_OF_NO_PROCESS = 2 ** 22 + 1
-
 /** Answers the start of this test process as the fixed window {@link AS_THIS_WINDOW} records it; the start of any other process cannot be read. */
 const readStartOfThisWindow: ProcessStartReader = async (pid) =>
-  pid === process.pid ? 'linux:16362446' : undefined
+  pid === process.pid ? 'linux@4026531836:16362446' : undefined
 
 /**
- * A window with a fixed identity, for the tests that state a marker or a claim file byte for byte: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor with the machine id "machine-a" (digest f9c8c7ddcf3d5f56), under the kernel boot "boot-1", begun at clock tick 16362446.
+ * A window with a fixed identity, for the tests that state a marker or a claim file byte for byte: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor with the machine id "machine-a" (digest f9c8c7ddcf3d5f56), under the kernel boot "boot-1", in the pid namespace 4026531836, begun at clock tick 16362446.
  * Every window of such a test is this test process, so the start reader answers that start for its process id.
+ * Every Linux start of this file names that namespace: a marker or a claim of a project folder whose start names none is not judged by its process id, and the time rules alone would decide it.
  */
 const AS_THIS_WINDOW = {
   identity: {
@@ -58,7 +61,7 @@ const AS_THIS_WINDOW = {
     machineKey: 'f9c8c7ddcf3d5f56',
     hostKey: 'd195d36bd79da7df',
     boot: { id: 'boot-1' },
-    processStart: 'linux:16362446',
+    processStart: 'linux@4026531836:16362446',
   },
   readStart: readStartOfThisWindow,
 }
@@ -68,7 +71,7 @@ const OWNER_OF_THIS_WINDOW = {
   machineKey: 'f9c8c7ddcf3d5f56',
   hostKey: 'd195d36bd79da7df',
   boot: { id: 'boot-1' },
-  processStart: 'linux:16362446',
+  processStart: 'linux@4026531836:16362446',
 }
 
 /** A window on another machine that works on the same project folder (a shared folder): the host "laptop", with digests of its own. Its process has this test process's id in its own space of process ids. */
@@ -78,7 +81,7 @@ const AS_WINDOW_OF_ANOTHER_MACHINE = {
     machineKey: '1fb1404a9738d5ed',
     hostKey: '5f0c1a8d2e3b4a69',
     boot: { id: 'boot-of-the-laptop' },
-    processStart: 'linux:777',
+    processStart: 'linux@4026531836:777',
   },
   readStart: readStartOfTheLaptopWindow,
 }
@@ -87,7 +90,7 @@ const AS_WINDOW_OF_ANOTHER_MACHINE = {
 async function readStartOfTheLaptopWindow(
   pid: number,
 ): Promise<string | undefined> {
-  return pid === process.pid ? 'linux:777' : undefined
+  return pid === process.pid ? 'linux@4026531836:777' : undefined
 }
 
 /** A point that one window of a test waits at until another window has passed it. @example const markerRemoved = gate(); await markerRemoved.passed */
@@ -167,7 +170,7 @@ test('a reservation that cannot be written leaves the run’s marker, and the en
       markerAfterTheFailedWrite,
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
@@ -203,13 +206,13 @@ test('the marker file a second window may be reading is not rewritten when it be
       await readFile(openedByAReader, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
     assert.equal(
       await readFile(wiki.markerPath, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446","watchEndedAtMs":1790000060000}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446","watchEndedAtMs":1790000060000}',
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'opened-by-a-reader',
@@ -229,7 +232,7 @@ test('of two windows that start on a killed editor’s marker at the same moment
   await writeFile(
     wiki.markerPath,
     JSON.stringify({
-      pid: 2 ** 22 + 1,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs,
@@ -307,6 +310,8 @@ function outcomeOf(
   return claiming.then(
     (claim) => {
       if ('release' in claim) return 'holds the claim'
+      if ('isMarkerInChange' in claim.heldBy)
+        return 'refused while another window changes the marker'
       return 'windowId' in claim.heldBy
         ? `held by ${claim.heldBy.windowId}`
         : 'refused while another window writes its marker'
@@ -320,7 +325,7 @@ async function leaveKilledEditorsMarker(markerPath: string): Promise<void> {
   await writeFile(
     markerPath,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
@@ -385,12 +390,12 @@ test('of three windows that start on a killed editor’s marker at the same mome
     const secondWindow = await secondStart
     const thirdWindow = await thirdStart
 
-    // Assert: the second window finds the first one removing the marker and is refused as for a marker that stays in the way; the third writes onto the emptied path and is the one that runs.
+    // Assert: the second window finds the first one removing the marker and is refused as beside a window that changes the marker (the editor says "Another editor window is starting or ending an update of this Wiki. Wait a moment and try again."); the third writes onto the emptied path and is the one that runs.
     assert.deepEqual(
       { firstWindow, secondWindow, thirdWindow },
       {
         firstWindow: 'held by window-c',
-        secondWindow: 'refused with EEXIST',
+        secondWindow: 'refused while another window changes the marker',
         thirdWindow: 'holds the claim',
       },
     )
@@ -447,8 +452,8 @@ test('a window that starts at the moment a stopped watch’s reservation is remo
     await claim.release()
     const otherWindow = await otherStart
 
-    // Assert
-    assert.equal(otherWindow, 'refused with EEXIST')
+    // Assert: the other window is refused in a sentence of the editor ("Another editor window is starting or ending an update of this Wiki. Wait a moment and try again."), not with the file error of its creation.
+    assert.equal(otherWindow, 'refused while another window changes the marker')
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -507,30 +512,32 @@ test('a watch that ends after another window took its outlasted marker over leav
 
 // Value: protects=every later start after a window was killed while it held the claim on the marker and its process id went to another process; fails_when=such a claim counts for as long as a process has its id, so a stale marker can never be removed and every start ends with a file error; why_new=Cycle 0045 local review wiki-1 #7, follow-up, rewritten in Cycle 0046 (row 2, ER-9): the claim is removed by the start its owner recorded, at once, and no longer by its age; seam=none
 test('a claim on the marker that a killed window left a moment ago does not keep a stale marker in place, although a process has its id: that process began at another time', async () => {
-  // Arrange: a killed editor's marker, and a claim written just now that records this machine, the id of this test process, which runs, and the start of a process that began long ago.
+  // Arrange: a killed editor's marker, and a claim written just now that records this machine, the id of this test process, which runs, and the start of a process that began long ago (clock tick 1; the fixed window's reader answers tick 16362446 for this process).
   const wiki = await createWikiFolder()
   await leaveKilledEditorsMarker(wiki.markerPath)
   const claimDirectory = `${wiki.markerPath}.takeover`
-  const { machineKey, hostKey } = await currentStorageOwner()
   await mkdir(claimDirectory)
   await writeFile(
     join(claimDirectory, 'left-by-a-killed-window'),
     JSON.stringify({
       pid: process.pid,
-      machineKey,
-      hostKey,
-      processStart: startOfKilledWindow(),
+      ...OWNER_OF_THIS_WINDOW,
+      processStart: 'linux@4026531836:1',
     }),
   )
   try {
     // Act
     const start = await outcomeOf(
-      claimWikiUpdateMarker(wiki.outputDirectory, {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: Date.now(),
-      }),
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      ),
     )
 
     // Assert
@@ -553,7 +560,7 @@ test('a claim on the marker whose window was killed a moment ago does not keep a
   await writeFile(
     join(claimDirectory, 'left-by-a-killed-window'),
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       ...(await currentStorageOwner()),
     }),
   )
@@ -664,7 +671,7 @@ test('a second window never finds a marker file without content while the first 
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-1' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     })
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
@@ -729,7 +736,7 @@ test('on a file system without hard links the marker is still created with its w
       await readFile(wiki.markerPath, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"cursor","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"cursor","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
@@ -883,7 +890,7 @@ test('a window that finds no marker under its claim removes nothing: the marker 
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-1' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     })
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
       'wiki',
@@ -943,13 +950,13 @@ test('the claim on the marker, a file in the learner’s project folder, names i
     assert.deepEqual(claimFilesWhileTheClaimIsHeld, [
       '{"pid":' +
         process.pid +
-        ',"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     ])
     assert.equal(
       await readFile(wiki.markerPath, 'utf8'),
       '{"pid":' +
         process.pid +
-        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux:16362446"}',
+        ',"windowId":"window-a","host":"vscode","startedAtMs":1790000000000,"machineKey":"f9c8c7ddcf3d5f56","hostKey":"d195d36bd79da7df","boot":{"id":"boot-1"},"processStart":"linux@4026531836:16362446"}',
     )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
@@ -994,7 +1001,7 @@ test('a claim on the marker without a process start, as 0.2.29.0 writes it, keep
     assert.deepEqual(
       { startAfter60Seconds, startAMillisecondLater },
       {
-        startAfter60Seconds: 'refused with EEXIST',
+        startAfter60Seconds: 'refused while another window changes the marker',
         startAMillisecondLater: 'holds the claim',
       },
     )
@@ -1009,33 +1016,35 @@ test('a claim on the marker without a process start, as 0.2.29.0 writes it, keep
 
 // Value: protects=a running window of this machine that holds the claim on the marker while its extension host is suspended for more than a minute (a debugger, a sleeping laptop); fails_when=its claim is removed by age after 60 s although its process runs, so a second window takes the claim and both change the marker (row 2, decision D8); why_new=Cycle 0046 row 2 (ER-4): the 60 s lease is dropped for a claim whose owner can be judged here; seam=the claim file's modification time
 test('a claim on the marker that a running window of this machine has held for two minutes stays in place, and a start on a stale marker is refused for that time', async () => {
-  // Arrange: a killed editor's marker, and a claim that records this machine, this test process, which runs, and its real start, last written two minutes ago.
+  // Arrange: a killed editor's marker, and a claim that records this machine, this test process, which runs, and the start the fixed window's reader answers for it, last written two minutes ago.
   const wiki = await createWikiFolder()
   await leaveKilledEditorsMarker(wiki.markerPath)
   const claimDirectory = `${wiki.markerPath}.takeover`
   const heldClaim = join(claimDirectory, 'held-by-a-suspended-window')
-  const { machineKey, hostKey, processStart } = await currentStorageOwner()
-  assert.ok(processStart, 'the start of this process can be read')
   await mkdir(claimDirectory)
   await writeFile(
     heldClaim,
-    JSON.stringify({ pid: process.pid, machineKey, hostKey, processStart }),
+    JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
   )
   const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
   await utimes(heldClaim, twoMinutesAgo, twoMinutesAgo)
   try {
     // Act
     const start = await outcomeOf(
-      claimWikiUpdateMarker(wiki.outputDirectory, {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: Date.now(),
-      }),
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      ),
     )
 
     // Assert
-    assert.equal(start, 'refused with EEXIST')
+    assert.equal(start, 'refused while another window changes the marker')
     assert.deepEqual(await readdir(claimDirectory), [
       'held-by-a-suspended-window',
     ])
@@ -1062,7 +1071,7 @@ test('a claim on the marker that a window of another machine left more than 60 s
       pid: process.pid,
       machineKey: '1fb1404a9738d5ed',
       hostKey: '5f0c1a8d2e3b4a69',
-      processStart: 'linux:777',
+      processStart: 'linux@4026531836:777',
     }),
   )
   const claimedAt = new Date(1_790_000_000_000)
@@ -1164,7 +1173,7 @@ test('a window that was suspended under its claim at the end of its run, while a
         machineKey: '1fb1404a9738d5ed',
         hostKey: '5f0c1a8d2e3b4a69',
         boot: { id: 'boot-of-the-laptop' },
-        processStart: 'linux:777',
+        processStart: 'linux@4026531836:777',
       },
     )
     assert.deepEqual((await readdir(wiki.directory)).toSorted(), [
@@ -1256,20 +1265,16 @@ test('a window that was suspended under its claim in the middle of its start, wh
   }
 })
 
-/** Places a claim on the marker as another running window of this machine holds it: it records this test process, which runs, with its real start, so no window removes it. Returns the claim file's path. */
+/** Places a claim on the marker as another running window of this machine holds it: it records this test process, which runs, with the start the reader of {@link AS_THIS_WINDOW} answers for it, so no window with that identity removes it. */
 async function holdClaimAsAnotherRunningWindow(
   markerPath: string,
-): Promise<string> {
+): Promise<void> {
   const claimDirectory = `${markerPath}.takeover`
-  const heldClaim = join(claimDirectory, 'held-by-another-window')
-  const { machineKey, hostKey, processStart } = await currentStorageOwner()
-  assert.ok(processStart, 'the start of this process can be read')
   await mkdir(claimDirectory)
   await writeFile(
-    heldClaim,
-    JSON.stringify({ pid: process.pid, machineKey, hostKey, processStart }),
+    join(claimDirectory, 'held-by-another-window'),
+    JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
   )
-  return heldClaim
 }
 
 // Value: protects=the end of an update at the moment another window holds the claim on the marker (it is looking at the marker for its own start); fails_when=the end asks for the claim once and gives up, so the run's marker stays behind and every window is refused with "Another editor window is updating this Wiki" until it expires (row 35, PL-27); why_new=Cycle 0046 row 35: no test reached the second attempt; seam=the wait between two attempts, which counts and at the third lets the other window release its claim
@@ -1277,7 +1282,6 @@ test('the end of a run waits for another window’s claim on the marker and remo
   // Arrange: a window that runs, and another window's claim that is released during the third wait.
   const wiki = await createWikiFolder()
   const waitsMs: number[] = []
-  let heldClaim = ''
   const { claimWikiUpdateMarker: claimWithCountedWaits } = await loadModule<
     typeof claimModule
   >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
@@ -1290,20 +1294,23 @@ test('the end of a run waits for another window’s claim on the marker and remo
     },
   })
   try {
-    const claim = await claimWithCountedWaits(wiki.outputDirectory, {
-      pid: process.pid,
-      windowId: 'window-a',
-      host: 'vscode',
-      startedAtMs: Date.now(),
-    })
+    const claim = await claimWithCountedWaits(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
     assert.ok('release' in claim)
-    heldClaim = await holdClaimAsAnotherRunningWindow(wiki.markerPath)
+    await holdClaimAsAnotherRunningWindow(wiki.markerPath)
 
     // Act
     await claim.release()
 
     // Assert
-    assert.equal(heldClaim.endsWith('held-by-another-window'), true)
     assert.deepEqual(waitsMs, [25, 25, 25])
     assert.deepEqual(await readdir(wiki.directory), ['wiki'])
   } finally {
@@ -1334,7 +1341,7 @@ test('the end of a run that never gets the claim on the marker gives up after tw
         host: 'vscode',
         startedAtMs: 1_790_000_000_000,
       },
-      { now: () => 1_790_000_000_000 },
+      { ...AS_THIS_WINDOW, now: () => 1_790_000_000_000 },
     )
     assert.ok('release' in claim)
     await holdClaimAsAnotherRunningWindow(wiki.markerPath)
@@ -1412,6 +1419,14 @@ test('the twenty attempts of a run’s end read the start of the running window 
   const holder = await idleChild(context)
   const holderPid = holder.pid
   assert.ok(holderPid, 'the holder runs')
+  const startOfTheHolder = await readProcessStart(holderPid)
+  // This is the file's one case with a real process and its real start; every other case names a fixed start.
+  if (startOfTheHolder === undefined) {
+    context.skip(
+      'the start of a running process could not be read on this machine within the bound of the query (on Windows a PowerShell that starts cold)',
+    )
+    return
+  }
   const { machineKey, hostKey } = await currentStorageOwner()
   let judgementsOfTheHolder = 0
   let readsOfItsStart = 0
@@ -1447,7 +1462,7 @@ test('the twenty attempts of a run’s end read the start of the running window 
       pid: holderPid,
       machineKey,
       hostKey,
-      processStart: await readProcessStart(holderPid),
+      processStart: startOfTheHolder,
     }),
   )
 
@@ -1470,7 +1485,7 @@ test('the prepared marker file a killed window left beside the marker is removed
   await writeFile(
     `${wiki.markerPath}.pending-left-by-a-killed-window`,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
@@ -1511,7 +1526,7 @@ test('the prepared marker file a killed window of another machine left beside th
       startedAtMs: 1_790_000_000_000,
       machineKey: '1fb1404a9738d5ed',
       hostKey: '5f0c1a8d2e3b4a69',
-      processStart: 'linux:777',
+      processStart: 'linux@4026531836:777',
     }),
   )
   const preparedAt = new Date(1_790_000_000_000)
@@ -1578,7 +1593,7 @@ test('the reservation a window wrote beside the marker and could not move over i
   })
   try {
     const killed = await claimAsKilledWindow(wiki.outputDirectory, {
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
@@ -1611,9 +1626,9 @@ test('the reservation a window wrote beside the marker and could not move over i
   }
 })
 
-// Value: protects=two users of one computer who work on one shared project folder; fails_when=the marker is created private to its writer like a storage lock, so the other user's window cannot read whose update runs, takes the file for an entry that is nobody's and removes it, and both update the Wiki; why_new=Cycle 0046 row 16: the marker is created by placeStorageLock, which creates private files unless told otherwise; seam=the process's file mode mask, set for the test
+// Value: protects=two users of one computer who work on one shared project folder; fails_when=the marker is created private to its writer like a storage lock, so the other user's window cannot read whose update runs, takes the file for an entry that is nobody's and removes it, and both update the Wiki; or the claim on the marker is private to its creator, so the other user's window can neither judge nor clear the claim a killed window left, and its starts on a stale marker and the ends of its runs fail until the first user starts Codebook again (row 116); why_new=Cycle 0046 row 16: the marker is created by placeStorageLock, which creates private files unless told otherwise, and row 116 for the claim; seam=the process's file mode mask, set for the test, and the read of the marker under the claim, at which the claim's modes are noted
 test(
-  'a marker and the reservation that replaces it are readable for the other users of the project folder, as the file mode mask allows',
+  'a marker, the reservation that replaces it and the claim under which it is replaced are readable for the other users of the project folder, as the file mode mask allows',
   {
     skip:
       process.platform === 'win32'
@@ -1621,17 +1636,40 @@ test(
         : false,
   },
   async () => {
-    // Arrange: the usual file mode mask, which takes the write permission from group and others.
+    // Arrange: the usual file mode mask, which takes the write permission from group and others; the claim's modes are read while the claim is held.
     const wiki = await createWikiFolder()
+    const claimFolder = `${wiki.markerPath}.takeover`
+    let modesOfTheClaim: { folder: number; file: number } | undefined
+    const { claimWikiUpdateMarker: claimAndNoteTheClaimsModes } =
+      await loadModule<typeof claimModule>(
+        resolve(__dirname, '../utils/claimWikiUpdateMarker.js'),
+        {
+          './readWikiRegularFile': {
+            readWikiRegularFile: async (path: string) => {
+              const [claimName] = await readdir(claimFolder)
+              assert.ok(claimName, 'the claim is held at this read')
+              modesOfTheClaim = {
+                folder: (await stat(claimFolder)).mode & 0o777,
+                file: (await stat(join(claimFolder, claimName))).mode & 0o777,
+              }
+              return readWikiRegularFile(path)
+            },
+          },
+        },
+      )
     const previousMask = process.umask(0o022)
     try {
       // Act
-      const claim = await claimWikiUpdateMarker(wiki.outputDirectory, {
-        pid: process.pid,
-        windowId: 'window-a',
-        host: 'vscode',
-        startedAtMs: Date.now(),
-      })
+      const claim = await claimAndNoteTheClaimsModes(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: Date.now(),
+        },
+        AS_THIS_WINDOW,
+      )
       assert.ok('reserve' in claim)
       const modeOfTheMarker = (await stat(wiki.markerPath)).mode & 0o777
       await claim.reserve(Date.now())
@@ -1639,12 +1677,55 @@ test(
 
       // Assert
       assert.deepEqual(
-        { modeOfTheMarker, modeOfTheReservation },
-        { modeOfTheMarker: 0o644, modeOfTheReservation: 0o644 },
+        { modeOfTheMarker, modeOfTheReservation, modesOfTheClaim },
+        {
+          modeOfTheMarker: 0o644,
+          modeOfTheReservation: 0o644,
+          modesOfTheClaim: { folder: 0o755, file: 0o644 },
+        },
       )
     } finally {
       process.umask(previousMask)
       await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the takeover claim of a storage lock, which lies in the editor's private storage and names the computer by its host name and the editor's machine id; fails_when=the modes a marker's claim gets in a project folder since row 116 become the claim's modes everywhere, so another user of the computer can read the record; why_new=Cycle 0046 row 116: the claim's modes are named by its caller since then; seam=the process's file mode mask, set for the test
+test(
+  'the takeover claim of a storage lock stays private to its user: its folder and its file give group and others no permission, whatever the file mode mask allows',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no permission bits for a group and for others'
+        : false,
+  },
+  async () => {
+    // Arrange: a storage directory, and the usual file mode mask, which would leave group and others the read permission.
+    const storage = await createWikiFolder()
+    const claimFolder = join(storage.directory, 'writer.lock.takeover')
+    const previousMask = process.umask(0o022)
+    try {
+      // Act
+      const claim = await claimStorageLockTakeover(
+        join(storage.directory, 'writer.lock'),
+        AS_THIS_WINDOW.identity,
+        readStartOfThisWindow,
+      )
+      assert.ok(claim)
+      const [claimName] = await readdir(claimFolder)
+      assert.ok(claimName, 'the claim is held')
+      const modesOfTheClaim = {
+        folder: (await stat(claimFolder)).mode & 0o777,
+        file: (await stat(join(claimFolder, claimName))).mode & 0o777,
+      }
+      await claim.release()
+
+      // Assert
+      assert.deepEqual(modesOfTheClaim, { folder: 0o700, file: 0o600 })
+    } finally {
+      process.umask(previousMask)
+      await rm(storage.directory, { recursive: true, force: true })
     }
   },
 )
@@ -1679,6 +1760,597 @@ test('a link at the marker’s path does not refuse every start: once it is olde
     assert.equal(start, 'holds the claim')
     assert.equal(await readFile(target, 'utf8'), 'kept')
     assert.equal((await lstat(wiki.markerPath)).isFile(), true)
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Makes a project as a cloned repository holds it, with an empty Wiki output folder in `.codebook`, and a folder beside the project. Every file and folder of both was last changed two minutes ago, longer than a claim on the marker may stay without an owner.
+ * All of it lies in one temporary folder of the test, which is removed with the test; a link of a test leads only to one of these two folders.
+ * @example const cloned = await createClonedProject(context)
+ */
+async function createClonedProject(context: TestContext): Promise<{
+  project: string
+  besideTheProject: string
+  outputDirectory: string
+  markerPath: string
+}> {
+  const temporaryFolder = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-wiki-claim-link-')),
+  )
+  context.after(() => rm(temporaryFolder, { recursive: true, force: true }))
+  const project = join(temporaryFolder, 'project')
+  const besideTheProject = join(temporaryFolder, 'beside-the-project')
+  const outputDirectory = join(project, '.codebook', 'wiki')
+  await mkdir(outputDirectory, { recursive: true })
+  await mkdir(join(project, 'src', 'utils'), { recursive: true })
+  await mkdir(join(project, 'docs'))
+  await mkdir(join(besideTheProject, 'photos'), { recursive: true })
+  const files = [
+    join(project, 'package.json'),
+    join(project, 'src', 'main.ts'),
+    join(project, 'src', 'utils', 'helper.ts'),
+    join(project, 'docs', 'guide.md'),
+    join(besideTheProject, 'notes.txt'),
+    join(besideTheProject, 'photos', 'holiday.txt'),
+  ]
+  for (const file of files) await writeFile(file, 'kept')
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60_000)
+  const folders = [
+    join(project, 'src', 'utils'),
+    join(project, 'src'),
+    join(project, 'docs'),
+    join(besideTheProject, 'photos'),
+    besideTheProject,
+  ]
+  for (const path of [...files, ...folders])
+    await utimes(path, twoMinutesAgo, twoMinutesAgo)
+  return {
+    project,
+    besideTheProject,
+    outputDirectory,
+    markerPath: `${outputDirectory}.update-run.json`,
+  }
+}
+
+/** Lists every file, folder and link below a folder as `/`-separated paths, sorted; a link is named and not followed. @example await entriesBelow('/tmp/project') // => ['docs', 'docs/guide.md', 'package.json'] */
+async function entriesBelow(folder: string): Promise<string[]> {
+  // With entry types the listing names a link and does not go into it.
+  return (await readdir(folder, { recursive: true, withFileTypes: true }))
+    .map((entry) =>
+      relative(folder, join(entry.parentPath, entry.name)).split(sep).join('/'),
+    )
+    .toSorted()
+}
+
+// Value: protects=the learner's own files in a project whose repository carries a link at `.codebook/wiki.update-run.json.takeover` (row 109, critical: one Update press deleted `src/`, `docs/` and `package.json`); fails_when=the claim's age sweep lists the claim folder's path through the link and removes every entry of the link's target that is older than 60 s as a claim nobody owns; why_new=Cycle 0046 row 109: no test put a link at the claim folder's path; seam=none (a junction on Windows, which needs no right)
+test('a link at the claim folder’s path that leads to the project folder is removed as a link when an update starts on a killed editor’s marker: every file and folder of the project stays, although each is older than a claim may be', async (context) => {
+  // Arrange: a killed editor's marker, so the start asks for the claim, and the link a repository carries.
+  const cloned = await createClonedProject(context)
+  await leaveKilledEditorsMarker(cloned.markerPath)
+  await symlink(cloned.project, `${cloned.markerPath}.takeover`, 'junction')
+
+  // Act
+  const start = await outcomeOf(
+    claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    { start, project: await entriesBelow(cloned.project) },
+    {
+      start: 'holds the claim',
+      project: [
+        '.codebook',
+        '.codebook/wiki',
+        '.codebook/wiki.update-run.json',
+        'docs',
+        'docs/guide.md',
+        'package.json',
+        'src',
+        'src/main.ts',
+        'src/utils',
+        'src/utils/helper.ts',
+      ],
+    },
+  )
+  assert.equal(
+    JSON.parse(await readFile(cloned.markerPath, 'utf8')).windowId,
+    'window-a',
+  )
+})
+
+// Value: protects=the learner's own files in a project whose repository carries a link at `.codebook/wiki.update-run.json.takeover`, at the end of an update that started without a marker in the way (row 109); fails_when=the end of the run asks for the claim, and the claim's age sweep lists the link's target and removes what is older than 60 s; why_new=Cycle 0046 row 109; seam=none
+test('a link at the claim folder’s path that leads to the project folder is removed as a link when a run ends: every file and folder of the project stays and the run’s marker is removed', async (context) => {
+  // Arrange: a run that began with no marker in the way, so nothing looked at the claim folder yet.
+  const cloned = await createClonedProject(context)
+  await symlink(cloned.project, `${cloned.markerPath}.takeover`, 'junction')
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: Date.now(),
+    },
+    AS_THIS_WINDOW,
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(await entriesBelow(cloned.project), [
+    '.codebook',
+    '.codebook/wiki',
+    'docs',
+    'docs/guide.md',
+    'package.json',
+    'src',
+    'src/main.ts',
+    'src/utils',
+    'src/utils/helper.ts',
+  ])
+})
+
+// Value: protects=a folder outside the project (the learner's home, another checkout) when a repository carries a link to it at `.codebook/wiki.update-run.json.takeover` (row 109: the folder was emptied); fails_when=the claim's age sweep lists the claim folder's path through the link; why_new=Cycle 0046 row 109; seam=none
+test('a link at the claim folder’s path that leads out of the project is removed as a link when an update starts on a killed editor’s marker: the folder it leads to keeps every file', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await leaveKilledEditorsMarker(cloned.markerPath)
+  await symlink(
+    cloned.besideTheProject,
+    `${cloned.markerPath}.takeover`,
+    'junction',
+  )
+
+  // Act
+  const start = await outcomeOf(
+    claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      start,
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+      besideTheWiki: await entriesBelow(join(cloned.project, '.codebook')),
+    },
+    {
+      start: 'holds the claim',
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+      besideTheWiki: ['wiki', 'wiki.update-run.json'],
+    },
+  )
+})
+
+// Value: protects=a folder outside the project when a repository carries a link to it at `.codebook/wiki.update-run.json.takeover`, at the end of an update (row 109); fails_when=the end of the run asks for the claim, and the claim's age sweep lists the link's target; why_new=Cycle 0046 row 109; seam=none
+test('a link at the claim folder’s path that leads out of the project is removed as a link when a run ends: the folder it leads to keeps every file and the run’s marker is removed', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await symlink(
+    cloned.besideTheProject,
+    `${cloned.markerPath}.takeover`,
+    'junction',
+  )
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: Date.now(),
+    },
+    AS_THIS_WINDOW,
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(
+    {
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+      besideTheWiki: await entriesBelow(join(cloned.project, '.codebook')),
+    },
+    {
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+      besideTheWiki: ['wiki'],
+    },
+  )
+})
+
+// Value: protects=the folders that links lead to which a repository carries where a killed window's claim, prepared claim folder or prepared marker would lie; fails_when=an entry that is nobody's by its age is removed through the link (its target is emptied) instead of by its own name; why_new=Cycle 0046 row 109, the audit of every removal beside the marker: these three removals take a link as a link, and nothing stated it; seam=the clock handed to the claim
+test('links where a killed window’s claim, its prepared claim folder and its prepared marker would lie are removed as links once they are older than 60 s, and the folders they lead to keep every file', async (context) => {
+  // Arrange: a real claim folder that holds a link, and two links beside the marker with the names of prepared entries.
+  const cloned = await createClonedProject(context)
+  await mkdir(`${cloned.markerPath}.takeover`)
+  await symlink(
+    cloned.besideTheProject,
+    join(`${cloned.markerPath}.takeover`, 'left-by-a-killed-window'),
+    'junction',
+  )
+  await symlink(
+    join(cloned.project, 'src'),
+    `${cloned.markerPath}.takeover-left-by-a-killed-window`,
+    'junction',
+  )
+  await symlink(
+    join(cloned.project, 'docs'),
+    `${cloned.markerPath}.pending-left-by-a-killed-window`,
+    'junction',
+  )
+  const aMinuteAndASecondLater = Date.now() + 61_000
+  const claim = await claimWikiUpdateMarker(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: aMinuteAndASecondLater,
+    },
+    { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(
+    {
+      project: await entriesBelow(cloned.project),
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+    },
+    {
+      project: [
+        '.codebook',
+        '.codebook/wiki',
+        'docs',
+        'docs/guide.md',
+        'package.json',
+        'src',
+        'src/main.ts',
+        'src/utils',
+        'src/utils/helper.ts',
+      ],
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=the time and the memory of an Update press in a project whose repository carries links to an endless device where a claim, a prepared claim's record and a prepared marker would lie (row 110: one start and its end took 1.8 s and 700 MiB for a single link); fails_when=the owner record of each entry is read with an unbounded read that follows the link, before the entry's age is looked at; why_new=Cycle 0046 row 110; seam=the clock handed to the claim (the test's time bound is the observation: every read of the device takes about a second)
+test(
+  'links to an endless device where a claim, the record of a prepared claim and a prepared marker would lie are never read: a start returns at once while they are young, and 61 s later they are removed by their age',
+  {
+    timeout: 2_000,
+    skip:
+      process.platform === 'win32'
+        ? 'Windows has no endless device at a path of the file system'
+        : false,
+  },
+  async () => {
+    // Arrange: a killed editor's marker, so each start asks for the claim, and a link to /dev/zero at each of the three names.
+    const wiki = await createWikiFolder()
+    await leaveKilledEditorsMarker(wiki.markerPath)
+    await mkdir(`${wiki.markerPath}.takeover`)
+    await symlink('/dev/zero', join(`${wiki.markerPath}.takeover`, 'left'))
+    await mkdir(`${wiki.markerPath}.takeover-left`)
+    await symlink('/dev/zero', join(`${wiki.markerPath}.takeover-left`, 'left'))
+    await symlink('/dev/zero', `${wiki.markerPath}.pending-left`)
+    const linkedAtMs = Date.now()
+    const startingWindow = {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode' as const,
+      startedAtMs: linkedAtMs,
+    }
+    try {
+      // Act: a link among the claims counts as a claim nobody can judge for 60 s, so the first start is refused.
+      const startWhileTheLinksAreYoung = await outcomeOf(
+        claimWikiUpdateMarker(wiki.outputDirectory, startingWindow, {
+          ...AS_THIS_WINDOW,
+          now: () => linkedAtMs,
+        }),
+      )
+      const later = await claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        startingWindow,
+        { ...AS_THIS_WINDOW, now: () => linkedAtMs + 61_000 },
+      )
+      assert.ok('release' in later)
+      await later.release()
+
+      // Assert
+      assert.deepEqual(
+        {
+          startWhileTheLinksAreYoung,
+          besideTheWikiAfterTheLaterRun: await readdir(wiki.directory),
+        },
+        {
+          startWhileTheLinksAreYoung:
+            'refused while another window changes the marker',
+          besideTheWikiAfterTheLaterRun: ['wiki'],
+        },
+      )
+    } finally {
+      await rm(wiki.directory, { recursive: true, force: true })
+    }
+  },
+)
+
+// Value: protects=the rule that what a repository puts beside the marker is judged by itself and never by what it leads to; fails_when=the owner record is read through a link (a link to a file at a claim's or a prepared marker's name, a link to a folder at a prepared claim's name), so a record elsewhere that names a running window keeps the link in place for good and with it the claim on the marker; why_new=Cycle 0046 row 110: "a link is removed by its age without being read"; seam=the clock handed to the claim
+test(
+  'links that lead to the record of a running window, where a claim, a prepared claim folder and a prepared marker would lie, are judged by their age alone and removed 61 s later',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'a link to a file needs a right on Windows that a user may lack'
+        : false,
+  },
+  async (context) => {
+    // Arrange: a record that names this window, which runs, in a folder of the project; and a link to it, or to its folder, at each of the three names.
+    const cloned = await createClonedProject(context)
+    const recordOfARunningWindow = join(cloned.project, 'docs', 'left')
+    await writeFile(
+      recordOfARunningWindow,
+      JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
+    )
+    await mkdir(`${cloned.markerPath}.takeover`)
+    await symlink(
+      recordOfARunningWindow,
+      join(`${cloned.markerPath}.takeover`, 'left'),
+    )
+    await symlink(
+      join(cloned.project, 'docs'),
+      `${cloned.markerPath}.takeover-left`,
+      'junction',
+    )
+    await symlink(recordOfARunningWindow, `${cloned.markerPath}.pending-left`)
+    const aMinuteAndASecondLater = Date.now() + 61_000
+    const claim = await claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: aMinuteAndASecondLater,
+      },
+      { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+    )
+    assert.ok('release' in claim)
+
+    // Act
+    await claim.release()
+
+    // Assert
+    assert.deepEqual(
+      {
+        besideTheWiki: await readdir(join(cloned.project, '.codebook')),
+        docs: (await readdir(join(cloned.project, 'docs'))).toSorted(),
+      },
+      { besideTheWiki: ['wiki'], docs: ['guide.md', 'left'] },
+    )
+  },
+)
+
+// Value: protects=the Update button in a checkout whose repository holds a folder at the marker's path (row 111: every start ended with the file error EISDIR, although the look calls such an entry nobody's); fails_when=the marker in the way is removed as a file only, which fails for a folder; why_new=Cycle 0046 row 111: the existing test of a folder asserts only the look's kind; seam=the clock handed to the claim
+test('a folder with content at the marker’s path does not refuse every start: once it is older than a write takes it is removed with its content as nobody’s marker, and the update runs', async () => {
+  // Arrange: a folder that holds a file, where the marker file would lie.
+  const wiki = await createWikiFolder()
+  await mkdir(wiki.markerPath)
+  await writeFile(join(wiki.markerPath, 'supplied-by-a-repository'), 'x')
+  const createdAtMs = (await lstat(wiki.markerPath)).mtimeMs
+  try {
+    // Act
+    const start = await outcomeOf(
+      claimWikiUpdateMarker(
+        wiki.outputDirectory,
+        {
+          pid: process.pid,
+          windowId: 'window-a',
+          host: 'vscode',
+          startedAtMs: createdAtMs,
+        },
+        { ...AS_THIS_WINDOW, now: () => createdAtMs + 2_000 },
+      ),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        start,
+        isTheMarkerAFile: (await lstat(wiki.markerPath)).isFile(),
+        besideTheWiki: (await readdir(wiki.directory)).toSorted(),
+      },
+      {
+        start: 'holds the claim',
+        isTheMarkerAFile: true,
+        besideTheWiki: ['wiki', 'wiki.update-run.json'],
+      },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the folder that a link at the marker's path leads to; fails_when=the removal of an entry that is nobody's marker, which also removes a folder with its content since row 111, goes into a link's target instead of removing the link; why_new=Cycle 0046 rows 109 and 111: the existing test has a link to a file; seam=the clock handed to the claim
+test('a link to a folder at the marker’s path is removed as a link once it is older than a write takes: the folder keeps every file, and the update runs', async (context) => {
+  // Arrange
+  const cloned = await createClonedProject(context)
+  await symlink(cloned.besideTheProject, cloned.markerPath, 'junction')
+  const linkedAtMs = (await lstat(cloned.markerPath)).mtimeMs
+
+  // Act
+  const start = await outcomeOf(
+    claimWikiUpdateMarker(
+      cloned.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: linkedAtMs,
+      },
+      { ...AS_THIS_WINDOW, now: () => linkedAtMs + 2_000 },
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      start,
+      isTheMarkerAFile: (await lstat(cloned.markerPath)).isFile(),
+      besideTheProject: await entriesBelow(cloned.besideTheProject),
+    },
+    {
+      start: 'holds the claim',
+      isTheMarkerAFile: true,
+      besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=every Wiki update in a checkout whose repository holds a file at `.codebook/wiki.update-run.json.takeover` (row 112: the first update's end left its marker, and every later start failed with a raw EEXIST for good); fails_when=a file at the claim folder's path is neither a folder to list nor removed, so no claim can ever be placed there; why_new=Cycle 0046 row 112; seam=none
+test('a file at the claim folder’s path does not keep the claim from being taken: the end of a run removes its marker, and the next start on a killed editor’s marker runs', async () => {
+  // Arrange: a file where the claim folder would lie, and a run that began with no marker in the way.
+  const wiki = await createWikiFolder()
+  await writeFile(`${wiki.markerPath}.takeover`, 'supplied by a repository')
+  const windowA = {
+    pid: process.pid,
+    windowId: 'window-a',
+    host: 'vscode' as const,
+    startedAtMs: Date.now(),
+  }
+  try {
+    const firstRun = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      windowA,
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in firstRun)
+
+    // Act
+    await firstRun.release()
+    const besideTheWikiAfterTheFirstRun = await readdir(wiki.directory)
+    await leaveKilledEditorsMarker(wiki.markerPath)
+    const nextStart = await outcomeOf(
+      claimWikiUpdateMarker(wiki.outputDirectory, windowA, AS_THIS_WINDOW),
+    )
+
+    // Assert
+    assert.deepEqual(
+      { besideTheWikiAfterTheFirstRun, nextStart },
+      { besideTheWikiAfterTheFirstRun: ['wiki'], nextStart: 'holds the claim' },
+    )
+  } finally {
+    await rm(wiki.directory, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=every later update of a window whose claim file on the marker could not be removed once (on Windows a file another program holds open, a scanner or an indexer); fails_when=the release swallows the failed removal, and the claim, which names a running process of this machine, has no age rule and an owner that is never gone, so the window's later runs leave their markers and every start on a marker in the way fails (row 113); why_new=Cycle 0046 row 113: the trigger cannot be produced on Linux; seam=the file system's removal of the claim file, which fails once, and the answers of the claim's releases
+test('a window whose claim on the marker could not be removed at the end of one run says so, and its next run removes that claim first and ends without leaving its marker', async () => {
+  // Arrange: a window whose first removal of a claim file fails, as for a file another program holds open.
+  const wiki = await createWikiFolder()
+  const claimFolder = `${wiki.markerPath}.takeover${sep}`
+  let failedRemovals = 0
+  const takeoverWithOneFailedRemoval = await loadModule<typeof takeoverModule>(
+    resolve(__dirname, '../utils/claimStorageLockTakeover.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        unlink: async (path: string) => {
+          if (path.startsWith(claimFolder) && failedRemovals === 0) {
+            failedRemovals += 1
+            throw Object.assign(
+              new Error('EPERM: operation not permitted, unlink'),
+              { code: 'EPERM' },
+            )
+          }
+          await unlink(path)
+        },
+      },
+    },
+  )
+  const answersOfTheReleases: boolean[] = []
+  const { claimWikiUpdateMarker: claimInThatWindow } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    './claimStorageLockTakeover': {
+      claimStorageLockTakeover: async (
+        ...claimInputs: Parameters<
+          typeof takeoverModule.claimStorageLockTakeover
+        >
+      ) => {
+        const claim =
+          await takeoverWithOneFailedRemoval.claimStorageLockTakeover(
+            ...claimInputs,
+          )
+        // The claim as it is, with the answer of its release noted.
+        return (
+          claim && {
+            ...claim,
+            release: async () => {
+              const isReleased = await claim.release()
+              answersOfTheReleases.push(isReleased)
+              return isReleased
+            },
+          }
+        )
+      },
+    },
+    'node:timers/promises': { setTimeout: async () => undefined },
+  })
+  /** One update of the window from its start to its end; answers what lies beside the Wiki afterwards. */
+  const besideTheWikiAfterARun = async (): Promise<string[]> => {
+    const claim = await claimInThatWindow(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
+    assert.ok('release' in claim)
+    await claim.release()
+    return (await readdir(wiki.directory)).toSorted()
+  }
+  try {
+    // Act
+    const afterTheFirstRun = await besideTheWikiAfterARun()
+    const afterTheSecondRun = await besideTheWikiAfterARun()
+
+    // Assert: the first run removed its marker under the claim it could not remove afterwards; the second run removed that claim and its own.
+    assert.deepEqual(
+      { afterTheFirstRun, afterTheSecondRun, answersOfTheReleases },
+      {
+        afterTheFirstRun: ['wiki', 'wiki.update-run.json.takeover'],
+        afterTheSecondRun: ['wiki'],
+        answersOfTheReleases: [false, true],
+      },
+    )
   } finally {
     await rm(wiki.directory, { recursive: true, force: true })
   }
