@@ -1,6 +1,6 @@
-import { link, lstat, unlink } from 'node:fs/promises'
+import { link, lstat } from 'node:fs/promises'
 
-import { areNamesOfOneFile } from './areNamesOfOneFile'
+import { dropSecondNameOfOneFile } from './dropSecondNameOfOneFile'
 import { systemErrorCode } from './systemErrorCode'
 
 /** The codes with which a link that puts a moved file back does nothing, as wanted: the place is taken (`EEXIST`), or there is no moved file (`ENOENT`). */
@@ -28,7 +28,7 @@ async function holdsAnEntry(path: string): Promise<boolean> {
 
 /**
  * Undoes what is left of a move of a file that turned out not to be Codebook's: the file gets its own path back when nothing is there, and the second name the move gave it is removed once the file stands at its own path too. Called by the recoveries of the Cursor skill ({@link deployCursorSkill}, {@link removeManagedCursorSkill}) and of the Cursor MCP catalog ({@link removeOwnedCursorMcpCatalog}) for a file that changed between their check and their move, at once and at the next call after a refusal or a crash.
- * Nothing is overwritten and no content is lost: the file is put back with a link, which never replaces what is there, and a name is removed only of a file that keeps its other name.
+ * Nothing is overwritten and no content is lost: the file is put back with a link, which never replaces what is there, and a name is removed only of a file that keeps its other name ({@link dropSecondNameOfOneFile}).
  * @param ownPath - The path the file was moved away from.
  * @param secondPath - The name the move gave it (in the same folder, or in Codebook's storage on the same volume).
  * @param describeRefusedLinkBack - Words the refusal for the code with which the file system refused to put the file back; the caller knows what the file is and which command the learner ran ({@link describeRefusedLinkBack}).
@@ -54,9 +54,8 @@ export async function dropSecondNameOfMovedFile(
       ? new Error(describeRefusedLinkBack(code), { cause: error })
       : error
   })
-  if (await areNamesOfOneFile(ownPath, secondPath)) {
-    await unlink(secondPath)
+  // The second name goes only as a name of the file that stands at its own path now.
+  if ((await dropSecondNameOfOneFile(ownPath, secondPath)) === 'dropped')
     return 'dropped'
-  }
   return (await holdsAnEntry(secondPath)) ? 'kept' : 'dropped'
 }

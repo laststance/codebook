@@ -23,7 +23,6 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
 } from './constants'
-import { areNamesOfOneFile } from './utils/areNamesOfOneFile'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { REMOVE_MANAGED_CURSOR_SKILL_COMMAND } from './utils/cursorCatalogCleanupNotice'
 import { describeRefusedLinkBack } from './utils/describeRefusedLinkBack'
@@ -32,6 +31,7 @@ import {
   describeRefusedSkillLink,
 } from './utils/describeRefusedSkillLink'
 import { dropSecondNameOfMovedFile } from './utils/dropSecondNameOfMovedFile'
+import { dropSecondNameOfOneFile } from './utils/dropSecondNameOfOneFile'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
 import { isRecordedFileId } from './utils/isRecordedFileId'
 import { isSameFileId } from './utils/isSameFileId'
@@ -779,28 +779,28 @@ async function writeStagedBytes(
 }
 
 /**
- * Says whether a file under a staged name that no record names is provably Codebook's alone, for {@link removeUnrecordedStages}: removing it must lose nothing of the learner's.
+ * Removes a file under a staged name that no record names when it is provably Codebook's alone, for {@link removeUnrecordedStages}: removing it must lose nothing of the learner's.
+ * A second name of the file at the skill's path goes as a name ({@link dropSecondNameOfOneFile}): that is a published skill's staged name, and the file keeps its own name, whoever wrote its bytes. A regular file that holds exactly the bundled skill as this installation packages it goes too. Everything else stays (other bytes under one name only, as an earlier version's staged skill or a file somebody wrote; a link; a folder).
  * @param stagedPath - A path whose name fits {@link STAGED_NAME_PATTERN}.
  * @param targetPath - The managed skill path.
  * @param packagedSha256 - Digest of the skill this installation packages.
- * @returns
- * - `true` for a second name of the file at the skill's path (a published skill's staged name: the file keeps its own name, whoever wrote its bytes), and for a regular file that holds exactly the bundled skill as this installation packages it
- * - `false` for everything else (other bytes under one name only, as an earlier version's staged skill or a file somebody wrote; a link; a folder): it stays
- * @example await isProvablyCodebooksStage('/home/user/.cursor/skills/.codebook-stage-1.tmp', targetPath, packaged.sha256)
+ * @example await removeProvablyCodebooksStage('/home/user/.cursor/skills/.codebook-stage-1.tmp', targetPath, packaged.sha256)
  */
-async function isProvablyCodebooksStage(
+async function removeProvablyCodebooksStage(
   stagedPath: string,
   targetPath: string,
   packagedSha256: string,
-): Promise<boolean> {
-  if (await areNamesOfOneFile(targetPath, stagedPath)) return true
+): Promise<void> {
+  if ((await dropSecondNameOfOneFile(targetPath, stagedPath)) === 'dropped')
+    return
   const look = await lookAtSkillFile(stagedPath)
-  return look.kind === 'read' && sha256(look.bytes) === packagedSha256
+  if (look.kind === 'read' && sha256(look.bytes) === packagedSha256)
+    await unlink(stagedPath)
 }
 
 /**
  * Removes the staged files of earlier setups that no record names, for {@link deploySkill} under the storage lock once the setup's own record is settled: a setup that was killed between staging and its record, or whose record the learner deleted as a refusal said, leaves such a file, and nothing else would ever remove it.
- * Only a file that is provably Codebook's goes ({@link isProvablyCodebooksStage}).
+ * Only a file that is provably Codebook's goes ({@link removeProvablyCodebooksStage}).
  * @param skillParent - `~/.cursor/skills`, where a setup stages.
  * @param targetPath - The managed skill path.
  * @param packagedSha256 - Digest of the skill this installation packages.
@@ -814,9 +814,11 @@ async function removeUnrecordedStages(
   for (const name of await readdir(skillParent)) {
     // Only Codebook's own staged names are looked at.
     if (!STAGED_NAME_PATTERN.test(name)) continue
-    const stagedPath = join(skillParent, name)
-    if (await isProvablyCodebooksStage(stagedPath, targetPath, packagedSha256))
-      await unlink(stagedPath)
+    await removeProvablyCodebooksStage(
+      join(skillParent, name),
+      targetPath,
+      packagedSha256,
+    )
   }
 }
 
@@ -967,8 +969,7 @@ async function settleChangedSkill(
   pendingPath: string,
 ): Promise<void> {
   // A skill edited in place after its publication is one file with the stage; a stage with the recorded bytes is removed by the caller. The name goes first, so that a refusal below, which keeps the record, leaves no staged name behind.
-  if (await areNamesOfOneFile(targetPath, pending.stagedPath))
-    await unlink(pending.stagedPath)
+  await dropSecondNameOfOneFile(targetPath, pending.stagedPath)
   await settleDisplacedName(pending, targetPath, pendingPath)
 }
 

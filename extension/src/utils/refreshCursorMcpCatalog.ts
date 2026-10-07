@@ -20,10 +20,10 @@ import {
   PRIVATE_FILE_MODE,
 } from '../constants'
 
-import { areNamesOfOneFile } from './areNamesOfOneFile'
 import { atomicPrivateWrite } from './atomicPrivateWrite'
 import { describeRefusedLinkBack } from './describeRefusedLinkBack'
 import { dropSecondNameOfMovedFile } from './dropSecondNameOfMovedFile'
+import { dropSecondNameOfOneFile } from './dropSecondNameOfOneFile'
 import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
@@ -735,9 +735,9 @@ async function recoverCreation(
       owner,
       CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES,
     )
-  // A config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
-  if (staged || (await areNamesOfOneFile(targetPath, record.stagedPath)))
-    await unlink(record.stagedPath)
+  // Codebook's own unpublished file goes; a config that was edited in place right after its publication still has the staged name as a second name: that name goes, the file stays at its path.
+  if (staged) await unlink(record.stagedPath)
+  else await dropSecondNameOfOneFile(targetPath, record.stagedPath)
   // A changed target remains user-owned; only the exact staged inode is discarded.
   await unlink(pendingPath)
 }
