@@ -26,8 +26,9 @@ export type WikiChatStartOutcome =
       withdrawal: WikiChatWithdrawal
     }
 
-/** The start of a VS Code Wiki update in the editor chat: how it ended, and the watch of the reply's end, which the watch for the publish follows when the chat works on the request. */
+/** The start of a VS Code Wiki update in the editor chat: how it ended, the session the request went to, which the watch's notification names, and the watch of the reply's end, which the watch for the publish follows when the chat works on the request. */
 export type WikiChatStart = WikiChatStartOutcome & {
+  session: WikiChatSession
   reply: WikiChatReplyWatch
 }
 
@@ -52,13 +53,13 @@ export type WikiChatStartBounds = {
  * @param options.signal - Aborts the start (the window closes).
  * @param options.bounds - The bounds of the start.
  * @param options.sleep - Delay function that ends early when its signal aborts; tests pass one of a manual clock.
- * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the session and the withdrawal's result, and with the watch of the reply's end ({@link watchWikiChatReply}).
+ * @returns The answer of {@link waitForWikiChatAnswer}, for `unanswered` with the withdrawal's result, and always with the session the request went to and the watch of the reply's end ({@link watchWikiChatReply}).
  * @throws What `watchSigns` throws, before any command ran.
  *
  * @example
  * ```ts
  * await startWikiChatUpdate({ query, runCommand, watchSigns, readOutputStamp, signal, bounds })
- * // => { outcome: 'working', reply } once the chat read the manifest
+ * // => { outcome: 'working', session: 'own', reply } once the chat read the manifest
  * // => { outcome: 'unanswered', session: 'own', withdrawal: 'withdrawn', reply } for a chat that is not ready
  * ```
  */
@@ -108,7 +109,7 @@ export async function startWikiChatUpdate(options: {
     })
     // The reply may end after the first answer; the watch for the publish follows it.
     const reply = watchWikiChatReply(handOver)
-    if (answer.outcome !== 'unanswered') return { ...answer, reply }
+    if (answer.outcome !== 'unanswered') return { ...answer, session, reply }
     // The request the chat still holds is taken back before the result is published.
     const withdrawal = await withdrawWikiChatRequest({
       handOver,
