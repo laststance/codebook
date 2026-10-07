@@ -745,9 +745,9 @@ function studyClient(
       send({ type: 'tab', tab })
     })
 
-  /** Names only known controls for panel replacement; captures no HTML or executable selector. @example focusLocator(document.activeElement) */
+  /** Names only known controls for panel replacement; captures no HTML or executable selector. @example focusLocator(keyboardControl()) */
   const focusLocator = (
-    target: Element | null,
+    target: Element | null | undefined,
   ): PresentationReadingPose['focus'] => {
     if (!(target instanceof HTMLElement) || target === document.body) return
     const id = options.focusIds.find((id) => id === target.id)
@@ -863,8 +863,10 @@ function studyClient(
         candidate.getBoundingClientRect().bottom > 0
       )
     })
+    // While the learner is away the keyboard's place is the control the pane was left at: the active element is the page body then.
     const anchor = anchorId ? element(anchorId) : undefined,
-      focus = focusLocator(document.activeElement)
+      focus = focusLocator(keyboardControl())
+    // A focused control the pose cannot name ends the capture; a control the learner left that it cannot name is only not carried over.
     if (
       document.activeElement instanceof HTMLElement &&
       document.activeElement !== document.body &&
@@ -901,6 +903,22 @@ function studyClient(
       restoring: false,
     }
     api.postMessage({ ...request, type: 'presentation-pose', pose })
+  }
+  /**
+   * Gives the control a pose names the keyboard; called by {@link restorePose} once the pose's page is rendered.
+   * Restoring reading context never focuses a different native pane: a document that does not have the focus (the pane's document was replaced while the learner was away) keeps the control as the one the learner left ({@link holdAsLeft}), so the learner's return to the pane gives it the keyboard under the pane's rules for a left control.
+   * @param target - The control the pose names, if it names one.
+   * @returns `false` only when the document has the focus and the control did not take it; `true` otherwise, also for a pose that names no control.
+   * @example if (!placePoseFocus(resolveFocus(pose.focus))) reject()
+   */
+  const placePoseFocus = (target: HTMLElement | undefined): boolean => {
+    if (!target) return true
+    if (!document.hasFocus()) {
+      holdAsLeft(target)
+      return true
+    }
+    target.focus({ preventScroll: true })
+    return document.activeElement === target
   }
   /** Restores a same-item pose once after replacement/layout; later learner input invalidates the queued animation frame. @example restorePose(message) */
   const restorePose = (message: PresentationPoseRestore): void => {
@@ -966,13 +984,9 @@ function studyClient(
         reject()
         return
       }
-      // Restoring reading context never focuses a different native pane.
-      if (document.hasFocus() && target) {
-        target.focus({ preventScroll: true })
-        if (document.activeElement !== target) {
-          reject()
-          return
-        }
+      if (!placePoseFocus(target)) {
+        reject()
+        return
       }
       window.scrollTo({
         top:
@@ -1566,15 +1580,24 @@ function studyClient(
     // While the host is asked again (Retry storage / refresh made it forget its list) the disclosure shows no button: a focus that stood on one goes to the summary, not to the document body.
     keepFocusInSavedStudies(focusedBefore)
   }
-  /** Says whether focus still rests where the learner left it when asking: on the delete button, or nowhere, in a pane that has focus. @example focusRestsOnDeleteButton() */
+  /**
+   * Says whether the keyboard still rests where the learner left it when asking: on the delete button, also while the pane is away because the editor's confirming dialog has the focus, or nowhere in a pane that has the focus. Read by {@link focusAfterRemoval}.
+   * @example focusRestsOnDeleteButton() // => false once the learner put the focus on another control
+   */
   const focusRestsOnDeleteButton = (): boolean =>
-    document.hasFocus() &&
-    (document.activeElement === element('delete-study') ||
-      document.activeElement === document.body)
-  /** Moves focus once after this pane's own request was answered: to the list after a removal, to the button after Cancel, a refusal or a failure. @example focusAfterRemoval(true) */
+    keyboardControl() === element('delete-study') ||
+    (document.hasFocus() && document.activeElement === document.body)
+  /**
+   * Moves focus once after this pane's own request was answered: to the list after a removal, to the button after Cancel, a refusal or a failure.
+   * An answer that arrives while the pane does not have the focus (the confirming dialog is the editor's and takes it) is owed to the pane's next focus event: left to the pane's general rule, the return gave the focus back to the delete button, which stands for the next study after a removal.
+   * @param moved - Whether the study was moved to the Trash.
+   * @example focusAfterRemoval(true)
+   */
   const focusAfterRemoval = (moved: boolean): void => {
     if (!focusRestsOnDeleteButton()) return
-    element(moved ? 'studies' : 'delete-study').focus({ preventScroll: true })
+    moveFocusOf(element('delete-study'), () =>
+      element(moved ? 'studies' : 'delete-study'),
+    )
   }
   /**
    * Follows this pane's own delete request by the number the host echoes, so that only the pane the learner used moves focus, once: a removal in progress under that number has started the request, and one under another number means the host did not take it (it takes one removal at a time and never answers the second); the request is answered when a state that is not in progress carries its number, or when Cancel clears the field after it started.
@@ -1768,16 +1791,24 @@ function studyClient(
     focusLostWithoutTarget = undefined
     leftControl = undefined
   })
+  /**
+   * Keeps a control as the one the learner left the pane at, or forgets that there is one; called at the window's blur, and by {@link restorePose} for the control a pose names in a document that does not have the focus (the pane's document was replaced while the learner was away).
+   * The control stays the holder of the pane's focus while the learner is away: the editor took the focus from it, as the page does from a control it disables.
+   * @param control - The control, or `undefined` when the keyboard stood on none.
+   * @example holdAsLeft(element('overview-tab')) // the return to the pane gives the Overview tab the keyboard
+   */
+  const holdAsLeft = (control: HTMLElement | undefined): void => {
+    leftControl = control
+    if (control) focusHolder = { control, isTakenByPage: true }
+  }
   window.addEventListener('blur', () => {
     // A browser that leaves the focus on the control when its window is left names it still; the editor's webview has taken it by now.
-    leftControl = focusedControl() ?? focusLostWithoutTarget
+    holdAsLeft(focusedControl() ?? focusLostWithoutTarget)
     focusLostWithoutTarget = undefined
     paneReturn = undefined
     // A press whose release went to another part of the editor is over.
     isPressUnderWay = false
     isPressOfReturn = false
-    // The control stays the holder of the pane's focus while the learner is away: the editor took the focus from it, as the page does from a control it disables.
-    if (leftControl) focusHolder = { control: leftControl, isTakenByPage: true }
   })
   /**
    * Puts the focus back that the pane settled at the learner's return when the press the learner returned with took it off again, which a press on the pane's background does; called at the release of that press.
