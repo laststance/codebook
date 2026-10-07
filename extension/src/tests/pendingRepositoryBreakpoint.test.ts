@@ -1099,3 +1099,63 @@ test('the place the adapter last reported for the owned breakpoint is read with 
     '[null,{"line":21,"column":7},{"line":30,"column":3}]',
   )
 })
+
+// Cycle 0046 (row 130): red while the read required the editor's binding to name its column: both editors drop it from the adapter's news about a breakpoint requested at column 1, so a breakpoint bound at another column of its line was not refused before the test was resumed.
+test('the read of a pending breakpoint requested at column 1 refuses a binding the editor answers without a column by the column the adapter reported', async () => {
+  // Arrange: the owner requested 20:1 and captures at that column; the registration is pending, the adapter's news names 20:12, and the editor answers line 20 without a column.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-column', undefined, 1)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(session, response())
+  breakpoint.onEvent(session, {
+    seq: 200,
+    type: 'event',
+    event: 'breakpoint',
+    body: {
+      reason: 'changed',
+      breakpoint: { id: 8, verified: true, line: 20, column: 12 },
+    },
+  })
+  session.getDebugProtocolBreakpoint = async () => ({
+    id: 8,
+    verified: true,
+    line: 20,
+  })
+  // Act
+  const refusal = await breakpoint.assertBoundAsDeclared(session, signal).then(
+    () => 'bound as declared',
+    (error: unknown) => String(error),
+  )
+  // Assert
+  assert.equal(
+    refusal,
+    'Error: Declared breakpoint 20:1 is bound at 20:12; this stop is captured at its declared position, so declare 20:12 or another statement.',
+  )
+})
+
+// Cycle 0046 (row 130): what a binding without any column means for an owner that captures at its requested column: another line is another place, the requested line names no other column.
+test('the read of a pending breakpoint requested at column 1 refuses a binding without any column on another line, naming that line, and none on its requested line', async () => {
+  // Arrange: the owner requested 20:1; the registration is pending and the adapter reported no place with a column.
+  const { breakpoint, session, request, response, signal } =
+    await breakpointHarness('declared-column', undefined, 1)
+  breakpoint.onRequest(session, request())
+  breakpoint.onResponse(session, response())
+  const readWhenAnswered = async (line: number): Promise<string> => {
+    session.getDebugProtocolBreakpoint = async () => ({
+      id: 8,
+      verified: true,
+      line,
+    })
+    return breakpoint.assertBoundAsDeclared(session, signal).then(
+      () => 'bound as declared',
+      (error: unknown) => String(error),
+    )
+  }
+  // Act
+  const answers = [await readWhenAnswered(22), await readWhenAnswered(20)]
+  // Assert
+  assert.deepEqual(answers, [
+    'Error: Declared breakpoint 20:1 is bound on line 22; this stop is captured at its declared position, so declare a statement of line 22 or another statement.',
+    'bound as declared',
+  ])
+})
