@@ -108,6 +108,7 @@ import { inspectConfiguredValues } from './utils/inspectConfiguredValues'
 import { isBlankOrCommentLine } from './utils/isBlankOrCommentLine'
 import { isFrameAtPosition } from './utils/isFrameAtPosition'
 import type { GeneratedPosition } from './utils/isGeneratedPositionBefore'
+import { isModuleEntryPause } from './utils/isModuleEntryPause'
 import { isPageStubOfSource } from './utils/isPageStubOfSource'
 import { isPauseAtBoundColumn } from './utils/isPauseAtBoundColumn'
 import { isPauseAtStop, type PauseStopTarget } from './utils/isPauseAtStop'
@@ -2755,8 +2756,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   /**
    * Chooses how long a page pause may last in a run that declares no browser stop, for the timer {@link onCdpPaused} starts for it.
    * The debugger also sets a server stop's breakpoint in the page, and the page pauses there in its stub of the server module. The debug adapter reports that pause as a stop that names the server breakpoint, which the run then resumes itself ({@link resumeServerBreakpointInBrowser}); it may first resolve which breakpoints were hit, so that report can come later than the short bound of a pause nobody owns. Such a pause is known by its place before the report arrives, and has the bound of a pause of the adapter's own until then.
+   * The adapter's own breakpoint at a module's first position is set by the bare base name of the declared stop's file, so the page also pauses for a moment at the first position of every other script whose address contains that name, until the adapter has read that script's source map; such a pause is known by its one breakpoint ({@link isModuleEntryPause}) and has the adapter's bound too.
    * @param event - The page's pause.
-   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageStubOfSource}); {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
+   * @returns {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} for a pause whose top frame lies in the page's stub of a declared server stop's module ({@link isPageStubOfSource}) and for the adapter's own pause at the first position of a module named like a declared stop's file; {@link REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS} for every other pause, also one without a frame.
    * @example
    * ```ts
    * this.unownedPagePauseLimitMs(event) // 3000 for a pause in (app-pages-browser)/./app/lib/actions.ts while a server stop is declared in app/lib/actions.ts, otherwise 250
@@ -2765,19 +2767,24 @@ export class ConfiguredBrowserRun implements StudyRuntime {
   private unownedPagePauseLimitMs(
     event: Protocol.Debugger.PausedEvent,
   ): number {
-    const scriptId = event.callFrames[0]?.location.scriptId,
-      scriptUrl =
-        scriptId === undefined
-          ? undefined
-          : this.participants.browser.scriptUrls.get(scriptId)
-    const isInServerStub = this.stops.some(
-      (stop) =>
-        stop.participant === 'server' &&
-        isPageStubOfSource(scriptUrl, stop.source.path),
-    )
-    return isInServerStub
+    const scriptUrl = this.pageScriptUrlOf(event),
+      sourcePaths = this.stops.map((stop) => stop.source.path)
+    const isAdaptersOwn =
+      sourcePaths.some((path) => isPageStubOfSource(scriptUrl, path)) ||
+      isModuleEntryPause(event, scriptUrl, sourcePaths)
+    return isAdaptersOwn
       ? REPOSITORY_ADAPTER_PAUSE_LIMIT_MS
       : REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS
+  }
+
+  /** Gives the address the page's runtime announced for the script a page pause is in, for {@link unownedPagePauseLimitMs}; `undefined` for a pause without a frame and for a script the page never announced. @example this.pageScriptUrlOf(event) // 'webpack-internal:///(app-pages-browser)/./app/lib/actions.ts' */
+  private pageScriptUrlOf(
+    event: Protocol.Debugger.PausedEvent,
+  ): string | undefined {
+    const scriptId = event.callFrames[0]?.location.scriptId
+    return scriptId === undefined
+      ? undefined
+      : this.participants.browser.scriptUrls.get(scriptId)
   }
 
   /**

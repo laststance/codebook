@@ -1528,3 +1528,135 @@ test('a page pause outside the stub of a declared server stop’s module still e
     'Unowned browser stop remained paused',
   )
 })
+
+/** A page script of another file than the server stop's `src/mode.ts`, whose address contains that file's base name, `mode`. */
+const OTHER_PAGE_SCRIPT = {
+  scriptId: 'other-page-module',
+  url: 'webpack-internal:///(app-pages-browser)/./src/my-mode.ts',
+}
+
+// Cycle 0046 (row 288): red while the debugger's own pause at the first position of another page script, which its breakpoint by the bare base name of the declared stop's file causes, had the 250 ms of a pause nobody owns: a script whose source map the debugger read for longer than that ended the run with "Unowned browser stop remained paused".
+test('the debugger’s own pause at the first position of another page script named like the server stop’s file, resumed after 300 ms, does not end a run without browser stops, and the server stop is captured', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript(
+    'browser',
+    OTHER_PAGE_SCRIPT.scriptId,
+    OTHER_PAGE_SCRIPT.url,
+  )
+  // Act: the page pauses at the first position of that script, at the debugger's breakpoint by the name "mode"; the debugger resumes it after 300 ms.
+  harness.emitUnannouncedPause('browser', {
+    scriptId: OTHER_PAGE_SCRIPT.scriptId,
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:mode'],
+  })
+  harness.advance(300)
+  const failuresWhilePaused = harness.run.view().failures.join('; ')
+  harness.emitResume('browser')
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresWhilePaused, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.equal(
+    journaled(harness, 'cdp.browser-adapter-pause-retired').length,
+    1,
+  )
+})
+
+// Cycle 0046 (row 288): that pause is bounded too, by the 3,000 ms the debug adapter may take for a pause of its own; red if it had no bound, or another one.
+test('the debugger’s own pause at the first position of another page script that nobody resumes ends a run without browser stops after 3,000 ms, not earlier', async (context) => {
+  // Arrange: as above; nothing resumes the pause.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript(
+    'browser',
+    OTHER_PAGE_SCRIPT.scriptId,
+    OTHER_PAGE_SCRIPT.url,
+  )
+  harness.emitUnannouncedPause('browser', {
+    scriptId: OTHER_PAGE_SCRIPT.scriptId,
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:mode'],
+  })
+  // Act
+  harness.advance(2_999)
+  const failuresJustBeforeTheBound = harness.run.view().failures.join('; ')
+  harness.advance(1)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the unowned pause ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(failuresJustBeforeTheBound, '')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unowned browser stop remained paused',
+  )
+})
+
+// Cycle 0046 (row 288): the longer bound is the debugger's own breakpoint's alone; red if a pause at the same place with another breakpoint, such as one set on that line by the script's address, were given 3,000 ms.
+test('a pause at the first position of another page script whose breakpoint was set by that script’s address still ends a run without browser stops after 250 ms', async (context) => {
+  // Arrange: as above, but the breakpoint the pause hit is one set by the script's address, as a breakpoint on that line of the file is.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript(
+    'browser',
+    OTHER_PAGE_SCRIPT.scriptId,
+    OTHER_PAGE_SCRIPT.url,
+  )
+  harness.emitUnannouncedPause('browser', {
+    scriptId: OTHER_PAGE_SCRIPT.scriptId,
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: [
+      '1:0:0:webpack-internal:///(app-pages-browser)/./src/my-mode.ts',
+    ],
+  })
+  // Act
+  harness.advance(249)
+  const failuresJustBeforeTheBound = harness.run.view().failures.join('; ')
+  harness.advance(1)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the unowned pause ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(failuresJustBeforeTheBound, '')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unowned browser stop remained paused',
+  )
+})
