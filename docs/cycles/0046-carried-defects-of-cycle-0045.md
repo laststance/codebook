@@ -634,6 +634,10 @@ Tasks 362/363 are closed by source evidence, not an unsupported code reset. `ope
 
 Review completion remains pending: four concrete repairs, the fresh repaired-head pass and all 49 native observations are required. The cycle carries none of these findings into another cycle.
 
+### Shared-chat guidance repair integrated (2026-10-08)
+
+Task 367 is fixed in MKS `9beaa4e5` and merged as `59ee86cb`: the README distinguishes not-sent, withdrawn and left outcomes in a shared chat, with the full Update anyway sentence for a request not taken back. Its new regression was red before the document correction; the relevant file passes 38 of 38, and restoring the old README fails all three new sentence checks before byte-identical restoration (SHA-256 `fc9e838115f6652ec42dc05ee885fc765d01a17b29c4e23b1f3e81dea7342498`). Type/lint/format and Fallow gates pass with no changed-file increase. Only the packaged README and its test changed; prior SPC/WUB guidance and production behavior are preserved. Private evidence: `impl/scratch-mks/codex-review-fixes/` and the authoritative 367 row in MKS's closure. The table has 367 tasks, 315 closed. SPC 364/365 and WUB 366 remain unmerged/unverified on root; all 49 native tasks remain open. No current-source integrated or installed proof is advanced from the earlier `0eb53b02` receipt.
+
 ## Result and decision
 
 - Result: pending
