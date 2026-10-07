@@ -80,6 +80,211 @@ test('a server stop that the editor shows 800 ms after the browser session went 
   }
 })
 
+for (const arrival of [
+  {
+    afterStoppedMs: 468,
+    name: '468 ms after its stopped event, the longest time measured',
+  },
+  {
+    afterStoppedMs: 779,
+    name: '779 ms after its stopped event, one millisecond before the editor can pass the focus',
+  },
+] as const)
+  // Value: protects=the keyboard of a learner at a stop that is read right after another session went on, while the editor still shows that session's frame (the last browser stop of a run, read 17 to 23 ms after the server session went on): the editor's own handling of the stop brings its frame at its second try, when the rest of the call stack is loaded, with the keyboard in the paused file, and the Application pane that covers the file takes the keyboard, so it is on an element; fails_when=such a stop counts only for a frame within 500 ms of its stopped event, which lies 32 to 50 ms above the 450 to 468 ms the editor needs on an idle machine, so that on a slower one the frame is taken for a passed focus, the pane comes without the keyboard over the file that has it, the keyboard is on no element and nothing is told; why_new=Cycle 0046 row 321 (native round in VS Code 1.140.0, check V-08, nine runs of nine); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger for two sessions with staysInBackground, continueDebugSession, resumeDebugger, the clock of performance.now held for the editor events, revealApplicationPaneOverPausedFile
+  test(`a browser stop read 20 ms after the server session went on, behind the server's frame, gives the paused file the keyboard when its frame arrives ${arrival.name}: the Application pane that covers it takes the keyboard`, async (t) => {
+    // Arrange: a live run whose server session stopped; the debugger opened the paused file with the keyboard.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      harness.pauseDebugger({
+        opensWithKeyboard: { filename: 'actions.ts', column: 2 },
+      })
+      const revealsBefore = harness.panelReveals().length
+
+      // Act: on a held clock the server session goes on, the browser's adapter reports its stop 20 ms later while the editor still shows the server's frame, the editor reports the server's thread 204 ms after the server went on, and the browser's frame arrives with the paused file opened with the keyboard; then the Application pane comes to the front over that file.
+      let clockMs = Math.floor(performance.now())
+      const clock = t.mock.method(performance, 'now', () => clockMs)
+      harness.continueDebugSession('live-next-server')
+      clockMs += 20
+      harness.pauseDebugger({
+        session: 'live-next-browser',
+        staysInBackground: true,
+      })
+      clockMs += 184
+      harness.resumeDebugger()
+      clockMs += arrival.afterStoppedMs - 184
+      harness.pauseDebugger({
+        session: 'live-next-browser',
+        startedBeforeTheReader: true,
+        opensWithKeyboard: { filename: 'login-form.tsx', column: 1 },
+      })
+      clock.mock.restore()
+      await harness.revealApplicationPaneOverPausedFile()
+
+      // Assert: the pane took the keyboard.
+      assert.deepEqual(
+        harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .map((reveal) => reveal.preserveFocus),
+        [false],
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner in the Call Stack view while two sessions are paused: a stop that was read behind the frame of a session that is still paused is not brought to the front by the editor, so a frame of it that arrives is one the learner selected, and nothing takes the keyboard from the view; fails_when=every frame within half a second of a stop counts as that stop's own, also while another session's frame keeps the focus, so the pane takes the keyboard from the Call Stack view and tells a sentence about a file the debugger never gave the keyboard; why_new=Cycle 0046 row 321 (the other side of the rule that replaced the time since the stop: before the other session goes on, the editor's own handling of the stop brings nothing); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger for two sessions with staysInBackground, passFocusToStoppedSession for a frame that is opened without the keyboard, focusView, revealApplicationPaneOverPausedFile
+test('a server stop read while the browser session is paused again is not shown by its own handling: a frame of it that arrives 300 ms later leaves the keyboard in the Call Stack view, and no notice is told', async (t) => {
+  // Arrange: a live run whose browser session stopped; the debugger opened the paused file with the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+
+    // Act: on a held clock the browser session goes on and stops again 100 ms later, and the learner clicks into the Call Stack view; the server stops while the browser session stays paused; 300 ms later the learner selects the server's frame in the Call Stack view, which opens its file without the keyboard; then the run's capture is rendered and the Application pane comes to the front.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    harness.continueDebugSession('live-next-browser')
+    clockMs += 100
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    harness.focusView()
+    const before = {
+      shows: harness.textDocumentShows().length,
+      reveals: harness.panelReveals().length,
+    }
+    harness.pauseDebugger({ staysInBackground: true })
+    clockMs += 300
+    harness.passFocusToStoppedSession('live-next-server', 'actions.ts', 2)
+    clock.mock.restore()
+    harness.service.action({
+      instanceId: harness.service.instanceId,
+      runId: record.id,
+      key: randomUUID(),
+      action: 'repository-click',
+    })
+    await readerSeams(harness).refresh()
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the keyboard is still in the Call Stack view; whatever was shown was shown without the keyboard, and nothing was told.
+    assert.equal(harness.keyboardInView(), true)
+    assert.deepEqual(
+      harness
+        .textDocumentShows()
+        .slice(before.shows)
+        .filter((shown) => !shown.preserveFocus),
+      [],
+    )
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(before.reveals)
+        .filter((reveal) => !reveal.preserveFocus),
+      [],
+    )
+    assert.deepEqual(harness.informationMessages, [])
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner at a stop that was read behind the frame of a debug session the reader does not hear (it started before the reader): nothing tells the reader when that session went on, so the stop counts as shown by its own handling, and the Application pane that covers the paused file takes the keyboard; fails_when=the reader takes such a frame for a passed focus, the pane comes without the keyboard over a file that may have it, and the keyboard is on no element without a word, which is the worse of the two errors; why_new=Cycle 0046 row 321 (what the reader does when it cannot tell, stated in the docstring of cameBeforeFocusPass); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger with startedBeforeTheReader for a session without a tracker and with staysInBackground, resumeDebugger, the clock of performance.now held for the editor events, revealApplicationPaneOverPausedFile
+test('a server stop read behind the frame of a session the reader does not hear counts as shown by its own handling however late its frame arrives: the Application pane that covers the paused file takes the keyboard', async (t) => {
+  // Arrange: a live run; a browser session that started before the reader is paused, and the editor shows its frame.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  let live: { close(): void } | undefined
+  try {
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    const record = harness.service.record(receipt)
+    await record.preparation
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.pauseDebugger({
+      session: 'live-next-browser',
+      startedBeforeTheReader: true,
+      opensWithKeyboard: { filename: 'login-form.tsx', column: 2 },
+    })
+    const revealsBefore = harness.panelReveals().length
+
+    // Act: on a held clock the server's adapter reports its stop behind that frame; the browser session goes on unheard, the editor reports its thread, and two seconds later the server's frame arrives with the paused file opened with the keyboard; then the Application pane comes to the front over that file.
+    let clockMs = Math.floor(performance.now())
+    const clock = t.mock.method(performance, 'now', () => clockMs)
+    harness.pauseDebugger({ staysInBackground: true })
+    clockMs += 200
+    harness.resumeDebugger()
+    clockMs += 1_800
+    harness.pauseDebugger({
+      startedBeforeTheReader: true,
+      opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+    })
+    clock.mock.restore()
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert: the pane took the keyboard.
+    assert.deepEqual(
+      harness
+        .panelReveals()
+        .slice(revealsBefore)
+        .map((reveal) => reveal.preserveFocus),
+      [false],
+    )
+  } finally {
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner at a server stop that follows a browser stop so late that the editor already shows the browser's thread, or at once in the same session: the editor's own handling of the stop opens the paused file with the keyboard, and the Application pane that covers it takes the keyboard, so it is on an element; fails_when=a stop is doubted because another session exists or went on at some time, or its frame is held against a time bound although nothing put it in doubt (an adapter that answers slowly), so the pane comes without the keyboard over the file that has it and the keyboard is on no element; why_new=Cycle 0046 row 274 (the bound of its fix: only a stop read while a frame of another session had the focus is in doubt); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger for two sessions, resumeDebugger, the clock of performance.now held for the editor events, revealApplicationPaneOverPausedFile
 test("a server stop read after the editor reported the browser's thread gives the paused file the keyboard however late its frame arrives: the Application pane that covers it takes the keyboard", async (t) => {
   // Arrange: a live run whose browser session stopped and went on; the editor reports its thread.

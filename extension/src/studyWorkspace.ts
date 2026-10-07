@@ -28,6 +28,7 @@ import {
   OPEN_REPLAY_RESULT_WAIT_MS,
   PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE,
   PAUSE_FOCUS_LOOKBACK_MS,
+  EDITOR_FOCUS_PASS_DELAY_MS,
   STOP_OWN_FOCUS_BOUND_MS,
   PRESENTATION_PREFERENCE_KEY,
   PRESENTATION_PREFERENCE_VERSION,
@@ -422,11 +423,12 @@ interface LeftoverTabClose {
  */
 /**
  * What {@link StudyWorkspace} notes of a stop a debug adapter reported, until the editor reports a stack frame of that session ({@link StudyWorkspace.cameWithStop}).
- * `readAtMs` is the moment the adapter's `stopped` event was read. `isDoubtful` says that the editor's own handling of that stop may not bring it to the front: the adapter asked to keep the focus where it is, a frame of another session had the focus when the stop was read, or the session went on before a frame of it was reported. Such a stop counts only for a frame that arrives within {@link STOP_OWN_FOCUS_BOUND_MS}.
+ * `readAtMs` is the moment the adapter's `stopped` event was read. `isDoubtful` says that the editor's own handling of that stop may not bring it to the front: the adapter asked to keep the focus where it is, or the session went on before a frame of it was reported. Such a stop counts only for a frame that arrives within {@link STOP_OWN_FOCUS_BOUND_MS}. `behindSessionId` names the other debug session whose frame had the focus when the stop was read, if any: the editor's handling skips a stop while such a frame is focused, and the stop counts only for a frame that arrives before the editor can pass the focus to it ({@link StudyWorkspace.cameBeforeFocusPass}).
  */
 interface StopNote {
   readAtMs: number
   isDoubtful: boolean
+  behindSessionId?: string
 }
 
 interface KeyboardPauseOfRecord {
@@ -594,6 +596,8 @@ export class StudyWorkspace {
   }
   /** The debug sessions whose adapter reported a stop ({@link debugStopOf}) that the editor has not reported as a stack frame yet, each with what {@link noteStopOf} noted of that stop; {@link cameWithStop} takes a session out again, and so does {@link forgetSession}. */
   private readonly announcedStops = new Map<string, StopNote>()
+  /** The moment each followed debug session was last seen to go on (the editor's resume or step request, or the adapter's `continued` event), kept while it runs: {@link noteSessionWentOn} sets it, the session's next stop and its end take it out. {@link cameBeforeFocusPass} reads from it how soon the editor can pass the focus on from that session. */
+  private readonly sessionsWentOnAtMs = new Map<string, number>()
   /** The debug sessions that started while this reader existed and have not ended, whose adapter's messages it therefore sees ({@link followStopsOf}); {@link forgetSession} takes a session out when it ends. A session that started before the reader has none to tell a stop from a selected frame. */
   private readonly followedSessions = new Set<string>()
   /** Whether the stack frame the editor reports now came with a stop of the debugger, which opens the paused file with the keyboard; `false` for a frame the learner selected in the Call Stack view and for one the editor brought to the front later by itself, whose file the editor opens without the keyboard, and while no frame is reported. Set by {@link judgeKeyboardAtStackItemChange}. */
@@ -2688,7 +2692,7 @@ export class StudyWorkspace {
    * Follows the stops of one debug session for the reader; called by the editor through the tracker factory of {@link watchKeyboardOutsideEditors} when a session of any debug type starts.
    * The adapter's `stopped` event reaches this tracker in the extension host before the editor opens the paused file and reports the stack frame, so {@link cameWithStop} finds it when that frame arrives. The editor makes a tracker for every adapter it starts, also for the new adapter of a session it restarts under the same id, and tells it when that adapter is stopped or exits.
    * @param session - The session that starts.
-   * @returns The tracker, which reads each message of that session's adapter ({@link readAdaptersMessage}), doubts a noted stop once the editor lets the session go on ({@link doubtStopOf}) and forgets the session when it ends ({@link forgetSession}).
+   * @returns The tracker, which reads each message of that session's adapter ({@link readAdaptersMessage}), notes when the editor lets the session go on, which puts a noted stop of it in doubt ({@link noteSessionWentOn}), and forgets the session when it ends ({@link forgetSession}).
    * @example vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: (session) => this.followStopsOf(session) })
    */
   private followStopsOf(
@@ -2700,7 +2704,7 @@ export class StudyWorkspace {
         this.readAdaptersMessage(session.id, message),
       // An adapter need not send `continued` after the editor's own resume or step: the request says it too.
       onWillReceiveMessage: (message: unknown): void => {
-        if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
+        if (isDebugResumeMessage(message)) this.noteSessionWentOn(session.id)
       },
       // The editor stops the adapter, or the adapter exits by itself: either is the session's end, and both may come.
       onWillStopSession: (): void => this.forgetSession(session.id),
@@ -2712,17 +2716,31 @@ export class StudyWorkspace {
    * Reads one message of a debug adapter for what it says about the session's stops; called by the tracker of {@link followStopsOf} for every message the adapter sends.
    * - A `stopped` event is noted ({@link noteStopOf}).
    * - An `invalidated` event for the session's threads or stacks is noted like a stop ({@link isDebugStopsInvalidation}): both editors then handle the stops of that session again, which opens the paused file with the keyboard and reports a frame, and no `stopped` event comes with it.
-   * - A `continued` event puts the noted stop in doubt ({@link doubtStopOf}).
+   * - A `continued` event is noted as the moment the session went on, which puts its noted stop in doubt ({@link noteSessionWentOn}).
    * @param sessionId - The session of the adapter.
    * @param message - The message as the tracker receives it.
    * @example onDidSendMessage: (message) => this.readAdaptersMessage(session.id, message)
    */
   private readAdaptersMessage(sessionId: string, message: unknown): void {
     const stop = debugStopOf(message)
-    if (stop) this.noteStopOf(sessionId, stop)
-    else if (isDebugStopsInvalidation(message))
+    if (stop) {
+      // A session that stops runs no longer: its frame is focused until it goes on again.
+      this.sessionsWentOnAtMs.delete(sessionId)
+      this.noteStopOf(sessionId, stop)
+    } else if (isDebugStopsInvalidation(message))
       this.noteStopOf(sessionId, { reason: undefined, keepsFocus: false })
-    else if (isDebugResumeMessage(message)) this.doubtStopOf(sessionId)
+    else if (isDebugResumeMessage(message)) this.noteSessionWentOn(sessionId)
+  }
+
+  /**
+   * Notes that a debug session goes on: the moment is kept for {@link cameBeforeFocusPass}, and a stop of that session the editor has not shown yet is put in doubt ({@link doubtStopOf}); called by {@link readAdaptersMessage} for the adapter's `continued` event and by the tracker of {@link followStopsOf} for the editor's resume and step requests ({@link isDebugResumeMessage}).
+   * The last such message counts: the editor starts its pass of the focus anew with each of them, and this tracker reads each before the editor's window does.
+   * @param sessionId - The session that goes on.
+   * @example if (isDebugResumeMessage(message)) this.noteSessionWentOn(session.id)
+   */
+  private noteSessionWentOn(sessionId: string): void {
+    this.sessionsWentOnAtMs.set(sessionId, performance.now())
+    this.doubtStopOf(sessionId)
   }
 
   /**
@@ -2734,12 +2752,13 @@ export class StudyWorkspace {
   private forgetSession(sessionId: string): void {
     this.followedSessions.delete(sessionId)
     this.announcedStops.delete(sessionId)
+    this.sessionsWentOnAtMs.delete(sessionId)
   }
 
   /**
    * Notes a stop a debug adapter reported, for the frame the editor reports next, and ends the chat's record when the learner started that stop from an editor; called by {@link readAdaptersMessage} for every `stopped` event, and for an `invalidated` event that makes the editor handle the session's stops again.
    * A stop after a step ({@link LEARNER_STARTED_STOP_REASONS}) that is reported while a text editor has the keyboard was made by a learner who works in that editor: the keyboard is not to go to the chat at this stop, at a later render of it or when the run goes on, however short a time ago the learner came from the chat. While no text editor is active (the chat has the keyboard, and the step came from the debug toolbar) the record stays.
-   * The note says when the stop was read and whether the editor's own handling of it may leave it in the background ({@link StopNote}): both editors bring a stop to the front, with the keyboard into the paused file, only when the adapter did not ask to keep the focus and no frame of another session has it (VS Code 1.140 and Cursor 3.23, the stop handling of their debug sessions: `if(!p||p.thread.session===this)` for the view model's focused frame `p`).
+   * The note says when the stop was read, whether the editor's own handling of it may leave it in the background, and behind which other session's frame it was read ({@link StopNote}): both editors bring a stop to the front, with the keyboard into the paused file, only when the adapter did not ask to keep the focus and no frame of another session has it (VS Code 1.140 and Cursor 3.23, the stop handling of their debug sessions: `if(!p||p.thread.session===this)` for the view model's focused frame `p`).
    * @param sessionId - The session that stopped.
    * @param stop - What {@link debugStopOf} read: the reason the adapter gave, if any, and whether it asked to keep the focus.
    * @example this.noteStopOf(session.id, { reason: 'step', keepsFocus: false })
@@ -2750,29 +2769,32 @@ export class StudyWorkspace {
   ): void {
     this.announcedStops.set(sessionId, {
       readAtMs: performance.now(),
-      isDoubtful: stop.keepsFocus || this.showsFrameOfOtherSession(sessionId),
+      isDoubtful: stop.keepsFocus,
+      behindSessionId: this.sessionOfFrameShownBeside(sessionId),
     })
     if (this.isLearnersStopFromEditor(stop.reason))
       this.keyboardOutsideEditors = undefined
   }
 
   /**
-   * Says whether Run and Debug shows a frame of another debug session than a given one; asked by {@link noteStopOf} when a stop is read.
-   * The editor keeps the frame of a session that went on as its focused one for about 200 ms, and that of a session that is still paused for as long as it is: a stop of another session that is read meanwhile is not brought to the front by its own handling.
+   * Names the other debug session whose frame Run and Debug shows while a given session stops; asked by {@link noteStopOf} when a stop is read.
+   * The editor keeps the frame of a session that went on as its focused one for about 200 ms, and that of a session that is still paused for as long as it is: a stop of another session that is read meanwhile is not brought to the front at once by its own handling.
    * @param sessionId - The session that stopped.
-   * @returns `true` while the active stack item is a frame of another session; `false` for a frame of the same session, for a thread and without an item.
-   * @example this.showsFrameOfOtherSession('live-next-server') // => true while the browser session's frame is shown
+   * @returns The id of the session of the active stack item while that item is a frame of another session; `undefined` for a frame of the same session, for a thread and without an item.
+   * @example this.sessionOfFrameShownBeside('live-next-server') // => 'live-next-browser' while the browser session's frame is shown
    */
-  private showsFrameOfOtherSession(sessionId: string): boolean {
+  private sessionOfFrameShownBeside(sessionId: string): string | undefined {
     const item = vscode.debug.activeStackItem
     return isStackFrameItem(item) && item.session.id !== sessionId
+      ? item.session.id
+      : undefined
   }
 
   /**
-   * Marks the noted stop of a session that goes on as doubtful; called by {@link readAdaptersMessage} for the adapter's `continued` event and by the tracker of {@link followStopsOf} for the editor's resume and step requests ({@link isDebugResumeMessage}).
+   * Marks the noted stop of a session that goes on as doubtful; called by {@link noteSessionWentOn} for every message that says so.
    * The note is not dropped there: a run that resumes its own stop at once does so before the editor reported that stop's frame, and the frame still arrives, with the keyboard in the paused file. A frame that arrives later than {@link STOP_OWN_FOCUS_BOUND_MS} after the stop was read is none of that stop: the learner selected it (another thread of the session is still paused), and it is not taken for a stop the editor never showed.
    * @param sessionId - The session that goes on.
-   * @example if (isDebugResumeMessage(message)) this.doubtStopOf(session.id)
+   * @example this.doubtStopOf(sessionId)
    */
   private doubtStopOf(sessionId: string): void {
     const note = this.announcedStops.get(sessionId)
@@ -2808,15 +2830,40 @@ export class StudyWorkspace {
 
   /**
    * Says whether the frame that arrives now was brought to the front by the editor's own handling of the stop a note stands for, which opens the paused file with the keyboard; asked by {@link cameWithStop}.
-   * A stop the editor's handling may have left in the background ({@link StopNote}) reaches the front in two other ways, both without the keyboard: 800 ms after the session whose frame had the focus went on, the editor passes the focus to a session that is still stopped (`passFocusScheduler` of both editors, which focuses the frame preserving the focus), and the learner selects its frame in the Call Stack view. The first comes at least 600 ms after the stop was read, as the other session's frame is focused for only 200 ms of those 800; the stop's own handling, where it does run, takes the adapter's answer to two requests. {@link STOP_OWN_FOCUS_BOUND_MS} lies between the two. A stop nothing put in doubt has no bound: an adapter that is slow to answer delays the frame, and the keyboard is in the paused file all the same.
+   * A stop the editor's handling may leave in the background ({@link StopNote}) reaches the front in two other ways, both without the keyboard: the editor passes the focus to a session that is still stopped (`passFocusScheduler` of both editors, which focuses the frame preserving the focus), and the learner selects its frame in the Call Stack view.
+   * - A stop read behind another session's frame is judged by the editor's own rule ({@link cameBeforeFocusPass}), not by a time since the stop: its handling tries twice, right after the top frame is loaded and again once the rest of the stack is, at least 420 ms later, and takes the keyboard when by then no frame is focused.
+   * - A stop whose adapter asked to keep the focus, or whose session went on before a frame of it was reported, counts for a frame within {@link STOP_OWN_FOCUS_BOUND_MS} of the stop: there only the first try can bring it, right after the adapter's answers.
+   * - A stop nothing put in doubt has no bound: an adapter that is slow to answer delays the frame, and the keyboard is in the paused file all the same.
    * @param note - What {@link noteStopOf} noted of the stop.
-   * @returns `true` for a stop that is not doubtful, and for a doubtful one whose frame arrives within the bound; `false` for a doubtful stop whose frame arrives later.
+   * @returns `true` for a stop nothing put in doubt, for a doubtful one whose frame arrives within the bound, and for one read behind another session's frame whose frame arrives before the editor can pass the focus; `false` otherwise.
    * @example return note !== undefined && this.wasShownByItsStop(note)
    */
   private wasShownByItsStop(note: StopNote): boolean {
+    if (
+      note.behindSessionId !== undefined &&
+      !this.cameBeforeFocusPass(note.behindSessionId)
+    )
+      return false
     return (
       !note.isDoubtful ||
       performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS
+    )
+  }
+
+  /**
+   * Says whether a frame that arrives now comes before the editor can pass the focus on from the session whose frame hid the stop; asked by {@link wasShownByItsStop} for a stop read behind another session's frame.
+   * The editor passes the focus {@link EDITOR_FOCUS_PASS_DELAY_MS} after that session went on, from a timer it starts anew with each such message, and without the keyboard. Before that, only the stop's own handling brings its frame, with the keyboard; if that handling has not come by then, the pass comes first in the editor too, and the handling then leaves the focused frame alone. So the same clock decides in the editor and here, and a slow or busy machine moves both together. While the other session is still paused, its frame keeps the focus and the stop's handling brings nothing: a frame that arrives then is one the learner selected.
+   * What stays unknown: a frame whose event reaches the extension host a few milliseconds after the bound although the editor focused it just before, which is then taken for a pass (the pane comes without the keyboard); and a frame the learner selects in the Call Stack view within the bound, which is taken for a stop (the pane takes the keyboard and says so). For a session this reader does not follow (it started before the reader, or it has ended) nothing is known, and the stop counts: a pane that takes the keyboard and tells the learner is the safer error, because the other one leaves the keyboard on no element without a word.
+   * @param otherSessionId - The session whose frame had the focus when the stop was read.
+   * @returns `true` less than {@link EDITOR_FOCUS_PASS_DELAY_MS} after that session was last seen to go on, and for a session this reader does not follow; `false` from that delay on, and while that session has not gone on since its own stop.
+   * @example this.cameBeforeFocusPass('live-next-server') // => true 467 ms after the server session went on, false 800 ms after it
+   */
+  private cameBeforeFocusPass(otherSessionId: string): boolean {
+    if (!this.followedSessions.has(otherSessionId)) return true
+    const wentOnAtMs = this.sessionsWentOnAtMs.get(otherSessionId)
+    return (
+      wentOnAtMs !== undefined &&
+      performance.now() - wentOnAtMs < EDITOR_FOCUS_PASS_DELAY_MS
     )
   }
 

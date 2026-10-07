@@ -281,11 +281,17 @@ export const LEARNER_SELECTION_KINDS: ReadonlySet<number | undefined> = new Set<
  */
 export const LEARNER_SIGN_FRESH_MS = 3_000
 /**
- * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling may have left in the background (a frame of another session had the focus, the adapter asked to keep the focus, or the session went on first); {@link StudyWorkspace} takes a later frame as brought to the front without the keyboard.
- * The editor's handling of a stop takes the adapter's answers to a `threads` and a `stackTrace` request. Its pass of the focus to a session that is still stopped comes 800 ms after the session it showed went on, and it shows that session's frame for only 200 ms of them, so a stop read behind that frame is passed the focus at least 600 ms after it was read (VS Code 1.140 and Cursor 3.23).
- * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a server stop the editor shows 800 ms after the browser session went on
+ * How long after a debug adapter reported a stop the frame of that stop can arrive and still count as brought to the front by the editor's own handling of the stop, for a stop that handling brings only at its first try: the adapter asked to keep the focus, or the session went on before a frame of it was reported; {@link StudyWorkspace} takes a later frame as one the learner selected.
+ * The first try of the editor's handling comes right after the adapter answered a `threads` and a `stackTrace` request (34 to 65 ms after the stop; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). A stop read behind another session's frame is not judged by this bound but by {@link EDITOR_FOCUS_PASS_DELAY_MS}.
+ * @example performance.now() - note.readAtMs <= STOP_OWN_FOCUS_BOUND_MS // => false for a frame the learner selects two seconds after a stop the editor never showed
  */
 export const STOP_OWN_FOCUS_BOUND_MS = 500
+/**
+ * How long after a debug session went on both editors wait before they pass the focus to a session that is still stopped, without the keyboard (`passFocusScheduler` of VS Code 1.140 and Cursor 3.23: a timer of 800 ms, started anew when the session is told to go on and when its adapter reports that it does). {@link StudyWorkspace} takes the frame of a stop that was read behind that session's frame as brought by the stop's own handling, with the keyboard, when it arrives before this delay has passed, and as passed the focus from then on.
+ * The stop's own handling tries at once and, where a frame of the other session still had the focus then, a second time when the rest of the call stack is loaded, which both editors start 420 ms after the top frame. Measured natively on 2026-10-07 in VS Code 1.140.0 for Linux, nine runs of nine: a browser stop read 17 to 23 ms after the server session went on had its frame 450 to 468 ms after its `stopped` event (467 to 491 ms after the server session went on), with the keyboard in the paused file; in the other order a frame came 34 to 65 ms after its `stopped` event, and once 454 ms after one read 197 ms after the other session went on (651 ms after it). No frame at 800 ms was seen in any run.
+ * @example performance.now() - wentOnAtMs < EDITOR_FOCUS_PASS_DELAY_MS // => true for a frame 491 ms after the other session went on
+ */
+export const EDITOR_FOCUS_PASS_DELAY_MS = 800
 /**
  * How long "Codebook: Close Study Workspace" waits, once its panes' tabs are gone, for the editor to remove the groups those tabs left empty before it gives the active editor group the keyboard: the removal rebuilds the editor grid and takes the keyboard from the editor that had it (Cursor removed the captured source's group 57 ms after its tab, and the Study pane's 12 ms after its tab).
  * @example await waitUntil(() => hasNoEmptiedGroup(), 'the emptied editor groups to close', CLOSE_GROUP_SETTLE_MS)
