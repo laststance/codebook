@@ -3748,6 +3748,159 @@ async function check(page, options, collected) {
     ),
   )
 
+  // Arrange: the bottom panel's pane with one saved study chosen, in a window with a Trash; no removal has an outcome (row 200).
+  const withStudyChosen = {
+      ...options.message,
+      studies: [savedOne],
+      model: {
+        ...options.message.model,
+        selection: {
+          ...options.message.model.selection,
+          studyId: savedOne.id,
+        },
+      },
+    },
+    replayWithStudyChosen = {
+      ...withStudyChosen,
+      contentTab: 'recording',
+      playbackPanelVisible: true,
+      recording: openRecording.recording,
+    },
+    refusedDuringRecording = {
+      status: 'refused',
+      studyId: savedOne.id,
+      text: 'Choose Overview or Live to leave Recording before deleting this study.',
+    },
+    movedDuringRecording = {
+      status: 'moved',
+      studyId: 'window_run-gone0002',
+      text: 'Saved study moved to the Trash. The library now holds 1 of 64 saved studies.',
+    }
+  /** Reads the three status regions of the Saved studies part and whether Remove by hand is open. */
+  const savedStudiesStatus = async () => ({
+    removal: await statusRegion('delete-study-status'),
+    filesNote: await statusRegion('study-files-note'),
+    copyLine: await statusRegion('copy-study-files-status'),
+    removeByHandOpen: await page
+      .locator('#study-files')
+      .evaluate((disclosure) => disclosure.open),
+  })
+  await publish(withStudyChosen)
+  // Act: a replay opens; the learner's delete request in the Study pane is refused during it, and then another window's removal ends; each time the replay is left with that outcome still in the host's message. After the replay a new refusal arrives.
+  await publish(replayWithStudyChosen)
+  await publish({
+    ...replayWithStudyChosen,
+    studyRemoval: refusedDuringRecording,
+  })
+  const refusalDuringReplay = (await savedStudiesStatus()).removal
+  await publish({ ...withStudyChosen, studyRemoval: refusedDuringRecording })
+  const leftWithRefusal = (await savedStudiesStatus()).removal
+  await publish({
+    ...replayWithStudyChosen,
+    studyRemoval: movedDuringRecording,
+  })
+  await publish({ ...withStudyChosen, studyRemoval: movedDuringRecording })
+  const leftWithRemoval = (await savedStudiesStatus()).removal
+  await publish({
+    ...withStudyChosen,
+    studyRemoval: {
+      status: 'refused',
+      studyId: savedOne.id,
+      text: 'Stop the run before deleting its study.',
+    },
+  })
+  const refusalAfterReplay = (await savedStudiesStatus()).removal
+  // A window without a Trash: Remove by hand is open with the study's file listed and a copy confirmed, when a replay opens and is left again.
+  const listedWithoutTrash = {
+    ...withStudyChosen,
+    removalWithoutTrash: true,
+    studyFiles: {
+      [savedOne.id]: ['/home/learner/studies/focus01.study.v3.json'],
+    },
+  }
+  await publish(listedWithoutTrash)
+  await toggleByKeyboard('study-files')
+  await page.locator('#copy-study-files').focus()
+  await page.keyboard.press('Enter')
+  await publish({
+    type: 'study-files-copied',
+    studyId: savedOne.id,
+    status: 'copied',
+    count: 1,
+  })
+  const openBeforeReplay = await savedStudiesStatus()
+  // The note is read in the turn that handles the replay's message, before the browser has told the pane that the disclosure closed.
+  const noteAsTheReplayOpens = await page.evaluate(
+    (message) => {
+      window.dispatchEvent(new MessageEvent('message', { data: message }))
+      return document.getElementById('study-files-note').textContent
+    },
+    {
+      ...replayWithStudyChosen,
+      removalWithoutTrash: true,
+      studyFiles: listedWithoutTrash.studyFiles,
+    },
+  )
+  const openDuringReplay = await savedStudiesStatus()
+  await publish(listedWithoutTrash)
+  const leftWithFilesListed = await savedStudiesStatus()
+  // Arrange and Act: the Study pane, where the learner asked, gets the same refusal during the replay.
+  await openPane('context', { width: 600, height: 800 })
+  await publish({
+    ...replayWithStudyChosen,
+    playbackPanelVisible: false,
+    studyRemoval: refusedDuringRecording,
+  })
+  const refusalInTheStudyPane = (await savedStudiesStatus()).removal
+  // Assert
+  const emptyStatus = (id, isRendered = true) => ({
+    ...emptyRegion(id),
+    isRendered,
+  })
+  cases.push({
+    name: 'the bottom panel takes no status of a removal while a replay keeps Saved studies out of it: a refusal and a removal that arrive during the replay leave its status region empty when the replay is left, the Study pane shows the refusal, and a refusal after the replay is shown again; Remove by hand that was open comes back closed, with its note and its copy line empty',
+    actual: {
+      refusalDuringReplay,
+      leftWithRefusal,
+      leftWithRemoval,
+      refusalAfterReplay,
+      openBeforeReplay,
+      noteAsTheReplayOpens,
+      openDuringReplay,
+      leftWithFilesListed,
+      refusalInTheStudyPane,
+    },
+    passed:
+      JSON.stringify(refusalDuringReplay) ===
+        JSON.stringify(emptyStatus('delete-study-status', false)) &&
+      JSON.stringify(leftWithRefusal) ===
+        JSON.stringify(emptyStatus('delete-study-status')) &&
+      JSON.stringify(leftWithRemoval) ===
+        JSON.stringify(emptyStatus('delete-study-status')) &&
+      refusalAfterReplay.text === 'Stop the run before deleting its study.' &&
+      openBeforeReplay.removeByHandOpen &&
+      openBeforeReplay.filesNote.text ===
+        'This window has no Trash, so Codebook cannot delete a saved study here. Remove these files by hand, then press Retry storage / refresh.' &&
+      openBeforeReplay.copyLine.text === 'Copied 1 path.' &&
+      noteAsTheReplayOpens === '' &&
+      JSON.stringify(openDuringReplay) ===
+        JSON.stringify({
+          removal: emptyStatus('delete-study-status', false),
+          filesNote: emptyStatus('study-files-note', false),
+          copyLine: emptyStatus('copy-study-files-status', false),
+          removeByHandOpen: false,
+        }) &&
+      JSON.stringify(leftWithFilesListed) ===
+        JSON.stringify({
+          removal: emptyStatus('delete-study-status'),
+          filesNote: emptyStatus('study-files-note', false),
+          copyLine: emptyStatus('copy-study-files-status', false),
+          removeByHandOpen: false,
+        }) &&
+      refusalInTheStudyPane.text ===
+        'Choose Overview or Live to leave Recording before deleting this study.',
+  })
+
   // Arrange: a page whose own content carries the two ids the Keyboard shortcuts list names its dialog and its tooltip by, as a Wiki page published before the publisher kept such ids apart can (row 101); the Study pane's document stands in for it, with two such elements ahead of the pane.
   /** Reads what Chrome's accessibility tree holds for one element: its role, its name and its description. */
   const accessibleNode = async (selector) => {

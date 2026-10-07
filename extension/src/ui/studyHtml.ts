@@ -1160,6 +1160,16 @@ function studyClient(
       dismissedRemoval = undefined
     return dismissedRemoval ? undefined : removal
   }
+  /**
+   * Keeps the bottom panel's pane from taking a removal's status while a replay keeps Saved studies out of it; called by {@link renderStudyRemoval} before the status is chosen.
+   * The learner cannot have asked there: the list is not shown. The pane the learner acted in tells the outcome. Here it is put aside like an outcome the learner dismissed ({@link visibleRemoval}), so it stays out when the replay is left as well: written then, a refusal such as "Choose Overview or Live to leave Recording before deleting this study." would appear exactly when it is no longer true, together with its status region.
+   * @param message - The current Study message.
+   * @example leaveRemovalStatusToAskingPane(message)
+   */
+  const leaveRemovalStatusToAskingPane = (message: StudyViewMessage): void => {
+    if (isReplayInBottomPanel(message))
+      dismissedRemoval = JSON.stringify(message.studyRemoval)
+  }
   /** Says whether a removal ended without moving the whole study, which the status line shows as an error. @example removalFailed({ status: 'refused', studyId }) // => true */
   const removalFailed = (removal: StudyRemoval): boolean =>
     removal !== undefined && ['refused', 'failed'].includes(removal.status)
@@ -1544,9 +1554,8 @@ function studyClient(
   ): void => {
     const offeredFor = filesOfferedFor(message, chosen, reason)
     offerStudyFilesFor(offeredFor)
-    if (!offeredFor) return
-    // A closed disclosure asks for nothing and holds nothing; it is filled once the learner has opened it.
-    if (!element('study-files').hasAttribute('open')) {
+    // A disclosure that is closed or not offered (beside a reason, as during a replay) asks for nothing and holds nothing; it is filled once the learner has opened it.
+    if (!offeredFor || !element('study-files').hasAttribute('open')) {
       emptyStudyFiles()
       return
     }
@@ -1597,6 +1606,7 @@ function studyClient(
    * @example renderStudyRemoval(message)
    */
   const renderStudyRemoval = (message: StudyViewMessage): void => {
+    leaveRemovalStatusToAskingPane(message)
     const chosenId = chosenStudyId(),
       chosen = message.studies.find((study) => study.id === chosenId),
       inProgress = removalInProgress(message.studyRemoval),
