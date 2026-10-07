@@ -3084,13 +3084,18 @@ test('an unanswered Move Learning Summary offer is made again in the next editor
       1_000,
     ).catch(() => undefined)
 
-    // Assert: once per session, and again in the next one.
+    // Assert: once per session, and again in the next one. Between them the first session's reader was disposed while its Application pane was the active editor, so the active editor group got the keyboard and the learner was told (Cycle 0046 row 342).
     assert.equal(offersInFirstSession, 1)
     assert.deepEqual(harness.informationMessages, [
       {
         message:
           'Cursor opens the Codebook Learning summary in its primary side bar. To keep it on the right, move it once: choose "New Secondary Side Bar Entry" in the list that opens.',
         items: ['Move Learning Summary…'],
+      },
+      {
+        message:
+          'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+        items: [],
       },
       {
         message:

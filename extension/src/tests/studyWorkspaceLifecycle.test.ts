@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -2444,3 +2445,179 @@ for (const ending of [
       await harness.close()
     }
   })
+
+// Value: protects=the keyboard of a learner at the end of a live run whose Application pane had the keyboard while the Study workspace is closed: the run's pane is closed, the active editor group has the keyboard, and the learner is told once in an editor session where it is, in words that are true for a pane the run closed; fails_when=the run's end disposes the pane that has the keyboard and focuses nothing, so the keyboard is on the page body and a key the learner presses goes nowhere until they click; why_new=Cycle 0046 row 342 (Cursor 3.23.12 on candidate 4: at the end of a run of five stops the tab "codebook · Application" closed, the extension host named login-form.tsx as the active text editor, and the workbench page had no focus with BODY as its active element, also a minute later); seam=the workspace harness with the controlled runtime, a live run's viewport and its close, the Application pane's reveal with the focus, keyboardOnBody, command log and information messages
+test('a live run that ends while its Application pane has the keyboard and the Study workspace is closed leaves the keyboard in the active editor group and says once in an editor session where it is', async () => {
+  // Arrange: the learner's file is the tab of the first group; a live run shows its Application pane there with the Study workspace closed, and the pane has the keyboard.
+  const harness = await workspaceHarness()
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft('login-form.tsx', 1)
+    const receipt = harness.service.start({
+      instanceId: harness.service.instanceId,
+      profile: 'repository-browser',
+      configuration: harness.configuration,
+      key: randomUUID(),
+    })
+    await harness.service.record(receipt).preparation
+    const live = harness.reader.presentation.createViewport(
+      receipt.runId,
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.reader['app']!.reveal(undefined, false)
+    const before = {
+      reader: harness.reader.presentationState().state,
+      keyboardInApplicationPane:
+        harness.focusedPanel() === 'codebook.scopedBrowser',
+    }
+    const commandsBefore = harness.commands.length
+
+    // Act: the run ends and gives its pane back; then a second run ends the same way in the same editor session.
+    live.close()
+    await waitUntil(
+      () => harness.informationMessages.length > 0,
+      'the notice of the run that closed its pane',
+      2_000,
+    ).catch(() => undefined)
+    const afterFirstRun = {
+      panels: harness.counts().panels,
+      keyboardOnBody: harness.keyboardOnBody(),
+      focusCommands: harness.commands
+        .slice(commandsBefore)
+        .filter((command) => /^workbench\.action\.focus/.test(command)),
+      sentences: harness.informationMessages.map((message) => message.message),
+    }
+    const second = harness.reader.presentation.createViewport(
+      randomUUID(),
+      () => {},
+      () => {},
+      'normal',
+    )
+    harness.reader['app']!.reveal(undefined, false)
+    second.close()
+    await waitUntil(
+      () =>
+        harness.commands
+          .slice(commandsBefore)
+          .filter(
+            (command) => command === 'workbench.action.focusActiveEditorGroup',
+          ).length === 2,
+      'the second run to settle the keyboard',
+      2_000,
+    ).catch(() => undefined)
+
+    // Assert
+    assert.deepEqual(before, {
+      reader: 'closed',
+      keyboardInApplicationPane: true,
+    })
+    assert.deepEqual(afterFirstRun, {
+      panels: 0,
+      keyboardOnBody: false,
+      focusCommands: ['workbench.action.focusActiveEditorGroup'],
+      sentences: [
+        'The run ended and Codebook closed its Application pane. The keyboard is in the active editor group now: closing the pane can leave it nowhere, and the editor does not tell Codebook whether it was in the pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+      ],
+    })
+    assert.equal(harness.keyboardOnBody(), false)
+    assert.equal(harness.informationMessages.length, 1)
+  } finally {
+    await harness.close()
+  }
+})
+
+for (const situation of [
+  'the learner works in a file of their own and the pane is not the active editor',
+  'the work window does not have the focus',
+] as const)
+  // Value: protects=the keyboard and the learner's quiet at the end of a live run whose pane did not have the keyboard: the pane is closed, no focus command runs and nothing is told; fails_when=every run's end focuses the active editor group and tells its sentence, also for a learner who types in their own file beside the pane, or in a window the learner is not in; why_new=Cycle 0046 row 342 (the bounds of the new rule, as row 66 has them for a Close); seam=the workspace harness with the controlled runtime, a live run's viewport and its close, focusMutableDraft, changeWindowFocus, command log and information messages
+  test(`a live run that ends with the Study workspace closed runs no focus command and tells nothing when ${situation}`, async () => {
+    // Arrange: a live run shows its Application pane with the Study workspace closed.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      await harness.service.record(receipt).preparation
+      const live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      if (situation.startsWith('the learner works'))
+        harness.focusMutableDraft('login-form.tsx', 1)
+      else {
+        harness.reader['app']!.reveal(undefined, false)
+        harness.changeWindowFocus(false)
+      }
+      const commandsBefore = harness.commands.length
+
+      // Act: the run ends; longer than the reader would take to settle the keyboard.
+      live.close()
+      await new Promise((resolve) => setTimeout(resolve, 150))
+
+      // Assert
+      assert.deepEqual(
+        {
+          panels: harness.counts().panels,
+          focusCommands: harness.commands
+            .slice(commandsBefore)
+            .filter((command) => /^workbench\.action\.focus/.test(command)),
+          sentences: harness.informationMessages,
+        },
+        { panels: 0, focusCommands: [], sentences: [] },
+      )
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the keyboard of a learner whose reader is disposed (a folder is added to the workspace) while one of its panes is the active editor: the pane is closed with the reader, the active editor group has the keyboard, and the learner is told as after a Close; fails_when=a disposal moves no keyboard whatever it closes, so a learner who read in the Study pane is left with the keyboard on the page body; why_new=Cycle 0046 row 342 (every path that closes a pane that held the keyboard; row 174's rule stays for a learner's own file); seam=the workspace harness, the focus-context action, the reader's dispose, keyboardOnBody, command log and information messages
+test('a reader that is disposed while its Study pane is the active editor leaves the keyboard in the active editor group and tells the learner where it is', async () => {
+  // Arrange: the Study workspace is open and the Study pane has the keyboard.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    harness.focusMutableDraft('actions.ts', 1)
+    await harness.reader.open()
+    await harness.reader.action('focus-context')
+    const keyboardInStudyPane =
+      harness.focusedPanel() === 'codebook.studyContext'
+    const commandsBefore = harness.commands.length
+
+    // Act: the workspace folders change, and the extension disposes its reader.
+    await harness.reader.dispose()
+
+    // Assert
+    assert.equal(keyboardInStudyPane, true)
+    assert.deepEqual(
+      {
+        panels: harness.counts().panels,
+        keyboardOnBody: harness.keyboardOnBody(),
+        focusCommands: harness.commands
+          .slice(commandsBefore)
+          .filter((command) => /^workbench\.action\.focus/.test(command)),
+        sentences: harness.informationMessages.map(
+          (message) => message.message,
+        ),
+      },
+      {
+        panels: 0,
+        keyboardOnBody: false,
+        focusCommands: ['workbench.action.focusActiveEditorGroup'],
+        sentences: [
+          'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
