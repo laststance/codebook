@@ -61,6 +61,7 @@ function pidNamespaceHere(
 /**
  * Names the space of process ids this process reads starts in and probes, as the form of every process start it answers: the text before the first colon of what {@link readProcessStart} gives here. Called by {@link readProcessStart} for each Linux start, and by {@link canJudgeOwnerHere} for a window whose own start is unknown.
  * A process id means a process only inside one such space. Each system has its own (`ps` on macOS, `win` on Windows), and on Linux each pid namespace has: two WSL distributions of one computer, or a container and its host, run on one kernel under one boot id, while a process id of one names another process, or none, in the other. The Linux form therefore names the namespace, `linux@<number>`.
+ * A Linux form without a namespace names no space, since two processes that cannot read their namespace may be in two: a record in a project folder whose start has that form is never judged by its process id, and a window that has that form judges none of them ({@link canJudgeOwnerHere}). Records of private storage are judged by the system alone.
  * @param inputs - The platform and the read of the namespace link; the real ones when left out.
  * @returns
  * - `linux@<number>` on Linux, with the number of this process's pid namespace; `linux` when the namespace cannot be read

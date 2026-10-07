@@ -168,11 +168,11 @@ async function isVerifiedLiveOwner(
 
 /**
  * Says whether the process a marker names no longer exists; called by {@link mayMarkerOwnerRun} for a marker that is neither verified nor ahead of the clock.
- * A marker of this build names its machine by pseudonyms and is judged like every owner record ({@link isRecordedOwnerGone}): one of another machine, or of another system of this computer, is never gone here and counts until it expires. A marker of 0.2.29.0 names no machine, and its process id is probed here, as that build does.
+ * A marker of this build names its machine by pseudonyms and is judged like every owner record ({@link isRecordedOwnerGone}): one of another machine, of another system or pid namespace of this computer, of a Linux window whose pid namespace could not be read, or of a window whose own process start could not be read (its marker records none) is never gone by its process id here and counts until it expires; the last is gone only when it was recorded under another kernel boot id. A marker of 0.2.29.0 names no machine, and its process id is probed here, as that build does.
  * Limit: two computers with one host name look like one, so a process id of the other is probed here.
  * @param marker - The marker beside the Wiki.
  * @param judgement - The identity of this process and the reader of process starts.
- * @returns `true` for an owner of this machine whose process id names no process, whose process began at another time than recorded, or that was recorded under another kernel boot; `false` while the owner may run, also one this user may not signal.
+ * @returns `true` for an owner of this machine that recorded its process start and whose process id names no process or whose process began at another time than recorded, and for one recorded under another kernel boot; `false` while the owner may run, also one this user may not signal.
  * @example
  * await isMarkerOwnerGone({ pid: 2 ** 22 + 1, windowId: '3f6c', host: 'vscode', startedAtMs: 0 }, judgement) // => true where no such process exists
  */
@@ -187,8 +187,26 @@ async function isMarkerOwnerGone(
 }
 
 /**
+ * Says whether a marker names a time that lies further ahead than two clocks may differ: its run starts, or the watch of its reservation ended, more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now; called by {@link mayMarkerOwnerRun} after the proof of a running owner.
+ * Why: a run's marker stops counting when it expires ({@link isRunMarkerExpired}), and a reservation when the watch bound after its end is over, so a time far ahead would count for good. A marker file a repository supplies could then refuse a start with a sentence that names a chat that never existed.
+ * @param marker - The marker beside the Wiki.
+ * @param nowMs - The present (epoch milliseconds).
+ * @returns `true` when `startedAtMs`, or `watchEndedAtMs` where the marker is a reservation, is later than now plus the tolerance; `false` otherwise.
+ * @example
+ * isFromTooFarAhead({ pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 0, watchEndedAtMs: 4_102_444_800_000 }, 1_790_000_000_000) // => true
+ * isFromTooFarAhead({ pid: 4242, windowId: '3f6c', host: 'vscode', startedAtMs: 1_790_000_300_000 }, 1_790_000_000_000)                    // => false
+ */
+function isFromTooFarAhead(marker: WikiUpdateMarker, nowMs: number): boolean {
+  const latestTimeMs = Math.max(
+    marker.startedAtMs,
+    marker.watchEndedAtMs ?? marker.startedAtMs,
+  )
+  return latestTimeMs > nowMs + WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
+}
+
+/**
  * Says whether the owner of another window's marker may still run, by the rules that look at the owner; called by {@link isLiveMarkerOfAnotherWindow} for a marker that is not expired.
- * The rules, in this order: a marker whose owner is proven to run here counts, whatever its start time says ({@link isVerifiedLiveOwner}); a marker whose run starts more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now is nobody's (a file a repository supplies cannot refuse every start); every other marker counts until its owner is gone ({@link isMarkerOwnerGone}).
+ * The rules, in this order: a marker whose owner is proven to run here counts, whatever its times say ({@link isVerifiedLiveOwner}); a marker whose run starts, or whose stopped watch ended, more than {@link WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS} ahead of now is nobody's ({@link isFromTooFarAhead}: a file a repository supplies cannot refuse every start); every other marker counts until its owner is gone ({@link isMarkerOwnerGone}).
  * @param marker - The marker beside the Wiki.
  * @param judgement - The identity of this process, the reader of process starts and the present.
  * @returns `true` while the owner may run; `false` for a marker from too far ahead without a proven owner and for one whose owner is gone.
@@ -199,13 +217,9 @@ async function mayMarkerOwnerRun(
   marker: WikiUpdateMarker,
   judgement: WikiUpdateMarkerJudgement,
 ): Promise<boolean> {
-  // A running window of this machine is looked at before its start time: a clock set back during its update makes that time lie ahead.
+  // A running window of this machine is looked at before its times: a clock set back during its update makes them lie ahead.
   if (await isVerifiedLiveOwner(marker, judgement)) return true
-  if (
-    marker.startedAtMs >
-    judgement.nowMs + WIKI_UPDATE_MARKER_CLOCK_TOLERANCE_MS
-  )
-    return false
+  if (isFromTooFarAhead(marker, judgement.nowMs)) return false
   return !(await isMarkerOwnerGone(marker, judgement))
 }
 
@@ -310,7 +324,7 @@ async function lookAtUnreadableEntry(
  * @returns
  * - `live`: a marker of another window that still counts ({@link isLiveMarkerOfAnotherWindow}: not older than any run, and its owner proven to run, or neither ahead of the clock nor gone), in `heldBy` (with `watchEndedAtMs` when it is the reservation of a stopped watch, which the caller weighs against the watch bound)
  * - `being-written`: a file without readable content that was written a moment ago, with that time in `heldBy`
- * - `unowned`: this window's own marker, one whose owner is gone, a run's marker older than any run can be, one whose run starts too far ahead, and an entry without a readable marker that is older than a write takes
+ * - `unowned`: this window's own marker, one whose owner is gone, a run's marker older than any run can be, one whose run starts or whose stopped watch ended too far ahead, and an entry without a readable marker that is older than a write takes
  * - `none`: no entry at the marker's path
  *
  * @example

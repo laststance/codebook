@@ -16,21 +16,20 @@ import {
   type WikiUpdateMarkerLook,
 } from '../utils/readLiveWikiUpdateMarker'
 
+import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
+
 const MINUTE_MS = 60_000
 
 /** The present of every test with a fixed clock (epoch milliseconds). */
 const NOW_MS = 1_790_000_000_000
 
-/** A process id that names no process on the machine the tests run on. */
-const PID_OF_NO_PROCESS = 2 ** 22 + 1
-
-/** This window as the tests with a fixed identity name it: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor whose machine id has the digest f9c8c7ddcf3d5f56, under the kernel boot "boot-1". */
+/** This window as the tests with a fixed identity name it: a Linux process of the host "workstation" (its digest is d195d36bd79da7df) in an editor whose machine id has the digest f9c8c7ddcf3d5f56, under the kernel boot "boot-1", in the pid namespace 4026531836. Every Linux start of these tests names that namespace: a record of a project folder whose start names none is not judged by its process id. */
 const THIS_WINDOW = {
   hostname: 'workstation',
   machineKey: 'f9c8c7ddcf3d5f56',
   hostKey: 'd195d36bd79da7df',
   boot: { id: 'boot-1' },
-  processStart: 'linux:16362446',
+  processStart: 'linux@4026531836:16362446',
 }
 
 /** Makes a Wiki folder that is removed with the test, and puts the given text at its marker's path when one is given; `modifiedAtMs` sets when that file says it was last written. Returns the output folder. */
@@ -227,9 +226,9 @@ test('a look tells a marker path that holds nothing from one that holds an entry
   })
 })
 
-// Value: protects=the Update button in a checkout whose repository holds a marker file; fails_when=a marker with a start in the far future counts for as long as its process id answers (process 1 always does), so every start is refused with "Another editor window is updating this Wiki" until the learner deletes the file by hand; why_new=Cycle 0046 row 17 (PL-9), rule 2; seam=the clock handed to the look
-test('a marker whose run starts more than 5 minutes ahead of the clock is nobody’s, so a marker file a repository supplies cannot refuse every start', async (context) => {
-  // Arrange: a marker as 0.2.29.0 writes it, whose process id answers (this test process).
+// Value: protects=the Update button in a checkout whose repository holds a marker file; fails_when=a marker with a start in the far future counts for as long as its process id answers (process 1 always does), so every start is refused with "Another editor window is updating this Wiki" until the learner deletes the file by hand, or a reservation whose watch ended in the far future counts for good and refuses a start with a sentence that names a chat that never existed (row 114); why_new=Cycle 0046 row 17 (PL-9), rule 2, and row 114 for the reservation; seam=the clock handed to the look
+test('a marker whose run starts, or whose stopped watch ended, more than 5 minutes ahead of the clock is nobody’s, so a marker file a repository supplies cannot refuse every start', async (context) => {
+  // Arrange: a run's marker and a stopped watch's reservation as 0.2.29.0 writes them, whose process id answers (this test process). The reservation's run began ten minutes before its watch ended.
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
@@ -239,17 +238,31 @@ test('a marker whose run starts more than 5 minutes ahead of the clock is nobody
       startedAtMs: NOW_MS,
     }),
   )
+  const reserved = await wikiWithMarkerFile(
+    context,
+    JSON.stringify({
+      pid: process.pid,
+      windowId: 'other-window',
+      host: 'vscode',
+      startedAtMs: NOW_MS - 600_000,
+      watchEndedAtMs: NOW_MS,
+    }),
+  )
 
   // Act
   const looks = {
     started5MinutesAhead: (await lookAt(marked, NOW_MS - 300_000)).kind,
     startedFurtherAhead: (await lookAt(marked, NOW_MS - 300_001)).kind,
+    watchEnded5MinutesAhead: (await lookAt(reserved, NOW_MS - 300_000)).kind,
+    watchEndedFurtherAhead: (await lookAt(reserved, NOW_MS - 300_001)).kind,
   }
 
   // Assert
   assert.deepEqual(looks, {
     started5MinutesAhead: 'live',
     startedFurtherAhead: 'unowned',
+    watchEnded5MinutesAhead: 'live',
+    watchEndedFurtherAhead: 'unowned',
   })
 })
 
@@ -268,7 +281,7 @@ test('the marker of a running window of this machine stays live after the clock 
         startedAtMs: NOW_MS,
         machineKey: 'f9c8c7ddcf3d5f56',
         hostKey: 'd195d36bd79da7df',
-        processStart: 'linux:500',
+        processStart: 'linux@4026531836:500',
         ...owner,
       }),
     )
@@ -284,15 +297,15 @@ test('the marker of a running window of this machine stays live after the clock 
   const looks = {
     runningWindow: (
       await lookAt(ofRunningWindow, sixMinutesBack, {
-        [process.pid]: 'linux:500',
+        [process.pid]: 'linux@4026531836:500',
       })
     ).kind,
     processOneWithAnotherStart: (
-      await lookAt(ofProcessOne, sixMinutesBack, { 1: 'linux:1' })
+      await lookAt(ofProcessOne, sixMinutesBack, { 1: 'linux@4026531836:1' })
     ).kind,
     sameStartWithoutBootId: (
       await lookAt(withoutBootId, sixMinutesBack, {
-        [process.pid]: 'linux:500',
+        [process.pid]: 'linux@4026531836:500',
       })
     ).kind,
     startCannotBeRead: (await lookAt(ofRunningWindow, sixMinutesBack)).kind,
@@ -313,14 +326,14 @@ test('a marker of another machine is live until its run marker expires, although
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'vscode',
       startedAtMs: NOW_MS,
       machineKey: '1fb1404a9738d5ed',
       hostKey: '5f0c1a8d2e3b4a69',
       boot: { id: 'boot-of-the-other-machine' },
-      processStart: 'linux:500',
+      processStart: 'linux@4026531836:500',
     }),
   )
 
@@ -336,7 +349,7 @@ test('a marker of another machine is live until its run marker expires, although
 
 // Value: protects=the Update button after an editor of this machine was killed during an update; fails_when=its marker counts until its run would have ended (about 21 minutes) although its process is gone, or for as long as another process has its id (process 1 answers every probe), or a running window whose start cannot be read at this moment loses its marker; why_new=Cycle 0046 row 17 (PL-9), rule 4; seam=the start reader handed to the look
 test('a marker of this machine is nobody’s when no process has its id or the process that has it began at another time, and stays live while that process’s start cannot be read', async (context) => {
-  // Arrange: three markers of this machine and boot, each recording the process start "linux:500".
+  // Arrange: three markers of this machine and boot, each recording the process start "linux@4026531836:500".
   const markerOf = (pid: number): Promise<string> =>
     wikiWithMarkerFile(
       context,
@@ -348,10 +361,10 @@ test('a marker of this machine is nobody’s when no process has its id or the p
         machineKey: 'f9c8c7ddcf3d5f56',
         hostKey: 'd195d36bd79da7df',
         boot: { id: 'boot-1' },
-        processStart: 'linux:500',
+        processStart: 'linux@4026531836:500',
       }),
     )
-  const ofNoProcess = await markerOf(PID_OF_NO_PROCESS)
+  const ofNoProcess = await markerOf(ID_OF_NO_PROCESS)
   const ofThisProcessId = await markerOf(process.pid)
   const ofProcessOne = await markerOf(1)
   const aMinuteLater = NOW_MS + 60_000
@@ -361,11 +374,11 @@ test('a marker of this machine is nobody’s when no process has its id or the p
     noProcessHasItsId: (await lookAt(ofNoProcess, aMinuteLater)).kind,
     itsIdWentToAnotherProcess: (
       await lookAt(ofThisProcessId, aMinuteLater, {
-        [process.pid]: 'linux:900',
+        [process.pid]: 'linux@4026531836:900',
       })
     ).kind,
     processOneWithAnotherStart: (
-      await lookAt(ofProcessOne, aMinuteLater, { 1: 'linux:1' })
+      await lookAt(ofProcessOne, aMinuteLater, { 1: 'linux@4026531836:1' })
     ).kind,
     startCannotBeRead: (await lookAt(ofThisProcessId, aMinuteLater)).kind,
   }
@@ -393,7 +406,7 @@ test('a marker without the machine’s digests, as 0.2.29.0 writes it, is judged
       }),
     )
   const ofRunningProcess = await markerOf(process.pid)
-  const ofNoProcess = await markerOf(PID_OF_NO_PROCESS)
+  const ofNoProcess = await markerOf(ID_OF_NO_PROCESS)
 
   // Act
   const looks = {
@@ -422,14 +435,14 @@ test('a marker of the other editor on this computer, with another machine id dig
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'cursor',
       startedAtMs: NOW_MS,
       machineKey: '1fb1404a9738d5ed',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-1' },
-      processStart: 'linux:500',
+      processStart: 'linux@4026531836:500',
     }),
   )
 
@@ -446,7 +459,7 @@ test('a marker of a window in the other system of this computer, whose process s
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'cursor',
       startedAtMs: NOW_MS,
@@ -516,13 +529,13 @@ test('a window’s own marker, a leftover of a run that ended, is nobody’s alt
       machineKey: 'f9c8c7ddcf3d5f56',
       hostKey: 'd195d36bd79da7df',
       boot: { id: 'boot-1' },
-      processStart: 'linux:16362446',
+      processStart: 'linux@4026531836:16362446',
     }),
   )
 
   // Act
   const look = await lookAt(marked, NOW_MS + 60_000, {
-    [process.pid]: 'linux:16362446',
+    [process.pid]: 'linux@4026531836:16362446',
   })
 
   // Assert
@@ -535,7 +548,7 @@ test('a marker whose boot is written in another form than a kernel boot id is st
   const marked = await wikiWithMarkerFile(
     context,
     JSON.stringify({
-      pid: PID_OF_NO_PROCESS,
+      pid: ID_OF_NO_PROCESS,
       windowId: 'other-window',
       host: 'vscode',
       startedAtMs: NOW_MS,

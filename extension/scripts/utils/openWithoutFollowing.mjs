@@ -39,22 +39,37 @@ function notOpened(code, path) {
 }
 
 /**
+ * Says whether an open file is the file a look at its path found, by {@link fileNameOnDevice} of both; called by {@link openFileLookedAt}.
+ * @param {import('node:fs/promises').FileHandle} file - The file that was opened.
+ * @param {import('node:fs').BigIntStats} lookedAt - What `lstat` answered for the path before the open.
+ * @returns {Promise<boolean>} `true` when both name one file; `false` for another file, and when the opened file's status cannot be read: a file that cannot be told to be the one that was looked at is not used.
+ * @example
+ * await isFileOfTheLook(file, await lstat(path, { bigint: true })) // => true while nothing replaced the path
+ */
+async function isFileOfTheLook(file, lookedAt) {
+  return file.stat({ bigint: true }).then(
+    (opened) => fileNameOnDevice(opened) === fileNameOnDevice(lookedAt),
+    () => false,
+  )
+}
+
+/**
  * Opens a file on a system whose open cannot refuse a link: the path is looked at without following it, and the opened file must be the one that look found; called by {@link openWithoutFollowing} where `O_NOFOLLOW` does not exist.
  * @param {string} path - Path of the file.
  * @param {number} flags - The flags of the open.
+ * @param {{ lstat: typeof lstat, open: typeof open }} fileSystem - The look and the open.
  * @returns {Promise<import('node:fs/promises').FileHandle>} The open regular file.
- * @throws The file system's error when the path cannot be looked at or opened; an error with the code `ELOOP` or `ENOTREG` for what {@link refusalOfLook} refuses; one with the code `EREPLACED` when another file took the path between the look and the open (the file is closed first).
+ * @throws The file system's error when the path cannot be looked at or opened; an error with the code `ELOOP` or `ENOTREG` for what {@link refusalOfLook} refuses; one with the code `EREPLACED` when another file took the path between the look and the open, or the opened file's status cannot be read. The file is closed on each of these ways out.
  * @example
- * await openFileLookedAt('C:\\work\\codebook.vsix', constants.O_RDONLY)
+ * await openFileLookedAt('C:\\work\\codebook.vsix', constants.O_RDONLY, { lstat, open })
  */
-async function openFileLookedAt(path, flags) {
-  const lookedAt = await lstat(path, { bigint: true })
+async function openFileLookedAt(path, flags, fileSystem) {
+  const lookedAt = await fileSystem.lstat(path, { bigint: true })
   const refusal = refusalOfLook(lookedAt)
   if (refusal) throw notOpened(refusal, path)
-  const file = await open(path, flags)
+  const file = await fileSystem.open(path, flags)
   // Between the look and the open the path can have become a link to another file.
-  const openedName = fileNameOnDevice(await file.stat({ bigint: true }))
-  if (openedName === fileNameOnDevice(lookedAt)) return file
+  if (await isFileOfTheLook(file, lookedAt)) return file
   await file.close()
   throw notOpened('EREPLACED', path)
 }
@@ -64,16 +79,21 @@ async function openFileLookedAt(path, flags) {
  * Where the system has `O_NOFOLLOW` (Linux, macOS) the open itself refuses a link, and `O_NONBLOCK` keeps it from waiting for the writer of a named pipe. Where it has not (Windows), the path is looked at first and the opened file must be the file that look found ({@link openFileLookedAt}). Which way is taken depends on the flag alone, never on the system's name, so a test can take the flag away.
  * @param {string} path - Path of the file.
  * @param {{ O_RDONLY: number, O_NOFOLLOW?: number, O_NONBLOCK?: number }} [flagsOfTheSystem] - The open flags this system defines; `fs.constants` unless a test takes one away.
+ * @param {{ lstat: typeof lstat, open: typeof open }} [fileSystem] - The look and the open; those of `node:fs/promises` unless a test puts something between the two (a script's module cannot be loaded with another file system, as the extension's tests load theirs).
  * @returns {Promise<import('node:fs/promises').FileHandle>} The open file. With `O_NOFOLLOW` it can still be a pipe, a device or a folder, which the caller refuses by its `stat`; without the flag it is a regular file.
  * @throws The file system's error when the path cannot be opened. For a link: the open's own error with the flag (`ELOOP` on Linux and macOS), and an error with the code `ELOOP` without it. Without the flag also an error with the code `ENOTREG` for a pipe, a device or a folder, and one with the code `EREPLACED` when another file took the path between the look and the open.
  * @example
  * const file = await openWithoutFollowing('/tmp/codebook.vsix')
  */
-export async function openWithoutFollowing(path, flagsOfTheSystem = constants) {
+export async function openWithoutFollowing(
+  path,
+  flagsOfTheSystem = constants,
+  fileSystem = { lstat, open },
+) {
   const readingWithoutWaiting =
     flagsOfTheSystem.O_RDONLY | (flagsOfTheSystem.O_NONBLOCK ?? 0)
   // With the flag the open itself refuses a link; without it the path is looked at first.
   return flagsOfTheSystem.O_NOFOLLOW === undefined
-    ? openFileLookedAt(path, readingWithoutWaiting)
-    : open(path, readingWithoutWaiting | flagsOfTheSystem.O_NOFOLLOW)
+    ? openFileLookedAt(path, readingWithoutWaiting, fileSystem)
+    : fileSystem.open(path, readingWithoutWaiting | flagsOfTheSystem.O_NOFOLLOW)
 }

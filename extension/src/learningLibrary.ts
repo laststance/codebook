@@ -669,7 +669,8 @@ export class LearningLibrary {
   }
 
   /**
-   * Counts the studies this library keeps now, for the saved-study count {@link StudyService.status} reports beside the limit.
+   * Counts the studies this library keeps now, as its own admission counts them ({@link admits}): for the saved-study count {@link StudyService.status} reports beside the limit, and for the admission of a Node test, to which {@link StudyWorkspace} hands this count ({@link NodeTestHistoryStore}).
+   * A study counts by its archive. What is left of a study without its archive is listed ({@link list}) and counts nothing, here as in every admission.
    * @returns The number of saved studies.
    * @throws When the library directory cannot be read.
    * @example

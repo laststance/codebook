@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 
 import { build as bundle, version as esbuildVersion } from 'esbuild'
 
+import { assertStableCheckout } from './assertStableCheckout.mjs'
 import { cleanPackageOutputs } from './cleanPackageOutputs.mjs'
 import { inspectBundle } from './inspectBundle.mjs'
 import { loadBuiltExtension } from './loadBuiltExtension.mjs'
@@ -50,11 +51,7 @@ export async function buildPackage(
       await cleanPackageOutputs(repository)
       // Corepack selects the package manager from cwd before pnpm processes --dir.
       await runCommand('pnpm', ['build'], extensionRoot)
-      assert.deepEqual(
-        await readBuildIdentity(repository, directory),
-        before,
-        'Source inputs changed during compilation. Retry from a stable checkout.',
-      )
+      await assertStableCheckout(repository, before, directory, 'compilation')
       const compiled = await import(
         pathToFileURL(join(extensionRoot, 'dist/constants.js')).href
       )
@@ -268,11 +265,7 @@ export async function buildPackage(
       const entries = await readVsixEntries(archiveBytes),
         checked = await verifyPackageContent(entries, files)
       const loaded = await loadBuiltExtension(entries)
-      assert.deepEqual(
-        await readBuildIdentity(repository, directory),
-        before,
-        'Source inputs changed during packaging. Retry from a stable checkout.',
-      )
+      await assertStableCheckout(repository, before, directory, 'packaging')
       return {
         output: destination,
         sha256: createHash('sha256').update(archiveBytes).digest('hex'),

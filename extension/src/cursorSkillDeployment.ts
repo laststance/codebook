@@ -6,10 +6,10 @@ import {
   mkdir,
   open,
   readdir,
-  readFile,
   rename,
   rmdir,
   unlink,
+  type FileHandle,
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -27,6 +27,7 @@ import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import { isNewerExtensionVersion } from './utils/isNewerExtensionVersion'
 import { isRecordedFileId } from './utils/isRecordedFileId'
 import { isSameFileId } from './utils/isSameFileId'
+import { openWithoutFollowing } from './utils/openWithoutFollowing'
 import { recordedFileId, type RecordedFileId } from './utils/recordedFileId'
 import { systemErrorCode } from './utils/systemErrorCode'
 import { withStorageLock } from './utils/withStorageLock'
@@ -110,15 +111,97 @@ async function inspectedPath(path: string): Promise<BigIntStats | undefined> {
   }
 }
 
-/** Reads a regular skill file for {@link deployCursorSkill} without accepting symlink targets. @param path - Exact file path. @returns Its bytes, or undefined when absent. @example await regularFile('/missing/SKILL.md') // => undefined */
+/** A file of the skill setup as one open file showed it: its bytes, and its status with exact numbers. Both are of one file, also when the path comes to name another file meanwhile. */
+type SkillFileRead = { kind: 'read'; bytes: Buffer; status: BigIntStats }
+
+/** Why a path of the skill setup was not read: it holds nothing, it holds a link, it holds a pipe, a device or a folder, or another file took it between the look at it and its open (only where the system's open cannot refuse a link, as on Windows). */
+type UnreadSkillFileKind = 'missing' | 'link' | 'not-regular' | 'replaced'
+
+/** What {@link lookAtSkillFile} found at a path. */
+type SkillFileLook = SkillFileRead | { kind: UnreadSkillFileKind }
+
+/** The kind of a path that {@link openWithoutFollowing} did not open, by the code of its error. */
+const UNREAD_KIND_BY_OPEN_CODE: ReadonlyMap<string, UnreadSkillFileKind> =
+  new Map([
+    ['ENOENT', 'missing'],
+    ['ELOOP', 'link'],
+    ['ENOTREG', 'not-regular'],
+    ['EREPLACED', 'replaced'],
+  ])
+
+/** What the learner reads for a path Codebook did not read, by what the path holds: each sentence names the path and what to do next. */
+const UNREAD_SKILL_FILE_SENTENCES: Record<
+  Exclude<UnreadSkillFileKind, 'missing'>,
+  (path: string) => string
+> = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+  'not-regular': (path) =>
+    `Codebook will not change a non-regular skill file: ${path}`,
+  replaced: (path) =>
+    `Another file took the place of ${path} while Codebook opened it, so it was not read. Run Codebook: Set Up AI Chat again.`,
+}
+
+/**
+ * Takes the status and the bytes of an open file, for {@link lookAtSkillFile}: both come from the one file that was opened.
+ * @param file - The file {@link openWithoutFollowing} opened.
+ * @returns The bytes and the status of a regular file; `not-regular` for a pipe, a device or a folder, which the open lets through where the system has `O_NOFOLLOW`.
+ * @example await readOpenSkillFile(file) // => { kind: 'read', bytes, status }
+ */
+async function readOpenSkillFile(file: FileHandle): Promise<SkillFileLook> {
+  const status = await file.stat({ bigint: true })
+  if (!status.isFile()) return { kind: 'not-regular' }
+  return { kind: 'read', bytes: await file.readFile(), status }
+}
+
+/**
+ * Reads one file of the skill setup (the skill, the bundled skill, a record, a retained file) without following a link, and takes its bytes and its status from the one file it opened; every read of {@link deployCursorSkill}, {@link verifyManagedCursorSkill} and {@link removeManagedCursorSkill} goes through it.
+ * A look at the path followed by a read of the path could read another file: a link that took the path in between would be read through. {@link openWithoutFollowing} refuses that on every system.
+ * @param path - Exact file path.
+ * @returns
+ * - `read` with the bytes and the status of the regular file at the path
+ * - `missing`, `link`, `not-regular` or `replaced` when nothing was read ({@link UnreadSkillFileKind})
+ * @throws Every other failure of the open or the read (no permission, for example).
+ * @example await lookAtSkillFile('/home/user/.cursor/skills/codebook/SKILL.md') // => { kind: 'read', bytes, status }
+ */
+async function lookAtSkillFile(path: string): Promise<SkillFileLook> {
+  let file
+  try {
+    file = await openWithoutFollowing(path)
+  } catch (error) {
+    const kind = UNREAD_KIND_BY_OPEN_CODE.get(systemErrorCode(error))
+    if (kind) return { kind }
+    throw error
+  }
+  try {
+    return await readOpenSkillFile(file)
+  } finally {
+    await file.close()
+  }
+}
+
+/**
+ * Reads a regular file of the skill setup with its status, for the callers that compare the file with a receipt ({@link deploySkill}, {@link removeManagedCursorSkill}) and through {@link regularFile} for those that need the bytes alone.
+ * @param path - Exact file path.
+ * @param kindsReadAsAbsent - What counts as "no file there" besides a path that holds nothing; a reconnect's look adds `replaced` ({@link inspectManagedSkill}).
+ * @returns The bytes and the status of the one file that was opened, or undefined when the path holds nothing (or one of `kindsReadAsAbsent`).
+ * @throws With the sentence that fits what the path holds ({@link UNREAD_SKILL_FILE_SENTENCES}): a link, a pipe, a device or a folder, or a file that was replaced while it was opened.
+ * @example await readRegularFile('/missing/SKILL.md') // => undefined
+ */
+async function readRegularFile(
+  path: string,
+  kindsReadAsAbsent: readonly UnreadSkillFileKind[] = [],
+): Promise<SkillFileRead | undefined> {
+  const look = await lookAtSkillFile(path)
+  if (look.kind === 'read') return look
+  if (look.kind === 'missing' || kindsReadAsAbsent.includes(look.kind))
+    return undefined
+  throw new Error(UNREAD_SKILL_FILE_SENTENCES[look.kind](path))
+}
+
+/** Reads the bytes of a regular file of the skill setup for {@link deployCursorSkill} without reading through a link ({@link readRegularFile}). @param path - Exact file path. @returns Its bytes, or undefined when absent. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened. @example await regularFile('/missing/SKILL.md') // => undefined */
 async function regularFile(path: string): Promise<Buffer | undefined> {
-  const status = await inspectedPath(path)
-  if (!status) return undefined
-  if (!status.isFile() || status.isSymbolicLink())
-    throw new Error(
-      `Codebook will not change a non-regular skill file: ${path}`,
-    )
-  return readFile(path)
+  return (await readRegularFile(path))?.bytes
 }
 
 /** Creates or verifies a private parent when {@link deployCursorSkill} prepares its owned paths. @param path - Directory to inspect. @returns After a regular directory exists. @example await ensureDirectory('/private/cursor-skill') // => resolves */
@@ -320,22 +403,17 @@ async function readPendingRemoval(
   return value as PendingRemoval
 }
 
-/** Rechecks a receipted skill during setup or recovery without trusting a volume device number that can change after restart. @param path - Exact managed skill path. @param owner - Recorded inode number and bytes. @returns Whether the same regular file still has its recorded inode number ({@link isSameFileId}: compared exactly) and content. @example await matchesOwnedFile('/home/.cursor/skills/codebook/SKILL.md', receipt) */
+/** Rechecks a receipted skill during setup or recovery without trusting a volume device number that can change after restart. The inode number and the bytes are of one open file ({@link lookAtSkillFile}), and the path must still name that file afterwards. @param path - Exact managed skill path. @param owner - Recorded inode number and bytes. @returns Whether the same regular file still has its recorded inode number ({@link isSameFileId}: compared exactly) and content; `false` also for a path that holds nothing, a link or no regular file, and for a file that was replaced while it was opened. @example await matchesOwnedFile('/home/.cursor/skills/codebook/SKILL.md', receipt) */
 async function matchesOwnedFile(
   path: string,
   owner: Pick<SkillReceipt, 'skillSha256' | 'inode'>,
 ): Promise<boolean> {
-  const status = await inspectedPath(path)
-  if (
-    !status?.isFile() ||
-    status.isSymbolicLink() ||
-    !isSameFileId(owner.inode, status.ino)
-  )
+  const look = await lookAtSkillFile(path)
+  if (look.kind !== 'read' || !isSameFileId(owner.inode, look.status.ino))
     return false
-  const bytes = await readFile(path)
   return (
-    sha256(bytes) === owner.skillSha256 &&
-    (await lstat(path, { bigint: true })).ino === status.ino
+    sha256(look.bytes) === owner.skillSha256 &&
+    (await inspectedPath(path))?.ino === look.status.ino
   )
 }
 
@@ -519,11 +597,11 @@ function publisherNamedBy(
  * @param targetPath - The managed skill file in Cursor's user skills.
  * @param packagedSha256 - Digest of the skill this installation packages.
  * @returns
- * - `changed`: no installed receipt, or the file is missing, replaced (another inode) or edited (other bytes)
+ * - `changed`: no installed receipt, or the file is missing, replaced (another inode, also one that took the path while it was opened) or edited (other bytes)
  * - `current`: the receipted, unedited file holds this installation's bytes
  * - `newer`: the receipted, unedited file was deployed by a later extension version than the running one, and the publisher it names is not known to be gone
  * - `outdated`: the receipted, unedited file holds other bytes and was deployed by this or an earlier version, or by a later one whose publisher no longer exists ({@link isRecordedPublisherGone}: that installation was removed, as after a rollback)
- * @throws When the skill path is no regular file, or a read fails for another reason than a missing file.
+ * @throws When the skill path holds a link or no regular file (with the sentence that fits, {@link readRegularFile}), or a read fails for another reason than a missing file.
  * @example await inspectManagedSkill('/private/cursor-skill/receipt.json', '/home/user/.cursor/skills/codebook/SKILL.md', packaged.sha256) // => { kind: 'current', receipt }
  */
 async function inspectManagedSkill(
@@ -532,14 +610,9 @@ async function inspectManagedSkill(
   packagedSha256: string,
 ): Promise<ManagedSkillState> {
   const receipt = await readReceipt(receiptPath, targetPath)
-  // A file another window replaces right now can vanish between two reads; that is a missing file, not a failed read.
-  const current = await regularFile(targetPath).catch((error: unknown) => {
-    if (isMissing(error)) return undefined
-    throw error
-  })
-  const currentStatus = current ? await inspectedPath(targetPath) : undefined
-  if (!isReceiptedSkillUnedited(receipt, current, currentStatus))
-    return { kind: 'changed' }
+  // A file another window replaces right now can be gone, or be another file between the look at its path and its open; neither is a failed read. Both count as changed here and are decided under the lock.
+  const current = await readRegularFile(targetPath, ['replaced'])
+  if (!isReceiptedSkillUnedited(receipt, current)) return { kind: 'changed' }
   return receiptedSkillState(
     receipt,
     packagedSha256,
@@ -570,37 +643,33 @@ async function isRecordedPublisherGone(
 /**
  * Says whether the deployed skill is the installed, unedited file of its receipt, for {@link inspectManagedSkill} right after it read both.
  * @param receipt - The owner receipt, or `undefined` when none is stored.
- * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
- * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @param current - The bytes and the status of the deployed skill file, both of one open file, or `undefined` when it is missing.
  * @returns `true` for an installed receipt whose file is still there with its inode and bytes ({@link holdsReceiptedBytes}); `false` without an installed receipt and for a missing, replaced or edited file.
- * @example isReceiptedSkillUnedited(undefined, bytes, status) // => false
+ * @example isReceiptedSkillUnedited(undefined, current) // => false
  */
 function isReceiptedSkillUnedited(
   receipt: SkillReceipt | undefined,
-  current: Buffer | undefined,
-  currentStatus: BigIntStats | undefined,
+  current: SkillFileRead | undefined,
 ): receipt is SkillReceipt {
   if (!receipt?.installed) return false
-  return holdsReceiptedBytes(receipt, current, currentStatus)
+  return holdsReceiptedBytes(receipt, current)
 }
 
 /**
  * Compares the deployed skill file with what its receipt recorded, for {@link isReceiptedSkillUnedited}: the inode first, and the digest only for the same file.
  * @param receipt - The installed owner receipt.
- * @param current - The bytes of the deployed skill file, or `undefined` when it is missing.
- * @param currentStatus - The status of that file, or `undefined` when it is missing.
+ * @param current - The bytes and the status of the deployed skill file, both of one open file, or `undefined` when it is missing.
  * @returns `true` when the file exists, is the receipted inode and holds the receipted bytes; `false` when it is missing, replaced (another inode) or edited (other bytes).
- * @example holdsReceiptedBytes(receipt, undefined, undefined) // => false
+ * @example holdsReceiptedBytes(receipt, undefined) // => false
  */
 function holdsReceiptedBytes(
   receipt: SkillReceipt,
-  current: Buffer | undefined,
-  currentStatus: BigIntStats | undefined,
+  current: SkillFileRead | undefined,
 ): boolean {
-  if (!current || !currentStatus) return false
+  if (!current) return false
   return (
-    isSameFileId(receipt.inode, currentStatus.ino) &&
-    sha256(current) === receipt.skillSha256
+    isSameFileId(receipt.inode, current.status.ino) &&
+    sha256(current.bytes) === receipt.skillSha256
   )
 }
 
@@ -765,19 +834,17 @@ async function deploySkill(
           'A codebook skill directory already exists in Cursor. Codebook left it untouched; resolve the name conflict before setup.',
         )
     }
-    const current = await regularFile(targetPath)
+    // The bytes and the inode number that are compared with the receipt are of one open file.
+    const current = await readRegularFile(targetPath)
     if (!receipt && current)
       throw new Error(
         'An existing codebook skill is not owned by this installation; no file was changed.',
       )
-    if (receipt && current) {
-      const status = await lstat(targetPath, { bigint: true })
-      if (!isSameFileId(receipt.inode, status.ino))
-        throw new Error(
-          'The managed Cursor skill was replaced after setup; Codebook preserved it.',
-        )
-    }
-    if (receipt && current && sha256(current) !== receipt.skillSha256)
+    if (receipt && current && !isSameFileId(receipt.inode, current.status.ino))
+      throw new Error(
+        'The managed Cursor skill was replaced after setup; Codebook preserved it.',
+      )
+    if (receipt && current && sha256(current.bytes) !== receipt.skillSha256)
       throw new Error(
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
       )
@@ -804,7 +871,10 @@ async function deploySkill(
           'The previous managed skill backup differs from its receipt; no replacement was made.',
         )
       if (!backup) {
-        const stagedBackup = await writeStagedBytes(receiptDirectory, current)
+        const stagedBackup = await writeStagedBytes(
+          receiptDirectory,
+          current.bytes,
+        )
         try {
           await link(stagedBackup, backupPath)
         } finally {
@@ -1055,18 +1125,18 @@ export async function removeManagedCursorSkill(
         version: recovered.owner.skillVersion,
       }
     await assertSkillParents(homeRoot)
+    // The bytes and the inode number that are compared with the receipt are of one open file.
     const receipt = await readReceipt(receiptPath, targetPath),
-      current = await regularFile(targetPath)
+      current = await readRegularFile(targetPath)
     if (!receipt?.installed || !current)
       throw new Error(
         'No installed Codebook-owned Cursor skill was found; no file was changed.',
       )
-    const status = await lstat(targetPath, { bigint: true })
-    if (!isSameFileId(receipt.inode, status.ino))
+    if (!isSameFileId(receipt.inode, current.status.ino))
       throw new Error(
         'The Cursor skill was replaced after setup; Codebook preserved it.',
       )
-    if (sha256(current) !== receipt.skillSha256)
+    if (sha256(current.bytes) !== receipt.skillSha256)
       throw new Error(
         'The Cursor skill was edited after setup; Codebook preserved it.',
       )

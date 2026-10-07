@@ -5,18 +5,18 @@ import { canJudgeOwnerHere } from '../utils/canJudgeOwnerHere'
 
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
-/** A WSL window of the computer "workstation": a Linux process begun at clock tick 16362446. The digests are the first 16 hex characters of the SHA-256 of "machine-a" and of "workstation". */
+/** A WSL window of the computer "workstation": a Linux process of the pid namespace 4026531836, begun at clock tick 16362446. The digests are the first 16 hex characters of the SHA-256 of "machine-a" and of "workstation". */
 const LINUX_WINDOW = {
   hostname: 'workstation',
   machineId: 'machine-a',
   machineKey: 'f9c8c7ddcf3d5f56',
   hostKey: 'd195d36bd79da7df',
-  processStart: 'linux:16362446',
+  processStart: 'linux@4026531836:16362446',
 }
 
 // Value: protects=what a window of this system left is judged by its owner's process id and start, in private storage and in a project folder; fails_when=a record of this machine and this system is taken for one that cannot be probed here, so a killed window's lock, claim or marker is never taken over (Cycle 0046 row 58); why_new=the predicate is new; seam=none
 test('an owner of this machine whose start has this system’s form can be judged here', () => {
-  // Act: two records judged by a Linux window, and one judged by a Windows window, whose own start says which system it is.
+  // Act: two records judged by a Linux window (the one of private storage names no pid namespace, which decides nothing for it; the one of a project folder names this window's), and one judged by a Windows window, whose own start says which system it is.
   const ofPrivateStorage = canJudgeOwnerHere(
       {
         pid: 4242,
@@ -31,7 +31,7 @@ test('an owner of this machine whose start has this system’s form can be judge
         pid: 4242,
         machineKey: '1fb1404a9738d5ed',
         hostKey: 'd195d36bd79da7df',
-        processStart: 'linux:100',
+        processStart: 'linux@4026531836:100',
       },
       LINUX_WINDOW,
     ),
@@ -280,4 +280,84 @@ test('an owner that names its machine in clear can be judged here although its L
   assert.equal(namedByMachineId, true)
   assert.equal(recordedWithoutANamespace, true)
   assert.equal(ofAWindowsWindow, false)
+})
+
+// Value: protects=the Wiki update marker and its claim of a live window in another pid namespace of one computer (two containers, or a container and its host, under one host name and one kernel boot) where neither window can read its own pid namespace: their Linux starts then have the same form, `linux`, although a process id of one names another process, or none, in the other; fails_when=two Linux forms without a namespace count as one space of process ids, so the record is probed here and its live owner is called gone (Cycle 0046 row 145, the case rows 65 and 103 left); why_new=every test with a form without a namespace had one on the other side; seam=none
+test('an owner that names its machine by digests alone and a Linux start without a pid namespace cannot be judged by a window that names no namespace either, and the same record with its host name in clear is judged as before', () => {
+  // Arrange: a Linux window that could not read its own pid namespace, and records of this computer (one host-name digest) under the same kernel boot, written by a window that could not read its own either.
+  const windowWithoutItsNamespace = {
+    hostname: 'workstation',
+    machineKey: 'f9c8c7ddcf3d5f56',
+    hostKey: 'd195d36bd79da7df',
+    boot: { id: 'boot-of-the-shared-kernel' },
+    processStart: 'linux:16362446',
+  }
+  const byDigestsAlone = {
+    pid: 4242,
+    machineKey: '1fb1404a9738d5ed',
+    hostKey: 'd195d36bd79da7df',
+    processStart: 'linux:100',
+  }
+  // Act
+  const judgeable = {
+    underTheSameKernelBoot: canJudgeOwnerHere(
+      { ...byDigestsAlone, boot: { id: 'boot-of-the-shared-kernel' } },
+      windowWithoutItsNamespace,
+    ),
+    whereNeitherNamesAKernelBoot: canJudgeOwnerHere(byDigestsAlone, {
+      ...windowWithoutItsNamespace,
+      boot: undefined,
+    }),
+    underAnotherKernelBoot: canJudgeOwnerHere(
+      { ...byDigestsAlone, boot: { id: 'boot-before-the-restart' } },
+      windowWithoutItsNamespace,
+    ),
+    withItsHostNameInClear: canJudgeOwnerHere(
+      {
+        ...byDigestsAlone,
+        hostname: 'workstation',
+        boot: { id: 'boot-of-the-shared-kernel' },
+      },
+      windowWithoutItsNamespace,
+    ),
+  }
+  // Assert
+  assert.deepEqual(judgeable, {
+    underTheSameKernelBoot: false,
+    whereNeitherNamesAKernelBoot: false,
+    underAnotherKernelBoot: true,
+    withItsHostNameInClear: true,
+  })
+})
+
+// Value: protects=the takeover of what a killed window left in a project folder on macOS and on Windows, whose forms name no pid namespace because those systems have one space of process ids each; fails_when=the rule for a Linux form without a namespace is applied to every form without one, so no marker or claim is ever judged on macOS or Windows and each stays until its time rule (Cycle 0046 row 145, the other side); why_new=the rule of the form without a namespace is new; seam=none
+test('an owner that names its machine by digests alone is still judged on macOS and on Windows, whose forms name no pid namespace', () => {
+  // Act: a record a macOS window wrote judged by another macOS window, and the same for Windows.
+  const onMacOS = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostKey: 'd195d36bd79da7df',
+        processStart: 'ps:Mon Oct  5 09:12:33 2026',
+      },
+      {
+        hostname: 'workstation',
+        hostKey: 'd195d36bd79da7df',
+        processStart: 'ps:Mon Oct  5 10:30:00 2026',
+      },
+    ),
+    onWindows = canJudgeOwnerHere(
+      {
+        pid: 4242,
+        hostKey: 'd195d36bd79da7df',
+        processStart: 'win:2026-10-05T09:12:33.1234567Z',
+      },
+      {
+        hostname: 'workstation',
+        hostKey: 'd195d36bd79da7df',
+        processStart: 'win:2026-10-05T10:30:00.0000000Z',
+      },
+    )
+  // Assert
+  assert.equal(onMacOS, true)
+  assert.equal(onWindows, true)
 })
