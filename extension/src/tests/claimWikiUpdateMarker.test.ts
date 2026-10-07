@@ -43,7 +43,7 @@ import {
 import { idleChild } from './utils/idleChild'
 import { ID_OF_NO_PROCESS } from './utils/idOfNoProcess'
 import { loadModule } from './utils/loadModule'
-import { startOfKilledWindow } from './utils/startOfKilledWindow'
+import { requireOwnPidNamespace } from './utils/requireOwnPidNamespace'
 
 /** Answers the start of this test process as the fixed window {@link AS_THIS_WINDOW} records it; the start of any other process cannot be read. */
 const readStartOfThisWindow: ProcessStartReader = async (pid) =>
@@ -1413,7 +1413,8 @@ test('a claim folder that a window prepared beside the marker and never put into
 
 // Value: protects=the end of an update on Windows and macOS, where the start of another process is read by starting PowerShell or ps; fails_when=each of the twenty attempts reads the start of the window that holds the claim anew, so the end of a run starts twenty queries of up to 3 s each (decision D7); why_new=Cycle 0046 rows 2 and 9 (ER-12): one cache for the whole attempt loop; seam=the start reader, which counts and reads the real start of a real process
 test('the twenty attempts of a run’s end read the start of the running window that holds the claim once', async (context) => {
-  // Arrange: a window that runs, and a claim held by a real running process of this machine, recorded with its real start.
+  // Arrange: a window that runs, and a claim held by a real running process of this machine, recorded with its real start. The window is this test process with its real identity, which judges the holder's claim only where it names its pid namespace (Cycle 0046 row 195).
+  requireOwnPidNamespace()
   const wiki = await createWikiFolder()
   context.after(() => rm(wiki.directory, { recursive: true, force: true }))
   const holder = await idleChild(context)
@@ -1479,9 +1480,8 @@ test('the twenty attempts of a run’s end read the start of the running window 
 
 // Value: protects=the learner's project folder after an editor was killed between writing its marker beside the marker's path and linking it into place; fails_when=the prepared marker file `<marker>.pending-<id>` is never removed and stays in `.codebook/` for good; why_new=Cycle 0046 row 16 (ER-6, ER-13): the marker is created from a prepared file since this cycle; seam=none
 test('the prepared marker file a killed window left beside the marker is removed when the next update ends', async () => {
-  // Arrange: a prepared marker of this machine whose process is gone.
+  // Arrange: a prepared marker of this machine, of this boot and of this pid namespace, whose process is gone. The windows are fixed: nothing here needs the identity of this test process.
   const wiki = await createWikiFolder()
-  const { machineKey, hostKey } = await currentStorageOwner()
   await writeFile(
     `${wiki.markerPath}.pending-left-by-a-killed-window`,
     JSON.stringify({
@@ -1489,19 +1489,24 @@ test('the prepared marker file a killed window left beside the marker is removed
       windowId: 'killed-editor',
       host: 'vscode',
       startedAtMs: Date.now(),
-      machineKey,
-      hostKey,
-      processStart: startOfKilledWindow(),
+      machineKey: 'f9c8c7ddcf3d5f56',
+      hostKey: 'd195d36bd79da7df',
+      boot: { id: 'boot-1' },
+      processStart: 'linux@4026531836:500',
     }),
   )
   try {
     // Act
-    const claim = await claimWikiUpdateMarker(wiki.outputDirectory, {
-      pid: process.pid,
-      windowId: 'window-a',
-      host: 'vscode',
-      startedAtMs: Date.now(),
-    })
+    const claim = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
     assert.ok('release' in claim)
     await claim.release()
 
@@ -1573,7 +1578,7 @@ test('the prepared marker file a killed window of another machine left beside th
 
 // Value: protects=the learner's project folder after an editor was killed while its stopped watch replaced its marker by a reservation; fails_when=the reservation written beside the marker has a name no sweep knows (`<marker>.<id>.tmp`), so it stays in `.codebook/` for good; why_new=found in Cycle 0046 while the marker's prepared file got the sweep (package MKR); seam=the killed window's move of the reservation over the marker, after which nothing of that window runs
 test('the reservation a window wrote beside the marker and could not move over it before it was killed is removed when the next update ends', async () => {
-  // Arrange: a window whose recorded process no longer exists and which is killed between writing its reservation beside the marker and moving it into place.
+  // Arrange: a window whose recorded process no longer exists and which is killed between writing its reservation beside the marker and moving it into place. Both windows are fixed, of one machine, boot and pid namespace: nothing here needs the identity of this test process or its start.
   const wiki = await createWikiFolder()
   let isKilled = false
   const { claimWikiUpdateMarker: claimAsKilledWindow } = await loadModule<
@@ -1592,12 +1597,16 @@ test('the reservation a window wrote beside the marker and could not move over i
     },
   })
   try {
-    const killed = await claimAsKilledWindow(wiki.outputDirectory, {
-      pid: ID_OF_NO_PROCESS,
-      windowId: 'killed-editor',
-      host: 'vscode',
-      startedAtMs: Date.now(),
-    })
+    const killed = await claimAsKilledWindow(
+      wiki.outputDirectory,
+      {
+        pid: ID_OF_NO_PROCESS,
+        windowId: 'killed-editor',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
     assert.ok('reserve' in killed)
     const reserving = await killed.reserve(Date.now()).then(
       () => 'reserved',
@@ -1608,12 +1617,16 @@ test('the reservation a window wrote beside the marker and could not move over i
     ).length
 
     // Act: another window starts on the killed window's marker, runs and ends.
-    const next = await claimWikiUpdateMarker(wiki.outputDirectory, {
-      pid: process.pid,
-      windowId: 'window-a',
-      host: 'vscode',
-      startedAtMs: Date.now(),
-    })
+    const next = await claimWikiUpdateMarker(
+      wiki.outputDirectory,
+      {
+        pid: process.pid,
+        windowId: 'window-a',
+        host: 'vscode',
+        startedAtMs: Date.now(),
+      },
+      AS_THIS_WINDOW,
+    )
     assert.ok('release' in next)
     await next.release()
 
