@@ -1,8 +1,10 @@
 import { resolve } from 'node:path'
+import { setTimeout as sleepFor } from 'node:timers/promises'
 
 import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
+import { findWikiUpdateStartBlock } from '../../utils/findWikiUpdateStartBlock'
 import {
   inspectDeepWikiFreshness,
   type WikiFreshness,
@@ -40,11 +42,12 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
   | 'candidate-listing'
+  | 'journal-wait'
   | 'publish-token-read'
 
 /**
@@ -73,7 +76,7 @@ export type HeldUpdateStep =
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
- * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
+ * @returns What the window showed (chat requests, every editor command the extension ran in order (`executedCommands`: its name, and for the chat request the name followed by " with the update request"), notifications by severity, the buttons each notification offered, confirmations with their detail text, progress titles), how often its looks read the watch stamp (`stampReads` counts the reads that began, `stampReadsDone` those that returned, so a test can wait for a look instead of for an amount of time) and listed the candidates, the two update entries, the state snapshot, `openWorkspace` (makes the window answer another folder as its opened project from then on), `hold` (keeps one awaited step of the next start open until `release()`, so a test can close the window in the middle of it) `openDocument`, `openTerminal` and `runTerminalCommand` (what the editor reports when a file is opened, by the chat or by the learner, a terminal opens or a command starts there), `signListenerCount` (how many listeners for these events the extension holds) and `close`.
  *
  * @example
  * ```ts
@@ -127,7 +130,11 @@ export async function openWikiUpdateWindow(options: {
   confirmations: string[]
   confirmationDetails: string[]
   progressTitles: string[]
-  looks: { candidateListings: number; stampReads: number }
+  looks: {
+    candidateListings: number
+    stampReads: number
+    stampReadsDone: number
+  }
   openWorkspace(nextProjectRoot: string): void
   openDocument(path: string, scheme?: string): void
   openTerminal(): void
@@ -179,7 +186,7 @@ export async function openWikiUpdateWindow(options: {
   const confirmations: string[] = []
   const confirmationDetails: string[] = []
   const progressTitles: string[] = []
-  const looks = { candidateListings: 0, stampReads: 0 }
+  const looks = { candidateListings: 0, stampReads: 0, stampReadsDone: 0 }
   const commands = new Map<string, () => Promise<void>>()
   const holds = new Map<
     HeldUpdateStep,
@@ -335,6 +342,16 @@ export async function openWikiUpdateWindow(options: {
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
         : {}),
+      // The real start check runs; a test that holds its wait at a fresh journal decides when the second look comes, and otherwise the real time passes.
+      './utils/findWikiUpdateStartBlock': {
+        findWikiUpdateStartBlock: (outputDirectory: string) =>
+          findWikiUpdateStartBlock(outputDirectory, {
+            wait: async (delayMs: number) => {
+              if (holds.has('journal-wait')) await passHold('journal-wait')
+              else await sleepFor(delayMs)
+            },
+          }),
+      },
       // The real listing runs; the window only counts how often a look parsed the candidates, and can keep one listing open after it has read the folder.
       './utils/listWikiCandidates': {
         listWikiCandidates: async (outputDirectory: string) => {
@@ -352,9 +369,11 @@ export async function openWikiUpdateWindow(options: {
       },
       // The real stamp is read; the window only counts the looks of a watch or of a Cursor run.
       './utils/readWikiWatchStamp': {
-        readWikiWatchStamp: (outputDirectory: string) => {
+        readWikiWatchStamp: async (outputDirectory: string) => {
           looks.stampReads += 1
-          return readWikiWatchStamp(outputDirectory)
+          const stamp = await readWikiWatchStamp(outputDirectory)
+          looks.stampReadsDone += 1
+          return stamp
         },
       },
       './utils/readWikiPublishToken': {

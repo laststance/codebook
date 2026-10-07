@@ -187,7 +187,7 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
       ['vscode', 'kept'],
     )
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.equal(wiki.notices.length, 1)
     assert.match(
@@ -233,7 +233,7 @@ test('every Wiki update shows one progress notification that can be cancelled, a
 
     // Assert
     assert.deepEqual(vsCodeWiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.deepEqual(cursorWiki.progressTitles, [
       'Updating LLM Wiki with Cursor Agent',
@@ -719,7 +719,7 @@ test('the update command and the browser link pressed while the first start is s
       ['workbench.action.chat.open'],
     )
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
@@ -1065,6 +1065,54 @@ test('a window that closes while the VS Code chat is still opening waits until t
   }
 })
 
+// Value: protects=what a window leaves beside the Wiki when it closes while the failed end of a start that threw is being recorded; fails_when=the run counts as settled before that end is recorded, so the closing window finds no run, does not wait, and the marker stays on disk until another window takes it over; why_new=Cycle 0046 row 260; seam=the editor's registration of a listener, which throws, and the read of the publish token the run's end begins with, which is kept open
+test('a window that closes while the failed end of a start that threw is being recorded waits for it, and the marker is gone when the close returns', async () => {
+  // Arrange: the editor refuses the listener for opened documents, so the start throws; the start checks read the publish token twice, and the third read, the one the run's end begins with, is kept open.
+  const wiki = await openWikiWindow({
+    signWatchFails: 'The editor refused the listener.',
+  })
+  try {
+    const firstCheck = wiki.hold('publish-token-read')
+    const click = wiki.clickUpdate()
+    await firstCheck.started
+    firstCheck.release()
+    const lastCheck = wiki.hold('publish-token-read')
+    await lastCheck.started
+    lastCheck.release()
+    const endOfTheRun = wiki.hold('publish-token-read')
+    await endOfTheRun.started
+
+    // Act: the window closes; the close is given a tenth of a second in which it must not return.
+    const closing = wiki.closeWindow()
+    const closeWhileTheEndIsRecorded = await Promise.race([
+      closing.then(() => 'the close returned'),
+      new Promise((resolveWait) =>
+        setTimeout(() => resolveWait('the close waits'), 100),
+      ),
+    ])
+    endOfTheRun.release()
+    await closing
+    const markerWhenClosed = await access(
+      `${wiki.outputDirectory}.update-run.json`,
+    ).then(
+      () => 'on disk',
+      () => 'gone',
+    )
+    await click
+
+    // Assert
+    assert.equal(closeWhileTheEndIsRecorded, 'the close waits')
+    assert.equal(markerWhenClosed, 'gone')
+    const status = wiki.status()
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'The editor refused the listener.',
+    )
+  } finally {
+    await wiki.close()
+  }
+})
+
 test(
   'a Cursor agent that does not stop is not waited for longer than the termination grace when the window closes',
   { timeout: 5_000 },
@@ -1348,10 +1396,23 @@ function manualAnswerClock(): {
   }
 }
 
-/** Waits until the window handed its request to the chat, so the answer's bound runs from then on. */
-async function waitForChatRequest(chatRequests: unknown[]): Promise<void> {
+/** Waits until the window handed its request to the chat, so the answer's bound runs from then on; `count` is the number of requests waited for (the second press's request is the second). It gives up after six seconds, and the test's assertion then fails. */
+async function waitForChatRequest(
+  chatRequests: unknown[],
+  count = 1,
+): Promise<void> {
   const deadline = Date.now() + 6_000
-  while (chatRequests.length === 0 && Date.now() < deadline)
+  while (chatRequests.length < count && Date.now() < deadline)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+}
+
+/** Waits until the window has read the watch stamp to the end `total` times in all. Three reads more than the count at some moment mean that a look which began after that moment has been taken whole: the first read may have begun before, the second sees what was written since, and the third begins only when the second's look is done. It gives up after six seconds, and the test's assertion then fails. */
+async function waitForStampReads(
+  looks: { stampReadsDone: number },
+  total: number,
+): Promise<void> {
+  const deadline = Date.now() + 6_000
+  while (looks.stampReadsDone < total && Date.now() < deadline)
     await new Promise((resolveWait) => setTimeout(resolveWait, 10))
 }
 
@@ -1572,6 +1633,40 @@ test('a request that is still pending after the chat’s Cancel returned is repo
       status.state === 'failed' ? status.reason : '',
       'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
     )
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the page and the notice when the chat reaches its first approval while Codebook takes the request back at the bound (the learner showed another session, so the chat's Cancel acted there); fails_when=the return of the chat command at that approval is taken for the end of the request, so the page says "took its request back, so no update is running" while the chat waits for an approval and can publish with no watch; why_new=Cycle 0046 row 257; seam=the editor's commands, of which the chat's Cancel leaves the request alone and the chat then asks for an approval
+test('a chat that asks for its first approval while Codebook takes the request back at the bound is reported as a request that may still be in the chat, not as an update that is not running', async () => {
+  // Arrange: the Cancel stops nothing of this request; the chat command returns at the chat's first approval.
+  const { clock, sleep } = manualAnswerClock()
+  const request = heldChatRequest()
+  const wiki = await openWikiWindow({
+    chatReply: request.chatReply,
+    chatAnswerClock: { sleep },
+    editorCommand: (name) => {
+      if (name === 'workbench.action.chat.cancel')
+        request.end({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+  })
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+
+    // Act
+    clock.advance(30_000)
+    await press
+
+    // Assert: the run has ended, with no watch.
+    const status = wiki.status()
+    assert.equal(status.state, 'failed')
+    assert.equal(
+      status.state === 'failed' ? status.reason : '',
+      'Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.',
+    )
+    assert.deepEqual(wiki.progressTitles, [])
   } finally {
     await wiki.close()
   }
@@ -1935,7 +2030,7 @@ test('a chat whose reply waits for a confirmation 20 seconds after it took the r
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -2030,9 +2125,9 @@ test('a chat that shows a first sign after 5 seconds and completes its reply aft
       () => 'on disk',
       () => 'gone',
     )
-    // The next press is given half a second to send its request; its chat then opens the manifest too, so the press ends.
+    // The next press is waited for until it has sent its request; its chat then opens the manifest too, so the press ends.
     const nextPress = wiki.clickUpdate()
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500))
+    await waitForChatRequest(wiki.chatRequests, 2)
     const requestsAfterTheNextPress = wiki.chatRequests.length
     wiki.openDocument(wiki.manifestPath)
     await nextPress
@@ -2103,9 +2198,9 @@ test('a chat whose reply waits for a confirmation after its first sign stays wat
     wiki.openDocument(wiki.manifestPath)
     await press
 
-    // Act: the chat asks to approve a command; ten looks of the watch pass.
+    // Act: the chat asks to approve a command; a look of the watch that began after that is taken whole.
     request.end({ type: 'confirmation', kind: 'toolInvocation' })
-    await new Promise((resolveWait) => setTimeout(resolveWait, 200))
+    await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
 
     // Assert
     assert.equal(wiki.status().state, 'running')
@@ -2181,17 +2276,18 @@ test('a folder the publisher prepares beside the Wiki counts as the chat’s wor
   try {
     const press = wiki.clickUpdate()
     await waitForChatRequest(wiki.chatRequests)
-    // The first look at the output has been taken by now.
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    // The first read of the output's stamp, the one every later look is compared with, has returned.
+    await waitForStampReads(wiki.looks, 1)
 
-    // Act: the publisher prepares a folder with its receipt; two seconds later Codebook looks again; then the bound passes.
+    // Act: the publisher prepares a folder with its receipt; two seconds later Codebook reads the stamp again; then the bound passes.
     await mkdir(preparedFolder)
     await writeFile(
       join(preparedFolder, 'codebook-publication.json'),
       JSON.stringify({ schemaVersion: 1, kind: 'candidate' }),
     )
     clock.advance(2_000)
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+    await waitForStampReads(wiki.looks, 2)
+    await new Promise((resolveWait) => setImmediate(resolveWait))
     clock.advance(28_000)
     // The settle time of a withdrawal passes as well.
     await new Promise((resolveWait) => setImmediate(resolveWait))
@@ -2804,14 +2900,14 @@ test('rewriting the manifest file without a publish is not recorded as Updated',
       await readFile(wiki.manifestPath),
     )
     await rename(`${wiki.manifestPath}.copy`, wiki.manifestPath)
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
     const afterSameBytes = wiki.status().state
     // Then other bytes are written, again without the publisher: no receipt names them.
     await writeFile(
       wiki.manifestPath,
       `${await readFile(wiki.manifestPath, 'utf8')}\n`,
     )
-    await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+    await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
     const afterOtherBytes = wiki.status().state
 
     // Assert
@@ -2934,7 +3030,7 @@ test('the confirmation of the browser’s update link says that the request goes
       'Update this project’s LLM Wiki with the editor agent?',
     ])
     assert.deepEqual(wiki.confirmationDetails, [
-      `${wiki.projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.`,
+      `${wiki.projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.`,
     ])
   } finally {
     await wiki.close()
@@ -2976,7 +3072,7 @@ test('the notification that watches an update started with the command says that
     // Assert: the command asked for no confirmation.
     assert.deepEqual(wiki.confirmations, [])
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -2995,7 +3091,7 @@ test('the notification that watches an update says when the watch ends and that 
 
     // Assert
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -3052,14 +3148,14 @@ test('the confirmation of an update whose output lies outside the project says t
 
     // Assert
     assert.deepEqual(fromTheLink.confirmationDetails, [
-      `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
+      `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
     ])
     for (const [window, running] of [
       [fromTheLink, runningFromTheLink],
       [fromTheCommand, runningFromTheCommand],
     ] as const) {
       assert.deepEqual(window.progressTitles, [
-        `Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel. ${approvalsNote}`,
+        `Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel. ${approvalsNote}`,
       ])
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,
@@ -3083,16 +3179,23 @@ test(
     // Another chat's publish is in progress: its journal was written just now.
     await writeFile(journalPath, '{}')
     try {
+      const journalWait = wiki.hold('journal-wait')
+
       // Act: that publish lands while the start check waits for its second look at the journal.
       const press = wiki.clickUpdate()
-      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      const reached = await Promise.race([
+        journalWait.started.then(() => 'the start check waits at the journal'),
+        press.then(() => 'the start ended without a wait at the journal'),
+      ])
       await wiki.publish('c'.repeat(64))
       await rm(journalPath)
+      journalWait.release()
       await press
-      // The watch makes several looks at the folder.
-      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      // The watch takes a whole look at the folder.
+      await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
 
       // Assert
+      assert.equal(reached, 'the start check waits at the journal')
       assert.equal(wiki.status().state, 'running')
       assert.equal(wiki.chatRequests.length, 1)
       assert.deepEqual(wiki.notices, [])

@@ -14,7 +14,7 @@ test('with the New Chat command the confirmation says that the request goes into
   // Assert
   assert.equal(
     sentences,
-    'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
+    'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
   )
 })
 
@@ -28,4 +28,22 @@ test('without the New Chat command the confirmation says that the request goes i
     sentences,
     'Copilot Chat receives the update request for this project in the chat that is open, like a message you typed: it waits behind a request in progress, a request that waits for your confirmation is cancelled, and a draft in the chat’s input is replaced by the request.',
   )
+})
+
+// Value: protects=the truth of the confirmation and of the notification when the Chat view opens for the first time in a window, where New Chat may find no chat to renew and the request goes into the chat the view restores; fails_when=one of the two texts promises a new chat without naming that case; why_new=Cycle 0046 row 261; seam=none
+test('the confirmation of an editor with New Chat names the Chat view that has not been opened yet, and the confirmation of an editor without New Chat does not', () => {
+  // Act
+  const withNewChat = describeWikiChatHandOver([
+    'workbench.action.chat.newChat',
+  ])
+  const withoutNewChat = describeWikiChatHandOver([])
+
+  // Assert
+  assert.equal(
+    withNewChat.includes(
+      ' If the Chat view has not been opened in this window yet, the request may go into the chat it restores. ',
+    ),
+    true,
+  )
+  assert.equal(withoutNewChat.includes('restores'), false)
 })
