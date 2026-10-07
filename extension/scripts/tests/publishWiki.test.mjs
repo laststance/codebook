@@ -2563,6 +2563,362 @@ for (const [label, content, error] of [
   })
 }
 
+// Value: protects=the rule that a page handed in as an article holds no document, form, script or authored SVG, which the publisher checks on the raw text of the page on purpose; fails_when=the check starts to skip comments or attribute values, so that a place it takes for a comment where a browser reads none could hide a real element from it, or the rule changes unnoticed in the other direction; why_new=Cycle 0046 row 192 (the rule was decided and is stated at the check; this pins it); seam=none
+for (const [place, content, sentence] of [
+  [
+    'a comment that shows a script',
+    '<h2 id="flow">Source flow</h2><!-- <script>track()</script> -->',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <script>.',
+  ],
+  [
+    'an attribute value that shows a form',
+    '<h2 id="flow">Source flow</h2><p title="put it into a <form> element">Where the question goes.</p>',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <form>.',
+  ],
+  [
+    'a comment that shows authored SVG',
+    '<h2 id="flow">Source flow</h2><!-- <svg><text>An old graph</text></svg> -->',
+    'Wiki page index.html must use diagram records and figure slots instead of authored SVG.',
+  ],
+])
+  test(`a page with ${place} is refused like a page that holds the element: the publisher reads the page as raw text`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-raw-text-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = content
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a page that uses a custom element whose name starts with the name of an element a page must not hold; fails_when=the check takes the hyphen for the end of the name again, so `<link-card>`, `<main-nav>`, `<template-part>` or `<svg-icon>` is refused as a link, a main, a template or authored SVG; why_new=Cycle 0046 row 207 (the names ended at a word boundary, and a hyphen is one); seam=none
+test('a page with custom elements whose names start with the name of an element a page must not hold is published: a name is matched whole', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-custom-element-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<h2 id="flow">Source flow</h2><link-card>A card</link-card><main-nav>Parts</main-nav><template-part>One part</template-part><svg-icon></svg-icon>'
+    manifest.pages[0].contentHtml = content
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the rule that a page holds no document part, link or authored SVG, however the tag goes on after its name; fails_when=matching a name whole lets through a tag whose name is followed by a slash, a line end or the tag's end; why_new=Cycle 0046 row 207; seam=none
+for (const [element, sentence] of [
+  [
+    '<main>',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <main>.',
+  ],
+  [
+    '<link/>',
+    'Wiki page index.html must contain article sections, not a document, form or script: it holds <link>.',
+  ],
+  [
+    '<svg\nwidth="10">',
+    'Wiki page index.html must use diagram records and figure slots instead of authored SVG.',
+  ],
+])
+  test(`a page that holds ${JSON.stringify(element)} is still refused: the name is whole there`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-whole-name-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        { message: sentence },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the agent's way from the refusal to the place in a long page; fails_when=the refusal for an element a page must not hold no longer names the element it found, so the agent has to search the page for two dozen names, or names another than the first one, or copies the page's capitals or the slash of an end tag into the name; why_new=Cycle 0046 row 205 (the sentence named the page alone); seam=none
+test('the refusal for an element a page must not hold names the first one it found, in small letters and without the slash of an end tag', async () => {
+  // Arrange: a page whose first such tag is the end tag of a form in capitals inside a comment, with a template after it; and a page that holds a meta element.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-names-element-')),
+  )
+  try {
+    const endTagInCapitals = await readerInput(root)
+    endTagInCapitals.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><!-- </FORM> --><template></template>'
+    const metaElement = await readerInput(root)
+    metaElement.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><meta charset="utf-8">'
+
+    // Act
+    const refusals = []
+    for (const manifest of [endTagInCapitals, metaElement])
+      refusals.push(
+        await renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }).then(
+          () => 'published',
+          (error) => error.message,
+        ),
+      )
+
+    // Assert
+    assert.deepEqual(refusals, [
+      'Wiki page index.html must contain article sections, not a document, form or script: it holds <form>.',
+      'Wiki page index.html must contain article sections, not a document, form or script: it holds <meta>.',
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a page that writes about such elements in an escaped code example, as the bundled skill asks for source code; fails_when=the raw-text check takes escaped text for a tag, so an article about a form or a script can no longer be published; why_new=Cycle 0046 row 192; seam=none
+test('a page that shows a form, a script and authored SVG as escaped text is published with the text as authored', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-escaped-text-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><pre><code>&lt;form&gt;&lt;script&gt;send()&lt;/script&gt;&lt;/form&gt;&lt;svg&gt;&lt;/svg&gt;</code></pre>'
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(
+      html.includes(
+        '<h2 id="flow">Source flow</h2><pre><code>&lt;form&gt;&lt;script&gt;send()&lt;/script&gt;&lt;/form&gt;&lt;svg&gt;&lt;/svg&gt;</code></pre>',
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page, on whose tags and ids the publisher and a browser must agree: the publisher follows a browser's reading of markup by a pattern, which holds only for markup written plainly; fails_when=a page is published although a `<` of its content begins something a browser reads by other rules (a `<?` or `<!` that is no comment, a CDATA section, a quotation mark that is no attribute's value, a tag or a quoted value that never ends, a bare value with a character a browser takes for an error, an end tag with an attribute, an attribute named twice, an id written with a character reference the publisher does not read), so an id of the reader could stand twice unseen, an outline entry could lead nowhere, or the rest of the page could be taken into an attribute; why_new=Cycle 0046 row 206 (the class of rows 134, 184, 193 and 194, closed by refusing what is not read exactly; it replaces row 193's allowance of a `<` in a bare attribute value); seam=none
+for (const [what, markup, place] of [
+  [
+    'a `<?` that a browser reads as a comment up to the next `>`',
+    '<? <b <h3 id="after">After</h3>',
+    '<? <b <h3 id="after">After</h3>',
+  ],
+  ['a `<!` that is no comment', '<!x <b>', '<!x <b>'],
+  [
+    'a CDATA section',
+    '<math><![CDATA[<h3 id="inside">Inside</h3>]]></math>',
+    '<![CDATA[<h3 id="inside">Inside</h3>]]><',
+  ],
+  [
+    'a quotation mark that is no attribute’s value',
+    '<p a"b>The text says id=fake here" </p>',
+    '<p a"b>The text says id=fake here" </p>',
+  ],
+  [
+    'a quoted attribute value that never ends',
+    '<a href="pages/details.html>More</a>',
+    '<a href="pages/details.html>More</a>',
+  ],
+  [
+    'a bare attribute value that holds a `<`',
+    '<p title=<!-- >A note</p><h3 id="qa-form">The form</h3>',
+    '<p title=<!-- >A note</p><h3 id="qa-form',
+  ],
+  [
+    'a bare attribute value that holds an `=`',
+    '<p title=a=b>A note</p>',
+    '<p title=a=b>A note</p>',
+  ],
+  ['an end tag with an attribute', '<p>A note</p id="note">', '</p id="note">'],
+  [
+    'a tag that never ends',
+    '<p>A note</p><div class="more"',
+    '<div class="more"',
+  ],
+  [
+    'an attribute named twice',
+    '<h3 id="note" id="qa-form">A note</h3>',
+    '<h3 id="note" id="qa-form">A note</h3>',
+  ],
+  [
+    'an id written with a character reference without its semicolon',
+    '<h3 id="qa&#45form">The form</h3>',
+    '<h3 id="qa&#45form">The form</h3>',
+  ],
+  [
+    'an id written with a named character reference the publisher does not read',
+    '<p id="a&lowbar;b">A note</p>',
+    '<p id="a&lowbar;b">A note</p>',
+  ],
+])
+  test(`a page with ${what} is refused with the sentence that names the place and says what to write`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-read-exactly-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${markup}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message: `Wiki page index.html has markup the publisher cannot read exactly as a browser does; write a < of the text as &lt;, close every tag and every quotation mark, quote an attribute value, name an attribute once and write an id as plain text; it starts: ${place}`,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=the markup an article is written in, which the rule above must not refuse; fails_when=the publisher refuses a `<` that is text for a browser (before a space, a digit or the page's end), a tag with a slash before its end, a bare attribute value, an attribute directly after a closing quote, an ampersand in an address, an id written with `&amp;` or a numeric reference, a custom element, or mathematics with an id inside, whose id it must read and rename like any other; why_new=Cycle 0046 row 206 (the rule was run over the 104 pages of the real Wikis on this machine first and refused none); seam=none
+test('a page whose every < is text, a comment that ends, an end tag or a plainly written start tag is published as authored, and an id inside mathematics is read like any other', async () => {
+  // Arrange: the forms an article uses, and a mathematics element one of whose parts carries an id of the reader.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-read-exactly-ok-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const authored =
+      '<h2 class="title"id="flow">Source flow</h2><p>When a < b and 1 <2, see <!-- a note --> the list.</p>' +
+      '<p data-level=2 title=\'it says "a > b"\'>A line<br/>and <img src=pages/a.png alt="A figure" /> a figure.</p>' +
+      '<p id="read&amp;write"><a href="pages/details.html?from=overview&part=2#more">More</a> <code-sample language=ts>let a</code-sample></p>' +
+      '<math><mi id="qa-form">x</mi></math><p>The end <'
+    manifest.pages[0].contentHtml = authored
+    manifest.pages.push({
+      path: 'pages/details.html',
+      title: 'Details',
+      section: 'Guide & concepts',
+      contentHtml: '<h2 id="more">More</h2><p>Explained from source.</p>',
+      sources: [{ path: 'source.ts', line: 1 }],
+      outline: [{ id: 'more', label: 'More' }],
+    })
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert: everything as authored, but for the id of the reader inside the mathematics, which is renamed.
+    assert.ok(
+      html.includes(
+        authored.replace(
+          '<mi id="qa-form">x</mi>',
+          '<mi id="page-qa-form">x</mi>',
+        ),
+      ),
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the reader's own controls and the publisher's reading of a page that holds a select element; fails_when=a select is published: a browser drops or rearranges tags inside it by rules of its own, so an id the publisher reads there may be no element; why_new=Cycle 0046 row 206; seam=none
+test('a page that holds <select> is refused like a page that holds a form or a script', async () => {
+  // Arrange
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-select-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    manifest.pages[0].contentHtml =
+      '<h2 id="flow">Source flow</h2><select><option>One</option></select>'
+
+    // Act / Assert
+    await assert.rejects(
+      renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      }),
+      {
+        message:
+          'Wiki page index.html must contain article sections, not a document, form or script: it holds <select>.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page, whose tags and ids the publisher and a browser must read alike, and the reader's own form, rail and script after the article; fails_when=a page with an element whose content a browser reads as text (or keeps out of the document, as a template's) is published: the publisher reads tags in that content that are none, and one such element that is never closed takes everything after it; why_new=Cycle 0046 row 193; seam=none
+for (const [name, element] of [
+  ['textarea', '<textarea>Notes</textarea>'],
+  ['xmp', '<xmp><b>shown as text</b></xmp>'],
+  ['noembed', '<noembed>No plug-in</noembed>'],
+  ['noframes', '<noframes>No frames</noframes>'],
+  ['plaintext', '<plaintext>'],
+  ['noscript', '<noscript><p>No script</p></noscript>'],
+  ['template', '<template><h3 id="hidden">Not in the page</h3></template>'],
+])
+  test(`a page that holds <${name}> is refused like a page that holds a form or a script`, async () => {
+    // Arrange
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-text-element-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2>${element}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message: `Wiki page index.html must contain article sections, not a document, form or script: it holds <${name}>.`,
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
 // Value: protects=a page that explains the reader's own markup, for example a section about how diagrams are published; fails_when=the diagram renderer reads the page's text again, so a page that only shows a generated diagram id in an escaped code example or inside a comment is refused as if an element carried it; why_new=Cycle 0046 row 184 (the check looked for the text id="codebook-diagram-…" anywhere in the page's content); seam=none
 test('a page that only shows a generated diagram id in an escaped code example or inside a comment is published', async () => {
   // Arrange: the diagram "flow" generates the ids codebook-diagram-4-flow, …-title and …-arrow; the page shows two of them as text and none on an element.
@@ -2631,8 +2987,8 @@ for (const [form, element] of [
     }
   })
 
-// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot again, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only); seam=none
-test('reader refuses a slot inside a comment that never ends instead of generating the figure into the comment', async () => {
+// Value: protects=the figure of a diagram, which the learner must see; fails_when=a slot inside a comment that never ends is taken for a slot, so the figure is generated into a comment and the page is published without it; why_new=Cycle 0046 row 184 (the comment check knew closed comments only), and row 194, since which such a page is refused for its comment before any diagram is read; seam=none
+test('a slot inside a comment that never ends is not rendered into the comment: the page is refused for its comment', async () => {
   // Arrange: the page's only slot stands after the start of a comment that has no end.
   const root = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-diagram-slot-open-comment-')),
@@ -2648,7 +3004,78 @@ test('reader refuses a slot inside a comment that never ends instead of generati
         projectRoot: root,
         outputDirectory: join(root, '.codebook/wiki'),
       }),
-      { message: 'Diagram figure slots must not be inside HTML comments.' },
+      {
+        message:
+          'Wiki page index.html has a comment that never ends; close it with -->.',
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=a published page's question form, rail and script, which stand after the article; fails_when=a page whose content holds a comment that never ends is published: a browser reads the rest of the article and everything after it as comment, so the page has no question form, no rail and runs no script (observed in the DOM check's browser on the page as published before); why_new=Cycle 0046 row 194; seam=none
+for (const [form, comment] of [
+  ['has no end', '<!-- to do'],
+  ['has a space inside its end', '<!-- to do -- >'],
+  ['has another character inside its end', '<!-- to do --!->'],
+])
+  test(`a page whose comment ${form} is refused with the sentence that says how to close it`, async () => {
+    // Arrange: the comment stands after the page's last paragraph.
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), 'codebook-reader-endless-comment-')),
+    )
+    try {
+      const manifest = await readerInput(root)
+      manifest.pages[0].contentHtml = `<h2 id="flow">Source flow</h2><p>Explained from source.</p>${comment}`
+
+      // Act / Assert
+      await assert.rejects(
+        renderWikiPages(manifest, {
+          projectRoot: root,
+          outputDirectory: join(root, '.codebook/wiki'),
+        }),
+        {
+          message:
+            'Wiki page index.html has a comment that never ends; close it with -->.',
+        },
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+// Value: protects=a page with comments in every form a browser ends, and the headings after them; fails_when=the publisher takes a comment that ends with "--!>", or the comments "<!-->" and "<!--->", or a "<!--" inside an attribute value for a comment that runs on, so it refuses a page a browser reads whole, or no longer sees the anchors after such a place; why_new=Cycle 0046 row 194 (each form was run in the DOM check's browser); seam=none
+test('a page whose comments end is published in every form a browser takes for the end of a comment, and the anchors after each are read', async () => {
+  // Arrange: a comment that ends with -->, one that ends with --!>, the comments <!--> and <!--->, and a title that only shows the start of a comment; a heading follows each.
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), 'codebook-reader-closed-comments-')),
+  )
+  try {
+    const manifest = await readerInput(root)
+    const content =
+      '<!-- one --><h2 id="one">One</h2><!-- two --!><h2 id="two">Two</h2>' +
+      '<!--><h2 id="three">Three</h2><!---><h2 id="four">Four</h2>' +
+      '<p title="<!--">A title that shows the start of a comment.</p><h2 id="five">Five</h2>'
+    manifest.pages[0].contentHtml = content
+    manifest.pages[0].outline = ['one', 'two', 'three', 'four', 'five'].map(
+      (id) => ({ id, label: `Part ${id}` }),
+    )
+
+    // Act
+    const html = (
+      await renderWikiPages(manifest, {
+        projectRoot: root,
+        outputDirectory: join(root, '.codebook/wiki'),
+      })
+    ).get('index.html')
+
+    // Assert
+    assert.ok(html.includes(content))
+    assert.ok(
+      html.includes(
+        '<ul class="outline"><li><a href="#one">Part one</a></li><li><a href="#two">Part two</a></li><li><a href="#three">Part three</a></li><li><a href="#four">Part four</a></li><li><a href="#five">Part five</a></li></ul>',
+      ),
     )
   } finally {
     await rm(root, { recursive: true, force: true })

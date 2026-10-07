@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import { canJudgeOwnerHere } from '../utils/canJudgeOwnerHere'
 
+import { requireOwnPidNamespace } from './utils/requireOwnPidNamespace'
 import { startOfKilledWindow } from './utils/startOfKilledWindow'
 
 /** A WSL window of the computer "workstation": a Linux process of the pid namespace 4026531836, begun at clock tick 16362446. The digests are the first 16 hex characters of the SHA-256 of "machine-a" and of "workstation". */
@@ -98,9 +99,11 @@ test('an owner whose start has another system’s form cannot be judged here, no
   assert.equal(ofAnotherMachine, false)
 })
 
-// Value: protects=a window whose own start could not be read still takes over what a killed window of its system and its pid namespace left: its form is then the one every start it reads here has; fails_when=an identity without a start has no form, or on Linux one without the pid namespace, so every record with a start counts as one of another space and no stale lock is taken over for the 60 s until the own start is read again (Cycle 0046 rows 58 and 65); why_new=the predicate is new; seam=none (the platform and the pid namespace this test runs in)
+// Value: protects=a window whose own start could not be read still takes over what a killed window of its system and its pid namespace left: its form is then the one every start it reads here has; fails_when=an identity without a start has no form, or on Linux one without the pid namespace, so every record with a start counts as one of another space and no stale lock is taken over for the 60 s until the own start is read again (Cycle 0046 rows 58 and 65); why_new=the predicate is new; seam=none (the platform and the pid namespace this test runs in; it ends with a sentence that names the link where Linux cannot read that namespace, Cycle 0046 row 195)
 test('a window whose own start is unknown judges an owner whose start has the form of the platform it runs on, and no other', () => {
-  // Arrange: a start in the form every start read in this process has (on Linux with this pid namespace), and one in a form no platform answers. The window knows its host name and its digest, not its own start.
+  // Arrange: the window is this test process itself, whose form is asked of the system; its record of a project folder is judged only where it names its pid namespace.
+  requireOwnPidNamespace()
+  // A start in the form every start read in this process has (on Linux with this pid namespace), and one in a form no platform answers. The window knows its host name and its digest, not its own start.
   const windowWithoutItsStart = {
     hostname: 'workstation',
     hostKey: 'd195d36bd79da7df',

@@ -469,9 +469,8 @@ test('a server stop bound past a break location between the two generated places
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:3 bound at 7:3, refused: line 5 between the declared line 3 and line 7 has a break location. Frozen source map positions in the selected citation: 3:2, 4:8, 5:3, 6:1, 7:3, 8:1. ${MAPPING_HINTS}`,
   )
-  // The refused place is judged when the module is announced and again when the receipt is read at the pause; every judgement names the same lines.
-  assert.deepEqual(
-    journaled(harness, 'breakpoint.rule-from-break-locations').at(-1),
+  // The refusal judged when the module was announced stands when the receipt is read at the pause: one entry.
+  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
     {
       participant: 'server',
       declared: { line: 3, column: 1 },
@@ -482,8 +481,68 @@ test('a server stop bound past a break location between the two generated places
         bound: { line: 7, column: 3 },
       },
     },
-  )
+  ])
   assert.equal(harness.run.view().snapshots.length, 0)
+})
+
+// Cycle 0046 (row 131): red while a binding the break locations refuse was judged again at every read of its receipt, so one refused stop left two equal `breakpoint.rule-from-break-locations` entries and asked the debugger twice.
+test('a server stop whose binding the break locations refuse leaves one journal entry of that judgement and one request for the break locations, although its receipt is read again at the pause', async (context) => {
+  // Arrange: the function head over lines 1 to 3 is mapped, and the debugger lists a break location on the parameter line (generated 1:2) and on the first statement (generated 3:2). The module is announced, then the adapter's news names 4:3, which is judged and refused as it arrives; the runtime pauses there afterwards.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 1, columnNumber: 2 },
+    { lineNumber: 3, columnNumber: 2 },
+  ])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.pauseAt('server', 3, 2)
+  harness.bindAt('server', 4, 3)
+  harness.movePausedFrame(4, 3)
+  harness.expireSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  harness.announceBreakpointVerified('server', 4, 3)
+  await waitUntil(
+    () => journaled(harness, 'breakpoint.rule-from-break-locations').length,
+    'news judged by the break locations',
+  )
+  // Act
+  harness.emitPause('server')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    return view.status === 'failed' || view.snapshots.length > 0
+  }, 'the stop was refused or captured')
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 4:3, refused: line 2 between the declared line 1 and line 4 has a break location. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:3, 5:1. ${MAPPING_HINTS}`,
+  )
+  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
+    {
+      participant: 'server',
+      declared: { line: 1, column: 1 },
+      boundLine: 4,
+      breakLocationLines: [2, 4],
+      generatedPlaces: {
+        requested: { line: 1, column: 1 },
+        bound: { line: 4, column: 3 },
+      },
+    },
+  ])
+  assert.equal(
+    harness.breakLocationRequests.filter((request) => !request.end).length,
+    1,
+  )
 })
 
 // Cycle 0046 (row 77): when the binding's generated place cannot be known, every line with a break location counts, as before the generated places were compared; red if an unknown place were read as "nothing between".
@@ -514,15 +573,15 @@ test('a server stop whose reported place the debugger lists no break location at
     harness.run.view().failures[0],
     `Error: Declared stop src/mode.ts:3 bound at 7:1, refused: line 4 between the declared line 3 and line 7 has a break location. Frozen source map positions in the selected citation: 3:2, 4:8, 5:3, 6:1, 7:3, 8:1. ${MAPPING_HINTS}`,
   )
-  assert.deepEqual(
-    journaled(harness, 'breakpoint.rule-from-break-locations')[0],
+  // The refusal judged when the news arrived stands when the receipt is read before the input: one entry.
+  assert.deepEqual(journaled(harness, 'breakpoint.rule-from-break-locations'), [
     {
       participant: 'server',
       declared: { line: 3, column: 1 },
       boundLine: 7,
       breakLocationLines: [4, 7],
     },
-  )
+  ])
   assert.equal(
     harness.commands.some((command) => command.method.startsWith('Input.')),
     false,
@@ -599,4 +658,260 @@ test('a server stop judged from its reported place before the pause is judged on
       },
     },
   ])
+})
+
+// Cycle 0046 (row 162): red while `dap.server-breakpoint-browser-stop-resumed` was journaled before the `continue` was sent, so a resume the adapter refused left an entry that said the page was resumed.
+test('a page pause at a server stop’s breakpoint whose resume the adapter refuses leaves the request in the journal and no entry that says resumed', async (context) => {
+  // Arrange: the server stop is armed and its breakpoint is set in the page too; the browser's adapter will refuse the run's resume.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.refuseStubResume()
+  // Act: the page pauses in its stub of the server module, naming the server breakpoint.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the run ended with the adapter’s refusal',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(harness.run.view().failures[0], 'Error: Thread is not paused')
+  assert.deepEqual(
+    journaled(harness, 'dap.server-breakpoint-browser-resume-requested'),
+    [
+      {
+        participant: 'browser',
+        threadId: 1,
+        hitBreakpointIds: [12],
+        declared: 'src/mode.ts:1',
+        inputDispatched: false,
+      },
+    ],
+  )
+  assert.deepEqual(
+    journaled(harness, 'dap.server-breakpoint-browser-stop-resumed'),
+    [],
+  )
+})
+
+// Cycle 0046 (row 157): red while a page pause that comes after the action was accepted, in a run without browser stops, kept its 250 ms timer although the run itself was resuming it: a resume slower than that ended the run with "Unowned browser stop remained paused".
+test('a page pause at a server stop’s breakpoint after the action was accepted is not ended by the 250 ms bound of an unowned page pause while the run’s own resume is under way, in a run that declares only a server stop', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the browser adapter answers the run's resume only when the test lets it. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const resume = harness.holdStubResume()
+  // Act: the page pauses in its stub of the server module, the run sends its resume, and 300 ms pass before the adapter answers it.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  harness.advance(300)
+  const failuresWhilePaused = harness.run.view().failures.join('; ')
+  resume.release()
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresWhilePaused, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.equal(
+    journaled(harness, 'cdp.browser-adapter-pause-retired').length,
+    1,
+  )
+})
+
+// Cycle 0046 (row 157, the same pause in a run that declares a browser stop too): red while the held page pause was judged by how long the debugger holds a pause of its own, although the run itself resumed it: a resume slower than that bound ended the run with "Manual or competing resume invalidated live pause: ...".
+test('a page pause at a server stop’s breakpoint after the action was accepted is not taken for a competing resume when the run’s own resume is slow, in a run that declares a browser stop too', async (context) => {
+  // Arrange: as above, with a browser stop declared after the server stop, so the page pause is held instead of timed.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const resume = harness.holdStubResume()
+  // Act: the page pauses in its stub, the run sends its resume, and 4 s pass before the adapter answers it.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  harness.advance(4_000)
+  resume.release()
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-stop-resumed').length ||
+      harness.run.view().failures.length,
+    'the adapter answered the resume',
+  )
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.deepEqual(journaled(harness, 'cdp.unannounced-pause-resumed-late'), [])
+})
+
+// Cycle 0046 (row 157, the order the native journal shows: the adapter's `stopped` is read before the runtime's pause): red while a page pause read after the run had already sent its resume still started the 250 ms timer of an unowned page pause.
+test('a page pause at a server stop’s breakpoint that is read only after the run sent its resume is not bounded as a pause nobody owns', async (context) => {
+  // Arrange: the action is accepted; the adapter's `stopped` names the server breakpoint, the run sends its resume, and the adapter answers it only when the test lets it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  const resume = harness.holdStubResume()
+  const stub = harness.announceBrowserStopAtServerBreakpoint(
+    harness.breakpoints[0]!,
+  )
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  // Act: the runtime's pause is read now, and 300 ms pass before the adapter answers the resume.
+  stub.paused()
+  harness.advance(300)
+  const failuresWhilePaused = harness.run.view().failures.join('; ')
+  resume.release()
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresWhilePaused, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+})
+
+// Cycle 0046 (row 158): red while a pause that arrived during the judgement by break locations stayed held after that judgement accepted its place: the stop was adopted only when the 3 s wait for its own pause ended, as the native journals of row 77 show.
+test('a server stop that pauses while the debugger still has to answer the break-location request is taken as soon as that judgement accepts its place, without the wait and without an adoption', async (context) => {
+  // Arrange: the module is announced and the adapter's news names 7:3; the debugger's answer to the judgement that news starts is kept back. The wait for the stop's own pause never ends by itself.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server'],
+    appendedRegistration('server'),
+  )
+  harness.listPossibleBreakLocations(
+    'server',
+    APPENDED_REGISTRATION_BREAK_LOCATIONS,
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.pauseAt('server', 6, 2)
+  harness.bindAt('server', 7, 3)
+  harness.movePausedFrame(7, 3)
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  const judgement = harness.holdBreakLocationAnswer()
+  harness.announceBreakpointVerified('server', 7, 3)
+  await waitUntil(
+    () => harness.breakLocationRequests.length,
+    'the break locations were asked for',
+  )
+  // Act: the runtime pauses at 7:3 and the debugger announces the stop, both before the debugger answered the judgement; then it answers.
+  harness.emitPause('server')
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the run waits for the stop’s own pause',
+  )
+  judgement.release()
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.deepEqual([server.source.line, server.source.column], [7, 3])
+  assert.deepEqual(journaled(harness, 'cdp.held-pause-adopted'), [])
+})
+
+// Cycle 0046 (row 159): red while news read before the run had seen the module was judged by the source map alone when the input was dispatched in that window: the run ended before the input with "line 2 between the declared line 1 and line 4 has a mapped position", which the judgement at the module's announcement would have lifted.
+test('a server stop whose pending breakpoint the adapter reports verified before the run has seen the module waits for the module before the input and is then judged by the break locations', async (context) => {
+  // Arrange: the function head over lines 1 to 3 is mapped and the debugger lists a break location on line 4 only. The adapter's news names 4:3 before the module is announced, and the action is accepted in that window.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+  })
+  harness.listPossibleBreakLocations('server', [
+    { lineNumber: 3, columnNumber: 2 },
+  ])
+  await harness.run.prepare()
+  harness.pauseAt('server', 3, 2)
+  harness.bindAt('server', 4, 3)
+  harness.movePausedFrame(4, 3)
+  harness.announceBreakpointVerified('server', 4, 3)
+  harness.run.action('once', 'repository-click')
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return harness.waitInProgress(
+      'the announcement of the module of declared stop src/mode.ts:1',
+    )
+  }, 'the run waits for the module before the input')
+  const inputSentBeforeTheModule = harness.commands.some((command) =>
+    command.method.startsWith('Input.'),
+  )
+  // Act: the run's own channel announces the module.
+  harness.announceScript('server', 'server', SERVER_MODULE_URL)
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(inputSentBeforeTheModule, false)
+  assert.deepEqual([server.source.line, server.source.column], [4, 3])
+  assert.equal(
+    journaled(harness, 'breakpoint.rule-from-break-locations').length,
+    1,
+  )
+})
+
+// Cycle 0046 (row 159): the map's reason is given only when the module does not arrive within the bound; red if the wait had no end or its expiry gave another text.
+test('a server stop whose reported place the map refuses and whose module is not announced within the bound is refused before the input with the map’s reason', async (context) => {
+  // Arrange: as above, but the module is never announced; the bound of the wait is 200 ms.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    mappings: { server: FUNCTION_HEAD_MODULE.mappings },
+    fixture: {
+      server: { source: FUNCTION_HEAD_MODULE.source, citationEndLine: 5 },
+    },
+    runtimeConstants: { CAPTURE_TIMEOUT_MS: 200 },
+  })
+  await harness.run.prepare()
+  harness.announceBreakpointVerified('server', 4, 3)
+  // Act
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'refused once the module did not arrive',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    `Error: Declared stop src/mode.ts:1 bound at 4:3, refused: line 2 between the declared line 1 and line 4 has a mapped position. Frozen source map positions in the selected citation: 1:1, 2:1, 3:1, 4:3, 5:1. ${MAPPING_HINTS}`,
+  )
+  assert.equal(
+    harness.commands.some((command) => command.method.startsWith('Input.')),
+    false,
+  )
 })

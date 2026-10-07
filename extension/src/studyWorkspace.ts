@@ -498,6 +498,8 @@ export class StudyWorkspace {
   private studyRemovalRequest?: number
   /** Whether {@link removeSavedStudy} has taken a delete request and not ended it yet; set before its first `await`, so a second request delivered in the same turn is refused before {@link askStudyRemoval} marks the removal `confirming`. */
   private studyRemovalTaken = false
+  /** Settles, without a rejection, when the first check of the delete request that is taken has ended (see {@link studyRemovalTaken}); a request for a study's files in a window without a Trash waits for it instead of being dropped. `undefined` while no request is being checked. */
+  private studyRemovalCheck?: Promise<void>
   /** Studies this window moved to the system Trash; a position save still queued for one of them writes nothing. */
   private readonly removedStudyIds = new Set<string>()
   /** The refused run for which a removal made room; its "did not start" line is no longer shown. */
@@ -6531,6 +6533,7 @@ export class StudyWorkspace {
       }
       try {
         this.catalog = await this.library.list()
+        this.giveUpSelectionOfRest()
         const id = this.firstShownStudyId()
         if (id) {
           this.selectedArchive = await this.readSavedArchive(id)
@@ -6560,15 +6563,39 @@ export class StudyWorkspace {
   }
 
   /**
+   * Says whether the library lists only what is left of a study without its archive (a catalog file, a recording), as after its files were removed by hand in part; asked by {@link giveUpSelectionOfRest} and {@link forgetStudiesRemovedByHand}.
+   * Such an entry is listed so that the rest can be removed. It cannot be read, so the reader neither selects it nor writes its study again.
+   * @param studyId - The study an entry may list.
+   * @example this.isRestWithoutArchive(study.id) // => true once the study's archive was removed by hand and the list was read again
+   */
+  private isRestWithoutArchive(studyId: string): boolean {
+    return this.catalog.some(
+      (entry) => entry.id === studyId && entry.format === 'archive-missing',
+    )
+  }
+
+  /**
+   * Gives up a saved selection that names what is left of a study without its archive, so a fresh reader does not try to read it and report "Study archive is unavailable."; called by {@link initialize} in the turn the catalog was listed, before {@link firstShownStudyId}.
+   * @example this.giveUpSelectionOfRest()
+   */
+  private giveUpSelectionOfRest(): void {
+    const selected = this.selection.studyId
+    if (selected && this.isRestWithoutArchive(selected)) this.selectNoStudy()
+  }
+
+  /**
    * Names the saved study a fresh reader shows first; read by {@link initialize} in the turn the catalog was listed.
    * @returns The study the saved selection names, otherwise the newest listed study this Codebook can read, or `undefined` for a library without one.
    * @example const id = this.firstShownStudyId()
    */
   private firstShownStudyId(): string | undefined {
-    // A study a newer Codebook saved cannot be read here; the newest entry that is not one is shown first.
+    // A study a newer Codebook saved cannot be read here, and of a study without its archive nothing can be read; the newest entry that is neither is shown first.
     return (
       this.selection.studyId ??
-      this.catalog.find((entry) => entry.format !== 'newer')?.id
+      this.catalog.find(
+        (entry) =>
+          entry.format !== 'newer' && entry.format !== 'archive-missing',
+      )?.id
     )
   }
 
@@ -12819,6 +12846,7 @@ export class StudyWorkspace {
    * Follows studies that left the library without a removal of this reader, as after the learner removed the listed files by hand; called by Retry storage / refresh before it reads the ledger and writes the selection.
    * The file lists kept for "Remove by hand" are forgotten first, also when a later step fails: a list made before the learner removed files names paths that may be gone ({@link forgetListedStudyFiles}).
    * Such a study is one the reader listed before and the library no longer holds, or one the ledger still named. The ledger's references are dropped under the storage lock, a run of this window is forgotten like a removed one (so it is not written back), and a reader that selects the study selects none. A study that was never saved is in neither group and is left alone.
+   * A study of which only a rest without its archive is listed ({@link isRestWithoutArchive}) has left the library in the same way: its entry stays, so the rest can be removed, and Retry does not write its archive again.
    * @example await this.forgetStudiesRemovedByHand()
    */
   private async forgetStudiesRemovedByHand(): Promise<void> {
@@ -12828,7 +12856,9 @@ export class StudyWorkspace {
     this.catalog = await this.library!.list()
     const gone = new Set(
       [...listedBefore, ...namedByLedger].filter(
-        (studyId) => !this.catalog.some((entry) => entry.id === studyId),
+        (studyId) =>
+          this.isRestWithoutArchive(studyId) ||
+          !this.catalog.some((entry) => entry.id === studyId),
       ),
     )
     for (const studyId of gone) {
@@ -12907,14 +12937,42 @@ export class StudyWorkspace {
   }
 
   /**
-   * Removes one saved study on the learner's request from the Saved studies section: confirms in a native dialog, holds off this window's writers of that study, moves its files to the system Trash through {@link LearningLibrary.removeStudy} and reports the outcome in the message's `studyRemoval` field.
-   * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines. Called by {@link receive} for the pane's `delete-study` message; one removal runs at a time, from its first check ({@link studyRemovalTaken}) to its move, and a request that arrives meanwhile returns without effect.
+   * Says whether a request for a study's files must wait: the window has no Trash and another request is being checked. Asked by {@link removeSavedStudy} until it is the request's turn.
+   * @example while (this.isFilesRequestInFront()) await this.studyRemovalCheck
+   */
+  private isFilesRequestInFront(): boolean {
+    return (
+      this.studyRemovalCheck !== undefined &&
+      this.studyRemovalAvailability() === 'no-trash'
+    )
+  }
+
+  /**
+   * Handles the pane's `delete-study` message; called by {@link receive}. With a Trash it starts the removal ({@link takeStudyRemoval}), which takes one request at a time and leaves a second one without effect.
+   * A window without a Trash moves nothing: a request there asks for a study's files, which every asking pane waits for. Several panes can ask at once (each open "Remove by hand" asks again after Retry storage / refresh), so such a request waits until the one in front is answered and is then answered itself, with the number it gave.
    * @param studyId - The entry the learner chose.
-   * @param removalRequest - The number the asking pane gave this request; every state of this removal echoes it.
-   * @returns Once the removal ended: refused, cancelled, moved or left in place, as its `studyRemoval` field says; at once for a request made while another removal runs.
+   * @param removalRequest - The number the asking pane gave this request; the answer echoes it.
+   * @returns Once the request is answered or the removal ended.
    * @example await this.removeSavedStudy(message.studyId, message.removalRequest)
    */
   private async removeSavedStudy(
+    studyId: string,
+    removalRequest?: number,
+  ): Promise<void> {
+    // No await while nothing is in front: two requests of one moment must not both pass this line before the first is taken. A waiting request that another one overtook waits for that one.
+    while (this.isFilesRequestInFront()) await this.studyRemovalCheck
+    await this.takeStudyRemoval(studyId, removalRequest)
+  }
+
+  /**
+   * Removes one saved study on the learner's request from the Saved studies section: confirms in a native dialog, holds off this window's writers of that study, moves its files to the system Trash through {@link LearningLibrary.removeStudy} and reports the outcome in the message's `studyRemoval` field.
+   * Every expected outcome (a refusal, Cancel, a Trash that refuses) ends in that field; nothing is written to the reader's error lines. Called by {@link removeSavedStudy}; one removal runs at a time, from its first check ({@link studyRemovalTaken}) to its move, and a request that arrives meanwhile returns without effect.
+   * @param studyId - The entry the learner chose.
+   * @param removalRequest - The number the asking pane gave this request; every state of this removal echoes it.
+   * @returns Once the removal ended: refused, cancelled, moved or left in place, as its `studyRemoval` field says; at once for a request made while another removal runs.
+   * @example await this.takeStudyRemoval(message.studyId, message.removalRequest)
+   */
+  private async takeStudyRemoval(
     studyId: string,
     removalRequest?: number,
   ): Promise<void> {
@@ -12923,12 +12981,19 @@ export class StudyWorkspace {
     // Taken before the first await: the checks below yield before the dialog marks the removal `confirming`.
     this.studyRemovalTaken = true
     this.studyRemovalRequest = removalRequest
+    const check = this.studyRemovalConfirmed(studyId)
+    // What a files request of another pane waits for; a check that throws ends the wait as well.
+    this.studyRemovalCheck = check.then(
+      () => undefined,
+      () => undefined,
+    )
     let confirmed: boolean
     try {
-      confirmed = await this.studyRemovalConfirmed(studyId)
+      confirmed = await check
     } finally {
       // A confirmed removal is `confirming` now and stays in progress through its move; any other one has ended.
       this.studyRemovalTaken = false
+      this.studyRemovalCheck = undefined
     }
     if (!confirmed) return
     // A checkpoint of this study waits until its files are settled instead of skipping the study.

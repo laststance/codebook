@@ -4,13 +4,14 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { test } from 'node:test'
+import { dirname, join, resolve } from 'node:path'
+import { test, type TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
 import type { Protocol } from 'devtools-protocol'
@@ -23,6 +24,7 @@ import {
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { assertConfiguredSourceDocuments } from '../utils/assertConfiguredSourceDocuments'
 import { assertDevelopmentWorkspace } from '../utils/assertDevelopmentWorkspace'
+import type * as AssertDevelopmentWorkspaceModule from '../utils/assertDevelopmentWorkspace'
 import { configuredDomExpression } from '../utils/configuredDomExpression'
 import { createBundleVerifier } from '../utils/createBundleVerifier'
 import { inspectConfiguredValues } from '../utils/inspectConfiguredValues'
@@ -31,6 +33,8 @@ import { readRepositoryBuildText } from '../utils/readRepositoryBuildText'
 import { sameScriptUrl } from '../utils/sameScriptUrl'
 
 import { createConfiguredStudy } from './utils/createConfiguredStudy'
+import { fileSystemWithLargeFileIds } from './utils/fileSystemWithLargeFileIds'
+import { loadModule } from './utils/loadModule'
 import { repositoryHarness } from './utils/repositoryHarness'
 
 test('unchanged native BOM and mixed-EOL source buffers pass identity guards while actual edits still reject', () => {
@@ -289,6 +293,80 @@ test('a foreign Next lock is preserved and prevents readiness before any applica
     { code: 'PREREQUISITE_MISSING' },
   )
   assert.equal(await readFile(lock, 'utf8'), 'another running app owns this')
+})
+
+/** The refusal of a Next development lock that is not the run's own, as {@link assertDevelopmentWorkspace} words it. */
+const FOREIGN_LOCK_REFUSAL =
+  'The selected Next development build lock is missing or belongs to another process. Stop its owner explicitly; Codebook does not reuse or remove another lock.'
+
+/**
+ * Prepares a workspace with an installed Next and a development lock on a file system whose file ids lie above 2^53, as on an NTFS volume, for the two tests of the lock's identity.
+ * @returns The workspace, the lock's path, the file system with large ids and {@link assertDevelopmentWorkspace} loaded on it.
+ * @example
+ * const { directory, lock, largeIds, assertOnLargeIds } = await workspaceWithLargeFileIds(context)
+ */
+async function workspaceWithLargeFileIds(context: TestContext) {
+  const { directory } = await repositoryHarness(context),
+    executable = join(directory, 'node_modules/next/dist/bin/next'),
+    lock = join(directory, '.next/dev/lock')
+  await mkdir(dirname(executable), { recursive: true })
+  await writeFile(executable, 'not executed')
+  await mkdir(dirname(lock), { recursive: true })
+  await writeFile(lock, 'the lock of the run')
+  const largeIds = fileSystemWithLargeFileIds()
+  const { assertDevelopmentWorkspace: assertOnLargeIds } = await loadModule<
+    typeof AssertDevelopmentWorkspaceModule
+  >(resolve(__dirname, '../utils/assertDevelopmentWorkspace.js'), {
+    'node:fs/promises': largeIds,
+  })
+  return { directory, lock, largeIds, assertOnLargeIds }
+}
+
+// Cycle 0046 (row 141): red while the lock a run owns was named by its device and inode as JavaScript numbers: on NTFS a file id passes 2^53, two ids that differ only below the rounding are one number, and a lock another `next dev` created anew was taken for Codebook's own.
+test('a Next development lock created anew under a file id that differs from the owned one only below a number’s precision is refused as another process’s', async (context) => {
+  // Arrange: the run's lock has the id 210824757556437109. Another `next dev` then replaces it by a new file, whose id 210824757556437110 is the same JavaScript number.
+  const { directory, lock, largeIds, assertOnLargeIds } =
+    await workspaceWithLargeFileIds(context)
+  const owned = await largeIds.lstat(lock, { bigint: true })
+  await writeFile(`${lock}.new`, 'the lock of another next dev')
+  await rename(`${lock}.new`, lock)
+  const createdAnew = await largeIds.lstat(lock, { bigint: true })
+  // Act
+  const answer = await assertOnLargeIds(
+    directory,
+    new AbortController().signal,
+    { dev: owned.dev, ino: owned.ino },
+  ).then(
+    () => 'taken for the owned lock',
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  // Assert
+  assert.deepEqual(
+    [owned.ino, createdAnew.ino, Number(owned.ino) === Number(createdAnew.ino)],
+    [210_824_757_556_437_109n, 210_824_757_556_437_110n, true],
+  )
+  assert.equal(answer, FOREIGN_LOCK_REFUSAL)
+  assert.equal(await readFile(lock, 'utf8'), 'the lock of another next dev')
+})
+
+// Cycle 0046 (row 141): the exact identity still names the run's own lock; red if only one side of the comparison were read exactly, so that the owned lock itself were refused.
+test('the Next development lock a run owns is still taken for its own when its file id lies above a number’s precision', async (context) => {
+  // Arrange: the run's lock has the id 210824757556437109 and nothing replaces it.
+  const { directory, lock, largeIds, assertOnLargeIds } =
+    await workspaceWithLargeFileIds(context)
+  const owned = await largeIds.lstat(lock, { bigint: true })
+  // Act
+  const answer = await assertOnLargeIds(
+    directory,
+    new AbortController().signal,
+    { dev: owned.dev, ino: owned.ino },
+  ).then(
+    () => 'taken for the owned lock',
+    (error: unknown) => (error instanceof Error ? error.message : error),
+  )
+  // Assert
+  assert.equal(owned.ino, 210_824_757_556_437_109n)
+  assert.equal(answer, 'taken for the owned lock')
 })
 
 test('configured inspection reads actual finite zero false null string and type values with side-effect checks on the exact frame', async () => {

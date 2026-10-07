@@ -3,7 +3,8 @@ import { join } from 'node:path'
 
 import { StudyError } from '../errors'
 
-export type DevelopmentLockIdentity = { dev: number; ino: number }
+/** The device and the inode number of the Next development lock a run owns, read with exact numbers: a file id of an NTFS volume can pass 2^53, where two ids that differ only below a `number`'s precision would be one value. */
+export type DevelopmentLockIdentity = { dev: bigint; ino: bigint }
 
 /** Rejects missing Next/default-build ownership before the configured runtime acquires a process; existing locks remain untouched. @example await assertDevelopmentWorkspace(root, signal) */
 export async function assertDevelopmentWorkspace(
@@ -21,10 +22,12 @@ export async function assertDevelopmentWorkspace(
     )
   }
   for (const path of ['.next', '.next/dev', '.next/dev/lock']) {
-    const identity = await lstat(join(root, path)).catch((error) => {
-      if (error.code === 'ENOENT') return undefined
-      throw error
-    })
+    const identity = await lstat(join(root, path), { bigint: true }).catch(
+      (error) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      },
+    )
     signal.throwIfAborted()
     if (path === '.next/dev/lock') {
       if (

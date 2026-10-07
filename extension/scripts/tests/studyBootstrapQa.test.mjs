@@ -290,19 +290,25 @@ test('the pane DOM check lays out the Wiki reader’s shell at a width where its
   )
 })
 
-// Value: protects=the Reader DOM job when a disclosure does not toggle at its key press: that case fails after five seconds and names the disclosure; fails_when=the flow waits for the toggle event without a bound of its own (a promise of the page awaited through `page.evaluate`, which no limit of the browser tool ends), so one disclosure that stays as it is holds the whole flow until the five-minute limit of its browser call; why_new=Cycle 0046 row 88 (the local CodeRabbit review); seam=the helper's own text from the script, run against a page that records its calls and lets the bounded wait run out
-test('the pane DOM check waits five seconds at most for a disclosure to toggle after its key press, and a disclosure that does not toggle fails with a sentence that names it', async () => {
-  // Arrange: the helper as the script states it, and a page whose bounded wait runs out the way the browser tool's does.
-  const script = await readFile(scriptUrl, 'utf8')
+/**
+ * Runs the DOM check's `toggleByKeyboard`, taken from the script's own text, against a hand-written page with one disclosure, so a test can say what the page does at the key press and read what the helper's wait accepts.
+ * @param {string} script - The text of `study-bootstrap-qa.mjs`.
+ * @param {(page: { disclosure: { open: boolean, ontoggle: null | (() => void) }, isWaitMet: () => boolean }) => void | Promise<void>} atPress - What happens in the page from the key press on; it may change the disclosure, fire its toggle event and note whether the helper's wait is met.
+ * @returns {Promise<{ calls: string[], outcome: string }>} The helper's calls of the browser tool in order, and how it ended: `resolved`, or the message it rejected with.
+ */
+async function runToggleByKeyboard(script, atPress) {
   const helperStart = script.indexOf('const toggleByKeyboard = async ('),
     helperEnd = script.indexOf('\n  }\n', helperStart)
   const helperText = script.slice(helperStart, helperEnd + '\n  }'.length)
   const calls = []
+  const disclosure = { open: false, ontoggle: null }
+  const window = {}
+  let isWaitMet = () => false
   const page = {
-    evaluate: async (callback) => {
-      calls.push(
-        `evaluate ${callback.toString().includes('addEventListener') ? 'listens for toggle' : 'other'}`,
-      )
+    // The helper's callbacks are made in the context below, so they read its `document` and `window`.
+    evaluate: async (callback, argument) => {
+      calls.push('evaluate')
+      return callback(argument)
     },
     locator: (selector) => ({
       focus: async () => {
@@ -314,31 +320,75 @@ test('the pane DOM check waits five seconds at most for a disclosure to toggle a
         calls.push(`press ${key}`)
       },
     },
-    waitForFunction: async (_callback, _argument, waitOptions) => {
-      calls.push(`wait ${JSON.stringify(waitOptions)}`)
-      throw new Error('page.waitForFunction: Timeout 5000ms exceeded.')
+    waitForFunction: async (callback, argument, waitOptions) => {
+      calls.push(
+        `wait ${JSON.stringify(argument)} ${JSON.stringify(waitOptions)}`,
+      )
+      isWaitMet = () => callback(argument)
+      await atPress({ disclosure, isWaitMet })
+      // The browser tool rejects a wait that is not met when its time is over.
+      if (!isWaitMet())
+        throw new Error('page.waitForFunction: Timeout 5000ms exceeded.')
     },
   }
-
-  // Act
   const toggleByKeyboard = runInNewContext(`${helperText}; toggleByKeyboard`, {
     page,
     Error,
+    window,
+    document: { getElementById: () => disclosure },
   })
   const outcome = await toggleByKeyboard('study-files').then(
     () => 'resolved',
     (error) => error.message,
   )
+  return { calls, outcome }
+}
+
+// Value: protects=the Reader DOM job when a disclosure does not toggle at its key press: that case fails after five seconds and names the disclosure; fails_when=the flow waits for the toggle event without a bound of its own (a promise of the page awaited through `page.evaluate`, which no limit of the browser tool ends), so one disclosure that stays as it is holds the whole flow until the five-minute limit of its browser call; why_new=Cycle 0046 row 88 (the local CodeRabbit review); seam=the helper's own text from the script, run against a page that records its calls and lets the bounded wait run out
+test('the pane DOM check waits five seconds at most for a disclosure to toggle after its key press, and a disclosure that does not toggle fails with a sentence that names it', async () => {
+  // Arrange: the script, and a page whose disclosure stays closed at the press.
+  const script = await readFile(scriptUrl, 'utf8')
+
+  // Act
+  const { calls, outcome } = await runToggleByKeyboard(script, () => {})
 
   // Assert
   assert.deepEqual(calls, [
-    'evaluate listens for toggle',
+    'evaluate',
     'focus #study-files > summary',
     'press Enter',
-    'wait {"timeout":5000}',
+    'wait {"id":"study-files","wasOpen":false} {"timeout":5000}',
   ])
   assert.equal(
     outcome,
     'The disclosure #study-files did not toggle within 5000 ms of Enter on its summary (page.waitForFunction: Timeout 5000ms exceeded.)',
   )
+})
+
+// Value: protects=the cases of the Reader DOM check that count what the pane sends after a disclosure was opened by keyboard; fails_when=the helper takes the next toggle event of the disclosure as the answer to its press, although a render before the press (the pane closes the disclosure for another study) can still owe one, so under load a case reads the pane before it acted on the press and counts its request one step late (one failure in four side-by-side runs); why_new=Cycle 0046 row 178; seam=the helper's own text from the script, run against a page whose disclosure fires an owed toggle event before it opens
+test('the pane DOM check takes a disclosure as toggled only once its open state differs from the one before the key press and a toggle event has reported that state, not at a toggle event a render before the press still owed', async () => {
+  // Arrange: the script, and a page that notes whether the helper's wait is met after each step.
+  const script = await readFile(scriptUrl, 'utf8')
+  const met = {}
+
+  // Act: the event of an earlier close arrives first, then the disclosure opens, then its own event arrives.
+  const { outcome } = await runToggleByKeyboard(
+    script,
+    ({ disclosure, isWaitMet }) => {
+      disclosure.ontoggle()
+      met.afterOwedEvent = isWaitMet()
+      disclosure.open = true
+      met.afterOpeningBeforeItsEvent = isWaitMet()
+      disclosure.ontoggle()
+      met.afterItsEvent = isWaitMet()
+    },
+  )
+
+  // Assert
+  assert.deepEqual(met, {
+    afterOwedEvent: false,
+    afterOpeningBeforeItsEvent: false,
+    afterItsEvent: true,
+  })
+  assert.equal(outcome, 'resolved')
 })
