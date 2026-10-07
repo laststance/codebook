@@ -5149,6 +5149,7 @@ test('a Retry storage / refresh pressed while a study whose archive still waits 
     const afterTheRefusedMove = structuredClone({
       removal: harness.reader.inspect().view!.studyRemoval?.status,
       queued: readerSeams(harness).queuedStudyWrites(),
+      selected: harness.reader.inspect().view!.model.selection.studyId,
       errors: harness.reader.inspect().view!.errors,
       unretryableErrorCount:
         harness.reader.inspect().view!.unretryableErrorCount,
@@ -5169,11 +5170,20 @@ test('a Retry storage / refresh pressed while a study whose archive still waits 
     assert.deepEqual(afterTheRefusedMove, {
       removal: 'failed',
       queued: 1,
-      // The Retry tried the archive once the move had ended: its line, with Retry storage / refresh beside it.
-      errors: ['Error: disk is read-only'],
+      // The study stays selected: its archive waits in this reader, whose server has ended, so it is not one whose files were removed by hand (row 357).
+      selected: unsaved.studyId,
+      // The Retry tried the archive once the move had ended: its line, with Retry storage / refresh beside it, and the selection's line as before the press, because the selected study still has no archive.
+      errors: [
+        'Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+      ],
       unretryableErrorCount: 0,
     })
     assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.equal(
+      harness.reader.inspect().view!.model.selection.studyId,
+      unsaved.studyId,
+    )
     assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
     assert.deepEqual(
       (await (await harness.reader.learningStorage()).list()).map((entry) => [
@@ -5453,6 +5463,118 @@ test('a study archive of another workspace’s library that a disposed reader ha
       ),
       [[unsaved.studyId, otherWorkspaceKey]],
     )
+  } finally {
+    context.mock.restoreAll()
+    await replacement?.dispose()
+    await harness.close()
+  }
+})
+
+// Value: protects=the selected study of a run whose last save failed and whose archive on disk was then lost, when the workspace's folders change before Retry storage / refresh: the reader made in place of the disposed one holds the study's archive, so it keeps the study selected and shown, and the press writes the archive and leaves it selected; fails_when=that reader, which holds no run of the study, takes the entry without an archive for a study removed by hand although the archive waits in it: it opens on no study, and the press drops the selection while it writes the study back; why_new=Cycle 0046 row 357 (the local CodeRabbit CLI's third run); seam=the hand-over (releaseUnsavedStudies and the workspace harness's createReader), the library's study save, which refuses from a point the test chooses, and the file system, on which the test removes the archive
+test('after the last save of the selected study failed, its archive on disk was lost and the workspace’s folders changed, the reader made again keeps the study selected with the archive it was handed, and Retry storage / refresh writes it and leaves it selected', async (context) => {
+  // Arrange: a recorded run that was stopped and saved, whose study is the ledger's selection. From then on the disk refuses every study save, and a press on Retry storage / refresh leaves the study's archive waiting in the reader.
+  const harness = await recordedReaderHarness()
+  let replacement: ReturnType<typeof harness.createReader> | undefined
+  try {
+    const saveStudy = LearningLibrary.prototype.saveStudy
+    let isDiskWritable = true
+    context.mock.method(
+      LearningLibrary.prototype,
+      'saveStudy',
+      function (
+        this: LearningLibrary,
+        study: Parameters<LearningLibrary['saveStudy']>[0],
+      ) {
+        return isDiskWritable
+          ? saveStudy.call(this, study)
+          : Promise.reject(new Error('disk is read-only'))
+      },
+    )
+    const studyId = harness.studyId,
+      firstLibrary = await harness.reader.learningStorage()
+    // The learner chooses the study in Saved studies, which writes the selection.
+    await harness.reader.open()
+    await readerSeams(harness).receive(
+      {
+        type: 'history',
+        revision: harness.reader.inspect().view!.revision,
+        studyId,
+      },
+      'context',
+    )
+    await waitUntil(
+      async () =>
+        (await firstLibrary.readProgress()).selection?.studyId === studyId,
+      'the selection of the chosen study in the ledger',
+      1_000,
+    )
+    const savedBeforeTheDiskRefused = structuredClone({
+      listed: (await firstLibrary.list()).map((entry) => [
+        entry.id,
+        entry.format,
+      ]),
+      ledgerSelection: (await firstLibrary.readProgress()).selection?.studyId,
+    })
+    isDiskWritable = false
+    await harness.reader.action('retry')
+    await harness.reader.retire(harness.service).catch(() => undefined)
+    // The archive on disk is lost (removed by hand); the study's catalog file is left.
+    await rm(
+      join(
+        harness.reader.inspect().libraryDirectory!,
+        `${studyId}.study.v3.json`,
+      ),
+    )
+    // Act: the workspace's folders change: the extension takes what the reader could not save, disposes it and makes a new reader with it. Then the disk is writable again and the learner presses Retry storage / refresh.
+    const handedOver = harness.reader.releaseUnsavedStudies()
+    await harness.reader.dispose()
+    replacement = harness.createReader(undefined, handedOver)
+    const successor = { reader: replacement },
+      library = await successor.reader.learningStorage()
+    await successor.reader.open()
+    const beforeRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      selected: successor.reader.inspect().view!.model.selection.studyId,
+      shown: successor.reader.inspect().rendered?.snapshotUri,
+      errors: successor.reader.inspect().view!.errors,
+    })
+    isDiskWritable = true
+    await successor.reader.action('retry')
+    const afterRetry = structuredClone({
+      queued: readerSeams(successor).queuedStudyWrites(),
+      listed: (await library.list()).map((entry) => [entry.id, entry.format]),
+      selected: successor.reader.inspect().view!.model.selection.studyId,
+      ledgerSelection: (await library.readProgress()).selection?.studyId,
+      shown: successor.reader.inspect().rendered?.snapshotUri,
+      errors: successor.reader.inspect().view!.errors,
+    })
+    // Assert
+    const capturedSourceOfTheStop = `codebook://${harness.service.instanceId}/runs/${harness.record.id}/snapshots/browser-session%3A1`
+    assert.deepEqual(savedBeforeTheDiskRefused, {
+      listed: [[studyId, 'v3']],
+      ledgerSelection: studyId,
+    })
+    assert.deepEqual(
+      structuredClone(handedOver.map((entry) => entry.archive.id)),
+      [studyId],
+    )
+    assert.deepEqual(beforeRetry, {
+      queued: 1,
+      listed: [[studyId, 'archive-missing']],
+      selected: studyId,
+      // The study is shown from the archive that waits: the captured source of the run's stop is rendered.
+      shown: capturedSourceOfTheStop,
+      errors: ['Error: History not saved: Error: disk is read-only'],
+    })
+    assert.deepEqual(afterRetry, {
+      queued: 0,
+      listed: [[studyId, 'v3']],
+      selected: studyId,
+      ledgerSelection: studyId,
+      shown: capturedSourceOfTheStop,
+      errors: [],
+    })
   } finally {
     context.mock.restoreAll()
     await replacement?.dispose()
