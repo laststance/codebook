@@ -304,6 +304,12 @@ export const CLOSE_GROUP_SETTLE_MS = 250
 export const STUDY_CLOSE_KEYBOARD_MESSAGE =
   'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.'
 /**
+ * What the reader tells the learner, once in an editor session, when a live run ended while the Study workspace was closed, the run's Application pane was the editor's active editor in the focused window, and the reader therefore gave the active editor group the keyboard after it closed that pane: a pane that is closed while it has the keyboard leaves the keyboard on no element. As at a Close ({@link STUDY_CLOSE_KEYBOARD_MESSAGE}), the editor does not say whether the keyboard was in the pane or in the terminal, a view or a side-view chat beside it, so the sentence says where it is now.
+ * @example void showPlainNotice(vscode.window, 'information', RUN_CLOSED_PANE_KEYBOARD_MESSAGE)
+ */
+export const RUN_CLOSED_PANE_KEYBOARD_MESSAGE =
+  'The run ended and Codebook closed its Application pane. The keyboard is in the active editor group now: closing the pane can leave it nowhere, and the editor does not tell Codebook whether it was in the pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.'
+/**
  * What the reader tells the learner, once in an editor session, when one of its panes (the Application pane or the captured source) took the keyboard from the file the editor's debugger had opened at a pause of a live run (`debug.focusEditorOnBreak`) and the reader knew of no chat to give it back to. That is VS Code, where the chat is a side view, and Cursor while its Agent chat is a pane of the secondary side bar: there the extension API reads the same whether the keyboard was in a file or in the chat input (Cycle 0045 X7-A.4, Cycle 0046 row 5), so Codebook cannot give it back and says where it is instead. Where Cursor's chat is a tab of another editor part and had the keyboard before the pause, the reader gives it back and tells nothing.
  * @example void showPlainNotice(vscode.window, 'information', SOURCE_TOOK_PAUSED_FOCUS_MESSAGE)
  */

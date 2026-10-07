@@ -1869,3 +1869,167 @@ test("the fake editor opens a new empty group for the focus command of the colum
     await harness.close()
   }
 })
+
+// Value: protects=the learner who runs Arrange Study Workspace while the Study pane already has the keyboard after a Read of the explanation: the three-pane layout is restored at once; fails_when=the Arrange reveals that pane once more and waits five seconds for a focus report its document cannot send, because it had the focus already and the editor's second reveal takes it from the document without an event, so the Arrange ends without running any editor command, the Read's layout stays and the pane shows an internal timeout; why_new=Cycle 0046 row 338 (native probe N325 in VS Code 1.140.0: 2 of 8 such Arranges ended after 5,036 ms with "Error: Error: Timed out waiting for owned presentation inner focus"); seam=the workspace harness's dropInnerFocusAtRevealOfFocusedPane, the reader's Read and arrange actions, panel reveals, the fake editor's maximized group and the pane's error lines
+test('Arrange Study Workspace after a Read of the explanation restores the three-pane layout at once when the Study pane already has the keyboard, without revealing that pane again or waiting for its focus report', async () => {
+  // Arrange: the learner reads the explanation enlarged, so the Study pane is the editor's active pane, and its document reported that it has the keyboard; a second reveal of it would take the keyboard from its document and bring no report.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.receiveContext({ type: 'pane-focus', focused: true })
+    harness.dropInnerFocusAtRevealOfFocusedPane()
+    const duringRead = {
+      maximized: harness.maximizedEditorGroup(),
+      keyboardInStudyPane:
+        harness.innerFocusedPanel() === 'codebook.studyContext',
+    }
+    const revealsBefore = harness.panelReveals().length
+    const startedMs = performance.now()
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(duringRead, { maximized: true, keyboardInStudyPane: true })
+    assert.deepEqual(
+      {
+        endedWithinOneSecond: performance.now() - startedMs < 1_000,
+        maximized: harness.maximizedEditorGroup(),
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        errorLines: [...harness.reader.inspect().view!.errors],
+        studyPaneReveals: harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .filter((reveal) => reveal.kind === 'codebook.studyContext').length,
+        keyboardInStudyPane:
+          harness.innerFocusedPanel() === 'codebook.studyContext',
+      },
+      {
+        endedWithinOneSecond: true,
+        maximized: false,
+        layoutConfirmed: true,
+        errorLines: [],
+        studyPaneReveals: 0,
+        keyboardInStudyPane: true,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who runs Arrange Study Workspace after a Read of the explanation while the Study pane is the editor's active pane and its document does not have the keyboard (it reported a blur, as when the keyboard is in the terminal or a view, or when the editor's own focus of the frame around it took it): the pane is given the keyboard with one reveal and the three-pane layout is restored at once; fails_when=the Arrange waits five seconds for a report of the pane's document that does not come, runs no editor command and leaves the Read's layout; why_new=Cycle 0046 row 338 (the other order the native failure can have: the pane lost its document's focus before the Arrange); seam=the workspace harness's suppressNativeInnerFocus (the pane's document never takes the focus), the pane's own focus report, panel reveals, the fake editor's maximized group and the pane's error lines
+test('Arrange Study Workspace after a Read of the explanation gives the Study pane the keyboard with one reveal and restores the three-pane layout at once when that pane is the active one and its document reports no keyboard', async () => {
+  // Arrange: the learner reads the explanation enlarged; then the pane's document reports that it lost the focus, and it will not report it again.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('read-context')
+    harness.receiveContext({ type: 'pane-focus', focused: false })
+    harness.suppressNativeInnerFocus()
+    const revealsBefore = harness.panelReveals().length
+    const startedMs = performance.now()
+
+    // Act
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(
+      {
+        endedWithinOneSecond: performance.now() - startedMs < 1_000,
+        maximized: harness.maximizedEditorGroup(),
+        layoutConfirmed: harness.reader.presentationState().layoutConfirmed,
+        errorLines: [...harness.reader.inspect().view!.errors],
+        studyPaneReveals: harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .filter((reveal) => reveal.kind === 'codebook.studyContext'),
+      },
+      {
+        endedWithinOneSecond: true,
+        maximized: false,
+        layoutConfirmed: true,
+        errorLines: [],
+        studyPaneReveals: [
+          {
+            kind: 'codebook.studyContext',
+            column: undefined,
+            preserveFocus: false,
+          },
+        ],
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner who presses Enlarge explanation in the Study pane, which has the keyboard then: the pane is enlarged at once; fails_when=the Enlarge reveals the pane it was pressed in once more and waits five seconds for a focus report that pane's document cannot send, so the button ends in an internal timeout line and nothing is enlarged; why_new=Cycle 0046 row 338 (the other wait of the same kind: an Enlarge needs the editor's focus on the pane, as an Arrange does, and not a report of the pane's document); seam=the workspace harness's dropInnerFocusAtRevealOfFocusedPane, the focus-context and enlarge-context actions, panel reveals and the fake editor's maximized group
+test('Enlarge explanation pressed in the Study pane enlarges it at once, without revealing that pane again or waiting for its focus report', async () => {
+  // Arrange: the Study pane is the editor's active pane and its document reported that it has the keyboard; a second reveal of it would take the keyboard from its document and bring no report.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('focus-context')
+    harness.receiveContext({ type: 'pane-focus', focused: true })
+    harness.dropInnerFocusAtRevealOfFocusedPane()
+    const revealsBefore = harness.panelReveals().length
+    const startedMs = performance.now()
+
+    // Act
+    const outcome = await harness.reader.action('enlarge-context').then(
+      () => 'enlarged',
+      (error: unknown) => String(error),
+    )
+
+    // Assert
+    assert.deepEqual(
+      {
+        outcome,
+        endedWithinOneSecond: performance.now() - startedMs < 1_000,
+        maximized: harness.maximizedEditorGroup(),
+        studyPaneReveals: harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .filter((reveal) => reveal.kind === 'codebook.studyContext').length,
+      },
+      {
+        outcome: 'enlarged',
+        endedWithinOneSecond: true,
+        maximized: true,
+        studyPaneReveals: 0,
+      },
+    )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the learner reading in the Study pane's error line what happened and what to do when Arrange Study Workspace could not give the Study pane the keyboard: one sentence that names the pane, the five seconds and the next step; fails_when=the line shows the wait's internal text behind a doubled prefix ("Error: Error: Timed out waiting for owned presentation inner focus"), which names nothing a learner can act on; why_new=Cycle 0046 row 338 (the sentence of a focus wait that does end without its report); seam=the workspace harness's suppressNativeInnerFocus (the pane's document never takes the focus), the focus-app and arrange actions and the pane's error lines
+test('Arrange Study Workspace run from the Application pane says in one sentence that the Explanation pane did not confirm the keyboard within five seconds and what to do, when that pane never reports the focus', async () => {
+  // Arrange: the Application pane is the active one, and the Study pane's document never takes the focus.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.open()
+    await harness.reader.action('focus-app')
+    harness.suppressNativeInnerFocus()
+
+    // Act: the Arrange waits its five seconds for the Study pane's report.
+    await harness.reader.action('arrange')
+
+    // Assert
+    assert.deepEqual(
+      [...harness.reader.inspect().view!.errors],
+      [
+        'Error: Codebook asked the Explanation pane to take the keyboard, and the pane did not confirm it within 5 seconds. The action was stopped there and nothing else was changed. Click into the Explanation pane and repeat the action.',
+      ],
+    )
+  } finally {
+    await harness.close()
+  }
+})

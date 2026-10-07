@@ -503,6 +503,7 @@ for (const sign of [
   'clicks into its file',
   'presses a key in its file after the Navigate Call Stack command',
   'opens it with a double click',
+  'opens it with a double click after the editor sent its whole tab model again',
   'goes to another file in that group',
 ] as const)
   // Value: protects=the keyboard of a learner who, at a frame that came without a stop, works in the text editor the Application pane then covers: the pane takes the keyboard, so it is on an element; fails_when=after a frame without a stop the reader holds for the rest of the pause that the covered editor has no keyboard, whatever the editor reports afterwards (a selection made with the mouse or the keyboard in it, a text editor that becomes active, the frame's preview tab kept open by the second click), so the pane comes without the keyboard over the editor the learner types in and the keyboard is on no element; why_new=Cycle 0046 rows 263 (second limit: a double click) and 273 (delegated review, finding 6: a click into the file, the navigation command); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame with its three gestures, workInActiveTextEditor, focusMutableDraft, revealApplicationPaneOverPausedFile
@@ -547,6 +548,16 @@ for (const sign of [
       }
       if (sign === 'opens it with a double click')
         harness.selectStackFrame('page.tsx', 1, 'double-click')
+      // Cursor's extension host makes every tab object anew with such an update (Cycle 0046 row 356): the kept tab is known by its file and group, not by the object.
+      if (
+        sign ===
+        'opens it with a double click after the editor sent its whole tab model again'
+      )
+        harness.selectStackFrame(
+          'page.tsx',
+          1,
+          'double-click-after-tab-model-update',
+        )
       if (sign === 'goes to another file in that group') {
         harness.selectStackFrame('page.tsx', 1)
         harness.focusMutableDraft('learner-notes.ts', 1)
@@ -619,6 +630,81 @@ test('a learner who selects a frame and then clicks into its file has the keyboa
     await harness.close()
   }
 })
+
+for (const course of [
+  {
+    name: 'is reported as a new object while it is a preview tab still',
+    state: { isPreview: true, isDirty: false },
+  },
+  {
+    name: 'is reported as a new object kept open by an edit with unsaved text',
+    state: { isPreview: false, isDirty: true },
+  },
+  {
+    name: 'is replaced by a kept tab of another file in the same column',
+    state: { isPreview: false, isDirty: false, filename: 'another-frame.tsx' },
+  },
+  {
+    name: 'is reported as a kept tab in another column',
+    state: { isPreview: false, isDirty: false, column: 2 },
+  },
+] as const)
+  // Value: protects=the keyboard of a learner in the Call Stack view after one click on a frame whose file opens as a preview tab: the tab as the editor shows it now decides, so a tab that is still a preview tab, and one that is kept only because its file was edited, are no sign that the learner works in that file, and the Application pane comes without the keyboard; fails_when=the reader does not read the current tab's preview and unsaved state, so any later tab event, or an agent's edit, makes the pane take the keyboard from the Call Stack view and tell a sentence about a file the learner never worked in; why_new=Cycle 0046 row 356 (the current tab's values, read from the tab in front and not from an object noted earlier); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame with a click on an unopened file, with a repeated report of its tab and with an edit, revealApplicationPaneOverPausedFile
+  test(`a frame's file that the learner opened with one click and that ${course.name} is no sign of the learner: the Application pane that comes to the front leaves the keyboard in the Call Stack view`, async () => {
+    // Arrange: a live run paused; the debugger opened the paused file in the Application pane's group, and the learner clicked into the Call Stack view.
+    const harness = await workspaceHarness()
+    harness.useNativeLayout({ orientation: 0, groups: [{}] })
+    let live: { close(): void } | undefined
+    try {
+      const receipt = harness.service.start({
+        instanceId: harness.service.instanceId,
+        profile: 'repository-browser',
+        configuration: harness.configuration,
+        key: randomUUID(),
+      })
+      const record = harness.service.record(receipt)
+      await record.preparation
+      await harness.reader.open()
+      live = harness.reader.presentation.createViewport(
+        receipt.runId,
+        () => {},
+        () => {},
+        'normal',
+      )
+      harness.pauseDebugger({
+        opensWithKeyboard: { filename: 'actions.ts', column: 1 },
+      })
+      harness.focusView()
+      const revealsBefore = harness.panelReveals().length
+
+      // Act: the learner selects the caller's frame with one click, which opens its file as a preview tab without the keyboard; then the tab's course, and the Application pane comes to the front over it.
+      harness.selectStackFrame(
+        'page.tsx',
+        1,
+        'click-on-unopened-file-then-tab-update',
+      )
+      const oldTab = harness.reportActiveTextTab(course.state)
+      await harness.revealApplicationPaneOverPausedFile()
+
+      // Assert: the pane came without the keyboard, which is still in the Call Stack view, and nothing was told.
+      assert.deepEqual(
+        harness
+          .panelReveals()
+          .slice(revealsBefore)
+          .map((reveal) => reveal.preserveFocus),
+        [true],
+      )
+      assert.equal(harness.keyboardInView(), true)
+      assert.deepEqual(harness.informationMessages, [])
+      assert.deepEqual(
+        { isPreview: oldTab.isPreview, isDirty: oldTab.isDirty },
+        { isPreview: true, isDirty: false },
+      )
+    } finally {
+      live?.close()
+      await harness.close()
+    }
+  })
 
 // Value: protects=the keyboard of a learner in the Call Stack view at a selected frame while the reader renders the pause again: the reader's own showing of the captured source over the frame's file, and the selection it sets there, are no sign of the learner, and the Application pane that then comes to the front leaves the keyboard in the view; fails_when=every text editor that becomes active after a frame, or every change of a selection, counts as the learner's choice of that editor, so the reader's own render makes the pane take the keyboard from the Call Stack view at its next reveal; why_new=Cycle 0046 row 273 (the bound of its fix: only what the learner did is a sign); seam=workspace harness with the controlled runtime, a live run's viewport, pauseDebugger, focusView, selectStackFrame, the reader's Retry, revealApplicationPaneOverPausedFile
 test("the reader's own showing of the captured source at a selected frame is no sign of the learner: the Application pane that comes to the front afterwards leaves the keyboard in the Call Stack view", async () => {

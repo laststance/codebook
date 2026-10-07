@@ -49,6 +49,7 @@ import {
   SHOW_NATIVE_VARIABLES_MANUAL_STEP,
   SHOW_NATIVE_VARIABLES_SCOPES_TIMEOUT_MS,
   SHOW_NATIVE_VARIABLES_VALUES_WAIT_MS,
+  RUN_CLOSED_PANE_KEYBOARD_MESSAGE,
   SOURCE_TOOK_PAUSED_FOCUS_MESSAGE,
   STUDY_CLOSE_KEYBOARD_MESSAGE,
   STUDY_EDITOR_AREA_LOOK_INTERVAL_MS,
@@ -135,6 +136,7 @@ import { isDebugStopsInvalidation } from './runtimeSupport/utils/isDebugStopsInv
 import { isStackFrameItem } from './runtimeSupport/utils/isStackFrameItem'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
+import { WaitTimeoutError } from './runtimeSupport/utils/waitTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
 import type {
@@ -192,6 +194,7 @@ import { maximizedEditorAreaWidthPx } from './utils/maximizedEditorAreaWidthPx'
 import { NodeHistoryPlaybackController } from './utils/nodeHistoryPlaybackController'
 import { nodeStopSourceMatches } from './utils/nodeStopSourceMatches'
 import { normalizeNativeSourceText } from './utils/normalizeNativeSourceText'
+import { paneKeyboardTimeoutMessage } from './utils/paneKeyboardTimeoutMessage'
 import { plannedStopLine } from './utils/plannedStopLine'
 import { projectLearningSummary } from './utils/projectLearningSummary'
 import { projectPlaybackStudy } from './utils/projectPlaybackStudy'
@@ -439,13 +442,38 @@ interface KeyboardPauseOfRecord {
 }
 
 /**
- * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}.
+ * The keyboard notices the reader told in this editor session, each of them told once: `'close'` is {@link STUDY_CLOSE_KEYBOARD_MESSAGE}, `'pause'` is {@link SOURCE_TOOK_PAUSED_FOCUS_MESSAGE}, `'chosen'` is {@link PANE_TOOK_CHOSEN_EDITOR_FOCUS_MESSAGE}, `'runEnd'` is {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}.
  * Kept with the module and not with a {@link StudyWorkspace}: the extension disposes its reader and makes a new one when the workspace folders change, and the extension host loads this module once, so the marks live as long as the host does.
  * @example
  * if (keyboardNoticesTold.has('close')) return
  * keyboardNoticesTold.add('close')
  */
-const keyboardNoticesTold = new Set<'close' | 'pause' | 'chosen'>()
+const keyboardNoticesTold = new Set<'close' | 'pause' | 'chosen' | 'runEnd'>()
+
+/**
+ * Drops the empty groups at the end of a list of groups' tabs, for {@link StudyWorkspace}'s comparison of the learner's groups before an Open and after a Close: an editor that removes emptied groups takes those away with the panes, and the layout makes them again.
+ * @param groups - The tabs of each group, in the layout's order.
+ * @returns The list up to its last group that has a tab.
+ * @example withoutTrailingEmpty([['a.ts'], [], ['b.ts'], []]) // => [['a.ts'], [], ['b.ts']]
+ */
+function withoutTrailingEmpty(groups: string[][]): string[][] {
+  let end = groups.length
+  while (end > 0 && groups[end - 1]!.length === 0) end--
+  return groups.slice(0, end)
+}
+
+/**
+ * Says whether a group still is the learner's group of before, by its tabs; the step of {@link StudyWorkspace}'s comparison for one group.
+ * @param before - The learner's tabs the group held before the Open.
+ * @param now - The learner's tabs it holds now.
+ * @returns `true` when every tab of before is still there, and when the group was empty before and is empty now; `false` when a tab of before is gone, and for a group that was empty and has tabs now.
+ * @example holdsTabsOfBefore(['a.ts'], ['a.ts', 'b.ts']) // => true
+ */
+function holdsTabsOfBefore(before: string[], now: string[]): boolean {
+  return before.length === 0
+    ? now.length === 0
+    : before.every((key) => now.includes(key))
+}
 
 /**
  * A study archive a Study reader captured and could not save, with the run it was captured from and the checkpoint it answers.
@@ -579,6 +607,8 @@ export class StudyWorkspace {
   private summaryDocumentActive = false
   // What the Learning summary's document last reported about the keyboard focus; the editor gives a webview view no focus state to read.
   private summaryHeldFocus = false
+  /** Whether the Study pane's own document last reported that it has the keyboard (`pane-focus`, sent at its window's focus and blur events and once at load); `false` until a report, after a blur, and for a newly bound pane. {@link focusPaneForGridCommand} reads it to leave a pane alone that has the keyboard already. */
+  private studyPaneReportsKeyboard = false
   // The wait for a hidden summary's report that it lost the focus; see {@link releaseHiddenSummaryFocus}.
   private summaryFocusRelease?: ReturnType<typeof setTimeout>
   // Set while Show Variables runs its commands: Run and Debug takes the focus on purpose then, also where its view hides the summary.
@@ -607,8 +637,8 @@ export class StudyWorkspace {
   private learnerChoseEditorAtFrame = false
   /** The moment the learner last clicked or pressed a key in the active text editor ({@link noteLearnersSelection}); read while no frame is shown, where it counts for {@link LEARNER_SIGN_FRESH_MS} ({@link workedInEditorJustNow}). */
   private learnerWorkedInEditorAtMs?: number
-  /** The preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. */
-  private previewTabOfFrame?: vscode.Tab
+  /** The file and the editor group of the preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. The tab is known by its document and view column, never by its object: Cursor's extension host builds every tab object anew whenever the editor sends its whole tab model, and an object taken before then keeps answering what it answered last. */
+  private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
   private leaseId?: string
@@ -633,6 +663,8 @@ export class StudyWorkspace {
   private arranging?: Promise<void>
   /** Whether a Read ({@link readStudyPane}) maximized an editor group and no command of the reader has left that maximization since; {@link close} then ends it, so a closed workspace leaves no maximized group behind. */
   private maximizedByRead = false
+  /** The main editor's layout as it stood before the first arrangement of the Open that opened this reader, with the learner's tabs of each of its groups ({@link noteLayoutBeforeOpen}); {@link giveLayoutOfBeforeOpenBack} applies it at the end of {@link close} when the groups are still those. `undefined` while the reader is closed, and when a close gave it back or found other groups. */
+  private layoutBeforeOpen?: { layout: unknown; groups: string[][] }
   /** The main editor's layout as {@link rememberSideBarsBeforeRead} read it when the reading began that is on now ({@link maximizedByRead}), before anything was hidden or maximized; `undefined` when that read failed or another editor part may have answered. Read only while a reading is on: a Read without a measurement and an Enlarge that begins during the reading keep it as the sizes of before their Expand ({@link expandKeepingGroupSizes}). */
   private layoutBeforeReading?: unknown
   /** The main editor's layout of before the first Expand the reader ran for a Read or an Enlarge since the groups last had their own sizes ({@link expandKeepingGroupSizes}): the editor's Expand leaves every other group at its minimum size, and {@link giveGroupSizesBackAfterExpand} applies this layout when a Close ends the enlargement, when a Restore ends it and arranges nothing, and when the Read or the Enlarge is refused after its Expand. A later Expand keeps it, so the sizes of before the first of several Reads and Enlarges come back. `undefined` while no Expand of the reader's is owed for: after the sizes were given back, after an arrangement or the Restore of an Enlarge applied its own layout, and when the layout of before could not be read or was not known to be the main editor's. */
@@ -3072,29 +3104,50 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the tab in front of the active group when it is a preview tab; read by {@link judgeKeyboardAtStackItemChange} at every stack item, for {@link keptPreviewTabOfFrame}.
+   * Names the file and the group of the tab in front of the active group when it is a preview tab of a text document; read by {@link judgeKeyboardAtStackItemChange} at every stack item, for {@link keptPreviewTabOfFrame}.
    * A frame's file that was not open before is opened as a preview tab by one click in the Call Stack view, and stays one until the learner keeps it.
-   * @returns The tab, or `undefined` for a tab that is kept open and for an empty group.
+   * @returns The document's URI and the group's view column, or `undefined` for a tab that is kept open, a tab that shows no text document, and an empty group.
    * @example this.previewTabOfFrame = this.previewTabInFront()
    */
-  private previewTabInFront(): vscode.Tab | undefined {
-    const tab = vscode.window.tabGroups.activeTabGroup.activeTab
-    return tab?.isPreview ? tab : undefined
+  private previewTabInFront():
+    NonNullable<StudyWorkspace['previewTabOfFrame']> | undefined {
+    const group = vscode.window.tabGroups.activeTabGroup
+    const uri = this.textTabUri(group.activeTab)
+    return group.activeTab?.isPreview && uri !== undefined
+      ? { uri, column: group.viewColumn }
+      : undefined
   }
 
   /**
    * Says whether the preview tab the editor showed for the frame was kept open since and is still in front: the third sign of {@link noteLearnersSignAtFrame}.
-   * A double click on a frame in the Call Stack view, and Enter there, open the frame's file a second time, with the keyboard and as a tab that is kept: for a frame that is already the selected one, the editor reports nothing else of it (no new frame, no new active editor, and the selection stays on the frame's line). A tab that is kept because its file was changed says nothing about the keyboard, since an agent's edit does that too.
-   * @returns `true` when the tab noted at the frame is no preview tab any more, shows no unsaved change and is the tab in front of the active group; `false` otherwise, and when the frame's tab was no preview tab.
+   * A double click on a frame in the Call Stack view, and Enter there, open the frame's file a second time, with the keyboard and as a tab that is kept: for a frame that is already the selected one, the editor reports nothing else of it (no new frame, no new active editor, and the selection stays on the frame's line). A tab that is kept because its file was changed says nothing about the keyboard, since an agent's edit keeps a preview tab too.
+   * The current tab is read by document and view column: Cursor 3.23 rebuilds its tab objects on a whole-model update, leaving a remembered object's preview and dirty values stale. VS Code 1.140 reconciles existing tab IDs, but the third sign must work in both editors.
+   * @returns `true` when the tab in front of the active group shows the document noted at the frame in the same view column, is no preview tab and has no unsaved change; `false` otherwise, and when the frame's tab was no preview tab.
    * @example this.noteLearnersSignAtFrame(this.keptPreviewTabOfFrame())
    */
   private keptPreviewTabOfFrame(): boolean {
-    const tab = this.previewTabOfFrame
+    const noted = this.previewTabOfFrame
+    const group = vscode.window.tabGroups.activeTabGroup
+    return (
+      noted !== undefined &&
+      group.viewColumn === noted.column &&
+      this.isKeptTabOf(group.activeTab, noted.uri)
+    )
+  }
+
+  /**
+   * Says whether a tab shows a given document as a kept tab without unsaved changes; asked by {@link keptPreviewTabOfFrame} about the tab in front of the active group.
+   * @param tab - The tab, read from the editor now.
+   * @param uri - The document's URI as a string.
+   * @returns `true` for a text tab of that document that is no preview tab and not dirty; `false` otherwise, and without a tab.
+   * @example this.isKeptTabOf(group.activeTab, noted.uri)
+   */
+  private isKeptTabOf(tab: vscode.Tab | undefined, uri: string): boolean {
     return (
       tab !== undefined &&
+      this.textTabUri(tab) === uri &&
       !tab.isPreview &&
-      !tab.isDirty &&
-      vscode.window.tabGroups.activeTabGroup.activeTab === tab
+      !tab.isDirty
     )
   }
 
@@ -4468,7 +4521,14 @@ export class StudyWorkspace {
     )
   }
 
-  /** Requires both document and native owned-tab focus for the final reading restoration. @example await this.focusPresentationPanel(panel, signal) */
+  /**
+   * Gives one of the reader's panes the keyboard and waits until both the editor and the pane's own document confirm it; called for the final reading restoration of a presentation change ({@link capturePresentationFocus}), for the presentation action `focus` ({@link focusCurrentPresentation}), and by {@link focusPaneForGridCommand} for a pane that is not the editor's active one.
+   * @param panel - The Application pane or the Study pane.
+   * @param signal - Ends the handshake with its reason.
+   * @returns Once the pane's document reported the focus and the editor names the pane's tab as the active one.
+   * @throws When the learner chose another pane or tab meanwhile, the window lost the focus, the pane was closed or replaced, and, with the sentence of {@link paneFocusFailure}, when the pane did not confirm the keyboard within {@link PRESENTATION_READY_TIMEOUT_MS}.
+   * @example await this.focusPresentationPanel(panel, signal)
+   */
   private async focusPresentationPanel(
     panel: vscode.WebviewPanel,
     signal?: AbortSignal,
@@ -4545,10 +4605,94 @@ export class StudyWorkspace {
           // Original focus is admissible only before acquisition; later departure permanently ends this handoff.
           assertOwnedFocus()
         },
+      }).catch((error: unknown) => {
+        throw this.paneFocusFailure(error, panel)
       })
     } finally {
       for (const subscription of focusChanges) subscription.dispose()
     }
+  }
+
+  /**
+   * Words the end of a pane's focus handshake for the learner or agent who reads it; called by {@link focusPresentationPanel} with whatever {@link focusWebview} rejected with.
+   * A wait of the handshake that ran out names an internal step ("owned presentation inner focus", "current presentation focus document"), and the caller's line or reason would show that text. It is replaced by {@link paneKeyboardTimeoutMessage}, which says which pane did not confirm the keyboard, for how long Codebook waited and what to do. Every other failure of the handshake is a sentence already (the window lost the focus, the learner chose another pane, the pane was closed) and is passed on as it is.
+   * @param error - What the handshake rejected with.
+   * @param panel - The pane that was asked.
+   * @returns An error with the sentence for a {@link WaitTimeoutError}; the given error otherwise.
+   * @example throw this.paneFocusFailure(error, panel) // => Error: Codebook asked the Explanation pane to take the keyboard, and the pane did not confirm it within 5 seconds. …
+   */
+  private paneFocusFailure(
+    error: unknown,
+    panel: vscode.WebviewPanel,
+  ): unknown {
+    if (!(error instanceof WaitTimeoutError)) return error
+    return new Error(
+      paneKeyboardTimeoutMessage(
+        panel === this.app ? 'Application' : 'Explanation',
+        PRESENTATION_READY_TIMEOUT_MS,
+      ),
+    )
+  }
+
+  /**
+   * Gives one of the reader's panes the editor's focus before a command that acts on the active editor group; called by the action Arrange Study Workspace and by {@link enlargePresentationPanel}.
+   * Those commands need the pane to be the editor's active one, not a report of the pane's own document, so for a pane the editor already names as active no report is waited for. Revealing such a pane once more makes the editor focus the frame around the pane's document, which can take the keyboard from that document without any focus event: {@link focusPresentationPanel} then waited its whole bound for a report that could not come, and the command did not run (2 of 8 Arranges after a Read of the explanation ended that way after five seconds; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). A pane whose document says that it has the keyboard is therefore left as it is; an active pane that does not say so (the keyboard is in a view, the terminal or a side bar, or the pane's page reports nothing) is revealed with the focus, and the command goes on at once. Any other pane gets the full handshake, whose reveal brings the focus event the report answers.
+   * @param panel - The pane the command acts on, one of the reader's two.
+   * @returns At once for the editor's active pane; otherwise once {@link focusPresentationPanel} confirmed the focus.
+   * @throws What {@link focusPresentationPanel} throws for a pane that is not the active one.
+   * @example await this.focusPaneForGridCommand(this.contextPanel)
+   */
+  private async focusPaneForGridCommand(
+    panel: vscode.WebviewPanel,
+  ): Promise<void> {
+    if (!this.isEditorsActivePane(panel)) {
+      await this.focusPresentationPanel(panel)
+      return
+    }
+    // The keyboard may be outside the editor area while the pane is the active editor: the pane takes it, and nothing waits for its document.
+    if (!this.reportsKeyboard(panel)) panel.reveal(undefined, false)
+  }
+
+  /**
+   * Says whether a pane's own document last reported that it has the keyboard; asked by {@link focusPaneForGridCommand} for the editor's active pane.
+   * @param panel - The Application pane or the Study pane.
+   * @returns What the Study pane last reported ({@link studyPaneReportsKeyboard}); `false` for the Application pane, whose page sends no such report.
+   * @example this.reportsKeyboard(this.contextPanel) // => true after the learner clicked into the Study pane
+   */
+  private reportsKeyboard(panel: vscode.WebviewPanel): boolean {
+    return panel === this.contextPanel && this.studyPaneReportsKeyboard
+  }
+
+  /**
+   * Says whether the editor names one of the reader's panes as its active editor; asked by {@link focusPaneForGridCommand}.
+   * @param panel - The Application pane or the Study pane.
+   * @returns `true` when the pane reports itself active and its tab is the one the active tab group shows in the pane's column; `false` otherwise, also while another editor part or a text editor is the active one.
+   * @example this.isEditorsActivePane(this.contextPanel) // => true during a Read of the explanation
+   */
+  private isEditorsActivePane(panel: vscode.WebviewPanel): boolean {
+    const group = vscode.window.tabGroups.activeTabGroup
+    return (
+      panel.active &&
+      group.viewColumn === panel.viewColumn &&
+      this.isCodebookPaneInput(
+        group.activeTab?.input,
+        this.paneViewTypeOf(panel),
+      )
+    )
+  }
+
+  /**
+   * Names the view type of one of the reader's two panes; asked by {@link isEditorsActivePane} to find the pane's tab.
+   * @param panel - The Application pane or the Study pane.
+   * @returns `'codebook.scopedBrowser'` for the Application pane, `'codebook.studyContext'` for the Study pane.
+   * @example this.paneViewTypeOf(this.app) // => 'codebook.scopedBrowser'
+   */
+  private paneViewTypeOf(
+    panel: vscode.WebviewPanel,
+  ): 'codebook.scopedBrowser' | 'codebook.studyContext' {
+    return panel === this.app
+      ? 'codebook.scopedBrowser'
+      : 'codebook.studyContext'
   }
 
   /** Opens a closed reader for a focused Read command, then makes its owned pane readable without changing the selected item or run. @example await this.readStudyPane('source') */
@@ -4858,7 +5002,7 @@ export class StudyWorkspace {
       ? receipt?.signature
       : previous?.expandedSignature
     // Native focus must belong to the requested pane before Expand or Maximize changes the editor grid.
-    await this.focusPresentationPanel(panel)
+    await this.focusPaneForGridCommand(panel)
     const before = receipt
       ? await this.readPassivePresentationLayout()
       : undefined
@@ -5938,7 +6082,7 @@ export class StudyWorkspace {
               void this.renderSelection().catch((error) =>
                 this.report('reader', error),
               )
-            else this.app?.dispose()
+            else void this.closeApplicationPaneOfEndedRun()
           },
         },
         studyRecord && createRecordingObserver(studyRecord),
@@ -6195,6 +6339,8 @@ export class StudyWorkspace {
               'The learner layout changed during feature entry; its current arrangement was preserved. Retry explicitly.',
             )
           }
+          // The learner's own layout, measured before this Open arranges anything, is what a Close gives back.
+          if (firstOpen) this.noteLayoutBeforeOpen(grid.layout, grid.groups)
           needsInitialReservation = this.needsInitialPaneReservation(
             grid.groups.length,
             compositionChanged,
@@ -6774,7 +6920,7 @@ export class StudyWorkspace {
       try {
         // A Study click can precede Cursor's native focus notification after unmaximizing Application.
         if (this.contextPanel)
-          await this.focusPresentationPanel(this.contextPanel)
+          await this.focusPaneForGridCommand(this.contextPanel)
         const state = this.presentationState()
         await this.changePresentation({
           presentationId: state.presentationId,
@@ -6784,10 +6930,13 @@ export class StudyWorkspace {
         })
       } catch (error) {
         if (this.closing || this.disposed) throw error
+        // The line begins with one error name, which the report adds: the cause's own is taken off.
         this.report(
           'layout',
           new Error(
-            error instanceof StudyError ? error.causeDetail : String(error),
+            withoutErrorName(
+              error instanceof StudyError ? error.causeDetail : String(error),
+            ),
           ),
         )
       }
@@ -7036,7 +7185,7 @@ export class StudyWorkspace {
 
   /**
    * Drains owned runtime and source acquisitions before closing only reader-owned tabs/panels; called by the command "Codebook: Close Study Workspace".
-   * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: that close moves no keyboard and tells nothing. One exception holds for every close, a disposal's and one in a window without the focus too: a close that ends a Read shows the side bars the Read hid again ({@link endEnlargementAtClose}), and the editor shows a bar only with a command that gives that bar the keyboard. The chat that had the keyboard as a tab of another editor part then gets it back and nothing is told; in every other case the active editor group takes the keyboard once the panes are closed and the learner is told ({@link movesKeyboardAfterClose}).
+   * When it closed a pane or the captured source in a focused window while a pane, the captured source or the learner's own file was the active editor, the active editor group gets the keyboard ({@link giveActiveGroupKeyboardAfterClose}): the editor rebuilds its grid when the panes' groups close, and the keyboard would be left on the page body. The editor does not say whether the keyboard was in that editor or in the terminal, a view or a side-view chat before the Command Palette opened; for a learner who was typing there this Close moves the keyboard into the editor, which is the price for not leaving a learner in a file with a dead keyboard, and the learner is told once in an editor session with {@link STUDY_CLOSE_KEYBOARD_MESSAGE}. While no text editor and no pane is active, the same is done where the editor has one editor part ({@link namesOnlyMainEditorGroups}: the keyboard is then in a page that is no text editor, in the terminal or in a view); beside another editor part (Cursor's chat as a tab, which may have the keyboard) nothing is focused. A window without the focus is left alone. {@link dispose} closes the reader too, when the extension host ends or the workspace folders changed: beside a learner's own file that close moves no keyboard and tells nothing; when it takes away the active editor (one of the reader's panes or its captured source) the active editor group gets the keyboard and the learner is told, as at a Close ({@link settlesKeyboardAtThisClose}). One exception holds for every close, a disposal's and one in a window without the focus too: a close that ends a Read shows the side bars the Read hid again ({@link endEnlargementAtClose}), and the editor shows a bar only with a command that gives that bar the keyboard. The chat that had the keyboard as a tab of another editor part then gets it back and nothing is told; in every other case the active editor group takes the keyboard once the panes are closed and the learner is told ({@link movesKeyboardAfterClose}).
    * @returns Once the panes and the captured source's tabs are closed and the reader's state is cleared.
    * @throws When the editor refused to close a captured source's tab.
    * @example await workspace.close()
@@ -7045,6 +7194,8 @@ export class StudyWorkspace {
     if (this.closingPromise) return this.closingPromise
     // A pane, the captured source or the learner's own file is the active editor: closing the panes below can leave the keyboard nowhere, and the editor group that remains then gets it.
     const hadKeyboardInEditors = this.hasKeyboardInEditors()
+    // One of the reader's own panes or its captured source is the active editor: this close takes away the editor that has the keyboard, also when nobody asked for the close.
+    const closesActiveEditor = this.hasOwnActiveEditor()
     // Read before anything is closed or shown: the tab outside the text editors and the Study panes that has the keyboard now (Cursor's chat), which gets it back when this close shows a side bar.
     const giveKeyboardBackToChat = this.retainForeignTabFocus(undefined)
     this.closing = true
@@ -7132,7 +7283,9 @@ export class StudyWorkspace {
       if (tabs.length && !(await vscode.window.tabGroups.close(tabs, true)))
         throw new Error('Some captured source readers could not close.')
       const leavesKeyboardNowhere =
-        settlesKeyboard && this.closesPaneOrSource(tabs.length)
+        settlesKeyboard &&
+        this.closesPaneOrSource(tabs.length) &&
+        this.settlesKeyboardAtThisClose(closesActiveEditor)
       this.opened = false
       // A closed reader has no live or replay arrangement: the next selection opens it instead of arranging panes that no longer exist.
       this.liveComposition = false
@@ -7142,6 +7295,8 @@ export class StudyWorkspace {
       this.app?.dispose()
       this.app = undefined
       this.initialAppPlacement = undefined
+      // The Study arrangement took the learner's own groups for its panes: with the panes gone, those groups get the layout they had before the Open.
+      await this.giveLayoutOfBeforeOpenBack()
       // The tabs are closed without moving the focus, so the keyboard would fall to the page body: the group the editor shows as active takes it.
       if (
         this.movesKeyboardAfterClose(
@@ -7205,19 +7360,94 @@ export class StudyWorkspace {
 
   /**
    * Says whether {@link close} gives the active editor group the keyboard at its end and tells the learner where it is; asked by {@link close} once the panes are disposed.
-   * A close that showed a side bar a Read hid always does, also while the reader is being disposed and in a window without the focus: the editor's command that shows a bar gave that bar the keyboard, so the keyboard has moved already, and the panes that close afterwards would leave it on no element. Any other Close the learner asked for does, in a focused window, when closing the panes can leave the keyboard nowhere. A reader that closes with its disposal (the extension host ends, or the workspace folders changed) otherwise moves no keyboard, because no learner asked for that close, and a window without the focus is otherwise left alone.
-   * @param leavesKeyboardNowhere - Whether closing the panes can leave the keyboard on no element.
+   * A close that showed a side bar a Read hid always does, also while the reader is being disposed and in a window without the focus: the editor's command that shows a bar gave that bar the keyboard, so the keyboard has moved already, and the panes that close afterwards would leave it on no element. Any other close does in a focused window when closing the panes can leave the keyboard nowhere and the close is one that settles it ({@link settlesKeyboardAtThisClose}). A window without the focus is otherwise left alone.
+   * @param leavesKeyboardNowhere - Whether closing the panes can leave the keyboard on no element, at a close that settles it.
    * @param movedKeyboardToSideBar - Whether this close showed a side bar a Read hid and did not give the keyboard back to the chat ({@link endEnlargementAtClose}).
-   * @returns `true` when a side bar took the keyboard, and in a focused window for a Close that is no disposal when the keyboard could be left nowhere; `false` otherwise.
-   * @example this.movesKeyboardAfterClose(true, false) // => false while the reader is being disposed, and in a window without the focus
+   * @returns `true` when a side bar took the keyboard, and in a focused window when the keyboard could be left nowhere; `false` otherwise.
+   * @example this.movesKeyboardAfterClose(true, false) // => false in a window without the focus
    */
   private movesKeyboardAfterClose(
     leavesKeyboardNowhere: boolean,
     movedKeyboardToSideBar: boolean,
   ): boolean {
     if (movedKeyboardToSideBar) return true
+    return vscode.window.state.focused && leavesKeyboardNowhere
+  }
+
+  /**
+   * Says whether this close is one that gives the keyboard an element again after it closed the panes; asked by {@link close}.
+   * A Close the learner asked for is. A reader that closes with its disposal (the extension host ends, or the workspace folders changed) moves no keyboard beside a learner's own file, because no learner asked for that close and the keyboard may be in the terminal or a chat; it does when one of its own panes or its captured source was the active editor, which the disposal takes away: the keyboard would be left on no element.
+   * @param closesActiveEditor - Whether one of the reader's panes or its captured source was the active editor when the close began ({@link hasOwnActiveEditor}).
+   * @returns `true` for a Close that is no disposal, and for a disposal that closes the active editor; `false` for a disposal beside a learner's own file or a page of the editor.
+   * @example this.settlesKeyboardAtThisClose(false) // => false while the reader is being disposed beside the learner's file
+   */
+  private settlesKeyboardAtThisClose(closesActiveEditor: boolean): boolean {
+    return !this.disposed || closesActiveEditor
+  }
+
+  /**
+   * Says whether the editor's active editor is one of the reader's own: a Study pane, the Application pane, or the captured source; asked by {@link close} before it closes anything.
+   * @returns `true` when one of the two panes is active or the active text editor shows the captured source; `false` for a learner's own file, another tab and none.
+   * @example const closesActiveEditor = this.hasOwnActiveEditor()
+   */
+  private hasOwnActiveEditor(): boolean {
     return (
-      vscode.window.state.focused && leavesKeyboardNowhere && !this.disposed
+      this.hasActiveStudyPane() ||
+      this.activeTextDocumentUri() === this.sourceUri?.toString()
+    )
+  }
+
+  /**
+   * Closes the Application pane a live run leaves behind when no Study workspace shows its history, and gives the keyboard an element again when that pane had it; called by the lease's `released` of {@link presentation} at the run's end, while the reader is closed or has no study to show.
+   * A pane that is closed while it has the keyboard leaves the keyboard on the page body: a key the learner presses then goes nowhere until they click (Cursor 3.23.12 at the end of a run of five stops, measured natively on 2026-10-07: the extension host named a text editor as active, the workbench page had no focus). So when the pane was the editor's active editor in the focused window, the active editor group gets the keyboard once the pane's tab and the group it may have left empty are gone, by the rule of a Close ({@link giveActiveGroupKeyboardAfterClose}), and the learner is told once in an editor session with {@link RUN_CLOSED_PANE_KEYBOARD_MESSAGE}.
+   * What the reader cannot know: beside Cursor's chat as a tab of another editor part the editor does not report a pane's focus, so the pane is not known to have the keyboard and nothing is focused; and while the pane is the active editor the keyboard may be in the terminal, a view or a side-view chat, which is the price the notice names. A window without the focus is left alone.
+   * @returns Once the pane is disposed and, where it had the keyboard, the focus command was answered.
+   * @example else void this.closeApplicationPaneOfEndedRun()
+   */
+  private async closeApplicationPaneOfEndedRun(): Promise<void> {
+    const panel = this.app
+    if (!panel) return
+    // Read before the pane goes: afterwards the editor names whatever tab took its place.
+    const heldKeyboard = this.holdsKeyboardInFocusedWindow(panel)
+    panel.dispose()
+    if (heldKeyboard) await this.settleKeyboardAfterRunClosedPane()
+  }
+
+  /**
+   * Says whether one of the reader's panes is the editor's active editor in a window that has the focus, which is all the reader can know of a pane that has the keyboard; asked by {@link closeApplicationPaneOfEndedRun} before it disposes the pane.
+   * @param panel - The Application pane or the Study pane.
+   * @returns `true` when the window is focused and {@link isEditorsActivePane} holds; `false` otherwise.
+   * @example const heldKeyboard = this.holdsKeyboardInFocusedWindow(panel)
+   */
+  private holdsKeyboardInFocusedWindow(panel: vscode.WebviewPanel): boolean {
+    return vscode.window.state.focused && this.isEditorsActivePane(panel)
+  }
+
+  /**
+   * Gives the active editor group the keyboard once the Application pane a run's end closed is gone, and tells the learner; the second half of {@link closeApplicationPaneOfEndedRun}, for a pane that had the keyboard.
+   * @returns Once the focus command was answered; at once, with nothing run, when a newer run has made its pane meanwhile (it has its own reveal) or the reader is closing (a close settles the keyboard by its own rule).
+   * @example if (heldKeyboard) await this.settleKeyboardAfterRunClosedPane()
+   */
+  private async settleKeyboardAfterRunClosedPane(): Promise<void> {
+    await this.closedPanesGone('codebook.scopedBrowser')
+    if (this.app || this.closing) return
+    await vscode.commands
+      .executeCommand('workbench.action.focusActiveEditorGroup')
+      .then(undefined, () => undefined)
+    this.tellKeyboardAfterRunClosedPane()
+  }
+
+  /**
+   * Tells the learner, once in an editor session, that the active editor group has the keyboard after a run's end closed the Application pane; called by {@link settleKeyboardAfterRunClosedPane}.
+   * @example this.tellKeyboardAfterRunClosedPane()
+   */
+  private tellKeyboardAfterRunClosedPane(): void {
+    if (keyboardNoticesTold.has('runEnd')) return
+    keyboardNoticesTold.add('runEnd')
+    void showPlainNotice(
+      vscode.window,
+      'information',
+      RUN_CLOSED_PANE_KEYBOARD_MESSAGE,
     )
   }
 
@@ -7294,16 +7524,7 @@ export class StudyWorkspace {
       vscode.window.tabGroups.all.some(
         (group) =>
           group.tabs.length > 0 &&
-          group.tabs.every(
-            (tab) =>
-              this.ownsCapturedSourceTab(tab) ||
-              (this.isCodebookPaneInput(
-                tab.input,
-                'codebook.scopedBrowser',
-                'codebook.studyContext',
-              ) &&
-                !this.inheritedPaneTabs.has(tab)),
-          ),
+          group.tabs.every((tab) => this.isOwnPaneOrSourceTab(tab)),
       )
     )
   }
@@ -7344,16 +7565,7 @@ export class StudyWorkspace {
    * @example await this.giveActiveGroupKeyboardAfterClose()
    */
   private async giveActiveGroupKeyboardAfterClose(): Promise<void> {
-    await waitUntil(
-      () =>
-        !this.hasUnownedPaneTab(
-          'codebook.scopedBrowser',
-          'codebook.studyContext',
-        ),
-      "the closed panes' tabs to leave their groups",
-      PRESENTATION_READY_TIMEOUT_MS,
-    ).catch(() => undefined)
-    await this.emptiedGroupsClosed()
+    await this.closedPanesGone()
     await vscode.commands
       .executeCommand('workbench.action.focusActiveEditorGroup')
       .then(undefined, () => undefined)
@@ -7361,7 +7573,143 @@ export class StudyWorkspace {
   }
 
   /**
-   * Waits, bounded by {@link CLOSE_GROUP_SETTLE_MS}, until the editor has removed the groups the closed tabs left empty; called by {@link giveActiveGroupKeyboardAfterClose} before its focus command.
+   * Waits until the editor has closed the tabs of the panes the reader disposed and removed the groups they left empty; called by {@link giveLayoutOfBeforeOpenBack} before it reads the groups that remain, by {@link giveActiveGroupKeyboardAfterClose} before its focus command, and by {@link closeApplicationPaneOfEndedRun} for the Application pane alone.
+   * @param kinds - The view types of the panes that were disposed; left out, both of the reader's panes. A kind the reader still holds a pane of must not be named: its live tab would be waited for.
+   * @returns Once no tab of a disposed pane is left, or after {@link PRESENTATION_READY_TIMEOUT_MS}, and once {@link emptiedGroupsClosed} returned.
+   * @example await this.closedPanesGone()
+   */
+  private async closedPanesGone(
+    ...kinds: ('codebook.scopedBrowser' | 'codebook.studyContext')[]
+  ): Promise<void> {
+    const closedKinds = kinds.length
+      ? kinds
+      : (['codebook.scopedBrowser', 'codebook.studyContext'] as const)
+    await waitUntil(
+      () => !this.hasUnownedPaneTab(...closedKinds),
+      "the closed panes' tabs to leave their groups",
+      PRESENTATION_READY_TIMEOUT_MS,
+    ).catch(() => undefined)
+    await this.emptiedGroupsClosed()
+  }
+
+  /**
+   * Notes the main editor's layout and the learner's tabs of each group before an Open arranges anything; called by {@link open} with its first measurement of the main editor, for a reader that was closed.
+   * The Study arrangement applies its layout to the learner's own groups when there are no more than it needs, so two groups side by side become the two rows of the left column, and unequal groups become equal; after a Close they stayed so (two groups of 659 and 440 px side by side were two rows of 70 and 617 px after Open and Close; measured natively on 2026-10-07 in VS Code 1.140.0 for Linux). The first note of an open reader is kept: an Open that failed half way and is repeated measures groups that hold the reader's panes already. A main editor with one group is not noted: it has no split and no size that could differ afterwards.
+   * @param layout - The main editor's layout as {@link readMainEditorGrid} measured it.
+   * @param groups - The main editor's groups in the order of that layout.
+   * @example if (firstOpen) this.noteLayoutBeforeOpen(grid.layout, grid.groups)
+   */
+  private noteLayoutBeforeOpen(
+    layout: unknown,
+    groups: readonly vscode.TabGroup[],
+  ): void {
+    // A single group has neither a split nor a size to give back.
+    if (groups.length < 2) return
+    this.layoutBeforeOpen ??= {
+      layout,
+      groups: groups.map((group) => this.learnersTabKeysOf(group)),
+    }
+  }
+
+  /**
+   * Gives the main editor the layout it had before the Open, at the end of {@link close}, once the panes and the groups they left empty are gone; the note is forgotten either way.
+   * The layout is applied only when the main editor answers ({@link isMainEditorLayout}) and the learner's groups are still the same ones ({@link hasLearnersGroupsOf}). A learner who opened, closed or moved a group during the session, or closed one of their tabs of before, keeps what they made, and so does a layout that is as before already. A reader that closes with its disposal applies nothing: no learner asked for that close.
+   * What cannot be given back: the width of a side bar the editor narrowed to make room for the panes' groups (no command reads or sets it), and a learner's group that stood empty in front of one with tabs and that the editor removed when the pane left it (an empty group can be made again only behind the groups that stay).
+   * @returns Once the editor answered the layout command, or at once when nothing is noted or nothing may be applied.
+   * @example await this.giveLayoutOfBeforeOpenBack()
+   */
+  private async giveLayoutOfBeforeOpenBack(): Promise<void> {
+    const before = this.layoutBeforeOpen
+    this.layoutBeforeOpen = undefined
+    if (!before || this.disposed) return
+    await this.closedPanesGone()
+    const now = await this.readEditorLayout()
+    if (!this.owesLayoutOfBeforeOpen(before, now)) return
+    await vscode.commands
+      .executeCommand('vscode.setEditorLayout', before.layout)
+      .then(undefined, () => undefined)
+  }
+
+  /**
+   * Says whether the layout of before the Open is to be applied now; asked by {@link giveLayoutOfBeforeOpenBack} with the layout the editor answers once the panes are gone.
+   * @param before - What {@link noteLayoutBeforeOpen} noted.
+   * @param now - The editor's layout now.
+   * @returns `true` when the answer is the main editor's, differs from the layout of before in its splits or proportions, and the main editor's groups are the learner's groups of before; `false` otherwise.
+   * @example if (!this.owesLayoutOfBeforeOpen(before, now)) return
+   */
+  private owesLayoutOfBeforeOpen(
+    before: NonNullable<StudyWorkspace['layoutBeforeOpen']>,
+    now: unknown,
+  ): boolean {
+    const count = editorLayoutGroupCount(now)
+    return (
+      count !== undefined &&
+      this.isMainEditorLayout(now) &&
+      !isProportionalEditorLayout(before.layout, now) &&
+      this.hasLearnersGroupsOf(before.groups, count)
+    )
+  }
+
+  /**
+   * Says whether the main editor's groups are still the learner's groups a layout was noted for; asked by {@link owesLayoutOfBeforeOpen}.
+   * "The same groups" is tested by number and by tabs, as the editor gives a group no name that lasts: there are no more groups than before, and, leaving empty groups at the end aside, the same number, each holding every tab it held before (a group may have gained tabs, as when the debugger opened a file in it) and each group that was empty before empty still. An empty group of before that the editor removed at the end is made again by the layout.
+   * @param before - The learner's tabs of each group as noted, in the layout's order.
+   * @param mainCount - How many groups the main editor has now.
+   * @returns `true` when the groups match as described; `false` when a group was opened, closed or moved, or a tab of before is gone from its group.
+   * @example this.hasLearnersGroupsOf([['file:///a.ts'], []], 1) // => true once the editor removed the empty second group with the pane that sat in it
+   */
+  private hasLearnersGroupsOf(before: string[][], mainCount: number): boolean {
+    const now = vscode.window.tabGroups.all
+      .toSorted((left, right) => left.viewColumn - right.viewColumn)
+      .slice(0, mainCount)
+      .map((group) => this.learnersTabKeysOf(group))
+    const keptBefore = withoutTrailingEmpty(before),
+      keptNow = withoutTrailingEmpty(now)
+    return (
+      now.length <= before.length &&
+      keptBefore.length === keptNow.length &&
+      keptBefore.every((keys, index) =>
+        holdsTabsOfBefore(keys, keptNow[index]!),
+      )
+    )
+  }
+
+  /**
+   * Lists the learner's tabs of an editor group by a key that outlives the editor's tab objects; asked by {@link noteLayoutBeforeOpen} and {@link hasLearnersGroupsOf}.
+   * @param group - An editor group.
+   * @returns One key for each tab that is not this reader's pane or captured source ({@link isOwnPaneOrSourceTab}): a text tab's document, any other tab's kind and label.
+   * @example this.learnersTabKeysOf(group) // => ['file:///work/login-form.tsx']
+   */
+  private learnersTabKeysOf(group: vscode.TabGroup): string[] {
+    return group.tabs
+      .filter((tab) => !this.isOwnPaneOrSourceTab(tab))
+      .map((tab) =>
+        tab.input instanceof vscode.TabInputText
+          ? tab.input.uri.toString()
+          : `${tab.input instanceof vscode.TabInputWebview ? tab.input.viewType : 'tab'}:${String(tab.label)}`,
+      )
+  }
+
+  /**
+   * Says whether a tab is one {@link close} closes: a pane this reader owns or one of its captured sources; asked by {@link emptiesEditorGroupAtClose} and {@link learnersTabKeysOf}.
+   * @param tab - A tab of an editor group.
+   * @returns `true` for a captured source of this workspace's reader and for an Application or Study pane that is not left over from an earlier extension host; `false` for every other tab.
+   * @example group.tabs.every((tab) => this.isOwnPaneOrSourceTab(tab))
+   */
+  private isOwnPaneOrSourceTab(tab: vscode.Tab): boolean {
+    return (
+      this.ownsCapturedSourceTab(tab) ||
+      (this.isCodebookPaneInput(
+        tab.input,
+        'codebook.scopedBrowser',
+        'codebook.studyContext',
+      ) &&
+        !this.inheritedPaneTabs.has(tab))
+    )
+  }
+
+  /**
+   * Waits, bounded by {@link CLOSE_GROUP_SETTLE_MS}, until the editor has removed the groups the closed tabs left empty; called by {@link closedPanesGone}.
    * @returns At once when the learner turned `workbench.editor.closeEmptyGroups` off (an emptied group then stays), when no group is empty or only one group is left; otherwise when the empty groups are gone or the bound passed.
    * @example await this.emptiedGroupsClosed()
    */
@@ -10447,6 +10795,7 @@ export class StudyWorkspace {
   /** Binds a fresh explanation document for cold entry or handoff without accepting retired controls or receipts. @example this.bindContextPanel(replacement) */
   private bindContextPanel(panel: vscode.WebviewPanel): void {
     this.contextPanel = panel
+    this.studyPaneReportsKeyboard = false
     this.lastPublished = undefined
     this.lastRendered = undefined
     panel.onDidDispose(() => {
@@ -12483,7 +12832,15 @@ export class StudyWorkspace {
     })
   }
 
-  /** Retains actual accepted layout effects for newer navigation while {@link close} invalidates the owner. @example await this.rememberLayout('study', lifetime, groups) */
+  /**
+   * Retains actual accepted layout effects for newer navigation while {@link close} invalidates the owner; called by {@link arrange} right after its layout command.
+   * It reads the editor's layout until it has the arrangement's proportions, and takes that read as the receipt. A Study layout the editor answered with the Study's groups at other sizes gets one more step here ({@link studyLayoutPixelPass}): {@link arrange} has to send proportions when the grid it measured gave one axis only, both editors can answer proportions with every group but the last of its siblings at one pixel, and the grid that answer made has the nested split whose two axes give the pixels.
+   * @param mode - The arrangement that was applied.
+   * @param lifetime - The reader lifetime the arrangement belongs to.
+   * @param retainedGroups - The main editor's groups the arrangement kept.
+   * @returns The receipt of a layout the editor kept, also stored as {@link layoutReceipt}; `undefined` when the groups or panes changed while the grid settled, when the grid never had the proportions (the reason is reported and kept in {@link layoutReceiptFailure}), and when it stayed at other sizes with the Study's groups for {@link STUDY_LAYOUT_STABLE_MISMATCH_MS}.
+   * @example await this.rememberLayout('study', lifetime, groups)
+   */
   private async rememberLayout(
     mode: 'study' | 'repository',
     lifetime: number,
@@ -12491,6 +12848,7 @@ export class StudyWorkspace {
   ): Promise<StudyWorkspace['layoutReceipt']> {
     this.assertLifetime(lifetime)
     this.layoutReceiptFailure = undefined
+    const appliesPixelsOnce = this.studyLayoutPixelPass()
     const groups = vscode.window.tabGroups.all.map((group) => ({
       group,
       column: group.viewColumn,
@@ -12523,6 +12881,8 @@ export class StudyWorkspace {
           mode === 'study' &&
           editorLayoutGroupCount(actual) === this.studyGroupCount()
         ) {
+          // The grid has the Study's groups at other sizes: the layout is applied once more, in the pixels this grid measures.
+          if (await appliesPixelsOnce(actual)) return false
           if (
             stableMismatch?.signature === signature &&
             nowMs - stableMismatch.sinceMs >= STUDY_LAYOUT_STABLE_MISMATCH_MS
@@ -12567,6 +12927,29 @@ export class StudyWorkspace {
             panes: this.studyPanePositions(),
           }
         : undefined)
+  }
+
+  /**
+   * Makes the step that applies the Study layout a second time in pixels, at most once for one arrangement; called by {@link rememberLayout}, which asks it for every read that has the Study's groups without its proportions.
+   * {@link arrange} sends pixels when the grid it measured has a nested split, whose two axes give the editor area ({@link toPixelEditorLayout}). A flat grid gives one axis only: the learner's two groups side by side with the Study pane's new group beside them are three columns, and the layout goes out in proportions. Both editors then left the Application group at one pixel and the split was never confirmed, so the Open went on to a Read of the explanation (measured natively on 2026-10-07 in VS Code 1.140.0 for Linux, three takes: a first column of 1 px with rows of 1 and 687 px beside 1269 px; Cursor 3.23.12: 1 px with rows of 1 and 657 px beside 659 px). The grid that answer made is nested, so its read gives both axes.
+   * A grid the editor really cannot give the proportions (a window too narrow for three groups) gets the same one step, to no effect, and is then taken as it is.
+   * @returns A function that takes a layout read and answers `true` when it applied the Study layout in that read's pixels; `false` on every later call, and when the read measures no pixels.
+   * @example
+   * ```ts
+   * const appliesPixelsOnce = this.studyLayoutPixelPass()
+   * if (await appliesPixelsOnce(actual)) return false // read the grid again
+   * ```
+   */
+  private studyLayoutPixelPass(): (actual: unknown) => Promise<boolean> {
+    let isStillOwed = true
+    return async (actual: unknown): Promise<boolean> => {
+      if (!isStillOwed) return false
+      isStillOwed = false
+      const pixels = toPixelEditorLayout(this.studyLayout(), actual)
+      if (!pixels) return false
+      await vscode.commands.executeCommand('vscode.setEditorLayout', pixels)
+      return true
+    }
   }
 
   /** Retains logical ownership across Cursor's wrapper-only tab-model resync, never across moved or replaced groups. @example this.observeEditorGroups(event) */
@@ -13138,6 +13521,9 @@ export class StudyWorkspace {
     if (message.type === 'pane-focus') {
       if (owner !== undefined && owner === this.summaryView)
         this.summaryHeldFocus = message.focused
+      // The Study pane's report is kept for an Arrange or an Enlarge, which leave a pane alone that has the keyboard.
+      if (owner !== undefined && owner === this.contextPanel)
+        this.studyPaneReportsKeyboard = message.focused
       return
     }
     await this.initialize()
