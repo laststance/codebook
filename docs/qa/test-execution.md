@@ -13,7 +13,7 @@ pnpm --dir extension test:package
 
 `test` compiles before starting Node's process-isolated test runner. Files run concurrently; tests within each file retain serial execution. Do not enable same-process test concurrency globally: workspace cases mock shared class prototypes and timers.
 
-The workspace regressions are divided by behavior into `studyWorkspace*.test.ts`: core Node history/save, navigation, entry, entry obstacles, focus, debug stops, replay, storage, layout, presentation, lifecycle, saved-study removal and Node history admission. They share `studyWorkspaceHarness.ts`, which contains fixtures only and registers no tests. Every harness creates its own temporary repository; every test file gets its own process/module state. Keep related race sequences together in a test, and wait for the observable result before issuing the next action.
+The workspace regressions are divided by behavior into `studyWorkspace*.test.ts`: core Node history/save, navigation, entry, entry obstacles, focus, debug stops, replay, storage, layout, pixel retry, presentation, lifecycle, saved-study removal and Node history admission. They share `studyWorkspaceHarness.ts`, which contains fixtures only and registers no tests. Every harness creates its own temporary repository; every test file gets its own process/module state. Keep related race sequences together in a test, and wait for the observable result before issuing the next action.
 
 For a focused replay/workspace change, compile the current source once and select all workspace partitions:
 
