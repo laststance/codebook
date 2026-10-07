@@ -148,7 +148,7 @@ export interface StudyEnvironment {
   createNodeTestRun?(
     configuration: NodeTestConfiguration,
     record: (type: string, detail?: unknown) => unknown,
-    /** The article's text of every source the selected node cites: the run refuses its start, and ends at a stop, while the editor holds other text for one of them. */
+    /** The article's text of every source the selected node cites: the run refuses its start, and ends at a continuation or at a stop, while the editor holds other text for one of them. */
     citedSources: ConfiguredDescriptor['sources'],
   ): Promise<NodeTestRuntime>
 }

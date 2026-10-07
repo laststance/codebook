@@ -9,7 +9,7 @@ import { normalizeNativeSourceText } from './normalizeNativeSourceText'
 
 /**
  * Refuses a run while the editor holds other text for a cited source than the article cites, because the editor's debugger shows that text at a pause while the run executes the saved file; it opens, saves, reverts and closes no learner tab.
- * Called by {@link ConfiguredBrowserRun} before its first effect and at every input, pause and continue boundary, and by {@link OwnedNodeTestRun} before its test is listed or launched and at every stop it captures. Codebook starts its debuggers without saving, so nothing else brings such a document and its file together.
+ * Called by {@link ConfiguredBrowserRun} before its first effect and at every input, pause and continue boundary, and by {@link OwnedNodeTestRun} before its test is listed or launched, before it resumes the test for a next stop and at every stop it captures. Codebook starts its debuggers without saving, so nothing else brings such a document and its file together.
  * @param root - The opened repository's folder; the sources' paths are relative to it.
  * @param sources - The article's text of every source the selected node cites.
  * @param documents - The editor's open documents (`vscode.workspace.textDocuments`); a document of another scheme than `file` is never a cited source.
