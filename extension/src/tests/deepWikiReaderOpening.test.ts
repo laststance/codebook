@@ -224,7 +224,7 @@ test(
       { errors: window.errors, readersStarted: window.readers.length },
       {
         errors: [
-          `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+          `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${manifestPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
         ],
         readersStarted: 0,
       },
@@ -268,7 +268,7 @@ test(
       { errors: window.errors, readersStarted: window.readers.length },
       {
         errors: [
-          `Codebook could not open DeepWiki: Error: The Wiki’s entry page (${entryPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+          `Codebook could not open DeepWiki: Error: The Wiki’s entry page (${entryPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
         ],
         readersStarted: 0,
       },
@@ -324,16 +324,53 @@ test('Open LLM Wiki does not open a Wiki whose manifest or entry page is a link 
     {
       withLinkedManifest: {
         errors: [
-          `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+          `Codebook could not open DeepWiki: Error: The Wiki’s manifest (${manifestPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
         ],
         readersStarted: 0,
       },
       withLinkedEntry: {
         errors: [
-          `Codebook could not open DeepWiki: Error: The Wiki’s entry page (${entryPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
+          `Codebook could not open DeepWiki: Error: The Wiki’s entry page (${entryPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first. Generate it through /codebook in this project, then retry.`,
         ],
         readersStarted: 0,
       },
+    },
+  )
+})
+
+// Value: protects=the learner who runs "Open LLM Wiki" before any Wiki was generated, the ordinary first use; fails_when=the notice is the one of an entry that is there and is refused, and tells the learner to remove a link, a folder or a pipe at a path that holds nothing (row 231); why_new=Cycle 0046 row 231: a missing file has a sentence of its own; seam=none
+test('Open LLM Wiki in a project without a Wiki says that no Wiki was found at its folder and how to generate one, and names nothing to remove', async (context) => {
+  // Arrange: two windows; the first project has no Wiki folder at all, the second has a Wiki whose entry page is gone.
+  const withoutAWiki = await openWikiOpeningWindow()
+  context.after(() => withoutAWiki.close())
+  const withoutAnEntryPage = await openWikiOpeningWindow()
+  context.after(() => withoutAnEntryPage.close())
+  const wikiOfTheFirst = join(withoutAWiki.projectRoot, '.codebook', 'wiki')
+  const wikiOfTheSecond = join(
+    withoutAnEntryPage.projectRoot,
+    '.codebook',
+    'wiki',
+  )
+  await rm(wikiOfTheFirst, { recursive: true })
+  await rm(join(wikiOfTheSecond, 'index.html'))
+
+  // Act
+  await withoutAWiki.open().catch(() => undefined)
+  await withoutAnEntryPage.open().catch(() => undefined)
+
+  // Assert
+  assert.deepEqual(
+    {
+      withoutAWiki: withoutAWiki.errors,
+      withoutAnEntryPage: withoutAnEntryPage.errors,
+    },
+    {
+      withoutAWiki: [
+        `Codebook could not open DeepWiki: Error: No Wiki was found at ${wikiOfTheFirst}: its manifest (codebook-wiki.json) does not exist. Generate it through /codebook in this project, then retry.`,
+      ],
+      withoutAnEntryPage: [
+        `Codebook could not open DeepWiki: Error: No Wiki was found at ${wikiOfTheSecond}: its entry page (index.html) does not exist. Generate it through /codebook in this project, then retry.`,
+      ],
     },
   )
 })

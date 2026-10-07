@@ -608,7 +608,7 @@ test(
     // Assert
     assert.equal(
       refusal,
-      `The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
+      `The Wiki’s manifest (${manifestPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
     )
   },
 )
@@ -643,7 +643,7 @@ test('the reader’s manifest read does not follow a link to a regular manifest 
     { filesOfTheManifestInPlace, throughTheLink },
     {
       filesOfTheManifestInPlace: ['index.html'],
-      throughTheLink: `The Wiki’s manifest (${manifestPath}) is missing, is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
+      throughTheLink: `The Wiki’s manifest (${manifestPath}) is no regular file or is larger than Codebook reads; a link, a folder or a pipe at that path must be removed first`,
     },
   )
 })
