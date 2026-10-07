@@ -20,8 +20,8 @@ const SKILL_CLAUSES: Record<CursorSkillRemovalStatus, string> = {
  * @param skillRemoval - How the removal ended for the skill ({@link CursorSkillRemovalStatus}): this removal took it away, an earlier one had, or Codebook knows no skill as its own.
  * @returns The notice's text; a refusal without a full stop at its end (a file system error) gets one.
  * @example
- * cursorCatalogCleanupNotice(new Error('Cursor MCP directory is not a regular directory; Codebook left its settings unchanged.'), 'removed')
- * // => 'Cursor MCP directory is not a regular directory; Codebook left its settings unchanged. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.'
+ * cursorCatalogCleanupNotice(new Error('Cursor MCP directory is not a regular directory: /home/user/.cursor. Codebook left its settings unchanged. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Remove Managed Cursor Skill again.'), 'removed')
+ * // => 'Cursor MCP directory is not a regular directory: /home/user/.cursor. Codebook left its settings unchanged. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.'
  */
 export function cursorCatalogCleanupNotice(
   refusal: unknown,

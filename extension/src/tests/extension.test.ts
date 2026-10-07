@@ -2028,7 +2028,7 @@ test('a failed Codebook command rejects with a message the editor cannot turn in
 
 // Cycle 0045 (ST-9): one case per notification that quotes outside text. Each fails when its message reaches the editor without the plain-text wrapper of the notice helper.
 test('a Cursor chat registration that fails with an error quoting a command link warns without a clickable link', async () => {
-  // Arrange: a saved Cursor setup reconnects at activation; the skill check passes once and then names a redirected home folder.
+  // Arrange: a saved Cursor setup reconnects at activation; the skill check passes once and then names a home folder whose Cursor folder is gone.
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-registration-notice-')),
   )
@@ -2103,7 +2103,7 @@ test('a Cursor chat registration that fails with an error quoting a command link
           skillChecks += 1
           if (skillChecks > 1)
             throw new Error(
-              'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor',
+              'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
             )
           return { status: 'current' }
         },
@@ -2125,7 +2125,7 @@ test('a Cursor chat registration that fails with an error quoting a command link
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat to repair the connection.',
+      'Codebook agent server started, but Cursor MCP registration failed: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {
@@ -2694,7 +2694,7 @@ test('a reconnect that finds the Cursor skill edited says once what happened and
 
 // Cycle 0045 (ST-9): the tenth notification that quotes outside text.
 test('a reconnect that fails with an error quoting a command link warns without a clickable link', async () => {
-  // Arrange: Cursor chat was set up for this workspace, and the skill check names a redirected home folder.
+  // Arrange: Cursor chat was set up for this workspace, and the skill check names a home folder whose Cursor folder is gone.
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-reconnect-link-')),
   )
@@ -2734,7 +2734,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
       './cursorSkillDeployment': {
         verifyManagedCursorSkill: async () => {
           throw new Error(
-            'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor',
+            'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
           )
         },
       },
@@ -2755,7 +2755,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Run Codebook: Set Up AI Chat.',
+      'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {

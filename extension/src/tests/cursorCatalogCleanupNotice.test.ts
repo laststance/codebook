@@ -61,7 +61,7 @@ test('the warning after a second removal whose Cursor MCP config cleanup was ref
 test('the warning after a removal that found no Codebook-owned skill and whose Cursor MCP config cleanup was refused says that no skill was found', () => {
   // Arrange
   const refusal = new Error(
-    'Cursor MCP directory is not a regular directory; Codebook left its settings unchanged.',
+    'Cursor MCP directory is not a regular directory: /home/user/.cursor. Codebook left its settings unchanged. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Remove Managed Cursor Skill again.',
   )
 
   // Act
@@ -70,6 +70,6 @@ test('the warning after a removal that found no Codebook-owned skill and whose C
   // Assert
   assert.equal(
     notice,
-    'Cursor MCP directory is not a regular directory; Codebook left its settings unchanged. No Codebook-owned Cursor skill was found; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
+    'Cursor MCP directory is not a regular directory: /home/user/.cursor. Codebook left its settings unchanged. What stands at that path is not a folder; it is yours to keep. Rename it or move it elsewhere, then run Codebook: Remove Managed Cursor Skill again. No Codebook-owned Cursor skill was found; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.',
   )
 })
