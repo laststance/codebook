@@ -82,6 +82,20 @@ const COMPOSED_QUOTATIONS = new Map([
       'Git reported no change before and reports changes now (${})',
     ],
   ],
+  [
+    'The managed Cursor skill was edited after setup: <path>. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.',
+    [
+      'The managed Cursor skill was edited after setup: ${}. Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run ${} again.',
+      'Codebook: Set Up AI Chat',
+    ],
+  ],
+  [
+    'Codebook will not read through a link: <path>. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.',
+    [
+      'Codebook will not read through a link: ${}. To finish the removal, remove the link, then run ${} again.',
+      'Codebook: Remove Managed Cursor Skill',
+    ],
+  ],
 ])
 
 /**
