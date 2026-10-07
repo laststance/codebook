@@ -1,7 +1,7 @@
 import { describeUnansweredWikiChat } from './describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from './describeWikiChatErrorReply'
 import { describeWikiChatOpenFailure } from './describeWikiChatOpenFailure'
-import type { WikiChatStart } from './startWikiChatUpdate'
+import type { WikiChatStartOutcome } from './startWikiChatUpdate'
 import { thrownMessage } from './thrownMessage'
 
 /** What the extension records when the start of a VS Code update already ended the run: a failure sentence of Codebook's own, a cancel, or nothing more than "the run stopped" (the end then says what is on disk). */
@@ -24,7 +24,7 @@ export type WikiChatStartEnd =
  * // => 'The editor chat answered the update request with an error and stopped (Quota exceeded.). Read its message in the Chat view, then press Update LLM Wiki again.'
  */
 function failureOfWikiChatStart(
-  start: WikiChatStart,
+  start: WikiChatStartOutcome,
   answerTimeoutMs: number,
 ): string | undefined {
   if (start.outcome === 'failed')
@@ -53,7 +53,7 @@ function failureOfWikiChatStart(
  * endWithoutFailure('working', false) // => undefined
  */
 function endWithoutFailure(
-  outcome: WikiChatStart['outcome'],
+  outcome: WikiChatStartOutcome['outcome'],
   isWindowClosing: boolean,
 ): WikiChatStartEnd | undefined {
   if (outcome === 'replied') return {}
@@ -78,7 +78,7 @@ function endWithoutFailure(
  * // => { failure: 'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.', isFailureCodebookSentence: true }
  */
 export function endOfWikiChatStart(
-  start: WikiChatStart,
+  start: WikiChatStartOutcome,
   answerTimeoutMs: number,
   isWindowClosing: boolean,
 ): WikiChatStartEnd | undefined {

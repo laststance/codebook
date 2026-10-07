@@ -69,6 +69,35 @@ test('the update request is handed over in three editor commands in this order: 
   assert.deepEqual(reply, { metadata: 'the reply' })
 })
 
+// Value: protects=the Codebook skill in the update's request: the editor resolves the request's /codebook command and attaches the skill only for a query it sends through the chat's input; fails_when=the request is sent with the option that keeps the input (`preserveInput`), with which the editor skips that step; why_new=Cycle 0046 row 197 (the option would keep a draft, at the price of the skill); seam=none
+test('the request is sent through the chat’s input, with the three options it had and without the option that keeps the input, so the editor resolves its /codebook command', async () => {
+  // Arrange
+  const requestOptions: unknown[] = []
+  const { sleep } = manualSleep()
+
+  // Act
+  const { handOver } = await handWikiRequestToChat({
+    query: '/codebook Update LLM Wiki',
+    runCommand: async (_command, ...options) => {
+      requestOptions.push(...options)
+      return {}
+    },
+    signal: new AbortController().signal,
+    sessionStartTimeoutMs: 5_000,
+    sleep,
+  })
+  await handOver
+
+  // Assert
+  assert.deepEqual(requestOptions, [
+    {
+      query: '/codebook Update LLM Wiki',
+      isPartialQuery: false,
+      blockOnResponse: true,
+    },
+  ])
+})
+
 // Value: protects=the update in an editor that has no New Chat command; fails_when=the missing command fails the hand-over, so no request is sent, or the session is taken for Codebook's own, so the withdrawal runs the Cancel alone in a chat the learner uses; why_new=Cycle 0046 row 129 (the fallback); seam=none
 test('an editor without the New Chat command still gets the request, and the session is reported as shared with the learner', async () => {
   // Arrange

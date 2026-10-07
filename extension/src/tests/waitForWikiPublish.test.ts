@@ -459,3 +459,133 @@ test('a new manifest that stays unreadable ends the watch after its grace, not a
   assert.equal(reads, 6)
   assert.equal(clock.now(), 10_000)
 })
+
+// Value: protects=the learner whose chat took up the update and then finished its reply without publishing; fails_when=the watch waits out its 15 minutes although the chat has said its last word; why_new=Cycle 0046 row 196; seam=the watch's sleep, during which the test ends the reply
+test('a reply that ends while the watch waits ends the watch as reply-ended after one more look, 4 seconds into a 15 minute bound', async () => {
+  // Arrange: the chat's reply ends during the second sleep of the watch.
+  const replyEnded = new AbortController()
+  let nowMs = 0
+  let looks = 0
+  const looksWhenTheReplyEnded: number[] = []
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => {
+      looks += 1
+      return 'old@1'
+    },
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs
+      if (nowMs === 4_000) {
+        looksWhenTheReplyEnded.push(looks)
+        replyEnded.abort()
+      }
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, { outcome: 'reply-ended' })
+  assert.equal(nowMs, 4_000)
+  assert.deepEqual(looksWhenTheReplyEnded, [2])
+  assert.equal(looks, 3)
+})
+
+// Value: protects=a publish that lands in the same moment as the chat's complete reply; fails_when=the watch ends at the reply's end without a look after it, so the run is reported by what an earlier look saw; why_new=Cycle 0046 row 196; seam=the watch's sleep, during which the test publishes and ends the reply
+test('a publish that lands in the same moment as the reply’s end is found by the look after it and ends the watch as published', async () => {
+  // Arrange: during the first sleep the site is published and the reply ends.
+  const replyEnded = new AbortController()
+  let token = 'old@1'
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => token,
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    sleep: async () => {
+      token = 'new@2'
+      replyEnded.abort()
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+})
+
+// Value: protects=the time between the reply's end and the run's end; fails_when=the sleep between two looks does not end at the reply's end, so the learner waits up to two more seconds, or the sleep is given a signal that has already aborted and the watch spins; why_new=Cycle 0046 row 196; seam=the watch's sleep, whose signals the test records
+test('the sleep between two looks ends at the reply’s end, and a manifest that is still being written after it is waited for at the usual pace', async () => {
+  // Arrange: the reply has ended before the watch starts; the new manifest becomes readable at the third look.
+  const replyEnded = new AbortController()
+  replyEnded.abort()
+  const sleepSignalsAborted: boolean[] = []
+  let reads = 0
+
+  // Act
+  const result = await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => 'new@2',
+    readPublished: async () => {
+      reads += 1
+      return reads < 3 ? undefined : 'a1b2c3d4e5f6+0f9e8d7c'
+    },
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    now: () => 0,
+    sleep: async (_delayMs, signal) => {
+      sleepSignalsAborted.push(signal.aborted)
+    },
+  })
+
+  // Assert
+  assert.deepEqual(result, {
+    outcome: 'published',
+    token: 'new@2',
+    published: 'a1b2c3d4e5f6+0f9e8d7c',
+  })
+  assert.deepEqual(sleepSignalsAborted, [false, false])
+})
+
+// Value: protects=a watched update while the chat's reply is still open; fails_when=the sleep is no longer ended by the reply's end, because it is given the watch's own signal only; why_new=Cycle 0046 row 196; seam=the watch's sleep, whose signal the test aborts through the reply's end
+test('while the reply is open the sleep between two looks is given a signal that the reply’s end aborts', async () => {
+  // Arrange
+  const replyEnded = new AbortController()
+  const abortedByTheReplysEnd: boolean[] = []
+
+  // Act
+  await waitForWikiPublish({
+    startToken: 'old@1',
+    readToken: async () => 'old@1',
+    readPublished: async () => 'a1b2c3d4e5f6+0f9e8d7c',
+    replyEnded: replyEnded.signal,
+    signal: new AbortController().signal,
+    unreadableGraceMs: 10_000,
+    timeoutMs: 900_000,
+    pollMs: 2_000,
+    sleep: async (_delayMs, signal) => {
+      replyEnded.abort()
+      abortedByTheReplysEnd.push(signal.aborted)
+    },
+  })
+
+  // Assert
+  assert.deepEqual(abortedByTheReplysEnd, [true])
+})

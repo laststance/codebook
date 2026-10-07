@@ -875,6 +875,11 @@ test('browser Update LLM Wiki starts the shared skill only for its opened reposi
             commands.set(name, action)
             return { dispose(): void {} }
           },
+          // The confirmation asks which commands the editor has, to say where the request goes.
+          getCommands: async () => [
+            'workbench.action.chat.open',
+            'workbench.action.chat.newChat',
+          ],
           // The reveal of the chat and New Chat carry no options; only the request does. The chat asks for a confirmation at once, so it works on the request and the run is watched.
           executeCommand: async (name: string, options: unknown) => {
             if (options === undefined) return undefined

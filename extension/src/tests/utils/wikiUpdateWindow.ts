@@ -59,6 +59,7 @@ export type HeldUpdateStep =
  * @param options.chatFails - Makes VS Code's chat command throw: "Chat is unavailable" for `true`, the given message for a text.
  * @param options.chatReply - What VS Code's chat command resolves with once it took the request, as it does with `blockOnResponse` when the chat's response completed (`{}`), completed with an error (`{ errorDetails }`) or waits for a confirmation (`{ type: 'confirmation' }`); a reply that waits for a confirmation, at once, when omitted, so the chat counts as working. A promise that never settles is a chat that never answers.
  * @param options.chatAnswerClock - Sleep handed to the start of the update in the chat (the hand-over of the request, the looks at the Wiki's output, the wait for the first answer and the withdrawal of an unanswered request), so a test can pass the bound of the session's start, the 30 second bound and the withdrawal's settle time without waiting.
+ * @param options.missingEditorCommands - Commands this editor does not have: the list of its commands leaves them out, and running one throws the editor's "command not found". An editor has the chat's commands when omitted.
  * @param options.signWatchFails - Makes the editor throw this message when the extension registers its listener for opened documents.
  * @param options.editorCommand - What the editor does when the extension runs a command other than the chat request (the reveal of the chat, which is the chat command without a query, the editor's New Chat, the chat's Cancel and its "Remove All Queued", for example): it gets the command's name, and what it returns or throws is the command's result. Such a command returns nothing when omitted.
  * @param options.cursorAgent - What the Cursor agent does; it gets the project, the prompt, the run's abort signal and the bound the run would stop it at.
@@ -92,6 +93,7 @@ export async function openWikiUpdateWindow(options: {
     sleep: (delayMs: number, signal: AbortSignal) => Promise<void>
   }
   editorCommand?: (name: string) => unknown
+  missingEditorCommands?: string[]
   signWatchFails?: string
   cursorAgent?: (
     root: string,
@@ -227,6 +229,16 @@ export async function openWikiUpdateWindow(options: {
             commands.set(name, action)
             return { dispose(): void {} }
           },
+          // The commands of the chat a supported editor has, without those the test takes away.
+          getCommands: async () =>
+            [
+              'workbench.action.chat.open',
+              'workbench.action.chat.newChat',
+              'workbench.action.chat.cancel',
+              'workbench.action.chat.removeAllPendingRequests',
+            ].filter(
+              (command) => !options.missingEditorCommands?.includes(command),
+            ),
           executeCommand: async (name: string, argument?: unknown) => {
             // Only the chat command that carries a query is the request; without one it reveals the chat.
             const query =
@@ -250,6 +262,8 @@ export async function openWikiUpdateWindow(options: {
                   ? 'Chat is unavailable'
                   : options.chatFails,
               )
+            if (options.missingEditorCommands?.includes(name))
+              throw new Error(`command '${name}' not found`)
             // Every other command of the editor does what the test says, and nothing when it says nothing.
             if (query === undefined) return options.editorCommand?.(name)
             await passHold('chat-open')
