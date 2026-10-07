@@ -3,9 +3,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-import { runInNewContext } from 'node:vm'
 
 import { projectStudy } from '../dist/studyModel.js'
 import { createConfiguredStudy } from '../dist/tests/utils/createConfiguredStudy.js'
@@ -13,37 +11,18 @@ import { studyHtml } from '../dist/ui/studyHtml.js'
 import { decodeLearnerProgress } from '../dist/utils/decodeLearnerProgress.js'
 import { selectStudy } from '../dist/utils/selectStudy.js'
 
-const [
-  mode = 'verify',
-  outputPath = 'artifacts/cycle-0018/reading-pose-browser',
-] = process.argv.slice(2)
+import { readerDomCommandOptions } from './utils/readerDomCommandOptions.mjs'
+import { readerDomFlowText } from './utils/readerDomFlowText.mjs'
+import { readerDomSessionName } from './utils/readerDomSessionName.mjs'
+
+// Exercise the reading pose of the compiled Study pane in Chromium: what the pane captures before the host replaces its document, and what it restores in the new one.
+const [mode = 'verify', outputPath = 'artifacts/reading-pose-dom'] =
+  process.argv.slice(2)
 assert.ok(['red', 'verify'].includes(mode))
 const output = resolve(outputPath),
-  session = `cb-reading-pose-${mode}`
+  session = readerDomSessionName('reading-pose', mode, output),
+  html = studyHtml('context')
 await mkdir(output, { recursive: true })
-let html = studyHtml('context')
-const compiled =
-  mode === 'red'
-    ? 'artifacts/cycle-0018/reading-pose-controls/original-studyHtml.js'
-    : 'extension/dist/ui/studyHtml.js'
-if (mode === 'red') {
-  const originalConstants = {},
-    originalHtml = {},
-    nativeRequire = createRequire(resolve('extension/dist/ui/studyHtml.js'))
-  runInNewContext(
-    await readFile(
-      'artifacts/cycle-0018/reading-pose-controls/original-ui-constants.js',
-      'utf8',
-    ),
-    { exports: originalConstants, require: nativeRequire },
-  )
-  runInNewContext(await readFile(compiled, 'utf8'), {
-    exports: originalHtml,
-    require: (name) =>
-      name === './constants' ? originalConstants : nativeRequire(name),
-  })
-  html = originalHtml.studyHtml('context')
-}
 const study = createConfiguredStudy(),
   baseline = {
     text: '',
@@ -97,13 +76,13 @@ const message = {
   },
 }
 
-/** Runs the owned Chromium session through the CLI and retains transport failures separately from assertions. @example command(['open', 'about:blank'], 'open') */
+/** Runs the owned Chromium session through the CLI and retains transport failures separately from assertions; {@link readerDomCommandOptions} gives the call labelled `flow` the flow's own limit. @example command(['open', 'about:blank'], 'open') */
 async function command(arguments_, label) {
   const result = await new Promise((resolve) =>
     execFile(
       'playwright-cli',
       [`-s=${session}`, ...arguments_],
-      { encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024 },
+      readerDomCommandOptions(label),
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     ),
   )
@@ -118,9 +97,9 @@ async function command(arguments_, label) {
   return result.stdout
 }
 
-/** Recreates the actual product DOM and exercises capture, restoration and newer keyboard input; native host messages are simulated. @example check(page, options) */
-async function check(page, options) {
-  const errors = []
+/** Recreates the actual product DOM and exercises capture, restoration and newer keyboard input; native host messages are simulated. It adds its cases and the page's errors to the lists of `collected`, which {@link runFlowKeepingCases} answers. @example check(page, options, { cases: [], errors: [] }) */
+async function check(page, options, collected) {
+  const { cases, errors } = collected
   page.on('pageerror', (error) => errors.push(String(error)))
   page.setDefaultTimeout(5_000)
   const publish = (message) =>
@@ -240,24 +219,21 @@ async function check(page, options) {
   const after = await inspect()
   await page.screenshot({ path: `${options.output}/after-replacement.png` })
   await page.waitForTimeout(500)
-  const cases = [
-    {
-      name: 'replacement preserves reading, disclosure, visited link and focused control',
-      before,
-      after,
-      passed:
-        Boolean(captured?.pose) &&
-        before.focus === 'understood' &&
-        after.focus === 'understood' &&
-        Math.abs(after.anchorTop - before.anchorTop) <= 2 &&
-        JSON.stringify(after.expanded) === JSON.stringify(before.expanded) &&
-        JSON.stringify(after.visited) === JSON.stringify(before.visited) &&
-        after.understood === before.understood &&
-        after.understandingWrites === 0 &&
-        after.restored === 1,
-    },
-  ]
-  if (options.mode === 'red') return { captured, cases }
+  cases.push({
+    name: 'replacement preserves reading, disclosure, visited link and focused control',
+    before,
+    after,
+    passed:
+      Boolean(captured?.pose) &&
+      before.focus === 'understood' &&
+      after.focus === 'understood' &&
+      Math.abs(after.anchorTop - before.anchorTop) <= 2 &&
+      JSON.stringify(after.expanded) === JSON.stringify(before.expanded) &&
+      JSON.stringify(after.visited) === JSON.stringify(before.visited) &&
+      after.understood === before.understood &&
+      after.understandingWrites === 0 &&
+      after.restored === 1,
+  })
   if (!captured?.pose)
     throw new Error('No serializable reading pose was captured.')
   const restore = { ...captured, type: 'restore-presentation-pose' }
@@ -286,7 +262,8 @@ async function check(page, options) {
   })
   await render(applying)
   await publish(request)
-  await page.mouse.move(300, 550)
+  // The wheel turns over the pane's title: the explanation below it scrolls within itself, so a wheel over it does not move the page.
+  await page.locator('#title').hover()
   await page.mouse.wheel(0, 300)
   await page.waitForFunction(() => window.scrollY > 0)
   // Wait for the wheel's native scroll to settle before comparing the later rejected restore.
@@ -305,6 +282,7 @@ async function check(page, options) {
     scrolled,
     scrollRetained,
     passed:
+      scrolled.scrollY > 0 &&
       scrollRetained.scrollY === scrolled.scrollY &&
       scrollRetained.restored === 0 &&
       scrollRetained.invalidated >= 1,
@@ -549,16 +527,15 @@ async function check(page, options) {
   await page.screenshot({
     path: `${options.output}/sequence-focus-restored.png`,
   })
-  return { captured, cases }
 }
 
 const report = {
   mode,
   qualification:
     'Compiled product HTML and real Chromium input; simulated host transport, not native acceptance.',
-  compiled,
+  compiled: 'extension/dist/ui/studyHtml.js',
   compiledSha256: createHash('sha256')
-    .update(await readFile(compiled))
+    .update(await readFile(new URL('../dist/ui/studyHtml.js', import.meta.url)))
     .digest('hex'),
   cases: [],
 }
@@ -569,8 +546,14 @@ const server = createServer((_request, response) => {
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const url = `http://127.0.0.1:${server.address().port}/`
+// The check and its fixtures reach `run-code` as one function in a file it loads itself (`--filename`): handed over as one command argument, the pane's page alone exceeds the size the system allows for one argument, and the script could not start (E2BIG, Cycle 0046 row 333).
+const flowPath = `${output}/flow.js`
 let recording = false
 try {
+  await writeFile(
+    flowPath,
+    readerDomFlowText(check, { html, message, output, url }),
+  )
   await command(['open', 'about:blank'], 'open')
   await command(
     [
@@ -580,13 +563,7 @@ try {
     'video-start',
   )
   recording = true
-  const result = await command(
-    [
-      'run-code',
-      `async page => (${check.toString()})(page, ${JSON.stringify({ html, message, output, mode, url })})`,
-    ],
-    'flow',
-  )
+  const result = await command(['run-code', `--filename=${flowPath}`], 'flow')
   Object.assign(
     report,
     JSON.parse(result.split('### Result\n')[1].split('\n###')[0]),
@@ -596,16 +573,12 @@ try {
     'video-stop',
   )
   recording = false
-  if (mode === 'red') {
-    assert.equal(report.captured?.pose, undefined)
-    assert.equal(report.cases[0].passed, false)
-    assert.notEqual(report.cases[0].after.focus, 'understood')
-  } else
-    assert.equal(
-      report.cases.every((entry) => entry.passed),
-      true,
-      JSON.stringify(report.cases),
-    )
+  assert.deepEqual(report.errors, [])
+  assert.equal(
+    report.cases.every((entry) => entry.passed),
+    mode !== 'red',
+    JSON.stringify(report.cases),
+  )
 } finally {
   // Each owned resource must close even when saving evidence or stopping its recording fails.
   try {

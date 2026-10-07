@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
 
 import {
+  PANE_RETURN_PRESS_WINDOW_MS,
   REPOSITORY_NARROW_WIDTH_PX,
   REPOSITORY_READER_DEBOUNCE_MS,
   REPOSITORY_VISITED_CITATIONS_LIMIT,
 } from '../constants'
 import type { RepositorySelection } from '../learnerSchemas'
 import type { RepositoryViewMessage } from '../repositoryView'
+import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
 
 import { STUDY_STYLES } from './constants'
 
@@ -34,11 +36,24 @@ body{padding:20px 24px;font-size:16px;line-height:1.5}button,select{font:inherit
 <p id="state" role="status" aria-live="polite">Loading repository library…</p><p id="errors" class="error" role="status" aria-live="polite"></p><button id="retry" data-action="retry" hidden>Retry storage / refresh</button><div id="latest" hidden><span id="latest-text"></span> <button id="load-latest" data-action="latest">Load latest</button></div>
 <div id="empty" hidden><h1>Your repository learning book</h1><p>Connect your agent, ask it to read repository sources and publish a learning book. Source reading and articles work without starting an application.</p></div>
 <div id="reader" class="layout" hidden><article class="article"><header data-reading-region><nav aria-label="Wiki articles"><label for="nodes">Article</label><select id="nodes"></select></nav><h1 id="article-title" tabindex="-1"></h1><div class="badges"><span class="badge">Source-derived</span><span class="badge">Agent interpretation</span></div><p id="summary" class="muted"></p><details class="contents-compact"><summary>Contents</summary><nav id="contents-compact" aria-label="Article contents"></nav></details></header><div id="sections"></div><section data-reading-region><h2>Cited source</h2><div id="anchors"></div><button id="current-file" data-action="current-file">Open verified current file</button><p id="source-status" class="muted"></p></section><section data-reading-region><h2>Related observations</h2><div id="observations"></div></section><section data-reading-region><label class="understanding" for="understand"><input id="understand" type="checkbox" aria-describedby="progress-description"><span>understand</span><span id="save-state" class="muted"></span></label><span id="progress-description" class="visually-hidden">Your understanding applies to every citation in this article.</span><p id="progress-status" class="muted"></p><details><summary>Understanding history</summary><div id="history" class="history"></div></details></section></article><aside class="context" aria-label="Article context"><div class="contents-wide"><h2>Article navigation</h2><nav id="contents-wide"></nav></div><h2>Source-derived relationships</h2><p class="muted">Agent interpretation of cited code; runtime order requires linked observations.</p><div id="relations"></div><button id="back-top">Back to top ↑</button></aside></div>
-<script nonce="${nonce}">(${repositoryClient.toString()})(${REPOSITORY_READER_DEBOUNCE_MS},${REPOSITORY_VISITED_CITATIONS_LIMIT})</script></body></html>`
+<script nonce="${nonce}">(${repositoryClient.toString()})(${REPOSITORY_READER_DEBOUNCE_MS},${REPOSITORY_VISITED_CITATIONS_LIMIT},${PANE_RETURN_PRESS_WINDOW_MS},${installPaneFocusMemory.toString()})</script></body></html>`
 }
 
-/** Keeps article DOM stable during status updates and restores section-relative reading context after width changes. @example repositoryClient(150, 512) */
-function repositoryClient(debounceMs: number, visitedLimit: number): void {
+/**
+ * Keeps article DOM stable during status updates and restores section-relative reading context after width changes; runs once in the Repository Wiki pane, which receives it as text from {@link repositoryHtml}.
+ * It focuses by script only while its document has the focus, because a `focus()` in a webview takes the window's keyboard from the part of the editor the learner works in: a focus it could not place is owed to the document's next focus event, and so is the focus of the control the learner left the pane at ({@link installPaneFocusMemory}).
+ * @param debounceMs - How long the pane waits after a scroll or a focus before it saves its reading place.
+ * @param visitedLimit - How many visited citations the pane keeps.
+ * @param returnPressWindowMs - How long after the window's focus event a pointer press still counts as the press the learner returned to the pane with.
+ * @param installFocusMemory - {@link installPaneFocusMemory}, handed over as the pane's script cannot import it.
+ * @example repositoryClient(150, 512, 300, installPaneFocusMemory)
+ */
+function repositoryClient(
+  debounceMs: number,
+  visitedLimit: number,
+  returnPressWindowMs: number,
+  installFocusMemory: typeof installPaneFocusMemory,
+): void {
   const api = acquireVsCodeApi()
   let saved = api.getState()
   const visited = new Set(saved?.visited ?? [])
@@ -49,6 +64,34 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     restoring = false,
     timer: ReturnType<typeof setTimeout> | undefined
   const element = (id: string) => document.getElementById(id)!
+  // The focus the pane owes: the element it would have focused in a document that has the focus. The newest wish replaces an older one, as the newest `focus()` would have. It is the control the learner left the pane at until a part of the pane names another place (an article's title, the place a revision returns to, the same control of a list that was rendered again).
+  let focusOwed: (() => HTMLElement | null) | undefined
+  /**
+   * Places the focus the pane owes, once; called by {@link placeFocus} while this document has the focus, and at the document's next focus event otherwise.
+   * @example payFocus()
+   */
+  const payFocus = (): void => {
+    const find = focusOwed
+    focusOwed = undefined
+    find?.()?.focus({ preventScroll: true })
+  }
+  /**
+   * Focuses an element for the pane itself (not for a press of the learner): at once in a document that has the focus, and at the document's next focus event in one that has not, so a pane the learner left takes no focus.
+   * @param find - Finds the element when the focus is placed; a part that is rendered again meanwhile is then looked up anew.
+   * @example placeFocus(() => element('article-title'))
+   */
+  const placeFocus = (find: () => HTMLElement | null): void => {
+    focusOwed = find
+    if (document.hasFocus()) payFocus()
+  }
+  // The editor takes the focus from the control the learner leaves the pane at and does not give it back: the pane owes it to that control, and reads the keyboard's place from the memory while the learner is away.
+  const { keyboardControl } = installFocusMemory(
+    returnPressWindowMs,
+    (control) => {
+      if (control) focusOwed = () => control
+    },
+    payFocus,
+  )
   const text = (id: string, value: string): void => {
     element(id).textContent = value
   }
@@ -92,10 +135,8 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
     })
     const section = sections[sectionIndex],
       top = section?.getBoundingClientRect().top ?? 0
-    const focused =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : undefined,
+    // While the learner is away the keyboard's place is the control the learner left, which the active element no longer names.
+    const focused = keyboardControl(),
       bounds = focused?.getBoundingClientRect()
     // A visible article control is a stable return anchor even when adjacent recovery text changes the section height.
     const visibleFocus =
@@ -138,7 +179,8 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
           section.getBoundingClientRect().top +
           section.offsetHeight * location.fraction,
       )
-    const focused = element(location.focusId),
+    const focusId = location.focusId,
+      focused = element(focusId),
       bounds = focused?.getBoundingClientRect()
     // Restore only an existing article anchor; old positions and hidden/missing targets keep the section-relative fallback.
     if (
@@ -154,7 +196,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
       )
       window.scrollTo(0, window.scrollY + bounds.top - offset)
     }
-    if (focus) focused?.focus({ preventScroll: true })
+    if (focus) placeFocus(() => document.getElementById(focusId))
     requestAnimationFrame(() => {
       restoring = false
     })
@@ -366,7 +408,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
         text('relations', 'No relationships authored for this article.')
       if (!location) {
         window.scrollTo(0, 0)
-        element('article-title').focus({ preventScroll: true })
+        placeFocus(() => element('article-title'))
       }
     }
     // Citation status changes update labels in place, without replacing the learner's focused control.
@@ -419,11 +461,11 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
       evidenceKey = JSON.stringify([key, links])
     if (element('observations').dataset.key !== evidenceKey) {
       element('observations').dataset.key = evidenceKey
-      const focusedId =
-        element('observations').contains(document.activeElement) &&
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement.id
-          : undefined
+      const keyboardStandsAt = keyboardControl(),
+        focusedId =
+          keyboardStandsAt && element('observations').contains(keyboardStandsAt)
+            ? keyboardStandsAt.id
+            : undefined
       element('observations').replaceChildren(
         ...links.map((link) => {
           const container = document.createElement('div'),
@@ -477,7 +519,7 @@ function repositoryClient(debounceMs: number, visitedLimit: number): void {
           'observations',
           'No runtime observation linked. This article explains source-derived behavior.',
         )
-      if (focusedId) element(focusedId)?.focus({ preventScroll: true })
+      if (focusedId) placeFocus(() => document.getElementById(focusedId))
     }
     const changedSource = message.sources.some(
         (source) => source.status === 'changed',

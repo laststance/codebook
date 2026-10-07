@@ -18,6 +18,7 @@ import { installWebviewFocus } from '../runtimeSupport/utils/installWebviewFocus
 import type { LiveStudy, projectStudy } from '../studyModel'
 import type { StudyCatalogEntry } from '../studySchemas'
 import type { StudyDescriptor } from '../utils/describeStudy'
+import { installPaneFocusMemory } from '../utils/installPaneFocusMemory'
 import { installShortcutHelp } from '../utils/installShortcutHelp'
 import type { projectLearningSummary } from '../utils/projectLearningSummary'
 import type { ShownInterpretation } from '../utils/projectRecording'
@@ -206,7 +207,7 @@ export function studyHtml(kind: 'context' | 'moments'): string {
 <section id="saved-studies"><h2>Saved studies</h2><select id="studies" aria-label="Saved study"><option value="">No saved study yet</option></select><p id="study-unopenable" class="muted" hidden></p><p id="study-newer" class="muted" hidden></p><p id="study-repairable" class="muted" hidden></p><div id="delete-study-row" class="row" hidden><button id="repair-study" class="primary" type="button" data-action="retry" aria-describedby="study-repairable" hidden>Repair saved study</button><button id="delete-study" type="button" aria-describedby="delete-study-reason delete-study-status">Delete saved study…</button></div><p id="delete-study-reason" class="muted" hidden></p><p id="delete-study-status" role="status" aria-live="polite"></p><details id="study-files" hidden><summary>Remove by hand</summary><p id="study-files-note" role="status" aria-live="polite"></p><ul id="study-files-list" class="muted" aria-label="Files of the chosen saved study"></ul><div class="row"><button id="copy-study-files" type="button">Copy paths</button><button type="button" data-action="retry">Retry storage / refresh</button></div><p id="copy-study-files-status" role="status" aria-live="polite"></p></details></section>
 <section id="recording-transport">${markupOnlyIn(kind, 'context', valuesHint)}<div class="playback-row"><button type="button" data-shortcut-help aria-label="Keyboard shortcuts" aria-keyshortcuts="?">?</button><button data-playback="start" title="Replay from start" aria-label="Replay from start">↤</button><button id="previous-moment" data-playback="previous" title="Previous recorded stop" aria-label="Previous recorded stop">◀|</button><button class="primary" id="playback-toggle" data-playback="play">Play</button><button id="next-moment" data-playback="next" title="Next recorded stop" aria-label="Next recorded stop">|▶</button><label for="playhead" class="visually-hidden">Recorded position</label><div class="timeline-track"><input id="playhead" type="range" min="0" max="0" step="1" value="0"><div id="history-coverage" role="img" aria-label="Historical source and debugger coverage unknown" hidden></div><span id="history-coverage-label" class="muted">History coverage unknown</span></div><span id="playback-position"></span></div><div class="playback-status-row"><span id="recording-status" role="status" aria-live="polite"></span><span id="application-covered-remedy" class="${markupOnlyIn(kind, 'context', 'visually-hidden')}${markupOnlyIn(kind, 'moments', 'muted')}" role="status" aria-live="polite"></span><details id="playback-options"><summary>Playback details</summary><button data-action="reload-recording">Reload saved recording</button><p>Recorded history only. Playback does not run application code or mark understanding.</p><details id="playback-diagnostics" hidden><summary>Recording error details</summary><p id="playback-diagnostic" class="error"></p></details></details></div><p id="playback-pending" class="muted"></p><p id="playback-reason" class="error"></p>${markupOnlyIn(kind, 'moments', valuesHint)}</section>
 </main>
-<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()})</script></body></html>`
+<script nonce="${nonce}">(${installShortcutHelp.toString()})(${JSON.stringify(STUDY_SHORTCUTS)}, '#study-content');(${studyClient.toString()})(${JSON.stringify(STUDY_UI_OPTIONS)}, ${kind === 'context' ? installWebviewFocus.toString() : 'undefined'}, ${savedStudyLabel.toString()}, ${savedLaterNote.toString()}, ${installPaneFocusMemory.toString()})</script></body></html>`
 }
 
 /** Keeps control DOM stable on state updates so native webview messages do not discard keyboard focus. @example studyClient() */
@@ -215,6 +216,7 @@ function studyClient(
   installFocus: typeof installWebviewFocus | undefined,
   studyLabel: typeof savedStudyLabel,
   savedNote: typeof savedLaterNote,
+  installFocusMemory: typeof installPaneFocusMemory,
 ): void {
   const api = acquireVsCodeApi(),
     visited = new Set(api.getState()?.visited ?? [])
@@ -1750,115 +1752,28 @@ function studyClient(
       undefined
     )
   }
-  /**
-   * Gives the control that holds the keyboard focus now; read by {@link readFocusHolder}.
-   * @returns The focused element, or `undefined` while the focus stands on the document body.
-   * @example focusedControl()?.id // => 'playback-toggle'
-   */
-  const focusedControl = (): HTMLElement | undefined => {
-    const active = document.activeElement
-    return active instanceof HTMLElement && active !== document.body
-      ? active
-      : undefined
-  }
-  // The control at which the keyboard stood when the learner left the pane for another part of the editor. The editor's webview takes the focus from that control as the pane is left (a focusout without a related target, after which the active element is the page body) and does not give it back on return, so the pane keeps the control itself: while it is away it is the control the parts ask about ({@link keyboardControl}), and on return it takes the focus again when it is still shown, or the place its part or the pane's general rule gives it when it left. Cleared once any control has the focus.
-  let leftControl: HTMLElement | undefined
-  // The control that just lost the focus with no control taking it. It becomes {@link leftControl} when the window's blur follows; a focus on any control ends it.
-  let focusLostWithoutTarget: HTMLElement | undefined
-  // Whether a pointer press inside the pane is under way, from its pointerdown to its release: a focus it takes off a control is the learner's own doing and not a leaving.
-  let isPressUnderWay = false
-  // Whether the press that is under way is the one the learner returned to the pane with: its release puts back the focus the pane settled for the return, which a press on the pane's background takes off again.
-  let isPressOfReturn = false
-  // The learner's last return to the pane: when the window's focus event came and which control had the focus once the pane had settled it ({@link repayReturnFocus}).
-  let paneReturn: { atMs: number; control: HTMLElement | undefined } | undefined
-  /**
-   * Gives the control at which the keyboard stands: the focused one, and while this document does not have the focus the one the learner left the pane at. Read by every part of the pane that asks which control holds the focus before it changes the page (the Show Variables buttons, Saved studies, the lists that are rendered again) and by {@link readFocusHolder}'s kept holder.
-   * @returns The control, or `undefined` when the keyboard stands on no control of the pane.
-   * @example keyboardControl()?.id // => 'playback-toggle' while the learner, who left the pane at Play, works in the editor
-   */
-  const keyboardControl = (): HTMLElement | undefined =>
-    focusedControl() ?? (document.hasFocus() ? undefined : leftControl)
-  document.addEventListener('focusout', (event) => {
-    // A press on the pane's background takes the focus off a control too; that is no leaving.
-    focusLostWithoutTarget =
-      event.relatedTarget === null &&
-      !isPressUnderWay &&
-      event.target instanceof HTMLElement
-        ? event.target
-        : undefined
-  })
-  document.addEventListener('focusin', () => {
-    focusLostWithoutTarget = undefined
-    leftControl = undefined
-  })
-  /**
-   * Keeps a control as the one the learner left the pane at, or forgets that there is one; called at the window's blur, and by {@link restorePose} for the control a pose names in a document that does not have the focus (the pane's document was replaced while the learner was away).
-   * The control stays the holder of the pane's focus while the learner is away: the editor took the focus from it, as the page does from a control it disables.
-   * @param control - The control, or `undefined` when the keyboard stood on none.
-   * @example holdAsLeft(element('overview-tab')) // the return to the pane gives the Overview tab the keyboard
-   */
-  const holdAsLeft = (control: HTMLElement | undefined): void => {
-    leftControl = control
-    if (control) focusHolder = { control, isTakenByPage: true }
-  }
-  window.addEventListener('blur', () => {
-    // A browser that leaves the focus on the control when its window is left names it still; the editor's webview has taken it by now.
-    holdAsLeft(focusedControl() ?? focusLostWithoutTarget)
-    focusLostWithoutTarget = undefined
-    paneReturn = undefined
-    // A press whose release went to another part of the editor is over.
-    isPressUnderWay = false
-    isPressOfReturn = false
-  })
-  /**
-   * Puts the focus back that the pane settled at the learner's return when the press the learner returned with took it off again, which a press on the pane's background does; called at the release of that press.
-   * A press on another control leaves the focus on that control, and a pane that was left again takes none.
-   * @example repayReturnFocus()
-   */
-  const repayReturnFocus = (): void => {
-    const settled = paneReturn?.control
-    paneReturn = undefined
-    if (settled && isFocusOpenFor(settled) && canTakeFocus(settled))
-      settled.focus({ preventScroll: true })
-  }
-  document.addEventListener(
-    'pointerdown',
-    (event) => {
-      if (!event.isTrusted) return
-      isPressUnderWay = true
-      // The press of the click the learner returned with can reach the page after the window's focus event. Its time is the click's own, so it is not later than that event by more than the editor's delay between the two.
-      isPressOfReturn = Boolean(
-        paneReturn &&
-        event.timeStamp - paneReturn.atMs <= options.returnPressWindowMs,
-      )
+  // The pane's memory of the control the learner left it at, which it shares with the Repository Wiki pane ({@link installPaneFocusMemory}). The control the learner left stays the holder of the pane's focus while the learner is away: the editor took the focus from it, as the page does from a control it disables. On return it takes the focus again when it is still shown, or the place its part or the pane's general rule ({@link settleFocus}) gives it when it left. The memory's listener for the window's focus event is added here, after the ones of the parts that place a focus of their own, so the pane's general rule runs last.
+  const {
+    focusedControl,
+    leftControl,
+    keyboardControl,
+    holdAsLeft,
+    canTakeFocus,
+    isFocusOpenFor,
+  } = installFocusMemory(
+    options.returnPressWindowMs,
+    (control) => {
+      if (control) focusHolder = { control, isTakenByPage: true }
     },
-    { capture: true, passive: true },
+    () => settleFocus(),
   )
-  /** Ends the press that is under way and, when the learner returned to the pane with it, puts back the focus it took off; called at the release of every pointer press in the pane. By then the browser's own handling of the press is over. @example document.addEventListener('pointerup', endPress, { capture: true, passive: true }) */
-  const endPress = (event: Event): void => {
-    if (!event.isTrusted) return
-    if (isPressOfReturn) repayReturnFocus()
-    isPressUnderWay = false
-    isPressOfReturn = false
-  }
-  document.addEventListener('pointerup', endPress, {
-    capture: true,
-    passive: true,
-  })
-  document.addEventListener('pointercancel', endPress, {
-    capture: true,
-    passive: true,
-  })
-  /** Says whether a control is shown and can be used, so that it can take the focus; read by {@link repayReturnFocus}. @example canTakeFocus(element('playback-toggle')) // => false for Play at a recording's end */
-  const canTakeFocus = (control: HTMLElement): boolean =>
-    control.checkVisibility() && !control.matches(':disabled')
   /**
    * Says whether a control lost the focus without the learner taking it off inside the pane: the editor took it when the learner left the pane at that control, or the page took it by disabling the control or by taking it out. Read by {@link keptFocusHolder}.
    * @param control - The control that held the focus.
    * @example isFocusTakenFrom(button('stop')!) // => true while Stop is disabled for a pending request
    */
   const isFocusTakenFrom = (control: HTMLElement): boolean =>
-    control === leftControl || !canTakeFocus(control)
+    control === leftControl() || !canTakeFocus(control)
   /**
    * Gives the holder of the focus that stays the holder although the document body has the focus: one the page took the focus from, by disabling it or by taking it out, and the one the editor took it from when the learner left the pane. Read by {@link readFocusHolder}.
    * A control that is shown and enabled and lost the focus inside the pane lost it by the learner's doing and is no holder any more.
@@ -1879,16 +1794,6 @@ function studyClient(
       ? { control: focused, isTakenByPage: false }
       : keptFocusHolder()
   }
-  /**
-   * Says whether the pane may place the focus for a holder now: this document has the focus, and the focus stands on the document body or on the holder itself. Read by {@link settleFocus}.
-   * A pane the learner left takes no focus back, and a learner who put the focus on another control keeps it.
-   * @param control - The control at which the keyboard stood.
-   * @example isFocusOpenFor(button('stop')!) // => true after the run stopped under a focused Stop
-   */
-  const isFocusOpenFor = (control: HTMLElement): boolean =>
-    document.hasFocus() &&
-    (document.activeElement === document.body ||
-      document.activeElement === control)
   /**
    * Gives a holder that is shown its own control back when the page had taken the focus from it by disabling it and it can be used again; read by {@link focusTargetFor}.
    * Pressing a control that the host disables while it works (Stop, a recorded step, Restore) therefore leaves the keyboard on that control. A control the learner took the focus from gets nothing back.
@@ -1931,12 +1836,6 @@ function studyClient(
     focusHolder = undefined
     target.focus({ preventScroll: true })
   }
-  window.addEventListener('focus', settleFocus)
-  // Added after every listener that places a focus at the window's focus event: what has the focus now is what the pane settled for this return. A press that is under way brought the return about, and the browser handles it after this event; the focus it may take off is put back at its release.
-  window.addEventListener('focus', (event) => {
-    paneReturn = { atMs: event.timeStamp, control: focusedControl() }
-    if (isPressUnderWay) isPressOfReturn = true
-  })
   /** Says whether the transport's status describes a shown moment, which is when it carries the covered label: not while the replay failed, nor while a requested moment is pending. Read by {@link coveredAnnouncement}. @example showsMomentStatus(recording) // => false for a failed replay */
   const showsMomentStatus = (
     recording: NonNullable<StudyViewMessage['recording']>,
