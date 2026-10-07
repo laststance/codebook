@@ -1,18 +1,16 @@
+import { SET_UP_AI_CHAT_COMMAND } from './startOverBy'
 import { thrownMessage } from './thrownMessage'
-
-/** The step that repairs a chat connection; a reason that already names it is not followed by it again. */
-const SETUP_STEP = 'Run Codebook: Set Up AI Chat'
 
 /**
  * Words a notification about a failed chat connection as one sentence each for what happened, what Codebook found and what the learner does next; called by {@link activate} when the saved AI chat setup does not reconnect at editor start, and when a start restores a saved Cursor setup and the chat connection cannot be registered.
  *
- * Why: such a notice used to be the thrown value's string form with the setup step appended, which printed "Error:", named the step twice when the reason already gave it, and ended with two full stops. The reason is shown as its message, ends with exactly one full stop, and is followed by the setup step only when it does not name that step itself.
+ * Why: such a notice used to be the thrown value's string form with the setup step appended, which printed "Error:", named the step twice when the reason already gave it, and ended with two full stops. The reason is shown as its message, ends with exactly one full stop, and is followed by the setup step only when it does not name the setup command ({@link SET_UP_AI_CHAT_COMMAND}) itself, however its sentence is written: "Run Codebook: Set Up AI Chat; …" as well as "…, then run Codebook: Set Up AI Chat again.", with which the refusals of the Cursor setup end.
  *
  * @param whatHappened - The notice's opening, without a colon or full stop.
  * @param thrown - What the failed connection threw (the skill check's refusal, a server start failure, a changed workspace, a missing external Node.js); its message is the reason, and a value that is no error is shown as its text.
  * @param setupStepSentence - The closing sentence that sends the learner to Codebook: Set Up AI Chat, with its full stop.
  * @returns
- * - A reason that names the setup step: `<whatHappened>: <reason>`
+ * - A reason that names the setup command: `<whatHappened>: <reason>`
  * - Any other reason: `<whatHappened>: <reason>. <setupStepSentence>`, with one full stop after the reason
  *
  * @example
@@ -21,6 +19,8 @@ const SETUP_STEP = 'Run Codebook: Set Up AI Chat'
  * // => 'Codebook AI chat did not reconnect: The selected workspace changed after setup. Run Codebook: Set Up AI Chat.'
  * noticeWithSetupStep('Codebook agent server started, but Cursor MCP registration failed', new Error('Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'), 'Run Codebook: Set Up AI Chat to repair the connection.')
  * // => 'Codebook agent server started, but Cursor MCP registration failed: Cursor skill is missing or was changed. Run Codebook: Set Up AI Chat; Codebook will not overwrite another edit.'
+ * noticeWithSetupStep('Codebook AI chat did not reconnect', new Error('Codebook will not read through a link: /home/user/.cursor/skills/codebook/SKILL.md. Remove the link, then run Codebook: Set Up AI Chat again.'), 'Run Codebook: Set Up AI Chat.')
+ * // => 'Codebook AI chat did not reconnect: Codebook will not read through a link: /home/user/.cursor/skills/codebook/SKILL.md. Remove the link, then run Codebook: Set Up AI Chat again.'
  * ```
  */
 export function noticeWithSetupStep(
@@ -32,5 +32,8 @@ export function noticeWithSetupStep(
   // A reason that already ends its sentence gets no second full stop.
   const reasonSentence = /[.!?]$/.test(reason) ? reason : `${reason}.`
   const notice = `${whatHappened}: ${reasonSentence}`
-  return reason.includes(SETUP_STEP) ? notice : `${notice} ${setupStepSentence}`
+  // A reason that names the setup command says the step itself, in its own words.
+  return reason.includes(SET_UP_AI_CHAT_COMMAND)
+    ? notice
+    : `${notice} ${setupStepSentence}`
 }

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import * as fileSystem from 'node:fs/promises'
 import {
+  chmod,
   link,
   lstat,
   mkdir,
@@ -14,16 +16,24 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { deployCursorSkill } from '../cursorSkillDeployment'
+import type * as CatalogModule from '../utils/refreshCursorMcpCatalog'
 import {
   captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
   removeOwnedCursorMcpCatalog,
 } from '../utils/refreshCursorMcpCatalog'
+
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
+import { loadModule } from './utils/loadModule'
+import { loadOpenWithoutFollowing } from './utils/loadOpenWithoutFollowing'
 
 test('Cursor MCP discovery refresh preserves the bytes of an existing user config', async (context) => {
   // Arrange
@@ -235,7 +245,7 @@ test('Cursor MCP discovery refresh refuses redirected config files', async (cont
   // Act / Assert
   await assert.rejects(
     refreshCursorMcpCatalog(join(directory, 'storage'), directory),
-    /redirected or inaccessible/,
+    /cannot be refreshed without following a link/,
   )
   assert.equal(
     await readFile(originalPath, 'utf8'),
@@ -395,8 +405,10 @@ test('removing the managed Cursor skill preserves a replacement MCP catalog conf
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
-  await rm(configPath)
-  await writeFile(configPath, '{"mcpServers":{}}\n')
+  // The copy replaces the config as an editor saves: written beside the path and moved over it. Both files exist at one moment, so they have two inode numbers on every file system; a file created after the config was deleted can get the config's number again and is then the config Codebook owns, bytes and number (row 291).
+  const besideTheConfig = join(directory, 'replacement.json')
+  await writeFile(besideTheConfig, '{"mcpServers":{}}\n')
+  await rename(besideTheConfig, configPath)
   // Act
   const result = await removeOwnedCursorMcpCatalog(storageRoot, directory)
   // Assert
@@ -508,14 +520,14 @@ async function answerOrRefusalOf(calling: Promise<unknown>): Promise<string> {
 
 // Value: protects=a learner whose ~/.cursor is a link, at the setup's refresh of the Cursor MCP config and at the removal's two steps; fails_when=the refusal reads "Cursor MCP directory is not a regular directory; Codebook left its settings unchanged." and names neither the folder nor a step, or names the setup to a learner who ran the removal, or the step does not end in a created and a retired config; why_new=Cycle 0046 row 277; seam=none, the real link
 test('a link at Cursor’s settings folder is refused by the setup’s refresh and by both steps of the removal with a sentence that names the folder, says what to do and names the command that was run: after the learner puts the folder in the link’s place, the refresh creates the config and the removal retires it', async (context) => {
-  // Arrange: Cursor's settings folder is kept elsewhere and a link stands in its place.
+  // Arrange: Cursor's settings folder is kept elsewhere and a link stands in its place (a junction on Windows, which every user may create).
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const storageRoot = join(directory, 'storage'),
     cursorPath = join(directory, 'home', '.cursor'),
     keptCursorPath = join(directory, 'home', 'dotfiles-cursor')
   await mkdir(keptCursorPath, { recursive: true })
-  await symlink(keptCursorPath, cursorPath)
+  await symlink(keptCursorPath, cursorPath, 'junction')
 
   // Act
   const refusals = {
@@ -581,7 +593,7 @@ test('a link at Cursor’s settings folder is refused by the setup’s refresh a
 
 // Value: protects=the learner who removes a refused link at ~/.cursor instead, or who has a file of that name and renames it; fails_when=the step the refusal names does not end in a finished removal and a finished setup: the removal refuses the missing folder, or the setup, which makes the folder with the skill before it refreshes the config, does not create the config; or the refusal tells the learner to delete their file; why_new=Cycle 0046 row 277: each step a sentence names is followed to a finished command; seam=none, the real link and file, with the skill's setup before the refresh as the setup command runs them
 test('after the learner removes a link at Cursor’s settings folder, or renames a file that stands there as its refusal says, a removal run again has nothing to retire, and a setup run again makes the folder and its refresh creates the config', async (context) => {
-  // Arrange: an installed extension, one home whose ~/.cursor is a link and one where a note of the learner stands at that path.
+  // Arrange: an installed extension, one home whose ~/.cursor is a link (a junction on Windows, which every user may create) and one where a note of the learner stands at that path.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const extensionPath = join(directory, 'extension')
@@ -596,6 +608,7 @@ test('after the learner removes a link at Cursor’s settings folder, or renames
   await symlink(
     join(homeWithLink, 'dotfiles-cursor'),
     join(homeWithLink, '.cursor'),
+    'junction',
   )
   await mkdir(homeWithFile)
   await writeFile(join(homeWithFile, '.cursor'), 'A note of the learner.\n')
@@ -728,6 +741,280 @@ test('a refresh and a removal of the Cursor MCP config that find no Cursor setti
       },
       removalRunAgain: '{"unowned":"not-owned"}',
       config: '{"mcpServers":{}}\n',
+    },
+  )
+})
+
+// Value: protects=a learner whose ~/.cursor/mcp.json is a link (a dotfiles manager keeps the config elsewhere); fails_when=setup ends with "Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.", which names neither the file nor a step, or a way it names does not end in a finished refresh, or the file the link points to is changed; why_new=Cycle 0046 row 286; seam=none, the real link
+test('a link at ~/.cursor/mcp.json is refused by the refresh with a sentence that names the config, says that the link and its file are the learner’s and names the setup: after the learner puts the file in the link’s place, the refresh keeps its bytes; after the learner removes the link, the refresh creates an empty config; a removal is not refused by the link', async (context) => {
+  // Arrange: two Cursor folders whose config is kept elsewhere behind a link.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const homeThatPutsTheFileInPlace = join(directory, 'puts-in-place'),
+    homeThatRemovesTheLink = join(directory, 'removes-the-link')
+  for (const home of [homeThatPutsTheFileInPlace, homeThatRemovesTheLink]) {
+    await mkdir(join(home, '.cursor'), { recursive: true })
+    await writeFile(
+      join(home, 'kept-mcp.json'),
+      '{"mcpServers":{"existing":{"command":"existing-tool"}}}\n',
+    )
+    if (
+      !(await createLinkIfAllowed(
+        join(home, 'kept-mcp.json'),
+        join(home, '.cursor', 'mcp.json'),
+      ))
+    )
+      return context.skip(LINK_NOT_ALLOWED)
+  }
+  const configInPlace = join(homeThatPutsTheFileInPlace, '.cursor', 'mcp.json'),
+    configOfTheRemovedLink = join(homeThatRemovesTheLink, '.cursor', 'mcp.json')
+
+  // Act
+  const refusals = {
+    putsInPlace: await answerOrRefusalOf(
+      refreshCursorMcpCatalog(
+        join(homeThatPutsTheFileInPlace, 'storage'),
+        join(homeThatPutsTheFileInPlace, '.cursor'),
+      ),
+    ),
+    removesTheLink: await answerOrRefusalOf(
+      refreshCursorMcpCatalog(
+        join(homeThatRemovesTheLink, 'storage'),
+        join(homeThatRemovesTheLink, '.cursor'),
+      ),
+    ),
+  }
+  const removalWhileTheLinkStands = await answerOrRefusalOf(
+    captureOwnedCursorMcpCatalogGeneration(
+      join(homeThatRemovesTheLink, 'storage'),
+      join(homeThatRemovesTheLink, '.cursor'),
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+  // The sentence is followed to the letter, each of its two ways in one home.
+  await unlink(configInPlace)
+  await rename(join(homeThatPutsTheFileInPlace, 'kept-mcp.json'), configInPlace)
+  await unlink(configOfTheRemovedLink)
+  await refreshCursorMcpCatalog(
+    join(homeThatPutsTheFileInPlace, 'storage'),
+    join(homeThatPutsTheFileInPlace, '.cursor'),
+  )
+  await refreshCursorMcpCatalog(
+    join(homeThatRemovesTheLink, 'storage'),
+    join(homeThatRemovesTheLink, '.cursor'),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      removalWhileTheLinkStands,
+      configInPlace: await readFile(configInPlace, 'utf8'),
+      configOfTheRemovedLink: await readFile(configOfTheRemovedLink, 'utf8'),
+      fileTheRemovedLinkPointedTo: await readFile(
+        join(homeThatRemovesTheLink, 'kept-mcp.json'),
+        'utf8',
+      ),
+    },
+    {
+      refusals: {
+        putsInPlace: `Cursor MCP config cannot be refreshed without following a link: ${configInPlace}. Codebook left the link and the file it points to as they are; both are yours. Put that file in the link's place, or remove the link (Codebook then creates an empty config there), then run Codebook: Set Up AI Chat again.`,
+        removesTheLink: `Cursor MCP config cannot be refreshed without following a link: ${configOfTheRemovedLink}. Codebook left the link and the file it points to as they are; both are yours. Put that file in the link's place, or remove the link (Codebook then creates an empty config there), then run Codebook: Set Up AI Chat again.`,
+      },
+      removalWhileTheLinkStands: '{"unowned":"not-owned"}',
+      configInPlace:
+        '{"mcpServers":{"existing":{"command":"existing-tool"}}}\n',
+      configOfTheRemovedLink: '{"mcpServers":{}}\n',
+      fileTheRemovedLinkPointedTo:
+        '{"mcpServers":{"existing":{"command":"existing-tool"}}}\n',
+    },
+  )
+})
+
+// Value: protects=a learner at whose ~/.cursor/mcp.json a folder stands; fails_when=setup ends with "Cursor MCP config is not a regular file; Codebook left its settings unchanged.", which names neither the path nor a step, or tells the learner to delete what is theirs, or the step does not end in a created config; why_new=Cycle 0046 row 286; seam=none, the real folder
+test('a folder at ~/.cursor/mcp.json is refused by the refresh as the learner’s own, to rename or to move, with the config’s path and the setup: after the learner renames it, the refresh creates the config and the folder is unchanged', async (context) => {
+  // Arrange
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    configPath = join(directory, 'mcp.json')
+  await mkdir(configPath)
+  await writeFile(join(configPath, 'note.txt'), 'A note of the learner.\n')
+
+  // Act
+  const refusal = await answerOrRefusalOf(
+    refreshCursorMcpCatalog(storageRoot, directory),
+  )
+  // The sentence is followed to the letter: what stands at the path gets another name.
+  await rename(configPath, join(directory, 'mcp-notes'))
+  await refreshCursorMcpCatalog(storageRoot, directory)
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusal,
+      config: await readFile(configPath, 'utf8'),
+      note: await readFile(join(directory, 'mcp-notes', 'note.txt'), 'utf8'),
+    },
+    {
+      refusal: `Cursor MCP config is not a regular file: ${configPath}. Codebook left its settings unchanged. What stands at that path is yours to keep: rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+      config: '{"mcpServers":{}}\n',
+      note: 'A note of the learner.\n',
+    },
+  )
+})
+
+// Value: protects=a learner whose ~/.cursor/mcp.json holds no byte (a file another tool created and never filled); fails_when=setup ends with "Inspect this file before retrying setup.", which names neither the file nor a command, or tells the learner to delete the file without saying that it is theirs, or a way it names does not end in a finished refresh; why_new=Cycle 0046 row 286; seam=none, the real files
+test('an empty ~/.cursor/mcp.json is refused by the refresh with a sentence that names the file as the learner’s and the setup as the command to run again: after the learner writes a config without servers into it, the refresh keeps those bytes; after the learner deletes it, the refresh creates the config', async (context) => {
+  // Arrange: two Cursor folders with an empty config.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const cursorThatWrites = join(directory, 'writes'),
+    cursorThatDeletes = join(directory, 'deletes')
+  for (const cursorDirectory of [cursorThatWrites, cursorThatDeletes]) {
+    await mkdir(cursorDirectory)
+    await writeFile(join(cursorDirectory, 'mcp.json'), '')
+  }
+
+  // Act
+  const refusals = {
+    writes: await answerOrRefusalOf(
+      refreshCursorMcpCatalog(
+        join(directory, 'storage-writes'),
+        cursorThatWrites,
+      ),
+    ),
+    deletes: await answerOrRefusalOf(
+      refreshCursorMcpCatalog(
+        join(directory, 'storage-deletes'),
+        cursorThatDeletes,
+      ),
+    ),
+  }
+  const configsAfterTheRefusals = [
+    await readFile(join(cursorThatWrites, 'mcp.json'), 'utf8'),
+    await readFile(join(cursorThatDeletes, 'mcp.json'), 'utf8'),
+  ]
+  // The sentence is followed to the letter, each of its two ways in one folder.
+  await writeFile(join(cursorThatWrites, 'mcp.json'), '{"mcpServers":{}}')
+  await rm(join(cursorThatDeletes, 'mcp.json'))
+  const ownedGenerations = {
+    writes: await refreshCursorMcpCatalog(
+      join(directory, 'storage-writes'),
+      cursorThatWrites,
+    ),
+    deletes: typeof (await refreshCursorMcpCatalog(
+      join(directory, 'storage-deletes'),
+      cursorThatDeletes,
+    )),
+  }
+
+  // Assert: the config the learner wrote stays theirs (no generation of Codebook's), the one Codebook created is its own.
+  assert.deepEqual(
+    {
+      refusals,
+      configsAfterTheRefusals,
+      ownedGenerations,
+      configs: [
+        await readFile(join(cursorThatWrites, 'mcp.json'), 'utf8'),
+        await readFile(join(cursorThatDeletes, 'mcp.json'), 'utf8'),
+      ],
+    },
+    {
+      refusals: {
+        writes: `Cursor MCP config is empty: ${join(cursorThatWrites, 'mcp.json')}. Codebook preserved it; the file is yours. Write your MCP servers into it (a config without servers is {"mcpServers":{}}), or delete it so that Codebook creates the config, then run Codebook: Set Up AI Chat again.`,
+        deletes: `Cursor MCP config is empty: ${join(cursorThatDeletes, 'mcp.json')}. Codebook preserved it; the file is yours. Write your MCP servers into it (a config without servers is {"mcpServers":{}}), or delete it so that Codebook creates the config, then run Codebook: Set Up AI Chat again.`,
+      },
+      configsAfterTheRefusals: ['', ''],
+      ownedGenerations: { writes: undefined, deletes: 'string' },
+      configs: ['{"mcpServers":{}}', '{"mcpServers":{}}\n'],
+    },
+  )
+})
+
+// Value: protects=a learner whose ~/.cursor/mcp.json this user may not read (a file of another user, or one whose rights a tool took away); fails_when=setup ends with "… without following a redirected or inaccessible file.", which names a link that is not there and neither the file nor a step, or the step does not end in a finished refresh; why_new=Cycle 0046 row 286 (the open the system refuses for another reason than a link); seam=none, the file's own rights
+test('a ~/.cursor/mcp.json this user may not read is refused by the refresh with a sentence that names the file, the system’s code and the setup: after the learner allows reading, the refresh keeps its bytes', async (context) => {
+  // Arrange: a config without any right.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    configPath = join(directory, 'mcp.json')
+  await writeFile(configPath, '{"mcpServers":{"existing":{}}}\n')
+  await chmod(configPath, 0o000)
+  const isReadAnyway = await readFile(configPath).then(
+    () => true,
+    () => false,
+  )
+  if (isReadAnyway)
+    return context.skip(
+      'this user reads a file that grants no right (an administrator, or a file system without such rights)',
+    )
+
+  // Act
+  const refusal = await answerOrRefusalOf(
+    refreshCursorMcpCatalog(storageRoot, directory),
+  )
+  // The sentence is followed to the letter: this user may read the file again.
+  await chmod(configPath, 0o600)
+  await refreshCursorMcpCatalog(storageRoot, directory)
+
+  // Assert
+  assert.deepEqual(
+    { refusal, config: await readFile(configPath, 'utf8') },
+    {
+      refusal: `Cursor MCP config cannot be refreshed because this user may not read it: ${configPath} (EACCES). Codebook left it unchanged. Allow this user to read that file, then run Codebook: Set Up AI Chat again.`,
+      config: '{"mcpServers":{"existing":{}}}\n',
+    },
+  )
+})
+
+// Value: protects=the sentence a learner reads when the system does not open ~/.cursor/mcp.json for a reason Codebook has no step for (too many open files, a failing disk); fails_when=the refusal speaks of "a redirected or inaccessible file", which names a link that is not there, or names neither the file, the system's code nor the command to run again; why_new=Cycle 0046 row 286 (every open the system refuses for another reason than a link or a missing right); seam=node:fs/promises open of the opener the loaded catalog opens through, which refuses the config once
+test('a ~/.cursor/mcp.json that the system does not open for a reason Codebook has no step for is answered with the config’s path, the system’s code and the setup as the command to run again, and the refresh run again, once the file opens, keeps its bytes', async (context) => {
+  // Arrange: a learner's config, and a catalog whose first open of it the system refuses with EMFILE.
+  const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
+  context.after(() => rm(directory, { recursive: true, force: true }))
+  const storageRoot = join(directory, 'storage'),
+    configPath = join(directory, 'mcp.json')
+  await writeFile(configPath, '{"mcpServers":{"existing":{}}}\n')
+  let isOpenRefused = false
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      './openWithoutFollowing': await loadOpenWithoutFollowing({
+        fileSystem: {
+          ...fileSystem,
+          open: async (
+            path: string,
+            ...flagsAndMode: [flags?: string | number, mode?: number]
+          ) => {
+            if (path === configPath && !isOpenRefused) {
+              isOpenRefused = true
+              throw Object.assign(new Error('EMFILE: too many open files'), {
+                code: 'EMFILE',
+              })
+            }
+            return fileSystem.open(path, ...flagsAndMode)
+          },
+        },
+      }),
+    },
+    // The catalog tells a refusal by `instanceof Error` and its code; this error belongs to this realm.
+    { Error },
+  )
+
+  // Act
+  const refusal = await answerOrRefusalOf(
+    catalog.refreshCursorMcpCatalog(storageRoot, directory),
+  )
+  // The sentence is followed to the letter: the command is run again, and the file opens now.
+  await catalog.refreshCursorMcpCatalog(storageRoot, directory)
+
+  // Assert
+  assert.deepEqual(
+    { refusal, config: await readFile(configPath, 'utf8') },
+    {
+      refusal: `Cursor MCP config could not be opened: ${configPath} (EMFILE). Codebook left it unchanged. Run Codebook: Set Up AI Chat again once that file can be opened.`,
+      config: '{"mcpServers":{"existing":{}}}\n',
     },
   )
 })

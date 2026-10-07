@@ -155,8 +155,7 @@ test('a Cursor MCP config that is a link is not refreshed through the link where
       learnersFileLastWrittenAtMs: (await lstat(learnersFile)).mtimeMs,
     },
     {
-      refresh:
-        'refused: Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.',
+      refresh: `refused: Cursor MCP config cannot be refreshed without following a link: ${folders.configPath}. Codebook left the link and the file it points to as they are; both are yours. Put that file in the link's place, or remove the link (Codebook then creates an empty config there), then run Codebook: Set Up AI Chat again.`,
       learnersFileLastWrittenAtMs: UNTOUCHED_AT_MS,
     },
   )
@@ -321,8 +320,7 @@ test('a link that takes the Cursor MCP config path while Codebook publishes its 
       learnersFileLastWrittenAtMs: (await lstat(learnersFile)).mtimeMs,
     },
     {
-      refresh:
-        'refused: Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.',
+      refresh: `refused: Cursor MCP config cannot be refreshed without following a link: ${folders.configPath}. Codebook left the link and the file it points to as they are; both are yours. Put that file in the link's place, or remove the link (Codebook then creates an empty config there), then run Codebook: Set Up AI Chat again.`,
       learnersFileLastWrittenAtMs: UNTOUCHED_AT_MS,
     },
   )
@@ -366,8 +364,7 @@ test('a link that replaces the Cursor MCP config right after Codebook published 
       learnersFileLastWrittenAtMs: (await lstat(learnersFile)).mtimeMs,
     },
     {
-      refresh:
-        'refused: Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.',
+      refresh: `refused: Cursor MCP config cannot be refreshed without following a link: ${folders.configPath}. Codebook left the link and the file it points to as they are; both are yours. Put that file in the link's place, or remove the link (Codebook then creates an empty config there), then run Codebook: Set Up AI Chat again.`,
       learnersFileLastWrittenAtMs: UNTOUCHED_AT_MS,
     },
   )
@@ -499,7 +496,7 @@ test(
     // Assert
     assert.equal(
       refresh,
-      'refused: Cursor MCP config is not a regular file; Codebook left its settings unchanged.',
+      `refused: Cursor MCP config is not a regular file: ${configPath}. Codebook left its settings unchanged. What stands at that path is yours to keep: rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
     )
   },
 )
@@ -945,10 +942,8 @@ test('a folder at the Cursor MCP config path is refused by the refresh as no reg
 
   // Assert
   assert.deepEqual(refreshes, {
-    withTheFlagsOfThisSystem:
-      'refused: Cursor MCP config is not a regular file; Codebook left its settings unchanged.',
-    whereTheOpenCannotRefuseALink:
-      'refused: Cursor MCP config is not a regular file; Codebook left its settings unchanged.',
+    withTheFlagsOfThisSystem: `refused: Cursor MCP config is not a regular file: ${folders.configPath}. Codebook left its settings unchanged. What stands at that path is yours to keep: rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
+    whereTheOpenCannotRefuseALink: `refused: Cursor MCP config is not a regular file: ${folders.configPath}. Codebook left its settings unchanged. What stands at that path is yours to keep: rename it or move it elsewhere, then run Codebook: Set Up AI Chat again.`,
   })
 })
 

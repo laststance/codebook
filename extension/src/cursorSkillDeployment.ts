@@ -82,6 +82,10 @@ const FINISH_REMOVAL_WITHOUT_THAT_FILE =
 /** What removal answers when the skill file changed between its check and its move away: the file is back in place and is the learner's now. */
 const SKILL_CHANGED_DURING_REMOVAL = `The Cursor skill changed during removal; Codebook did not remove it and left it in place. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
 
+/** What setup answers for the installed skill file with other bytes than Codebook wrote (the same file, edited in place): setup leaves it alone, adopts it again once its content is back, and installs its skill anew when the file is gone from its path. */
+const SKILL_EDITED_AFTER_SETUP =
+  'The managed Cursor skill was edited after setup; Codebook preserved it. Undo that edit in the file, or delete or rename the file, then run Codebook: Set Up AI Chat again.'
+
 /** What setup answers for a file that took the place of the skill Codebook installed (another inode): setup leaves it alone, and installs its skill again once the path is free. */
 const SKILL_REPLACED_AFTER_SETUP =
   "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again."
@@ -222,15 +226,9 @@ type UnreadSkillFileSentences = Record<
   (path: string) => string
 >
 
-/** What the learner reads for a file of the skill setup that is not the managed skill itself (the bundled skill, the Wiki publisher, the copy of the installed skill) and that Codebook did not read: each sentence names the path. */
-const UNREAD_SKILL_FILE_SENTENCES: UnreadSkillFileSentences = {
-  link: (path) =>
-    `Codebook will not read through a link: ${path}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
-  'not-regular': (path) =>
-    `Codebook will not change a non-regular skill file: ${path}`,
-  replaced: (path) =>
-    `Another file took the place of ${path} while Codebook opened it, so it was not read. Run Codebook: Set Up AI Chat again.`,
-}
+/** What a setup or a reconnect answers for a path another file took while Codebook opened it (only where the system's open cannot refuse a link): nothing was read, and the same command reads the path as it stands then. */
+const ANOTHER_FILE_TOOK_THE_PLACE = (path: string): string =>
+  `Another file took the place of ${path} while Codebook opened it, so it was not read. Run Codebook: Set Up AI Chat again.`
 
 /** What a setup or a reconnect answers for the managed skill path when it did not read it: each sentence names the step after which a setup installs the skill again (the receipt is there, so a path that holds nothing is restored). */
 const UNREAD_SKILL_SENTENCES_OF_SETUP: UnreadSkillFileSentences = {
@@ -238,7 +236,28 @@ const UNREAD_SKILL_SENTENCES_OF_SETUP: UnreadSkillFileSentences = {
     `Codebook will not read through a link: ${path}. Remove the link, then run Codebook: Set Up AI Chat again.`,
   'not-regular': (path) =>
     `Codebook will not change a non-regular skill file: ${path}. Delete or rename what stands at that path, then run Codebook: Set Up AI Chat again.`,
-  replaced: UNREAD_SKILL_FILE_SENTENCES.replaced,
+  replaced: ANOTHER_FILE_TOOK_THE_PLACE,
+}
+
+/** How a refusal ends for a file of the installation itself (the bundled skill, the Wiki publisher): the learner does not repair such a file, the extension is installed again, in the words of the README's section "Install the private VSIX" ("install the desired verified VSIX"), and the setup is run in the reopened window. */
+const INSTALL_AGAIN_THEN_SET_UP_AGAIN =
+  'That path is part of the Codebook installation. Install the verified VSIX again (README, "Install the private VSIX"), then run Codebook: Set Up AI Chat again.'
+
+/** What the learner reads for a file of the installation itself (the bundled skill, the Wiki publisher) that Codebook did not read: each sentence names the path, and a link and what is no regular file end with installing the extension again ({@link INSTALL_AGAIN_THEN_SET_UP_AGAIN}). */
+const UNREAD_INSTALLED_FILE_SENTENCES: UnreadSkillFileSentences = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
+  'not-regular': (path) =>
+    `Codebook will not change a non-regular skill file: ${path}. ${INSTALL_AGAIN_THEN_SET_UP_AGAIN}`,
+  replaced: ANOTHER_FILE_TOOK_THE_PLACE,
+}
+
+/** What the learner reads for the copy of the installed skill that Codebook keeps in its own storage when an update did not read it: each sentence names the path and the step after which a setup updates the skill (a path that holds nothing gets the copy anew). */
+const UNREAD_SKILL_COPY_SENTENCES: UnreadSkillFileSentences = {
+  link: (path) =>
+    `Codebook will not read through a link: ${path}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+  'not-regular': UNREAD_SKILL_SENTENCES_OF_SETUP['not-regular'],
+  replaced: ANOTHER_FILE_TOOK_THE_PLACE,
 }
 
 /** What a removal answers for the managed skill path when it did not read it: each sentence names the step after which the removal finishes, and the removal as the command to run again. */
@@ -292,11 +311,11 @@ async function lookAtSkillFile(path: string): Promise<SkillFileLook> {
 /**
  * Reads a regular file of the skill setup with its status, for the callers that compare the file with a receipt ({@link deploySkill}, {@link removeManagedCursorSkill}) and through {@link regularFile} for those that need the bytes alone.
  * @param path - Exact file path.
- * @param sentences - What the learner reads when the path was not read: {@link UNREAD_SKILL_SENTENCES_OF_SETUP} or {@link UNREAD_SKILL_SENTENCES_OF_REMOVAL} for the managed skill path, by the command that reads it; {@link UNREAD_SKILL_FILE_SENTENCES} for every other file.
+ * @param sentences - What the learner reads when the path was not read: {@link UNREAD_SKILL_SENTENCES_OF_SETUP} or {@link UNREAD_SKILL_SENTENCES_OF_REMOVAL} for the managed skill path, by the command that reads it; {@link UNREAD_INSTALLED_FILE_SENTENCES} for a file of the installation and {@link UNREAD_SKILL_COPY_SENTENCES} for the copy of the installed skill in Codebook's storage.
  * @param kindsReadAsAbsent - What counts as "no file there" besides a path that holds nothing; a reconnect's look adds `replaced` ({@link inspectManagedSkill}).
  * @returns The bytes and the status of the one file that was opened, or undefined when the path holds nothing (or one of `kindsReadAsAbsent`).
  * @throws With the sentence that fits what the path holds: a link, a pipe, a device or a folder, or a file that was replaced while it was opened.
- * @example await readRegularFile('/missing/SKILL.md', UNREAD_SKILL_FILE_SENTENCES) // => undefined
+ * @example await readRegularFile('/missing/SKILL.md', UNREAD_INSTALLED_FILE_SENTENCES) // => undefined
  */
 async function readRegularFile(
   path: string,
@@ -310,9 +329,12 @@ async function readRegularFile(
   throw new Error(sentences[look.kind](path))
 }
 
-/** Reads the bytes of a regular file of the skill setup for {@link deployCursorSkill} without reading through a link ({@link readRegularFile}). @param path - Exact file path. @returns Its bytes, or undefined when absent. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened. @example await regularFile('/missing/SKILL.md') // => undefined */
-async function regularFile(path: string): Promise<Buffer | undefined> {
-  return (await readRegularFile(path, UNREAD_SKILL_FILE_SENTENCES))?.bytes
+/** Reads the bytes of a regular file of the skill setup that is not the managed skill itself, for {@link packageSkill} (the installation's files) and {@link deploySkill} (the copy of the installed skill), without reading through a link ({@link readRegularFile}). @param path - Exact file path. @param sentences - What the learner reads when the path was not read: {@link UNREAD_INSTALLED_FILE_SENTENCES} or {@link UNREAD_SKILL_COPY_SENTENCES}, by whose file the path is, because the step that works differs. @returns Its bytes, or undefined when absent. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened. @example await regularFile('/missing/SKILL.md', UNREAD_INSTALLED_FILE_SENTENCES) // => undefined */
+async function regularFile(
+  path: string,
+  sentences: UnreadSkillFileSentences,
+): Promise<Buffer | undefined> {
+  return (await readRegularFile(path, sentences))?.bytes
 }
 
 /** How the refusal begins for a folder of the skill's path that a setup or a removal found as a link or as no folder; the path and the step follow ({@link refuseUnlessRealFolder}). */
@@ -1000,10 +1022,11 @@ async function settleDisplacedName(
 
 /**
  * Words the refusal of an update whose installed skill changed while the setup ran, for {@link deploySkill} after it abandoned that setup: the path is looked at once more, because the step that works depends on what stands there now.
+ * "Edited in place" and "another file" are told apart by the inode number alone, and a file system may give the number of a deleted file to the next file it creates (ext4 does so at once). A file that was created at the path after the skill was deleted can therefore have the receipt's number: it is answered as the skill edited in place. {@link SKILL_EDITED_DURING_SETUP} names steps that work for such a file too: once it is deleted or renamed the next setup installs the skill anew, and once it holds the receipt's bytes it is the installed skill by number and bytes, which a setup adopts. No file is overwritten, moved or deleted on the number alone: every such step also compares the recorded bytes ({@link matchesOwnedFile}).
  * @param targetPath - The managed skill path.
  * @param receipt - The receipt of the installed skill, which no step of the abandoned setup changed.
  * @returns
- * - {@link SKILL_EDITED_DURING_SETUP}: the receipted file itself stands there with other bytes; once the edit is undone in that file the next setup adopts it
+ * - {@link SKILL_EDITED_DURING_SETUP}: a file with the receipt's inode number stands there with other bytes (the receipted file itself, or a file that got its number after it was deleted); once it holds the receipt's bytes the next setup adopts it
  * - {@link SKILL_REMOVED_DURING_SETUP}: the path holds nothing
  * - {@link SKILL_CHANGED_DURING_SETUP}: another file (or a link, or no file) stands there, which no setup adopts
  * @example await sentenceOfSkillChangedDuringUpdate('/home/user/.cursor/skills/codebook/SKILL.md', receipt)
@@ -1237,7 +1260,7 @@ async function packageSkill(extensionPath: string): Promise<{
   recorded: RecordedPublisher
 }> {
   const path = join(extensionPath, SKILL_RELATIVE_PATH),
-    canonicalBytes = await regularFile(path)
+    canonicalBytes = await regularFile(path, UNREAD_INSTALLED_FILE_SENTENCES)
   if (!canonicalBytes)
     throw new Error(
       'This Codebook installation is missing its bundled skill. Reinstall the VSIX.',
@@ -1254,7 +1277,7 @@ async function packageSkill(extensionPath: string): Promise<{
   const publisherPath = join(extensionPath, WIKI_PUBLISHER_RELATIVE_PATH)
   if (
     canonicalText.includes(WIKI_PUBLISHER_PATH_MARKER) &&
-    !(await regularFile(publisherPath))
+    !(await regularFile(publisherPath, UNREAD_INSTALLED_FILE_SENTENCES))
   )
     throw new Error(
       'This Codebook installation is missing its Wiki publisher. Reinstall the VSIX.',
@@ -1554,9 +1577,7 @@ async function deploySkill(
     if (receipt && current && !isSameFileId(receipt.inode, current.status.ino))
       throw new Error(SKILL_REPLACED_AFTER_SETUP)
     if (receipt && current && sha256(current.bytes) !== receipt.skillSha256)
-      throw new Error(
-        'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
-      )
+      throw new Error(SKILL_EDITED_AFTER_SETUP)
     if (receipt && current && !receipt.installed)
       throw new Error(SKILL_BACK_AFTER_REMOVAL)
     if (receipt && current && receipt.skillSha256 === packaged.sha256)
@@ -1572,7 +1593,7 @@ async function deploySkill(
         receiptDirectory,
         `${receipt.skillSha256}.SKILL.md`,
       )
-      const backup = await regularFile(backupPath)
+      const backup = await regularFile(backupPath, UNREAD_SKILL_COPY_SENTENCES)
       if (backup && sha256(backup) !== receipt.skillSha256)
         throw new Error(
           `The copy of the installed Cursor skill that Codebook keeps as ${backupPath} differs from its receipt; no skill file was changed. Delete that copy, then run Codebook: Set Up AI Chat again.`,

@@ -3075,7 +3075,7 @@ test('a reconnect that finds the Cursor skill edited says once what happened and
 
 // Cycle 0045 (ST-9): the tenth notification that quotes outside text.
 test('a reconnect that fails with an error quoting a command link warns without a clickable link', async () => {
-  // Arrange: Cursor chat was set up for this workspace, and the skill check names a home folder whose Cursor folder is gone.
+  // Arrange: Cursor chat was set up for this workspace, and the skill check names a home folder whose Cursor folder is a link; its refusal ends with the setup as its own step (row 284: the notice does not say that step a second time).
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), 'codebook-reconnect-link-')),
   )
@@ -3115,7 +3115,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
       './cursorSkillDeployment': {
         verifyManagedCursorSkill: async () => {
           throw new Error(
-            'Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
+            "Codebook will not follow a missing or redirected skill directory: /home/[Open](command:x)/.cursor. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
           )
         },
       },
@@ -3136,7 +3136,7 @@ test('a reconnect that fails with an error quoting a command link warns without 
 
     // Assert
     assert.deepEqual(warnings, [
-      'Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. Nothing stands at that path. Run Codebook: Set Up AI Chat again.',
+      "Codebook AI chat did not reconnect: Codebook will not follow a missing or redirected skill directory: /home/[Open] (command:x)/.cursor. That path is a link, and Codebook leaves what it points to as it is. Put the folder it points to in the link's place, or remove the link, then run Codebook: Set Up AI Chat again.",
     ])
     assert.equal(warnings[0]!.includes(']('), false)
   } finally {

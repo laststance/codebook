@@ -12,11 +12,11 @@ import {
 
 // Value: protects=the end of every refusal of the Cursor setup for a folder that is no real folder; fails_when=a link is told as "not a folder" (a link looked at without following is never a folder), a real folder is refused, the learner is told to delete what is theirs, or the sentence names another command than the one that was run; why_new=Cycle 0046 row 277; seam=none, the real entries
 test('what stands where a folder of the Cursor setup should be is told apart as nothing, a link or something that is no folder, each with its step and the command that was run, and a real folder is no refusal', async (context) => {
-  // Arrange: a folder, a link to it, a file, and a path that holds nothing.
+  // Arrange: a folder, a link to it (a junction on Windows, which every user may create), a file, and a path that holds nothing.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-real-folder-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   await mkdir(join(directory, 'folder'))
-  await symlink(join(directory, 'folder'), join(directory, 'link'))
+  await symlink(join(directory, 'folder'), join(directory, 'link'), 'junction')
   await writeFile(join(directory, 'file'), 'A note of the learner.\n')
 
   // Act

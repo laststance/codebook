@@ -732,3 +732,22 @@ test('the packaged README says that a deadline’s failure text says where a par
     'The debugger reported that the page paused at the breakpoint of declared server stop app/lib/actions.ts:27, which it also sets in the page\'s copy of that module. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.',
   )
 })
+
+// Value: protects=a learner whom a refusal for a damaged installation sends to the README: 'Install the verified VSIX again (README, "Install the private VSIX")'; fails_when=the README's section gets another heading, or no longer says how to install again, so the refusal names a place that is not there; why_new=Cycle 0046 row 285: the refusal names the section and uses its words; seam=none, the packaged README
+test('the packaged README has the section a refusal for a damaged installation names, and that section says how to install the verified VSIX again', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const section =
+    readme.split('\n## Install the private VSIX\n')[1]?.split('\n## ')[0] ??
+    'no section "Install the private VSIX"'
+
+  // Assert
+  assert.deepEqual(
+    heldSentences(section, [
+      'To update or reinstall, stop active Codebook runs, close the affected editor windows, install the desired verified VSIX with the same command and reopen the same workspace/profile.',
+    ]),
+    [true],
+  )
+})

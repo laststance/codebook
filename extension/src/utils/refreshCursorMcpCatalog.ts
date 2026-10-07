@@ -384,25 +384,86 @@ const CONFIG_NOT_WRITABLE_SENTENCE =
 const CONFIG_CHANGED_SENTENCE =
   'Cursor MCP config changed while Codebook refreshed it; Codebook left it unchanged. Run Codebook: Set Up AI Chat again.'
 
-/** What the learner reads for a config path that holds a pipe, a device or a folder. */
-const CONFIG_NOT_REGULAR_SENTENCE =
-  'Cursor MCP config is not a regular file; Codebook left its settings unchanged.'
+/**
+ * Words what the learner reads for a config path that holds a pipe, a device or a folder; for {@link refusalOfConfigOpen} where the opener looks at the path first, and for {@link refreshCursorMcpCatalog} where the open lets such a path through and its status tells it.
+ * What stands there is not Codebook's: the sentence says that it stays and how the path is freed, after which a setup creates the config.
+ * @param targetPath - The config's path.
+ * @returns The sentence, which names the path and the setup as the command to run again (only a setup's refresh opens the config this way; a removal answers such a path as a preserved config).
+ * @example configNotRegularSentence('/home/user/.cursor/mcp.json')
+ */
+function configNotRegularSentence(targetPath: string): string {
+  return `Cursor MCP config is not a regular file: ${targetPath}. Codebook left its settings unchanged. What stands at that path is yours to keep: rename it or move it elsewhere, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+}
 
-/** What the learner reads for a config path that holds a link, or that cannot be opened for another reason than a missing file. */
-const CONFIG_REDIRECTED_SENTENCE =
-  'Cursor MCP config cannot be refreshed without following a redirected or inaccessible file.'
+/**
+ * Words what the learner reads for a config path that holds a link, for {@link refusalOfConfigOpen}: Codebook sets no time through a link, and both the link and the file it points to are the learner's.
+ * @param targetPath - The config's path.
+ * @returns The sentence, with both ways after which a setup finishes: the file in the link's place is refreshed as it is, and where only the link is removed a setup creates an empty config.
+ * @example configLinkSentence('/home/user/.cursor/mcp.json')
+ */
+function configLinkSentence(targetPath: string): string {
+  return `Cursor MCP config cannot be refreshed without following a link: ${targetPath}. Codebook left the link and the file it points to as they are; both are yours. Put that file in the link's place, or remove the link (Codebook then creates an empty config there), then run ${SET_UP_AI_CHAT_COMMAND} again.`
+}
 
-/** The sentence for a config that {@link openWithoutFollowing} refused where it looks at the path first, by the code of its refusal; every other failure of the open reads {@link CONFIG_REDIRECTED_SENTENCE}. */
-const CONFIG_OPEN_SENTENCES: ReadonlyMap<string, string> = new Map([
-  ['ENOTREG', CONFIG_NOT_REGULAR_SENTENCE],
-  ['EREPLACED', CONFIG_CHANGED_SENTENCE],
+/**
+ * Words what the learner reads for a config that holds no byte, for {@link refreshCursorMcpCatalog}: Cursor reads no servers from such a file, and Codebook writes nothing into a file it did not create.
+ * @param targetPath - The config's path.
+ * @returns The sentence, with both ways after which a setup finishes: a config the learner wrote is refreshed as it is, and where the file is deleted a setup creates the config.
+ * @example configEmptySentence('/home/user/.cursor/mcp.json')
+ */
+function configEmptySentence(targetPath: string): string {
+  return `Cursor MCP config is empty: ${targetPath}. Codebook preserved it; the file is yours. Write your MCP servers into it (a config without servers is {"mcpServers":{}}), or delete it so that Codebook creates the config, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+}
+
+/** The error codes with which a system refuses to open a file this user may not read. */
+const READ_REFUSED_CODES: ReadonlySet<string> = new Set(['EPERM', 'EACCES'])
+
+/**
+ * Words what the learner reads for a config the system did not open for another reason than a link, a path that is no regular file or a replaced file; for {@link refusalOfConfigOpen}.
+ * @param targetPath - The config's path.
+ * @param code - The file system's code for the refused open.
+ * @returns
+ * - A file this user may not read ({@link READ_REFUSED_CODES}): the sentence that says to allow reading
+ * - Every other code: the sentence that names the path and the code, and the setup as the command to run again once the file can be opened (no step is known for a code Codebook does not know)
+ * @example configUnopenedSentence('/home/user/.cursor/mcp.json', 'EACCES')
+ */
+function configUnopenedSentence(targetPath: string, code: string): string {
+  return READ_REFUSED_CODES.has(code)
+    ? `Cursor MCP config cannot be refreshed because this user may not read it: ${targetPath} (${code}). Codebook left it unchanged. Allow this user to read that file, then run ${SET_UP_AI_CHAT_COMMAND} again.`
+    : `Cursor MCP config could not be opened: ${targetPath} (${code}). Codebook left it unchanged. Run ${SET_UP_AI_CHAT_COMMAND} again once that file can be opened.`
+}
+
+/** The sentence for a config that {@link openWithoutFollowing} refused, by the code of its refusal: a link (`ELOOP`, from the open's own flag or from the look that comes first where the system has none), and, from that look alone, a path that is no regular file and a file that was replaced; every other code reads {@link configUnopenedSentence}. */
+const CONFIG_OPEN_SENTENCES: ReadonlyMap<
+  string,
+  (targetPath: string) => string
+> = new Map([
+  ['ELOOP', configLinkSentence],
+  ['ENOTREG', configNotRegularSentence],
+  ['EREPLACED', (): string => CONFIG_CHANGED_SENTENCE],
 ])
+
+/**
+ * Turns a refused open of the Cursor MCP config into the sentence that fits it, for {@link openConfigForRefresh}.
+ * @param error - What {@link openWithoutFollowing} threw; never a missing file.
+ * @param targetPath - The config's path, which every sentence but the one of a replaced config names.
+ * @returns An error with the sentence ({@link CONFIG_OPEN_SENTENCES}, {@link configUnopenedSentence}) and the failure as its cause; a failure without a code itself.
+ * @example throw refusalOfConfigOpen(Object.assign(new Error('ELOOP'), { code: 'ELOOP' }), '/home/user/.cursor/mcp.json')
+ */
+function refusalOfConfigOpen(error: unknown, targetPath: string): unknown {
+  const code = systemErrorCode(error)
+  if (!code) return error
+  const sentence =
+    CONFIG_OPEN_SENTENCES.get(code)?.(targetPath) ??
+    configUnopenedSentence(targetPath, code)
+  return new Error(sentence, { cause: error })
+}
 
 /**
  * Opens the Cursor MCP config for a refresh without following a link, and turns a refusal into the sentence that fits it; called by {@link refreshCursorMcpCatalog} for each of its three opens of the config.
  * @param targetPath - The config's path.
- * @returns The open file; with `O_NOFOLLOW` it can still be a pipe, a device or a folder, which the refresh refuses by its status with {@link CONFIG_NOT_REGULAR_SENTENCE}.
- * @throws The file system's error for a path that holds nothing (`ENOENT`: the refresh creates the config then); otherwise an error with the sentence of a pipe, a device or a folder, of a config another file replaced while it was opened, or of a link or an inaccessible file, with the failure as its cause.
+ * @returns The open file; with `O_NOFOLLOW` it can still be a pipe, a device or a folder, which the refresh refuses by its status with {@link configNotRegularSentence}.
+ * @throws The file system's error for a path that holds nothing (`ENOENT`: the refresh creates the config then); otherwise an error with the sentence of a link, of a pipe, a device or a folder, of a config another file replaced while it was opened, or of a file the system did not open ({@link refusalOfConfigOpen}), with the failure as its cause.
  * @example const handle = await openConfigForRefresh('/home/user/.cursor/mcp.json')
  */
 async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
@@ -410,11 +471,7 @@ async function openConfigForRefresh(targetPath: string): Promise<FileHandle> {
     return await openWithoutFollowing(targetPath)
   } catch (error) {
     if (isMissing(error)) throw error
-    throw new Error(
-      CONFIG_OPEN_SENTENCES.get(systemErrorCode(error)) ??
-        CONFIG_REDIRECTED_SENTENCE,
-      { cause: error },
-    )
+    throw refusalOfConfigOpen(error, targetPath)
   }
 }
 
@@ -895,11 +952,9 @@ export async function refreshCursorMcpCatalog(
       }
       try {
         const status = await handle.stat()
-        if (!status.isFile()) throw new Error(CONFIG_NOT_REGULAR_SENTENCE)
-        if (status.size === 0)
-          throw new Error(
-            'Cursor MCP config is empty; Codebook preserved it. Inspect this file before retrying setup.',
-          )
+        if (!status.isFile())
+          throw new Error(configNotRegularSentence(targetPath))
+        if (status.size === 0) throw new Error(configEmptySentence(targetPath))
         // Cursor 3.21.16 may connect an extension server without publishing it to Agent until this file watcher fires.
         await setTimesOfOpenConfig(
           handle,
