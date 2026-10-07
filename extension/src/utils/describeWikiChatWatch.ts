@@ -4,12 +4,13 @@ import {
   NEW_CHAT_PLACE,
   OPEN_CHAT_KEEPS_ITS_PLACE,
   OPEN_CHAT_PLACE,
+  RESTORED_CHAT_CASE_AFTER,
 } from './describeWikiChatHandOver'
 import type { WikiChatSession } from './handWikiRequestToChat'
 
-/** Where the watched request is, for each session it can have gone to; the words are those of the confirmation. */
+/** Where the watched request is, for each session it can have gone to; the words are those of the confirmation. After New Chat ran, Codebook does not know whether the Chat view had its chat yet, so the place of a session of its own names the other case too. */
 const WATCHED_REQUEST_PLACES: Record<WikiChatSession, string> = {
-  own: `${NEW_CHAT_PLACE}; the chat you had open ${OPEN_CHAT_KEEPS_ITS_PLACE}`,
+  own: `${NEW_CHAT_PLACE} (${RESTORED_CHAT_CASE_AFTER}); the chat you had open ${OPEN_CHAT_KEEPS_ITS_PLACE}`,
   shared: OPEN_CHAT_PLACE,
 }
 
@@ -23,7 +24,7 @@ const WATCHED_REQUEST_PLACES: Record<WikiChatSession, string> = {
  * @returns The title: that Codebook watches for the update and where the request is; when the watch ends, and that Cancel stops the watch and not the chat; and to press Cancel after a refused step, in the words the page's running line gives the same advice with ({@link WIKI_REFUSED_STEP_ADVICE}).
  * @example
  * describeWikiChatWatch('own', 900_000)
- * // => 'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.'
+ * // => 'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.'
  * describeWikiChatWatch('shared', 60_000)
  * // => 'Watching for the LLM Wiki update in the chat that is open. The watch ends when the new Wiki is published, after 1 minute, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.'
  */

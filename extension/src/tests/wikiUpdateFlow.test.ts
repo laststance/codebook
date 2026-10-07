@@ -187,7 +187,7 @@ test('cancelling a VS Code Wiki update ends it as cancelled and leaves the publi
       ['vscode', 'kept'],
     )
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.equal(wiki.notices.length, 1)
     assert.match(
@@ -233,7 +233,7 @@ test('every Wiki update shows one progress notification that can be cancelled, a
 
     // Assert
     assert.deepEqual(vsCodeWiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.deepEqual(cursorWiki.progressTitles, [
       'Updating LLM Wiki with Cursor Agent',
@@ -719,7 +719,7 @@ test('the update command and the browser link pressed while the first start is s
       ['workbench.action.chat.open'],
     )
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
@@ -2030,7 +2030,7 @@ test('a chat whose reply waits for a confirmation 20 seconds after it took the r
     assert.equal(wiki.status().state, 'running')
     assert.deepEqual(wiki.errors, [])
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -3030,7 +3030,7 @@ test('the confirmation of the browser’s update link says that the request goes
       'Update this project’s LLM Wiki with the editor agent?',
     ])
     assert.deepEqual(wiki.confirmationDetails, [
-      `${wiki.projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.`,
+      `${wiki.projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.`,
     ])
   } finally {
     await wiki.close()
@@ -3072,7 +3072,7 @@ test('the notification that watches an update started with the command says that
     // Assert: the command asked for no confirmation.
     assert.deepEqual(wiki.confirmations, [])
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -3091,7 +3091,7 @@ test('the notification that watches an update says when the watch ends and that 
 
     // Assert
     assert.deepEqual(wiki.progressTitles, [
-      'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+      'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
     ])
   } finally {
     await wiki.close()
@@ -3148,14 +3148,14 @@ test('the confirmation of an update whose output lies outside the project says t
 
     // Assert
     assert.deepEqual(fromTheLink.confirmationDetails, [
-      `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
+      `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
     ])
     for (const [window, running] of [
       [fromTheLink, runningFromTheLink],
       [fromTheCommand, runningFromTheCommand],
     ] as const) {
       assert.deepEqual(window.progressTitles, [
-        `Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel. ${approvalsNote}`,
+        `Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel. ${approvalsNote}`,
       ])
       assert.equal(
         running.state === 'running' ? running.isOutputOutsideProject : false,

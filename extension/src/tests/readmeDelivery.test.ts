@@ -348,7 +348,7 @@ test('the packaged README says that a VS Code update sends its request into a ne
 
   // Act
   const delivered = heldSentences(readme, [
-    "In VS Code the update's request does not go into the chat you are using: Codebook reveals the chat, runs the editor's **New Chat** and sends the request into that new chat, so a request of yours that is in progress, waits for a confirmation or is queued is neither stopped nor held back, and the update does not wait behind it.",
+    "In VS Code the update's request does not go into the chat you are using, with the one exception named below: Codebook reveals the chat, runs the editor's **New Chat** and sends the request into that new chat, so a request of yours that is in progress, waits for a confirmation or is queued is neither stopped nor held back, and the update does not wait behind it.",
     "Your chat is not closed: with a request in progress or waiting for a confirmation it goes on in the background, and you return to it from the Chat view's session list (its chat history). New Chat closes the diff editors that show that chat's edits; the edits stay.",
     "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work in the window (a file you open, a command you run) is not taken for a sign.",
     'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
@@ -398,7 +398,7 @@ test('the packaged README quotes the confirmation of a VS Code update word for w
   // Assert
   assert.equal(
     confirmation,
-    'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
+    'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. If the Chat view has not been opened in this window yet, the request may go into the chat it restores. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
   )
   assert.deepEqual(delivered, [true])
 })
@@ -419,7 +419,39 @@ test('the packaged README says when the watch of a VS Code update ends and that 
   assert.deepEqual(delivered, [true, true, true])
   assert.equal(
     describeWikiChatWatch('own', WIKI_UPDATE_WATCH_TIMEOUT_MS),
-    'Watching for the LLM Wiki update in a new chat; the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+    'Watching for the LLM Wiki update in a new chat (in the chat the Chat view restored, if it opened only now); the chat you had open keeps its place in the chat list. The watch ends when the new Wiki is published, after 15 minutes, or with Cancel, which stops watching, not the chat. If you refuse a step of the chat, press Cancel.',
+  )
+})
+
+// Value: protects=a learner reading the two cases in which the update's request does not get a new chat of the Chat view, and the sentence of a chat that never held the request; fails_when=the README says without exception that the request does not go into a chat of the learner's, although a Chat view that opens only now sends it into the chat it restores and a chat in an editor tab gets the new chat in its tab, or it quotes two of the three sentences of the bound; why_new=Cycle 0046 row 261; seam=none
+test('the packaged README names the Chat view that opens only now and the chat in an editor tab as limits of the new chat, and quotes the sentence of a chat that never held the request', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const delivered = heldSentences(readme, [
+    'Two limits, the first of them that exception. When the Chat view has not been opened in the window yet, it may still be restoring your last chat while New Chat runs: New Chat then does nothing, and the request goes into that restored chat; the confirmation and the notification name this case.',
+    'When the chat you focused last is a chat in an editor tab, the new chat starts in that tab, and the chat that was shown there keeps its place in the chat list.',
+    "If the chat's command had returned without the chat taking a request, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.`",
+  ])
+
+  // Assert: the README holds each sentence, and the product prints the sentence and names the case in its confirmation and its notification.
+  assert.deepEqual(delivered, [true, true, true])
+  assert.equal(
+    describeUnansweredWikiChat('not-sent', 'own', WIKI_CHAT_OPEN_TIMEOUT_MS),
+    'Codebook saw no sign of the update in the editor chat within 30 seconds and the chat holds no request of it, so no update is running. Check that Copilot Chat is enabled and signed in, then retry.',
+  )
+  assert.equal(
+    describeWikiChatHandOver(['workbench.action.chat.newChat']).includes(
+      'If the Chat view has not been opened in this window yet, the request may go into the chat it restores.',
+    ),
+    true,
+  )
+  assert.equal(
+    describeWikiChatWatch('own', WIKI_UPDATE_WATCH_TIMEOUT_MS).includes(
+      'in a new chat (in the chat the Chat view restored, if it opened only now)',
+    ),
+    true,
   )
 })
 
