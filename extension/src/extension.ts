@@ -1761,11 +1761,15 @@ export function activate(
               repositoryReader = undefined
               // What the reader could not save is taken before its dispose, so a dispose that throws loses none of it.
               unsavedStudies.push(...(reader?.releaseUnsavedStudies() ?? []))
-              await reader?.dispose()
-              reader = undefined
-              // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
-              workspace()
-              repository()
+              try {
+                await reader?.dispose()
+              } finally {
+                // A reader whose dispose threw is disposed all the same and refuses every command, so it is replaced like one whose dispose ended; the failure is still told below.
+                reader = undefined
+                // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
+                workspace()
+                repository()
+              }
             } finally {
               await closingReader?.close()
             }

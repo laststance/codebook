@@ -7055,12 +7055,28 @@ export class StudyWorkspace {
     }
   }
 
-  /** Releases observers after extension shutdown has retired its service; read-only harnesses inspect state via {@link inspect}. @example await workspace.dispose() */
+  /**
+   * Ends this reader after the extension has retired its service: closes its panes and its playback and releases what it registered with the editor; called when the window closes and when a change of the workspace's folders replaces the reader. Read-only harnesses inspect state via {@link inspect}.
+   * The registrations are released whatever the closing did: a reader that kept its views, its source provider and its listeners after a close that threw would share them with the reader made in its place.
+   * @throws What closing the panes or the playback threw, after the registrations were released.
+   * @example await workspace.dispose()
+   */
   async dispose(): Promise<void> {
     this.disposed = true
     clearInterval(this.timer)
-    await this.close()
-    await this.playback?.dispose()
+    try {
+      await this.close()
+    } finally {
+      try {
+        await this.playback?.dispose()
+      } finally {
+        this.releaseRegistrations()
+      }
+    }
+  }
+
+  /** Releases what this reader registered with the editor (its citation watchers, its views, providers and listeners, its highlight and its outline's change event); called by {@link dispose} whatever closing the panes did. @example this.releaseRegistrations() */
+  private releaseRegistrations(): void {
     this.citationRevision++
     for (const watcher of this.citationWatchers.splice(0)) watcher.dispose()
     for (const disposable of this.disposables) disposable.dispose()
