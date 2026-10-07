@@ -73,6 +73,10 @@ import {
   REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
 } from './utils/cursorCatalogCleanupNotice'
 import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
+import {
+  describeSecondWikiUpdateStart,
+  type WikiUpdateProgressPlace,
+} from './utils/describeSecondWikiUpdateStart'
 import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { describeWikiChatWatch } from './utils/describeWikiChatWatch'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
@@ -202,9 +206,10 @@ export function activate(
   let wikiUpdate: Promise<void> | undefined
   // One update run per window, shared by the command, the `/update` link and the browser button.
   const wikiUpdateRun = new WikiUpdateRun()
-  // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped.
+  // The active run of either host: its one abort, and a promise that settles once its watch or its agent has stopped. `awaitsChat` marks a VS Code update that still waits for the chat's first sign, which shows no notification yet.
   let activeWikiRun:
-    { controller: AbortController; settled: Promise<void> } | undefined
+    | { controller: AbortController; settled: Promise<void>; awaitsChat?: true }
+    | undefined
   // How this window's last run ended, also across a reload: a candidate written while it lasted is this window's own leftover.
   let lastWikiRun: WikiLastRun | undefined = wikiLastRunSchema.safeParse(
     context.workspaceState.get(WIKI_UPDATE_LAST_RUN_STATE_KEY),
@@ -874,11 +879,17 @@ export function activate(
       () => undefined,
     )
   }
-  /** Tells the learner that a second start was refused and where the first run's progress is. @example showWikiUpdateRunning() */
+  /** Names where the running update's progress can be read in the editor now, for {@link showWikiUpdateRunning}: none in an editor without the progress API; the notification that follows the chat's first sign while a VS Code update still waits for it; otherwise the notification of the watch or of the Cursor agent's run, which is shown. @example wikiProgressPlace() // => 'awaited-chat' while a VS Code update waits for the chat's first sign */
+  const wikiProgressPlace = (): WikiUpdateProgressPlace => {
+    // Without the progress API no update shows a notification ({@link withCancellableProgress}).
+    if (!vscode.window.withProgress) return 'reader-only'
+    return activeWikiRun?.awaitsChat ? 'awaited-chat' : 'notification'
+  }
+  /** Tells the learner that a second start was refused and where the first run's progress is at this moment ({@link describeSecondWikiUpdateStart}). @example showWikiUpdateRunning() */
   const showWikiUpdateRunning = (): void => {
     void showNotice(
       'information',
-      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
+      describeSecondWikiUpdateStart(wikiProgressPlace()),
     )
   }
   /** Records how a run of either host ended: reads the publish token and the publication identity again, lets {@link classifyWikiUpdateEnd} decide, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. @example await finishWikiUpdate(run, { cancelled: true }) */
@@ -1374,6 +1385,8 @@ export function activate(
           settled: new Promise<void>((resolveSettled) => {
             reportOpeningEnded = resolveSettled
           }),
+          // Until the chat's first sign no notification watches this run; a second start says so.
+          awaitsChat: true as const,
         }
         activeWikiRun = opening
         endOpening = (): void => {

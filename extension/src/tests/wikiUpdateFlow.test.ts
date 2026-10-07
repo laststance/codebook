@@ -679,21 +679,52 @@ test("dismissing the confirmation of the browser's update link starts no update:
   }
 })
 
-test('a second start from the browser link is refused before the confirmation is shown and says where the progress is', async () => {
-  // Arrange
+// Value: protects=a learner who presses Update a second time while a VS Code update is watched reading where its progress is; fails_when=the second start asks for a confirmation or sends a second request, or its sentence no longer names the notification that is on screen at that moment; why_new=Cycle 0046 row 316 named the state: the chat has given its first sign and the watch's notification is shown; seam=none
+test('a second start from the browser link while the watch’s notification is shown is refused before the confirmation is shown and says that the progress is in the browser reader and in that notification', async () => {
+  // Arrange: the chat took up the request at once, so the watch has begun and its notification is shown.
   const wiki = await openWikiWindow()
   try {
     await wiki.clickUpdate()
+    const notificationsShown = wiki.progressTitles.length
 
     // Act
     await wiki.clickUpdate()
 
     // Assert
+    assert.equal(notificationsShown, 1)
     assert.equal(wiki.confirmations.length, 1)
     assert.deepEqual(wiki.notices, [
       'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader and in the notification here.',
     ])
     assert.equal(wiki.chatRequests.length, 1)
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=a learner who presses Update a second time within the first seconds of a VS Code update, before the chat has given a sign; fails_when=the second start names a notification "here" although none is shown until the chat's first sign, so the learner looks for something that is not there; why_new=Cycle 0046 row 316: the sentence named the notification in every state; seam=none
+test('a second start from the browser link before the chat’s first sign names no notification: it says that the progress is in the browser reader and that a notification follows once the chat has taken up the request', async () => {
+  // Arrange: the run has begun and the chat command has not answered yet, so no notification is shown.
+  const wiki = await openWikiWindow({ cancellable: [] })
+  try {
+    const chat = wiki.hold('chat-open')
+    const firstClick = wiki.clickUpdate()
+    await chat.started
+
+    // Act
+    await wiki.clickUpdate()
+    const noticesBeforeTheFirstSign = [...wiki.notices]
+    const notificationsShown = wiki.progressTitles.length
+    await wiki.closeWindow()
+    chat.release()
+    await firstClick
+
+    // Assert
+    assert.equal(notificationsShown, 0)
+    assert.equal(wiki.confirmations.length, 1)
+    assert.deepEqual(noticesBeforeTheFirstSign, [
+      'Codebook is already updating this project’s LLM Wiki. Its progress is in the browser reader. Codebook is waiting for the editor chat to take up the request; once it has, a notification here watches the update.',
+    ])
   } finally {
     await wiki.close()
   }
