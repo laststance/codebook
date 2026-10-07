@@ -1884,8 +1884,8 @@ export async function workspaceHarness(
       private readonly lease: {
         panel: ReturnType<typeof panel>
         released(): void
-        keepsKeyboardAtPause?(): Promise<boolean>
-        tookKeyboardAtPause?(): void
+        comesWithoutKeyboard?(): Promise<boolean>
+        tookKeyboardFromEditor?(): void
       },
       _observer?: unknown,
       readonly mode = 'live',
@@ -1974,9 +1974,9 @@ export async function workspaceHarness(
      */
     async revealOverPausedFile(): Promise<void> {
       assert.equal(this.closed, false)
-      const keeps = (await this.lease.keepsKeyboardAtPause?.()) ?? false
+      const keeps = (await this.lease.comesWithoutKeyboard?.()) ?? false
       this.panel.reveal(undefined, keeps)
-      if (!keeps) this.lease.tookKeyboardAtPause?.()
+      if (!keeps) this.lease.tookKeyboardFromEditor?.()
     }
     /** Ends this simulated lease during workspace cleanup, using its original release callback. @example viewport.close() */
     close(): void {

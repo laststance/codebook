@@ -1,6 +1,6 @@
 export const ACTIVE_TIMEOUT_MS = 20_000
 /**
- * How long {@link BrowserViewport} waits for its lease's owner to answer whether the pane is to come to the front without the keyboard ({@link ViewportLease.keepsKeyboardAtPause}), before it reveals the pane as if the keyboard had been given to nobody. The owner's answer is two reads of the editor and one focus command, which the editor answers within tens of milliseconds; a reveal that waits also holds every placement queued behind it, whose own waits last five seconds, so the bound lies well below that and well above the answer's usual time.
+ * How long {@link BrowserViewport} waits for its lease's owner to answer whether the pane is to come to the front without the keyboard ({@link ViewportLease.comesWithoutKeyboard}), before it reveals the pane as if the keyboard had been given to nobody. The owner's answer is two reads of the editor and one focus command, which the editor answers within tens of milliseconds; a reveal that waits also holds every placement queued behind it, whose own waits last five seconds, so the bound lies well below that and well above the answer's usual time.
  * @example await settledWithin(answered, KEYBOARD_OWNER_ANSWER_TIMEOUT_MS)
  */
 export const KEYBOARD_OWNER_ANSWER_TIMEOUT_MS = 2_000

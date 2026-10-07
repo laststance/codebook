@@ -3274,7 +3274,7 @@ export class StudyWorkspace {
    * - `true` without such a sign whenever the debugger did not give that editor the keyboard ({@link debuggerGaveEditorKeyboard}): at a frame without a stop, at a stop with `debug.focusEditorOnBreak` off, and while no frame is shown. The keyboard stays where the learner has it.
    * - `true` when the chat that had the keyboard before the stop got it back now ({@link returnsKeyboardToChatAtPause}).
    * - `false` when the debugger gave the covered file the keyboard and the reader knows of nobody to give it back to: the pane takes it.
-   * @example keepsKeyboardAtPause: () => this.keepsKeyboardFromPaneAtPause()
+   * @example comesWithoutKeyboard: () => this.keepsKeyboardFromPaneAtPause()
    */
   private async keepsKeyboardFromPaneAtPause(): Promise<boolean> {
     if (this.learnerWorksInActiveEditor()) return false
@@ -5705,8 +5705,8 @@ export class StudyWorkspace {
         {
           panel,
           // Before the pane covers the paused file, the chat that had the keyboard before the pause gets it back, and a file the learner's selected frame opened keeps the pane from the keyboard; a pane that had to take it tells the learner once where it is.
-          keepsKeyboardAtPause: () => this.keepsKeyboardFromPaneAtPause(),
-          tookKeyboardAtPause: () => this.tellPaneTookKeyboard(),
+          comesWithoutKeyboard: () => this.keepsKeyboardFromPaneAtPause(),
+          tookKeyboardFromEditor: () => this.tellPaneTookKeyboard(),
           released: () => {
             // A retired runtime cannot close or replace the panel attached to a newer lease.
             if (this.leaseId !== leaseId) return
@@ -9475,7 +9475,7 @@ export class StudyWorkspace {
 
   /**
    * Tells the learner that one of the reader's panes took the keyboard from a text editor, with the sentence that fits why that editor had it; called by {@link settleKeyboardAtPause} when the captured source took it, and through the viewport's lease ({@link presentation}) when the Application pane did.
-   * @example tookKeyboardAtPause: () => this.tellPaneTookKeyboard()
+   * @example tookKeyboardFromEditor: () => this.tellPaneTookKeyboard()
    */
   private tellPaneTookKeyboard(): void {
     // The debugger gave the paused file the keyboard: the learner may have been typing somewhere else. Otherwise the learner worked in that file.

@@ -34,9 +34,9 @@ export interface ViewportLease {
    * Asked right before the leased pane is revealed over the active text editor of its group ({@link BrowserViewport.coversActiveTextEditor}): the pane's owner says whether the pane is to come to the front without the keyboard. The owner knows what the viewport cannot read: whether the editor's debugger gave that editor the keyboard at a stop, whether it gave the keyboard back to whoever had it before the pause (a chat), whether the learner selected the frame in the Call Stack view, and whether the learner gave a sign of working in that editor, at a pause or while a session runs. The owner is asked before the reveal and not told after it, because a webview's focus cannot be awaited: it reaches the pane's frame some time after `reveal()` returned, and a focus command run right behind the reveal could be undone by it.
    * @returns `true` when the pane must not take the keyboard, `false` when it has to take it.
    */
-  keepsKeyboardAtPause?(): Promise<boolean>
+  comesWithoutKeyboard?(): Promise<boolean>
   /** Called right after the leased pane took the keyboard from that editor, so the owner can tell the learner where it is. */
-  tookKeyboardAtPause?(): void
+  tookKeyboardFromEditor?(): void
 }
 export type BrowserViewportFactory = (
   runId: string,
@@ -469,7 +469,7 @@ export class BrowserViewport {
 
   /**
    * Decides whether the pane takes the keyboard when {@link revealNow} brings it to the front; called once before each reveal.
-   * A leased pane leaves the keyboard where it is, except over a text editor that has it: hiding that editor would leave the keyboard on no element. Whether the active text editor of the pane's group has it is the owner's to say ({@link ViewportLease.keepsKeyboardAtPause}), so the owner is asked whenever the pane would cover that editor ({@link coversActiveTextEditor}), at a pause and while a session runs. Without an owner to ask, the viewport judges by what it can read itself ({@link showsFocusingPause}).
+   * A leased pane leaves the keyboard where it is, except over a text editor that has it: hiding that editor would leave the keyboard on no element. Whether the active text editor of the pane's group has it is the owner's to say ({@link ViewportLease.comesWithoutKeyboard}), so the owner is asked whenever the pane would cover that editor ({@link coversActiveTextEditor}), at a pause and while a session runs. Without an owner to ask, the viewport judges by what it can read itself ({@link showsFocusingPause}).
    * @returns
    * - `false` at once when the pane covers no active text editor.
    * - At once what {@link showsFocusingPause} says, when the lease has no owner to ask.
@@ -478,7 +478,7 @@ export class BrowserViewport {
    */
   private takesKeyboardAtPause(): boolean | Promise<boolean> {
     if (!this.coversActiveTextEditor()) return false
-    const asked = this.lease?.keepsKeyboardAtPause?.()
+    const asked = this.lease?.comesWithoutKeyboard?.()
     if (!asked) return this.showsFocusingPause()
     return this.takesKeyboardByOwnersAnswer(asked)
   }
@@ -536,7 +536,7 @@ export class BrowserViewport {
       return
     }
     this.panel.reveal(undefined, !takesKeyboard)
-    if (takesKeyboard) this.lease.tookKeyboardAtPause?.()
+    if (takesKeyboard) this.lease.tookKeyboardFromEditor?.()
   }
 
   /**
