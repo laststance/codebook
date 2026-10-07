@@ -395,8 +395,10 @@ test('removing the managed Cursor skill preserves a replacement MCP catalog conf
   const storageRoot = join(directory, 'storage'),
     configPath = join(directory, 'mcp.json')
   await refreshCursorMcpCatalog(storageRoot, directory)
-  await rm(configPath)
-  await writeFile(configPath, '{"mcpServers":{}}\n')
+  // The copy replaces the config as an editor saves: written beside the path and moved over it. Both files exist at one moment, so they have two inode numbers on every file system; a file created after the config was deleted can get the config's number again and is then the config Codebook owns, bytes and number (row 291).
+  const besideTheConfig = join(directory, 'replacement.json')
+  await writeFile(besideTheConfig, '{"mcpServers":{}}\n')
+  await rename(besideTheConfig, configPath)
   // Act
   const result = await removeOwnedCursorMcpCatalog(storageRoot, directory)
   // Assert

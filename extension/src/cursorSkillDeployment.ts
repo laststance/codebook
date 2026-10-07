@@ -1022,10 +1022,11 @@ async function settleDisplacedName(
 
 /**
  * Words the refusal of an update whose installed skill changed while the setup ran, for {@link deploySkill} after it abandoned that setup: the path is looked at once more, because the step that works depends on what stands there now.
+ * "Edited in place" and "another file" are told apart by the inode number alone, and a file system may give the number of a deleted file to the next file it creates (ext4 does so at once). A file that was created at the path after the skill was deleted can therefore have the receipt's number: it is answered as the skill edited in place. {@link SKILL_EDITED_DURING_SETUP} names steps that work for such a file too: once it is deleted or renamed the next setup installs the skill anew, and once it holds the receipt's bytes it is the installed skill by number and bytes, which a setup adopts. No file is overwritten, moved or deleted on the number alone: every such step also compares the recorded bytes ({@link matchesOwnedFile}).
  * @param targetPath - The managed skill path.
  * @param receipt - The receipt of the installed skill, which no step of the abandoned setup changed.
  * @returns
- * - {@link SKILL_EDITED_DURING_SETUP}: the receipted file itself stands there with other bytes; once the edit is undone in that file the next setup adopts it
+ * - {@link SKILL_EDITED_DURING_SETUP}: a file with the receipt's inode number stands there with other bytes (the receipted file itself, or a file that got its number after it was deleted); once it holds the receipt's bytes the next setup adopts it
  * - {@link SKILL_REMOVED_DURING_SETUP}: the path holds nothing
  * - {@link SKILL_CHANGED_DURING_SETUP}: another file (or a link, or no file) stands there, which no setup adopts
  * @example await sentenceOfSkillChangedDuringUpdate('/home/user/.cursor/skills/codebook/SKILL.md', receipt)
