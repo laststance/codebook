@@ -1460,14 +1460,11 @@ export function activate(
             context.globalStorageUri.fsPath,
             undefined,
             REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
-          ).then(
-            (ownedGeneration) => ({ ownedGeneration }),
-            (refusal: unknown) => ({ refusal }),
-          )
-          // A skill an earlier removal took away is no refusal: this removal goes on to what that one could not finish.
-          const wasSkillAlreadyRemoved =
-            (await removeManagedCursorSkill(context.globalStorageUri.fsPath))
-              .status === 'already-removed'
+          ).catch((refusal: unknown) => ({ refusal }))
+          // A skill an earlier removal took away, or none that Codebook knows as its own, is no refusal: this removal goes on to the config.
+          const skillRemoval = (
+            await removeManagedCursorSkill(context.globalStorageUri.fsPath)
+          ).status
           await context.workspaceState.update('codebook.aiChatSetup', undefined)
           if (registeredCursorServer) {
             vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
@@ -1475,22 +1472,24 @@ export function activate(
           }
           try {
             if ('refusal' in catalogCapture) throw catalogCapture.refusal
-            const catalogCleanup = catalogCapture.ownedGeneration
-              ? await removeOwnedCursorMcpCatalog(
-                  context.globalStorageUri.fsPath,
-                  undefined,
-                  catalogCapture.ownedGeneration,
-                  REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
-                )
-              : 'not-owned'
+            // Without a config of Codebook's own nothing is retired, and the notice says why.
+            const catalogCleanup =
+              'ownedGeneration' in catalogCapture
+                ? await removeOwnedCursorMcpCatalog(
+                    context.globalStorageUri.fsPath,
+                    undefined,
+                    catalogCapture.ownedGeneration,
+                    REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+                  )
+                : catalogCapture.unowned
             void showNotice(
               'information',
-              cursorRemovalNotice(wasSkillAlreadyRemoved, catalogCleanup),
+              cursorRemovalNotice(skillRemoval, catalogCleanup),
             )
           } catch (error) {
             void showNotice(
               'warning',
-              cursorCatalogCleanupNotice(error, wasSkillAlreadyRemoved),
+              cursorCatalogCleanupNotice(error, skillRemoval),
             )
           }
         } finally {

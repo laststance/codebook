@@ -26,6 +26,7 @@ import {
   createLinkIfAllowed,
   LINK_NOT_ALLOWED,
 } from './utils/createLinkIfAllowed'
+import { loadDropSecondNameWhoseLinkIsRefused } from './utils/loadDropSecondNameWhoseLinkIsRefused'
 import { loadModule } from './utils/loadModule'
 
 /** The config Codebook creates for a first-time Cursor user. */
@@ -645,5 +646,123 @@ test('a record of the Cursor MCP catalog that is a link is refused under a remov
   assert.equal(
     refusal,
     `refused: Codebook will not read a Cursor MCP catalog ownership record through a link: ${receiptPath}. Remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+  )
+})
+
+// Value: protects=the notice of a Cursor removal that retires no config; fails_when=the catalog answers one word for every such removal, so the notice calls a config preserved that an earlier removal retired, that the learner deleted, or that Codebook never created; why_new=Cycle 0046 row 246; seam=none, the real files
+test('before a removal the Cursor MCP catalog says why there is no config to retire: Codebook never created one, also where Cursor’s settings folder is not there, an earlier removal retired it, it is gone from its path, or it was changed', async (context) => {
+  // Arrange: four homes. One was never set up; in the others Codebook created the config, which was then retired, deleted by the learner, or changed. And a fifth place: a settings folder that does not exist.
+  const neverSetUp = await catalogFolders(context),
+    retired = await catalogFolders(context),
+    deleted = await catalogFolders(context),
+    changed = await catalogFolders(context)
+  for (const folders of [retired, deleted, changed])
+    await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  await removeOwnedCursorMcpCatalog(
+    retired.storageRoot,
+    retired.cursorDirectory,
+  )
+  await rm(deleted.configPath)
+  await writeFile(changed.configPath, EDITED_CONFIG)
+
+  // Act
+  const captures = {
+    neverSetUp: await captureOwnedCursorMcpCatalogGeneration(
+      neverSetUp.storageRoot,
+      neverSetUp.cursorDirectory,
+    ),
+    retired: await captureOwnedCursorMcpCatalogGeneration(
+      retired.storageRoot,
+      retired.cursorDirectory,
+    ),
+    deleted: await captureOwnedCursorMcpCatalogGeneration(
+      deleted.storageRoot,
+      deleted.cursorDirectory,
+    ),
+    changed: await captureOwnedCursorMcpCatalogGeneration(
+      changed.storageRoot,
+      changed.cursorDirectory,
+    ),
+    retiredAndRemovedAgain: await removeOwnedCursorMcpCatalog(
+      retired.storageRoot,
+      retired.cursorDirectory,
+    ),
+    withoutASettingsFolder: await captureOwnedCursorMcpCatalogGeneration(
+      join(neverSetUp.cursorDirectory, 'storage-of-another-home'),
+      join(neverSetUp.cursorDirectory, 'no-such-folder'),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(captures, {
+    neverSetUp: { unowned: 'not-owned' },
+    retired: { unowned: 'already-retired' },
+    deleted: { unowned: 'not-owned' },
+    changed: { unowned: 'preserved' },
+    retiredAndRemovedAgain: 'already-retired',
+    withoutASettingsFolder: { unowned: 'not-owned' },
+  })
+})
+
+// Value: protects=a learner on a file system that refuses hard links whose Cursor MCP config is edited in the instant before a removal moves it away; fails_when=the removal cannot put the config back and ends with the file system's text ("EPERM: operation not permitted, link …"), while Cursor's config stands under a name in Codebook's storage that nothing tells the learner; why_new=Cycle 0046 row 243; seam=node:fs/promises rename of the loaded catalog, before whose move the config is edited, and its utility for the link back loaded over a file system that refuses links with EPERM
+test('a Cursor MCP config that is edited right before a removal moves it, on a file system that refuses to link it back, is kept under its retired name: the removal says where it is and names the command that was run, and after the learner moves it back, a removal leaves it in place and drops the record', async (context) => {
+  // Arrange: the config Codebook created; the learner's editor writes it right before the removal's move.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        rename: async (from: string, to: string) => {
+          if (from === folders.configPath) await writeFile(from, EDITED_CONFIG)
+          return fileSystem.rename(from, to)
+        },
+      },
+      './dropSecondNameOfMovedFile':
+        await loadDropSecondNameWhoseLinkIsRefused('EPERM'),
+    },
+    { Error },
+  )
+
+  // Act: the refusal, and then its sentence followed to the letter on a file system that links.
+  const removal = await outcomeOf(
+    catalog.removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+      undefined,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+  const retiredName = (await readdir(folders.recordDirectory)).find((name) =>
+    name.startsWith('retired-'),
+  )
+  const retiredPath = join(folders.recordDirectory, retiredName ?? 'none')
+  await rename(retiredPath, folders.configPath)
+  const removalAfterTheMoveBack = await outcomeOf(
+    removeOwnedCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+      undefined,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      removalAfterTheMoveBack,
+      config: await readFile(folders.configPath, 'utf8'),
+      records: (await readdir(folders.recordDirectory)).filter((name) =>
+        name.startsWith('pending-'),
+      ),
+    },
+    {
+      removal: `refused: The Cursor MCP config changed while Codebook had moved it away, and the file system refused to put it back as ${folders.configPath} (EPERM). The file is kept as ${retiredPath}; move it back to ${folders.configPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+      removalAfterTheMoveBack: 'answered preserved',
+      config: EDITED_CONFIG,
+      records: [],
+    },
   )
 })

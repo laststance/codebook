@@ -31,20 +31,28 @@ async function holdsAnEntry(path: string): Promise<boolean> {
  * Nothing is overwritten and no content is lost: the file is put back with a link, which never replaces what is there, and a name is removed only of a file that keeps its other name.
  * @param ownPath - The path the file was moved away from.
  * @param secondPath - The name the move gave it (in the same folder, or in Codebook's storage on the same volume).
+ * @param describeRefusedLinkBack - Words the refusal for the code with which the file system refused to put the file back; the caller knows what the file is and which command the learner ran ({@link describeRefusedLinkBack}).
  * @returns
  * - `dropped`: no second name is left (it was removed, or it never existed because nothing was moved)
  * - `kept`: the second name holds a file and the own path holds another one; both stay, and the caller says so
- * @throws The file system's error when the link back or the removal fails for another reason.
+ * @throws
+ * - When the file system refuses the link back with another code (a file system without hard links, a folder that allows no new files): the caller's sentence, with the refusal as its cause; the file stays under its second name
+ * - A failure without a code, and every failure of the removal: itself
  * @example
- * await dropSecondNameOfMovedFile('/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/retired-1.mcp.json') // => 'dropped'
+ * await dropSecondNameOfMovedFile('/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/retired-1.mcp.json', (code) => `refused (${code})`) // => 'dropped'
  */
 export async function dropSecondNameOfMovedFile(
   ownPath: string,
   secondPath: string,
+  describeRefusedLinkBack: (code: string) => string,
 ): Promise<'dropped' | 'kept'> {
   // A link never replaces a file: it puts the moved file back only where its own path holds nothing.
   await link(secondPath, ownPath).catch((error: unknown) => {
-    if (!NOTHING_TO_PUT_BACK_CODES.has(systemErrorCode(error))) throw error
+    const code = systemErrorCode(error)
+    if (NOTHING_TO_PUT_BACK_CODES.has(code)) return
+    throw code
+      ? new Error(describeRefusedLinkBack(code), { cause: error })
+      : error
   })
   if (await areNamesOfOneFile(ownPath, secondPath)) {
     await unlink(secondPath)

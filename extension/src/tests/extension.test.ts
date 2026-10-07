@@ -4,13 +4,15 @@ import {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import { connectionSchema } from '../client'
@@ -26,6 +28,10 @@ import {
 } from '../utils/refreshCursorMcpCatalog'
 
 import { createHarness } from './helpers'
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { keepLocalAddress, parseFakeUri } from './utils/fakeEditorAddresses'
 import {
   createFakeFileWatching,
@@ -2239,7 +2245,9 @@ test('a managed Cursor skill removal whose catalog cleanup error quotes a comman
         removeManagedCursorSkill: async () => ({ status: 'removed' }),
       },
       './utils/refreshCursorMcpCatalog': {
-        captureOwnedCursorMcpCatalogGeneration: async () => 'generation-1',
+        captureOwnedCursorMcpCatalogGeneration: async () => ({
+          ownedGeneration: 'generation-1',
+        }),
         removeOwnedCursorMcpCatalog: async () => {
           throw new Error(
             "EACCES: permission denied, unlink '/home/[Open](command:x)/.cursor/mcp.json'",
@@ -2895,7 +2903,8 @@ const REMOVAL_TEST_SKILL =
 /**
  * Sets Cursor chat up for real in a temporary home (the skill, and the empty MCP config Codebook creates and owns) and loads the extension's removal command over it, with the real skill removal and the real catalog.
  * @param beforeFirstCleanup - What happens once, right before the command's first cleanup of the MCP config reaches the real catalog, given the path of the catalog's receipt: nothing, a refusal thrown in the cleanup's place ({@link refuseAsLockedStorage}), or a change another Cursor window made in the meantime.
- * @returns The command, the notifications it showed, the paths of the skill, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
+ * @param isCursorChatSetUp - Whether Cursor chat was set up in that home before the command is loaded; without it the home holds nothing, not even a `.cursor` folder.
+ * @returns The command, the notifications it showed, the paths of the skill, of its receipt, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
  */
 /** Refuses a cleanup of the Cursor MCP config as the catalog does while another window holds its storage lock; handed to {@link removalCommandOverATemporaryHome}. */
 async function refuseAsLockedStorage(): Promise<void> {
@@ -2906,11 +2915,13 @@ async function refuseAsLockedStorage(): Promise<void> {
 
 async function removalCommandOverATemporaryHome(
   beforeFirstCleanup: (catalogReceiptPath: string) => Promise<void>,
+  isCursorChatSetUp = true,
 ): Promise<{
   runRemoval: () => Promise<void>
   informations: string[]
   warnings: string[]
   skillPath: string
+  skillReceiptPath: string
   configPath: string
   catalogReceiptPath: string
   dispose: () => Promise<void>
@@ -2929,12 +2940,14 @@ async function removalCommandOverATemporaryHome(
     join(extensionPath, 'skills', 'codebook', 'SKILL.md'),
     REMOVAL_TEST_SKILL,
   )
-  await cursorSkillDeployment.deployCursorSkill(
-    extensionPath,
-    storageRoot,
-    homeRoot,
-  )
-  await refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+  if (isCursorChatSetUp) {
+    await cursorSkillDeployment.deployCursorSkill(
+      extensionPath,
+      storageRoot,
+      homeRoot,
+    )
+    await refreshCursorMcpCatalog(storageRoot, cursorDirectory)
+  }
   const commands = new Map<string, () => Promise<void>>(),
     informations: string[] = [],
     warnings: string[] = []
@@ -3033,6 +3046,7 @@ async function removalCommandOverATemporaryHome(
     informations,
     warnings,
     skillPath: join(cursorDirectory, 'skills', 'codebook', 'SKILL.md'),
+    skillReceiptPath: join(storageRoot, 'cursor-skill', 'receipt.json'),
     configPath: join(cursorDirectory, 'mcp.json'),
     catalogReceiptPath,
     dispose: async (): Promise<void> => {
@@ -3140,7 +3154,7 @@ test('a Remove Managed Cursor Skill whose Cursor MCP catalog record is damaged r
         skillAfterTheFirstRemoval: 'ENOENT',
         configAfterTheFirstRemoval: '{"mcpServers":{}}\n',
         informations: [
-          'The managed Cursor skill was already removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+          'The managed Cursor skill was already removed. Codebook owns no Cursor MCP config; none was changed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
         ],
         configAfterTheSecondRemoval: '{"mcpServers":{}}\n',
       },
@@ -3168,6 +3182,148 @@ test('a Cursor MCP catalog record that is damaged between the two catalog steps 
           `Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${cursor.catalogReceiptPath}, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.`,
         ],
         informations: [],
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=the learner who runs Remove Managed Cursor Skill again after a removal that finished; fails_when=the notice says "Existing or changed Cursor MCP config preserved." although no config is there, because every removal that retires nothing is worded as a preserved config; why_new=Cycle 0046 row 246: the notice tells a config that was already retired from one that was preserved; seam=the removal command with the real skill and catalog over a temporary home
+test('a Remove Managed Cursor Skill that is run again after one that finished says that the skill was already removed and that Codebook’s config was already retired, not that a config was preserved', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  try {
+    // Act
+    await cursor.runRemoval()
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        config: await access(cursor.configPath).then(
+          () => 'still there',
+          (error: { code?: string }) => error.code,
+        ),
+      },
+      {
+        informations: [
+          'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+          "The managed Cursor skill was already removed. Codebook's empty Cursor MCP config was already retired; no config was changed. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.",
+        ],
+        warnings: [],
+        config: 'ENOENT',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who asks Codebook to remove its Cursor setup while a link stands at the skill's path; fails_when=the refusal says "then run Codebook: Set Up AI Chat again", which installs again the skill the learner is removing, or the removal does not finish after the link is removed; why_new=Cycle 0046 row 244: every refusal of the skill that a removal meets names the removal; seam=the removal command with the real skill and catalog over a temporary home
+test('a Remove Managed Cursor Skill that meets a link at the skill’s path says to remove the link and to run the removal again; after the learner removes the link, the removal finishes and retires the config Codebook created', async (context) => {
+  // Arrange: the installed skill is moved away and a link to it stands at its path.
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  const movedSkillPath = join(dirname(cursor.skillPath), 'moved-SKILL.md')
+  await rename(cursor.skillPath, movedSkillPath)
+  if (!(await createLinkIfAllowed(movedSkillPath, cursor.skillPath))) {
+    await cursor.dispose()
+    return context.skip(LINK_NOT_ALLOWED)
+  }
+  try {
+    // Act: the refusal is followed to the letter.
+    const refusal = await cursor.runRemoval().then(
+      () => 'no refusal',
+      (error: Error) => error.message,
+    )
+    await rm(cursor.skillPath)
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        movedSkill: await readFile(movedSkillPath, 'utf8'),
+      },
+      {
+        refusal: `Codebook will not read through a link: ${cursor.skillPath}. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+        informations: [
+          'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        warnings: [],
+        movedSkill: REMOVAL_TEST_SKILL,
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who asks Codebook to remove its Cursor setup while the skill's receipt is damaged; fails_when=the refusal sends the learner to Codebook: Set Up AI Chat, or the removal that is run again after the receipt and the folder were deleted ends with an error and leaves the config Codebook created; why_new=Cycle 0046 row 244: the invalid record's sentence names the removal, and a removal without a receipt goes on to the config; seam=the removal command with the real skill and catalog over a temporary home, whose skill receipt is cut off
+test('a Remove Managed Cursor Skill whose skill receipt is invalid says to delete the receipt and the skill folder and to run the removal again; after the learner does so, the removal retires the config Codebook created and says that no Codebook-owned skill was found', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  await writeFile(cursor.skillReceiptPath, '{"schemaVersion":1,')
+  try {
+    // Act: the refusal is followed to the letter.
+    const refusal = await cursor.runRemoval().then(
+      () => 'no refusal',
+      (error: Error) => error.message,
+    )
+    await rm(cursor.skillReceiptPath)
+    await rm(dirname(cursor.skillPath), { recursive: true })
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        refusal,
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        config: await access(cursor.configPath).then(
+          () => 'still there',
+          (error: { code?: string }) => error.code,
+        ),
+      },
+      {
+        refusal: `Cursor skill ownership receipt is invalid; no skill file was changed. To start over, delete ${cursor.skillReceiptPath} and the folder ${dirname(cursor.skillPath)} (first copy anything of yours out of that folder), then run Codebook: Remove Managed Cursor Skill again.`,
+        informations: [
+          'No Codebook-owned Cursor skill was found; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        warnings: [],
+        config: 'ENOENT',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who runs Remove Managed Cursor Skill in a Cursor where Codebook's chat was never set up; fails_when=the command ends with an error ("No installed Codebook-owned Cursor skill was found; no file was changed.", or a refusal of the missing skills folder) instead of a notice that nothing was there to remove; why_new=Cycle 0046 row 244; seam=the removal command with the real skill and catalog over a temporary home that holds nothing
+test('a Remove Managed Cursor Skill in a Cursor where Codebook was never set up ends with the notice that nothing was there to remove, and changes no file', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome(async () => {}, false)
+  try {
+    // Act
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        informations: cursor.informations,
+        warnings: cursor.warnings,
+        home: await readdir(dirname(dirname(cursor.configPath))),
+      },
+      {
+        informations: [
+          'Nothing to remove: no Codebook-owned Cursor skill was found and Codebook owns no Cursor MCP config. No file was changed.',
+        ],
+        warnings: [],
+        home: [],
       },
     )
   } finally {

@@ -632,7 +632,7 @@ test('the packaged README agrees with the refusals of a Cursor setup or removal:
   const readme = await readPackagedReadme()
   const endOfTheCleanupWarning = cursorCatalogCleanupNotice(
     new Error('<cause>.'),
-    false,
+    'removed',
   ).slice('<cause>. '.length)
 
   // Act
