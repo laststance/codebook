@@ -508,14 +508,14 @@ async function answerOrRefusalOf(calling: Promise<unknown>): Promise<string> {
 
 // Value: protects=a learner whose ~/.cursor is a link, at the setup's refresh of the Cursor MCP config and at the removal's two steps; fails_when=the refusal reads "Cursor MCP directory is not a regular directory; Codebook left its settings unchanged." and names neither the folder nor a step, or names the setup to a learner who ran the removal, or the step does not end in a created and a retired config; why_new=Cycle 0046 row 277; seam=none, the real link
 test('a link at Cursor’s settings folder is refused by the setup’s refresh and by both steps of the removal with a sentence that names the folder, says what to do and names the command that was run: after the learner puts the folder in the link’s place, the refresh creates the config and the removal retires it', async (context) => {
-  // Arrange: Cursor's settings folder is kept elsewhere and a link stands in its place.
+  // Arrange: Cursor's settings folder is kept elsewhere and a link stands in its place (a junction on Windows, which every user may create).
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const storageRoot = join(directory, 'storage'),
     cursorPath = join(directory, 'home', '.cursor'),
     keptCursorPath = join(directory, 'home', 'dotfiles-cursor')
   await mkdir(keptCursorPath, { recursive: true })
-  await symlink(keptCursorPath, cursorPath)
+  await symlink(keptCursorPath, cursorPath, 'junction')
 
   // Act
   const refusals = {
@@ -581,7 +581,7 @@ test('a link at Cursor’s settings folder is refused by the setup’s refresh a
 
 // Value: protects=the learner who removes a refused link at ~/.cursor instead, or who has a file of that name and renames it; fails_when=the step the refusal names does not end in a finished removal and a finished setup: the removal refuses the missing folder, or the setup, which makes the folder with the skill before it refreshes the config, does not create the config; or the refusal tells the learner to delete their file; why_new=Cycle 0046 row 277: each step a sentence names is followed to a finished command; seam=none, the real link and file, with the skill's setup before the refresh as the setup command runs them
 test('after the learner removes a link at Cursor’s settings folder, or renames a file that stands there as its refusal says, a removal run again has nothing to retire, and a setup run again makes the folder and its refresh creates the config', async (context) => {
-  // Arrange: an installed extension, one home whose ~/.cursor is a link and one where a note of the learner stands at that path.
+  // Arrange: an installed extension, one home whose ~/.cursor is a link (a junction on Windows, which every user may create) and one where a note of the learner stands at that path.
   const directory = await mkdtemp(join(tmpdir(), 'codebook-cursor-mcp-'))
   context.after(() => rm(directory, { recursive: true, force: true }))
   const extensionPath = join(directory, 'extension')
@@ -596,6 +596,7 @@ test('after the learner removes a link at Cursor’s settings folder, or renames
   await symlink(
     join(homeWithLink, 'dotfiles-cursor'),
     join(homeWithLink, '.cursor'),
+    'junction',
   )
   await mkdir(homeWithFile)
   await writeFile(join(homeWithFile, '.cursor'), 'A note of the learner.\n')

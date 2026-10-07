@@ -4419,7 +4419,8 @@ test('a link at the skill folder ~/.cursor/skills/codebook is refused by setup, 
       'codebook',
     )
   await rename(linkToMovedSkill, movedSkillFolder)
-  await symlink(movedSkillFolder, linkToMovedSkill)
+  if (!(await createLinkIfAllowed(movedSkillFolder, linkToMovedSkill)))
+    return context.skip(LINK_NOT_ALLOWED)
 
   // Act
   const refusals = {
