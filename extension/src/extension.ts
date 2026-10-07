@@ -218,17 +218,39 @@ export function activate(
   let lastWikiRun: WikiLastRun | undefined = wikiLastRunSchema.safeParse(
     context.workspaceState.get(WIKI_UPDATE_LAST_RUN_STATE_KEY),
   ).data
+  /** Whether the editor stored the latest run's record; {@link dropWikiReservation} waits for it at shutdown before removing the reload's fallback reservation. */
+  let lastWikiRunWrite: Promise<boolean> | undefined
   // This window's id in the marker of a running update; another window's live marker refuses a start here.
   const wikiWindowId = randomUUID()
   // The reservation this window's stopped VS Code watch left on disk for other windows, with the timer that removes it at the watch bound.
   let wikiReservation:
     { release: () => Promise<void>; timer: NodeJS.Timeout } | undefined
-  /** Removes this window's reservation from the disk: at the watch bound and when the window closes, where the chat it stood for is gone. A marker another window wrote since is left alone. @example await dropWikiReservation() */
-  const dropWikiReservation = async (): Promise<void> => {
+  /** Checks whether a reload needs the stopped watch's disk reservation; called by {@link dropWikiReservation} before releasing it. @param isWindowClosing - Whether this removal is part of shutdown. @param mayAgentStillWork - Whether the latest run left a chat that may publish. @param recordWritten - The storage result of that run, which never rejects. @returns `true` only at shutdown when a chat may still publish and its record could not be stored. @example await doesReloadNeedWikiReservation(true, true, Promise.resolve(false)) // => true */
+  const doesReloadNeedWikiReservation = async (
+    isWindowClosing: boolean,
+    mayAgentStillWork: boolean | undefined,
+    recordWritten: Promise<boolean> | undefined,
+  ): Promise<boolean> =>
+    isWindowClosing &&
+    mayAgentStillWork === true &&
+    (await recordWritten) === false
+  /** Removes this window's reservation at its bound or shutdown; called by its timer and {@link stopExtension}. A failed workspace-state write keeps the stopped watch's reservation for the reloaded window, which otherwise has no record of the chat that may still publish. @param isWindowClosing - Whether shutdown must first check that the record was stored. @example await dropWikiReservation(true) */
+  const dropWikiReservation = async (
+    isWindowClosing = false,
+  ): Promise<void> => {
     const reservation = wikiReservation
     wikiReservation = undefined
     if (!reservation) return
     clearTimeout(reservation.timer)
+    // The disk marker is the reload's only protection when its stopped-watch record could not be stored.
+    if (
+      await doesReloadNeedWikiReservation(
+        isWindowClosing,
+        lastWikiRun?.mayAgentStillWork,
+        lastWikiRunWrite,
+      )
+    )
+      return
     await reservation.release().catch(() => undefined)
   }
   /** The button of a refusal that names an earlier chat's leftover: it starts the update with that leftover ignored. */
@@ -765,7 +787,7 @@ export function activate(
     )
   }
   /**
-   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, and releases the Wiki reservation and the DeepWiki reader; called by {@link deactivate}.
+   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, settles the Wiki reservation and closes the DeepWiki reader; called by {@link deactivate}. A stopped watch whose record could not be stored keeps its bounded reservation for the reloaded window.
    * Every step runs whatever the step before it did. A stop that threw used to end the first three steps, so the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, did not run, and a write under way was not waited for before the extension host ended.
    * It is kept apart from {@link replaceReadersAfterFolderChange}: the two share only "stop, then dispose two readers", and that handling also hands archives over, clears the readers' variables, makes new readers and names each failed step for its notice, none of which a closing window may do.
    * @throws The first failure of its steps, after all of them ran, so that the editor still logs it.
@@ -791,7 +813,7 @@ export function activate(
           stoppedWikiRun.settled.catch(() => undefined),
           WIKI_CURSOR_TERMINATION_GRACE_MS,
         ),
-      (): Promise<void> => dropWikiReservation(),
+      (): Promise<void> => dropWikiReservation(true),
       (): Promise<void> | undefined => deepWikiReader?.close(),
     ]) {
       try {
@@ -898,14 +920,18 @@ export function activate(
       describeSecondWikiUpdateStart(wikiProgressPlace()),
     )
   }
-  /** Keeps how this window's last Wiki update ended: in memory for this window's next start, and in the workspace state for the window after a reload; called by {@link finishWikiUpdate}. The write is not awaited by a window that stays open (the notice of the end must not wait for the editor's storage), and it never rejects: when the storage refuses it, the record stays in memory only, and a reloaded window then knows nothing of this run. @returns A promise that settles when the editor's storage took or refused the record. @example await rememberLastWikiRun({ outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: [] }) */
-  const rememberLastWikiRun = (record: WikiLastRun): Promise<void> => {
+  /** Keeps the last Wiki update's record in memory and workspace storage; called by {@link finishWikiUpdate}. The open window does not wait for storage before showing the end. A refusal stays in memory and leaves the reservation as the reload's fallback at shutdown. @param record - The latest run's durable control facts. @returns A non-rejecting promise: `true` when stored, `false` when storage refused it. @example await rememberLastWikiRun({ outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: [] }) // => true */
+  const rememberLastWikiRun = (record: WikiLastRun): Promise<boolean> => {
     lastWikiRun = record
-    return Promise.resolve()
+    lastWikiRunWrite = Promise.resolve()
       .then(() =>
         context.workspaceState.update(WIKI_UPDATE_LAST_RUN_STATE_KEY, record),
       )
-      .then(undefined, () => undefined)
+      .then(
+        () => true,
+        () => false,
+      )
+    return lastWikiRunWrite
   }
   /** What a run hands to its end: what it observed itself, without a look at the disk. */
   type ObservedWikiRunEnd = Partial<

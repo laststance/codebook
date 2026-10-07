@@ -939,8 +939,8 @@ test('a window that was reloaded while it watched a VS Code update starts the ne
   }
 })
 
-// Value: protects=the extension host's log and this window's next press when the editor's storage refuses the record of an ended update; fails_when=the rejected write is left unhandled, or the run does not end with its own sentence, or this window forgets its stopped watch although it has the record in memory; why_new=Cycle 0046 row 359. The last part states what a reloaded window knows then: nothing of that run (the record was not written, and the reservation left the disk when the window closed), so its press starts the update; seam=the editor's storage, which rejects every write
-test('a VS Code watch that is stopped while the editor’s storage refuses the record of the run leaves no unhandled rejection: the update ends with its own sentence, the next press in this window is still answered with the wait and Update anyway, and the window after a reload, which has neither a record nor a reservation, starts the update', async () => {
+// Value: protects=the extension host's log and both the current and reloaded window's next Update press after storage rejected a stopped watch's record; fails_when=the rejection is unhandled or closing the window removes the only remaining reservation, allowing a second chat while the first may still publish; why_new=Cycle 0046 row 359; seam=workspace storage rejects every write, and the retained marker names a process that has ended before the reload
+test('a stopped VS Code watch whose record cannot be stored leaves no unhandled rejection and keeps its reservation across reload and process exit, so neither window starts a second chat without Update anyway', async () => {
   // Arrange
   const unhandledRejections: string[] = []
   const noteUnhandled = (reason: unknown): void => {
@@ -971,13 +971,21 @@ test('a VS Code watch that is stopped while the editor’s storage refuses the r
       () => 'still there',
       () => 'gone',
     )
+    assert.equal(markerAfterTheClose, 'still there')
+    // A real reload replaces the extension host: the reservation still stands for a chat that may publish, even when its former process is gone.
+    const marker: unknown = JSON.parse(await readFile(markerPath, 'utf8'))
+    assert.ok(typeof marker === 'object' && marker !== null)
+    await writeFile(
+      markerPath,
+      JSON.stringify({ ...marker, pid: ID_OF_NO_PROCESS }),
+    )
     reloaded = await openWikiUpdateWindow({
       projectRoot: wiki.projectRoot,
       workspaceState,
     })
     await reloaded.clickUpdate()
-    // A rejection nobody handles is reported once the turn's promise jobs are done.
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+    // An unhandled rejection is reported after the promise jobs of this turn.
+    await new Promise<void>((resolveWait) => setImmediate(resolveWait))
 
     // Assert: the end and this window's next press.
     assert.equal(ended.state, 'cancelled')
@@ -995,12 +1003,21 @@ test('a VS Code watch that is stopped while the editor’s storage refuses the r
     )
     assert.deepEqual(offeredInThisWindow, ['Update anyway', 'Open LLM Wiki'])
     assert.equal(wiki.chatRequests.length, 1)
-    // What the reloaded window knows: no record, no reservation.
+    // The missing workspace record does not remove the reservation's protection after a reload.
     assert.equal(workspaceState.has('codebook.wikiUpdateLastRun'), false)
-    assert.equal(markerAfterTheClose, 'gone')
-    assert.equal(reloaded.status().state, 'running')
-    assert.equal(reloaded.chatRequests.length, 1)
-    assert.deepEqual(reloaded.errors, [])
+    assert.equal(markerAfterTheClose, 'still there')
+    assert.equal(reloaded.status().state, 'failed')
+    assert.match(
+      reloaded.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat another editor window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; that window stopped watching it at ${CLOCK_TIME}[^.]* and Codebook waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.equal(reloaded.chatRequests.length, 0)
+    assert.deepEqual(reloaded.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
     assert.deepEqual(unhandledRejections, [])
   } finally {
     process.off('unhandledRejection', noteUnhandled)

@@ -30,7 +30,7 @@ function didWatchStopBeforeChat(
 /**
  * Says whether the chat of an ended Wiki update may still publish; called by the extension when it records a run's end, to decide whether the next press is held back and whether the run's marker stays as a reservation for other windows.
  *
- * Why: stopping a VS Code watch does not stop the chat it watched, so a cancelled or timed-out watch leaves a chat that can still publish, and so do a watch that ended because a file of the learner's is in the way (the chat publishes once the file is moved) a watch that broke off with an error while the chat worked, and a start whose request Codebook could not take back, which may still be in the chat. A second chat beside it is what the reservation prevents. A Cursor agent is stopped with its run, and a window that closes or reloads takes its chat with it.
+ * Why: stopping a VS Code watch does not stop the chat it watched, so a cancelled or timed-out watch leaves a chat that can still publish, and so do a watch that ended because a file of the learner's is in the way (the chat publishes once the file is moved), a watch that broke off with an error while the chat worked, and a start whose request Codebook could not take back, which may still be in the chat. A second chat beside it is what the reservation prevents. A Cursor agent is stopped with its run. A window that closes or reloads ends its active watch without reserving it; an earlier stopped watch's reservation is settled separately by {@link dropWikiReservation}, which preserves it when its record could not be stored.
  *
  * @param host - Editor host that ran the update.
  * @param endState - The state the run ended in.
