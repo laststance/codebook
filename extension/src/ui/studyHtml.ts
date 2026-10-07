@@ -589,7 +589,7 @@ function studyClient(
     }
     const studyId = filesDisclosureStudyId
     if (!current || !studyId) return
-    followStudyFiles(current, studyId)
+    followStudyFiles(current, studyId, true)
     showStudyFilesAnswer(current, studyId)
   })
   // Retry storage / refresh beside a refusal asks for the files again with the Study message that follows the press.
@@ -1160,6 +1160,16 @@ function studyClient(
       dismissedRemoval = undefined
     return dismissedRemoval ? undefined : removal
   }
+  /**
+   * Keeps the bottom panel's pane from taking a removal's status while a replay keeps Saved studies out of it; called by {@link renderStudyRemoval} before the status is chosen.
+   * The learner cannot have asked there: the list is not shown. The pane the learner acted in tells the outcome. Here it is put aside like an outcome the learner dismissed ({@link visibleRemoval}), so it stays out when the replay is left as well: written then, a refusal such as "Choose Overview or Live to leave Recording before deleting this study." would appear exactly when it is no longer true, together with its status region.
+   * @param message - The current Study message.
+   * @example leaveRemovalStatusToAskingPane(message)
+   */
+  const leaveRemovalStatusToAskingPane = (message: StudyViewMessage): void => {
+    if (isReplayInBottomPanel(message))
+      dismissedRemoval = JSON.stringify(message.studyRemoval)
+  }
   /** Says whether a removal ended without moving the whole study, which the status line shows as an error. @example removalFailed({ status: 'refused', studyId }) // => true */
   const removalFailed = (removal: StudyRemoval): boolean =>
     removal !== undefined && ['refused', 'failed'].includes(removal.status)
@@ -1332,13 +1342,16 @@ function studyClient(
   /**
    * Follows the files of the entry an open "Remove by hand" disclosure is offered for: takes the host's answer in, and asks the host, which names a study's files only in its answer to a delete request, when the pane has neither an answer nor an open request. Called by {@link showStudyFiles} on every Study message while the disclosure is open, and when the learner opens it; never for a study that was only chosen.
    * So nothing is asked twice while an answer is owed, a refusal stands until the learner opens the disclosure again or presses Retry storage / refresh in it, and a list the host forgot (Retry storage / refresh) is asked for again, also when the host's revision did not change.
+   * A request the pane sends by itself is marked `unprompted`: it can reach the host after the host rendered again, and the host answers a marked request without the line it tells a learner who pressed a control on a view that has changed.
    * @param message - The current Study message.
    * @param studyId - The entry the disclosure is offered for.
-   * @example followStudyFiles(message, entry.id)
+   * @param isAskedByLearner - Whether the learner asked by opening the disclosure; a Study message that makes the pane ask is no such request.
+   * @example followStudyFiles(message, entry.id, false)
    */
   const followStudyFiles = (
     message: StudyViewMessage,
     studyId: string,
+    isAskedByLearner: boolean,
   ): void => {
     settleFilesRequest(message, studyId)
     if (awaitsOrHasFilesAnswer(message, studyId)) return
@@ -1351,6 +1364,7 @@ function studyClient(
       type: 'delete-study',
       studyId,
       removalRequest: filesRequest.request,
+      ...(isAskedByLearner ? {} : { unprompted: true }),
     })
   }
   /**
@@ -1540,14 +1554,13 @@ function studyClient(
   ): void => {
     const offeredFor = filesOfferedFor(message, chosen, reason)
     offerStudyFilesFor(offeredFor)
-    if (!offeredFor) return
-    // A closed disclosure asks for nothing and holds nothing; it is filled once the learner has opened it.
-    if (!element('study-files').hasAttribute('open')) {
+    // A disclosure that is closed or not offered (beside a reason, as during a replay) asks for nothing and holds nothing; it is filled once the learner has opened it.
+    if (!offeredFor || !element('study-files').hasAttribute('open')) {
       emptyStudyFiles()
       return
     }
     // An open disclosure follows the host on every Study message.
-    followStudyFiles(message, offeredFor)
+    followStudyFiles(message, offeredFor, false)
     const focusedBefore = focusedInStudyFiles()
     showStudyFilesAnswer(message, offeredFor)
     // While the host is asked again (Retry storage / refresh made it forget its list) the disclosure shows no button: a focus that stood on one goes to the summary, not to the document body.
@@ -1593,6 +1606,7 @@ function studyClient(
    * @example renderStudyRemoval(message)
    */
   const renderStudyRemoval = (message: StudyViewMessage): void => {
+    leaveRemovalStatusToAskingPane(message)
     const chosenId = chosenStudyId(),
       chosen = message.studies.find((study) => study.id === chosenId),
       inProgress = removalInProgress(message.studyRemoval),

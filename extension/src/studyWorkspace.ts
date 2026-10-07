@@ -125,7 +125,11 @@ import { sha256 } from './runtimeSupport/utils/sha256'
 import { ViewportAckTimeoutError } from './runtimeSupport/utils/viewportAckTimeoutError'
 import { waitUntil } from './runtimeSupport/utils/waitUntil'
 import { explainNodeHistorySchema } from './schemas'
-import type { StudyRecord, StudyService } from './service'
+import type {
+  StudyRecord,
+  StudyRemovalExclusion,
+  StudyService,
+} from './service'
 import {
   projectStudy,
   studyIdSchema,
@@ -291,6 +295,8 @@ const messageSchema = z.discriminatedUnion('type', [
     studyId: studyIdSchema,
     // The number the asking pane gave this delete request; every state of the removal it starts or is refused with echoes it.
     removalRequest: openRequestNumberSchema.optional(),
+    // Set by a pane of a window without a Trash on a request for a study's files that it sends by itself, because its open "Remove by hand" follows the host; a request the learner made by opening the disclosure or pressing the delete button carries none.
+    unprompted: z.literal(true).optional(),
   }),
   z.strictObject({
     type: z.literal('copy-study-files'),
@@ -12035,6 +12041,15 @@ export class StudyWorkspace {
       }
       return
     }
+    // A request for a study's files that the pane sent by itself names its study and changes nothing, so it is answered whatever the reader shows by now. Refused like a control the learner pressed on a view that has changed, it would put a line into the pane for nothing the learner did. Only a window without a Trash answers it so: with a Trash the message is a deletion and keeps every check.
+    if (
+      message.type === 'delete-study' &&
+      message.unprompted &&
+      this.studyRemovalAvailability() === 'no-trash'
+    ) {
+      await this.removeSavedStudy(message.studyId, message.removalRequest)
+      return
+    }
     if (!(message.type === 'action' && message.action === 'stop'))
       this.assertPresentationIdle()
     if (message.revision !== this.revision)
@@ -12863,7 +12878,8 @@ export class StudyWorkspace {
     )
     for (const studyId of gone) {
       // A run of this window whose saved study is gone would otherwise be checkpointed into the library again.
-      if (this.recordOfStudy(studyId)) await this.forgetRemovedStudy(studyId)
+      if (this.recordOfStudy(studyId))
+        await this.forgetRemovedStudy(studyId, 'archive-removed')
       this.activeArchive = withoutStudy(this.activeArchive, studyId)
       this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
       if (this.selection.studyId === studyId) this.selectNoStudy()
@@ -13076,7 +13092,7 @@ export class StudyWorkspace {
       })
       return
     }
-    await this.forgetRemovedStudy(studyId)
+    await this.forgetRemovedStudy(studyId, 'removed-by-learner')
     if (removal.outcome !== 'moved') {
       // Partly moved: the study is still listed and stays chosen, so deleting it again finishes the removal.
       this.settleStudyRemoval({
@@ -13228,16 +13244,32 @@ export class StudyWorkspace {
     )
   }
 
-  /** Excludes this window's run of a removed study from history, so the service stops reporting saved material for it and stops serving its evidence. @example this.excludeRemovedRun(studyId) */
-  private excludeRemovedRun(studyId: string): void {
+  /**
+   * Excludes this window's run of a removed study from history, so the service stops reporting saved material for it and stops serving its evidence; called by {@link forgetRemovedStudy}.
+   * @param studyId - The removed study.
+   * @param exclusion - How it was removed, which decides the sentence an agent reads for the run.
+   * @example this.excludeRemovedRun(studyId, 'removed-by-learner')
+   */
+  private excludeRemovedRun(
+    studyId: string,
+    exclusion: StudyRemovalExclusion,
+  ): void {
     const record = this.recordOfStudy(studyId)
-    if (record) this.service?.excludeHistory(record)
+    if (record) this.service?.excludeHistory(record, exclusion)
   }
 
-  /** Makes this window forget a study of which something went to the Trash: it is never written again, its run is excluded from history, and the list is read again. @example await this.forgetRemovedStudy(studyId) */
-  private async forgetRemovedStudy(studyId: string): Promise<void> {
+  /**
+   * Makes this window forget a study that was removed: it is never written again, its run is excluded from history, and the list is read again. Called by {@link moveSavedStudy} once something of the study went to the Trash, and by {@link forgetStudiesRemovedByHand} for a study whose archive left the library without a removal of this window.
+   * @param studyId - The removed study.
+   * @param exclusion - How it was removed: `removed-by-learner` for this window's delete, `archive-removed` for a study that left the library otherwise, so an agent is not told of a Trash the study never went to.
+   * @example await this.forgetRemovedStudy(studyId, 'archive-removed')
+   */
+  private async forgetRemovedStudy(
+    studyId: string,
+    exclusion: StudyRemovalExclusion,
+  ): Promise<void> {
     this.removedStudyIds.add(studyId)
-    this.excludeRemovedRun(studyId)
+    this.excludeRemovedRun(studyId, exclusion)
     // The recording went to the Trash with the study; this window's writer of it is not kept.
     this.recordings?.release(studyId)
     this.archiveSignatures.delete(studyId)

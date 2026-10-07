@@ -295,6 +295,22 @@ test('the packaged README names API 1.7 as the version the server reports, says 
   assert.deepEqual(saysSourceAnswerHoldsText, [])
 })
 
+// Value: protects=an agent's author reading in the packaged README both sentences a run can answer with after its saved study was removed, and that the second came with API 1.7; fails_when=the README names only "The learner moved this saved study to the Trash.", so the reason of a removal by hand is in no document of the agent's contract; why_new=Cycle 0046 row 201; seam=none
+test('the packaged README names, in API 1.7’s changes and under Delete a saved study, the reason a run answers with after its study was removed by hand or in another window', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+
+  // Act
+  const named = heldSentences(readme, [
+    "API 1.7 also added a second reason a run resource names, and its evidence is refused with, once the run's saved study was removed: `The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.`, beside `The learner moved this saved study to the Trash.` for a study deleted in this window (see [Delete a saved study](#delete-a-saved-study)).",
+    "- When a study's files were removed by hand (the only way in a window without a Trash) or the study was deleted in another Codebook window, the next **Retry storage / refresh** finds its archive gone. An agent that then reads a run of this window whose study that was, or adds an explanation to it, gets `EVIDENCE_UNAVAILABLE` with `The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.`; the run resource still answers and names the same reason.",
+    "- After the removal an agent that reads the run's evidence (`manifest`, `events`, observations, explanations) or adds an explanation gets `EVIDENCE_UNAVAILABLE` with `The learner moved this saved study to the Trash.`; the run resource itself still answers and names the same reason.",
+  ])
+
+  // Assert
+  assert.deepEqual(named, [true, true, true])
+})
+
 // Value: protects=a learner who presses Update LLM Wiki in VS Code reading why the update ended after half a minute and what a refused start keeps; fails_when=the update table says again that the watch starts with the request, or that every failed update kept a site; why_new=Cycle 0046 row 56: rows 3 and 22 changed both and the table still described 0.2.29.0; seam=none
 test('the packaged README says that a VS Code update waits 30 seconds for the chat’s first answer before it watches, and that a folder without a Wiki names no kept site', async () => {
   // Arrange
