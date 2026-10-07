@@ -24,6 +24,7 @@ import { claimStorageLockTakeover } from '../utils/claimStorageLockTakeover'
 import type * as claimModule from '../utils/claimWikiUpdateMarker'
 import { claimWikiUpdateMarker } from '../utils/claimWikiUpdateMarker'
 import { currentStorageOwner } from '../utils/currentStorageOwner'
+import type * as lookModule from '../utils/isFolderOfItsOwn'
 import type * as placeModule from '../utils/placeStorageLock'
 import { placeStorageLock } from '../utils/placeStorageLock'
 import {
@@ -34,6 +35,7 @@ import {
   readProcessStart,
   type ProcessStartReader,
 } from '../utils/readProcessStart'
+import { readRecordedOwner } from '../utils/readRecordedOwner'
 import { readWikiRegularFile } from '../utils/readWikiRegularFile'
 import type * as removalModule from '../utils/removeWithoutFollowing'
 import { removeWithoutFollowing } from '../utils/removeWithoutFollowing'
@@ -2479,6 +2481,76 @@ test('a link to a folder at the marker’s path that the system refuses to unlin
       start: 'refused with EPERM',
       isTheLinkStillThere: true,
       besideTheProject: ['notes.txt', 'photos', 'photos/holiday.txt'],
+    },
+  )
+})
+
+// Value: protects=a file behind an entry at a prepared claim's name that the look without following calls a directory although it leads elsewhere (on Windows a junction whose target is a volume); fails_when=the claim's age sweep reads the owner file below every entry that look calls a directory, so the file behind the entry is opened and the entry is judged by it: a record that names a running window keeps it in place for good (rows 227 and 228); why_new=Cycle 0046 row 228: the other places that join a name onto a path a repository can supply and then open it; seam=a file system whose lstat calls a link a directory and whose rmdir removes it as a name, and the reader of owner records, which notes every file it is asked to open
+test('an entry where a prepared claim folder would lie that the look calls a directory although it leads elsewhere is judged by its age alone: the record of a running window behind it is never opened, and 61 s later the entry is removed as a name', async (context) => {
+  // Arrange: a record that names this window, which runs, in a folder of the project, and a link to that folder at a prepared claim's name, on a file system whose look is wrong about the link.
+  const cloned = await createClonedProject(context)
+  await writeFile(
+    join(cloned.project, 'docs', 'left'),
+    JSON.stringify({ pid: process.pid, ...OWNER_OF_THIS_WINDOW }),
+  )
+  await symlink(
+    join(cloned.project, 'docs'),
+    `${cloned.markerPath}.takeover-left`,
+    'junction',
+  )
+  const wrongLook = fileSystemWhoseLinksResistRemoval({
+    lstatOfALink: 'a directory',
+    rmdirOfALink: 'removes it',
+  })
+  const look = await loadModule<typeof lookModule>(
+    resolve(__dirname, '../utils/isFolderOfItsOwn.js'),
+    { 'node:fs/promises': wrongLook.fileSystem },
+  )
+  const walk = await loadModule<typeof removalModule>(
+    resolve(__dirname, '../utils/removeWithoutFollowing.js'),
+    { 'node:fs/promises': wrongLook.fileSystem, './isFolderOfItsOwn': look },
+  )
+  const ownerFilesOpened: string[] = []
+  const { claimWikiUpdateMarker: claimWhereTheLookIsWrong } = await loadModule<
+    typeof claimModule
+  >(resolve(__dirname, '../utils/claimWikiUpdateMarker.js'), {
+    'node:fs/promises': wrongLook.fileSystem,
+    './isFolderOfItsOwn': look,
+    './removeWithoutFollowing': walk,
+    './readRecordedOwner': {
+      readRecordedOwner: (path: string) => {
+        ownerFilesOpened.push(path)
+        return readRecordedOwner(path)
+      },
+    },
+  })
+  const aMinuteAndASecondLater = Date.now() + 61_000
+  const claim = await claimWhereTheLookIsWrong(
+    cloned.outputDirectory,
+    {
+      pid: process.pid,
+      windowId: 'window-a',
+      host: 'vscode',
+      startedAtMs: aMinuteAndASecondLater,
+    },
+    { ...AS_THIS_WINDOW, now: () => aMinuteAndASecondLater },
+  )
+  assert.ok('release' in claim)
+
+  // Act
+  await claim.release()
+
+  // Assert
+  assert.deepEqual(
+    {
+      ownerFilesOpened,
+      besideTheWiki: await readdir(join(cloned.project, '.codebook')),
+      docs: (await readdir(join(cloned.project, 'docs'))).toSorted(),
+    },
+    {
+      ownerFilesOpened: [],
+      besideTheWiki: ['wiki'],
+      docs: ['guide.md', 'left'],
     },
   )
 })

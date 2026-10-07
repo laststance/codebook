@@ -1,6 +1,7 @@
 import { readdir, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
+import { isFolderOfItsOwn } from './isFolderOfItsOwn'
 import { isLeftEmpty } from './isLeftEmpty'
 import { isStaleStorageLock } from './isStaleStorageLock'
 import { listPlacedClaims } from './listPlacedClaims'
@@ -23,12 +24,24 @@ async function removeStaleOwnerFile(
     await unlink(path).catch(() => undefined)
 }
 
-/** Removes one prepared claim folder when the owner file inside it, named like the claim, is stale, or when the folder never got one and stayed empty ({@link isLeftEmpty}). The folder is removed by Codebook's own walk ({@link removeWithoutFollowing}), which unlinks a link at that name and never lists below one. @example await removeStalePreparedClaim('/storage/learning/writer.lock.takeover-4f2c', '4f2c', judgement) */
+/**
+ * Removes one prepared claim folder when the owner file inside it, named like the claim, is stale, or when the folder never got one and stayed empty ({@link isLeftEmpty}); called by {@link removeStalePreparations} for each `<lock>.takeover-<name>` beside the lock.
+ * The prepared path is looked at first: an owner file is read only below a real directory that is its parent's own entry ({@link isFolderOfItsOwn}). Beside a Wiki update's marker a cloned repository decides what stands at such a name, and the read that refuses a link guards only the last part of a path, so a link to a folder there would have a file of the learner opened and the link judged by it. A link, a file or a folder that leads elsewhere is no prepared claim: it is not read and not removed here, and the marker's claim removes it by its age and its own name ({@link claimWikiUpdateMarker}).
+ * The folder is removed by Codebook's own walk ({@link removeWithoutFollowing}), which never lists below a link.
+ * @param path - `<lock>.takeover-<name>`.
+ * @param claimName - `<name>`, as the owner file inside the folder is called.
+ * @param judgement - The identity of this process and the reader of process starts.
+ * @returns Nothing; a folder that cannot be removed stays for the next sweep.
+ * @example
+ * await removeStalePreparedClaim('/storage/learning/writer.lock.takeover-4f2c', '4f2c', judgement)
+ */
 async function removeStalePreparedClaim(
   path: string,
   claimName: string,
   { identity, readStart }: LeftoverJudgement,
 ): Promise<void> {
+  // Nothing is read below a path that is no folder of its parent's own.
+  if (!(await isFolderOfItsOwn(path).catch(() => false))) return
   if (
     (await isStaleStorageLock(join(path, claimName), identity, readStart)) ||
     (await isLeftEmpty(path, 'directory'))
