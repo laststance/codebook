@@ -661,7 +661,8 @@ test('a server stop judged from its reported place before the pause is judged on
 })
 
 // Cycle 0046 (row 162): red while `dap.server-breakpoint-browser-stop-resumed` was journaled before the `continue` was sent, so a resume the adapter refused left an entry that said the page was resumed.
-test('a page pause at a server stop’s breakpoint whose resume the adapter refuses leaves the request in the journal and no entry that says resumed', async (context) => {
+// Cycle 0046 (row 268): red while the run ended with the adapter's bare text, "Error: Thread is not paused", which names neither the page's pause nor the declared stop. The page paused before the action here, so the run read only the debugger's report of the stop and names no place.
+test('a page pause at a server stop’s breakpoint whose resume the adapter refuses leaves the request in the journal and no entry that says resumed, and the run ends naming the declared stop and the refusal', async (context) => {
   // Arrange: the server stop is armed and its breakpoint is set in the page too; the browser's adapter will refuse the run's resume.
   const harness = await nativeParticipantsHarness(context, ['server'])
   await harness.run.prepare()
@@ -674,7 +675,10 @@ test('a page pause at a server stop’s breakpoint whose resume the adapter refu
   )
   await harness.run.stop()
   // Assert
-  assert.equal(harness.run.view().failures[0], 'Error: Thread is not paused')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: The debugger reported that the page paused at the breakpoint of declared server stop src/mode.ts:1, which it also sets in the page\'s copy of that module. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.',
+  )
   assert.deepEqual(
     journaled(harness, 'dap.server-breakpoint-browser-resume-requested'),
     [
@@ -838,6 +842,143 @@ test('a page pause at a server stop’s breakpoint that is read only after the r
   // Assert
   assert.equal(failuresWhilePaused, '')
   assert.deepEqual([server.source.line, server.source.column], [1, 1])
+})
+
+// Cycle 0046 (row 268): red while nothing named the page's pause once the run had sent its own resume of it: with the resume never answered, the action's deadline ended the run with "... declared server stop src/mode.ts:1 (registration pending) was not hit within 20 s of the accepted action; the server action's request may still be running (a first compilation after a cold start can take longer), or its line does not execute for this input. Start a new run; if the stop is not hit again, declare a line this action executes.", while the page stood paused at that stop's breakpoint waiting for Codebook's resume.
+test('an action whose page stays paused at a server stop’s breakpoint because the debugger never answers Codebook’s resume ends at its deadline naming that pause, the declared stop and the unanswered resume, and not a line to declare, in a run that declares only a server stop', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the browser adapter never answers the run's resume. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.holdStubResume()
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  // Act: the 20 s of the action's deadline pass.
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the action’s deadline ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository input reached no verified pause. The page paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 1:1, at the breakpoint of declared server stop src/mode.ts:1, which the debugger also sets in the page's copy of that module. Codebook asked the debugger to resume the page and got no answer, so the page stayed paused. Keep the declaration and start a new run.",
+  )
+  assert.deepEqual(
+    journaled(harness, 'dap.server-breakpoint-browser-stop-resumed'),
+    [],
+  )
+})
+
+// Cycle 0046 (row 268, the same pause in a run that declares a browser stop too): red while the deadline also added "The browser is paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 1:1 without a debugger stop.", although a stop announced that pause and the run was resuming it.
+test('an action whose page stays paused at a server stop’s breakpoint because the debugger never answers Codebook’s resume ends at its deadline naming that pause once, as the pause Codebook is resuming and not as one without a debugger stop, in a run that declares a browser stop too', async (context) => {
+  // Arrange: as above, with a browser stop declared after the server stop, so the page pause is held instead of timed.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.holdStubResume()
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  // Act: the 20 s of the action's deadline pass.
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the action’s deadline ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository input reached no verified pause. The page paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 1:1, at the breakpoint of declared server stop src/mode.ts:1, which the debugger also sets in the page's copy of that module. Codebook asked the debugger to resume the page and got no answer, so the page stayed paused. Keep the declaration and start a new run.",
+  )
+})
+
+// Cycle 0046 (row 268, the refused resume of a pause the run has read): red while the run ended with the adapter's bare text, "Error: Thread is not paused".
+test('a page pause at a server stop’s breakpoint after the action was accepted whose resume the adapter refuses ends the run naming the place of that pause, the declared stop and the refusal', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the browser's adapter will refuse the run's resume.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.refuseStubResume()
+  // Act: the page pauses in its stub of the server module, naming the server breakpoint.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the run ended with the adapter’s refusal',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Error: The page paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 1:1, at the breakpoint of declared server stop src/mode.ts:1, which the debugger also sets in the page\'s copy of that module. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.',
+  )
+})
+
+// Cycle 0046 (row 268, the deadline of a continuation): red while the deadline of the next stop said "... declared stop src/mode.ts:1 (stop 2 of 2) was not hit within 20 s; its breakpoint was still pending (...). Start a new run; if the stop is not hit again, declare a line this action executes after the preceding stop." while the page stood paused at that stop's breakpoint under the run's own resume.
+test('a continuation whose page stays paused at the next server stop’s breakpoint because the debugger never answers Codebook’s resume ends at its deadline naming that pause and the unanswered resume, and not a line to declare', async (context) => {
+  // Arrange: the first server stop is captured and continued; the second has not paused. The browser adapter never answers the run's resume of the page.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'server'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  harness.holdNextPause()
+  harness.run.action('once', 'repository-click')
+  const first = await pauseReady(harness, 'server')
+  await harness.run.continue('server', first.pause)
+  harness.holdStubResume()
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints.at(-1)!)
+  await waitUntil(
+    () =>
+      journaled(harness, 'dap.server-breakpoint-browser-resume-requested')
+        .length,
+    'the run’s resume of the page was sent',
+  )
+  // Act: the 20 s of the continuation's deadline pass.
+  harness.advance(20_000)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the continuation’s deadline ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    "Repository continuation reached no next declared pause. The page paused at webpack-internal:///(app-pages-browser)/./src/mode.ts 1:1, at the breakpoint of declared server stop src/mode.ts:1 (stop 2 of 2), which the debugger also sets in the page's copy of that module. Codebook asked the debugger to resume the page and got no answer, so the page stayed paused. Keep the declaration and start a new run.",
+  )
 })
 
 // Cycle 0046 (row 269): red while one flag stood for every resume of the run's own and any resume of the page cleared it: with two pauses in the stub whose `stopped` events were read before the page's events, the first pause's resume cleared the flag, the second pause got the timer of a pause nobody owns, and an adapter that answered its resume late ended the run with "Unowned browser stop remained paused".
