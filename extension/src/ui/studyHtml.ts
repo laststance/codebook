@@ -1946,6 +1946,7 @@ function studyClient(
       : 'Layout not confirmed. Restore it or focus a pane below.')
   /**
    * Gives what the status line under "Study view and pane controls" says about the presentation; read on every Study message that carries a presentation.
+   * The host sends such a message when a tab or a tab group of the editor changes while the reader is not changing tabs itself, so the line says that the layout is not confirmed as soon as the learner closes a pane's tab or the captured source's tab by hand. A change that no tab event tells (a sash the learner drags) reaches the line only with the next message after the host read the layout, at an agent's status read or at Restore.
    * The line stands outside that disclosure, so it is rendered while the Recording tab keeps the disclosure closed, and its first text changes a status region that exists. The bottom panel's pane has no pane controls: its line stays empty, as it never showed one, and the Study pane alone announces the status.
    * @param presentation - The presentation of the current Study message.
    * @returns

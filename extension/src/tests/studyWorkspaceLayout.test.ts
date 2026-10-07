@@ -9,6 +9,7 @@ import {
   PRESENTATION_SETTLE_CEILING_MS,
 } from '../constants'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
+import type { StudyViewMessage } from '../ui/studyHtml'
 
 import {
   workspaceHarness,
@@ -4611,6 +4612,154 @@ test('a Study layout the editor did not keep is reported with the command that a
       (await harness.reader.readPresentationState()).layoutConfirmed,
       true,
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+/**
+ * Finds the tab of the captured source the reader shows, as the learner sees it in the editor.
+ * @param harness - The reader and the fake editor's groups.
+ * @returns The tab whose document is the reader's captured source.
+ * @example harness.closeTabByHand(capturedSourceTab(harness))
+ */
+function capturedSourceTab(
+  harness: Awaited<ReturnType<typeof workspaceHarness>>,
+) {
+  const sourceUri = harness.reader.inspect().sourceUri
+  const sourceTab = harness.groups
+    .flatMap((group) => group.tabs)
+    .find(
+      (tab) =>
+        tab.input !== undefined &&
+        'uri' in tab.input &&
+        tab.input.uri.toString() === sourceUri,
+    )
+  assert.ok(sourceTab)
+  return sourceTab
+}
+
+/** Reads from Study messages what each tells the pane's status line about the layout. @example layoutTold(harness.postedMessages().slice(postedBefore)) */
+function layoutTold(messages: readonly StudyViewMessage[]) {
+  return messages.map((message) => ({
+    layoutConfirmed: message.presentation?.layoutConfirmed,
+    reason: message.presentation?.reason,
+  }))
+}
+
+// Value: protects=the Study pane's status line saying that the layout is not confirmed, with the reason, as soon as the learner closes the captured source's tab by hand on the Recording tab; fails_when=no tab event makes the reader publish, so an agent's status read answers "not confirmed" at once while the pane's line stays empty until some other action publishes (seen natively 1, 5, 10 and 40 s after the close); why_new=Cycle 0046 row 327 (the native look of row 74 (c) in VS Code 1.140.0); seam=the workspace harness's closeTabByHand, which closes a tab and tells the editor's tab listeners, and the Study messages the reader posts
+test('when the learner closes the captured source’s tab by hand on the Recording tab, the Study pane is told in the same turn that the layout is not confirmed, with the reason, and tab events that change nothing afterwards post nothing more', async () => {
+  // Arrange: a saved recording is open and paused with its panes in a confirmed layout.
+  const harness = await recordedReaderHarness(true)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  try {
+    await harness.reader.openRecording(harness.studyId)
+    await harness.controller.settle()
+    const before = await harness.reader.readPresentationState()
+    const postedBefore = harness.postedMessages().length
+    // Act: the learner closes the captured source's tab with its close button; then the editor refreshes its tab model three times without a change.
+    harness.closeTabByHand(capturedSourceTab(harness))
+    const toldAtTheClose = layoutTold(
+      harness.postedMessages().slice(postedBefore),
+    )
+    const postedAfterTheClose = harness.postedMessages().length
+    harness.announceTabChange()
+    harness.announceTabChange()
+    harness.announceTabChange()
+    // Assert
+    assert.deepEqual(
+      [before.layoutConfirmed, before.reader.contentTab],
+      [true, 'recording'],
+    )
+    assert.equal(toldAtTheClose.length > 0, true)
+    assert.deepEqual(
+      [...new Set(toldAtTheClose.map((told) => JSON.stringify(told)))],
+      [
+        JSON.stringify({
+          layoutConfirmed: false,
+          reason:
+            'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.',
+        }),
+      ],
+    )
+    assert.equal(harness.postedMessages().length, postedAfterTheClose)
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the Study pane's status line saying that the layout is not confirmed as soon as the learner closes the captured source's tab or the Application pane's tab by hand beside a saved study; fails_when=the reader publishes nothing at a tab event, so the line stays empty until another action publishes; why_new=Cycle 0046 row 327 (the same change outside the Recording tab, and a pane's own tab); seam=the workspace harness's closeTabByHand, which also ends the pane whose tab it closes, and the Study messages the reader posts
+for (const [closedTab, reason] of [
+  [
+    'the captured source’s tab',
+    'The current captured source is not ready in its native pane. Wait for it, or use Return to current with the latest reader revision before restoring the layout.',
+  ],
+  [
+    'the Application pane’s tab',
+    'The application or source pane is no longer in its Study destination. Focus the existing Study or Application pane, then restore its layout. Opening Repository Wiki does not repair Study.',
+  ],
+] as const)
+  test(`when the learner closes ${closedTab} by hand beside a saved study whose layout is confirmed, the Study pane is told in the same turn that the layout is not confirmed, with the reason`, async () => {
+    // Arrange: a saved study is shown with its three panes in a confirmed layout.
+    const { harness } = await studyLayoutWithSecondSavedStudy()
+    try {
+      const before = await harness.reader.readPresentationState()
+      const postedBefore = harness.postedMessages().length
+      // Act: the learner closes the tab with its close button.
+      harness.closeTabByHand(
+        closedTab === 'the captured source’s tab'
+          ? capturedSourceTab(harness)
+          : harness
+              .nativePanels()
+              .find((panel) => panel.kind === 'codebook.scopedBrowser')!
+              .nativeTab,
+      )
+      const toldAtTheClose = layoutTold(
+        harness.postedMessages().slice(postedBefore),
+      )
+      // Assert
+      assert.equal(before.layoutConfirmed, true)
+      assert.deepEqual(toldAtTheClose.at(-1), {
+        layoutConfirmed: false,
+        reason,
+      })
+    } finally {
+      await harness.close()
+    }
+  })
+
+// Value: protects=the Study pane's status line against a reason of the middle of the reader's own work: a tab that changes while the reader restores its layout makes it publish nothing at that moment, and the panes are told how the layout stands when the restore has ended; fails_when=every tab event publishes, also the ones of the reader's own arrangement, so the line shows and a screen reader announces a state the reader is about to change; why_new=Cycle 0046 row 327 (the reader does not publish on its own tab changes); seam=the workspace harness holding the editor's layout answer during Restore, its closeTabByHand, and the Study messages the reader posts
+test('a tab that is closed while the reader restores its layout makes the reader post nothing at that moment, and the Study pane is told how the layout stands once the restore has ended', async () => {
+  // Arrange: a saved study with a confirmed layout; Restore is under way and waits for the editor's layout.
+  const { harness } = await studyLayoutWithSecondSavedStudy()
+  try {
+    const state = await harness.reader.readPresentationState()
+    const editorLayout = harness.holdNextCommand('vscode.getEditorLayout')
+    const restoring = harness.reader
+      .changePresentation({
+        presentationId: state.presentationId,
+        expectedRevision: state.presentationControlRevision,
+        mode: state.mode,
+        action: 'restore',
+      })
+      .then(
+        () => 'restored',
+        (error: unknown) => String(error),
+      )
+    await editorLayout.started
+    const postedBefore = harness.postedMessages().length
+    // Act: the captured source's tab closes during the restore; then the editor answers and the restore ends.
+    harness.closeTabByHand(capturedSourceTab(harness))
+    const postedAtTheClose = harness.postedMessages().length - postedBefore
+    editorLayout.release()
+    await restoring
+    // Assert
+    assert.equal(postedAtTheClose, 0)
+    assert.equal(
+      harness.postedMessages().at(-1)!.presentation?.layoutConfirmed,
+      harness.reader.presentationState().layoutConfirmed,
+    )
+    assert.equal(harness.postedMessages().at(-1)!.presentation?.state, 'open')
   } finally {
     await harness.close()
   }

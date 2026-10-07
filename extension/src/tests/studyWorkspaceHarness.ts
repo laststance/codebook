@@ -3457,6 +3457,24 @@ export async function workspaceHarness(
       activeTabGroup = group
       for (const listener of tabChangeListeners) listener()
     },
+    /** Closes one tab the way the learner does with the tab's close button: the tab leaves its group, the group shows its neighbour, a pane whose tab it is ends, and the editor tells its tab listeners which tab closed. The reader's own closes go through `tabGroups.close`, and a pane the reader disposes closes its tab without an event in this fake. @example harness.closeTabByHand(sourceTab) */
+    closeTabByHand(tab: Tab): void {
+      const group = groups.find((candidate) => candidate.tabs.includes(tab))
+      assert.ok(group)
+      const wasShown = group.activeTab === tab,
+        pane = [...panels].find((candidate) => candidate.nativeTab === tab)
+      if (pane) pane.dispose()
+      else closeTabs([tab])
+      // The group shows the tab beside the closed one, or none.
+      if (wasShown && group.activeTab === tab)
+        group.activeTab = group.tabs.at(-1)
+      for (const listener of tabChangeListeners)
+        listener({ opened: [], closed: [tab], changed: [] })
+    },
+    /** Tells the reader's tab listeners that tabs changed although none did, as the editor does when it refreshes its tab model. @example harness.announceTabChange() */
+    announceTabChange(): void {
+      for (const listener of tabChangeListeners) listener()
+    },
     /** Emits real close/open membership changes so cold-focus tests distinguish replacement from wrapper refresh. @example harness.replaceActiveWebviewTab(); */
     replaceActiveWebviewTab() {
       const previous = activeTabGroup.activeTab
