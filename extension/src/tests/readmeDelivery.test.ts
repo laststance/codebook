@@ -664,13 +664,14 @@ test('the packaged README agrees with the refusals of a Cursor setup or removal:
 })
 
 // Cycle 0046 (row 283): red while the README said that a deadline's failure text "ends with where" a participant is paused without a debugger stop; since row 268 the sentences on a page pause Codebook is resuming follow it, and a refused resume ends the run with them.
+// Cycle 0046 (row 290): red while the README named "the active-progress or hold deadline" for the first sentence; the whole run's deadline adds the place too.
 test('the packaged README says that a deadline’s failure text says where a participant is paused without a debugger stop, and ends with the page pause Codebook asked the debugger to resume when one is still open', async () => {
   // Arrange
   const readme = await readPackagedReadme()
 
   // Act
   const delivered = heldSentences(readme, [
-    'When the active-progress or hold deadline expires while a participant is paused without a debugger stop, the failure text says where, for example `The server is paused at auth.ts:18 without a debugger stop.`',
+    'When a deadline expires while a participant is paused without a debugger stop, the failure text says where, for example `The server is paused at auth.ts:18 without a debugger stop.`',
     "When a deadline expires while the page is still paused at a server stop's breakpoint that Codebook asked the debugger to resume, the failure text ends with that pause: the declared server stop, the place when Codebook read the page's own pause, and whether the debugger answered the resume, followed by `Keep the declaration and start a new run.`",
     'A resume the debugger refuses ends the run with the same sentences and the refusal in quotation marks.',
   ])
@@ -682,6 +683,10 @@ test('the packaged README says that a deadline’s failure text says where a par
   // Assert: the README holds each sentence and no longer says "ends with where", and the product's text closes with the sentence the README quotes and holds the refusal in quotation marks.
   assert.deepEqual(delivered, [true, true, true])
   assert.equal(readme.includes('the failure text ends with where'), false)
+  assert.equal(
+    readme.includes('When the active-progress or hold deadline expires'),
+    false,
+  )
   assert.equal(
     failureOfRefusedResume,
     'The debugger reported that the page paused at the breakpoint of declared server stop app/lib/actions.ts:27, which it also sets in the page\'s copy of that module. Codebook asked the debugger to resume the page, and the request failed: "Thread is not paused". Keep the declaration and start a new run.',
