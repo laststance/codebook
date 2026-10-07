@@ -2921,6 +2921,50 @@ test('pressing Open LLM Wiki on an update notice leaves no unhandled rejection w
   }
 })
 
+// Value: protects=the learner who confirms an update in the editor: they read before the press that a new chat starts, where the chat they had open goes, and that a draft in an empty chat is replaced; fails_when=the confirmation says only that Copilot Chat receives the request, so the learner finds another chat in the view and their half-typed question gone without a word; why_new=Cycle 0046 rows 197 and 198; seam=none
+test('the confirmation of the browser’s update link says that the request goes into a new chat, that the open chat keeps its place in the chat list, and what becomes of a draft', async () => {
+  // Arrange
+  const wiki = await openWikiWindow()
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.confirmations, [
+      'Update this project’s LLM Wiki with the editor agent?',
+    ])
+    assert.deepEqual(wiki.confirmationDetails, [
+      `${wiki.projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.`,
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
+// Value: protects=the learner in an editor that has no New Chat command: the confirmation tells them that the request goes into the chat they have open and what it does there; fails_when=the confirmation promises a new chat the editor cannot start, so a request in progress is queued before, a request waiting for a confirmation is cancelled and a draft is replaced without a word; why_new=Cycle 0046 row 198 (the fallback of row 129); seam=the editor's list of commands, from which New Chat is taken
+test('in an editor without the New Chat command the confirmation says that the request goes into the open chat like a typed message: behind a request in progress, cancelling one that waits for a confirmation, replacing a draft', async () => {
+  // Arrange
+  const wiki = await openWikiWindow({
+    missingEditorCommands: ['workbench.action.chat.newChat'],
+  })
+  try {
+    // Act
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.deepEqual(wiki.confirmationDetails, [
+      `${wiki.projectRoot}\n\nCopilot Chat receives the update request for this project in the chat that is open, like a message you typed: it waits behind a request in progress, a request that waits for your confirmation is cancelled, and a draft in the chat’s input is replaced by the request.`,
+    ])
+    assert.deepEqual(wiki.executedCommands, [
+      'workbench.action.chat.open',
+      'workbench.action.chat.newChat',
+      'workbench.action.chat.open with the update request',
+    ])
+  } finally {
+    await wiki.close()
+  }
+})
+
 test('the confirmation of an update whose output lies outside the project says the chat will ask to approve each step there', async () => {
   // Arrange
   const projectRoot = await realpath(
@@ -2952,7 +2996,7 @@ test('the confirmation of an update whose output lies outside the project says t
 
     // Assert
     assert.deepEqual(fromTheLink.confirmationDetails, [
-      `${projectRoot}\n\nCopilot Chat receives the update request for this project. ${approvalsNote}`,
+      `${projectRoot}\n\nCopilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat. ${approvalsNote}`,
     ])
     for (const [window, running] of [
       [fromTheLink, runningFromTheLink],

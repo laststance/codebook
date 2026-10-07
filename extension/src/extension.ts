@@ -68,6 +68,7 @@ import {
   currentStorageOwner,
   useEditorMachineId,
 } from './utils/currentStorageOwner'
+import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
@@ -1350,10 +1351,10 @@ export function activate(
               const isOutputOutsideProject =
                 wikiOutputLabel(projectRoot, outputDirectory) ===
                 outputDirectory
-              // The chat asks to approve every step outside the workspace; the learner should know before confirming.
+              // The request starts a new chat where the editor has one, and the chat asks to approve every step outside the workspace; the learner should know both before confirming.
               const agentAccess = isCursorHost
                 ? 'Cursor Agent runs without further prompts and can edit files and run commands in this project.'
-                : `Copilot Chat receives the update request for this project.${isOutputOutsideProject ? ` ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`
+                : `${describeWikiChatHandOver(await vscode.commands.getCommands(true))}${isOutputOutsideProject ? ` ${WIKI_OUTSIDE_OUTPUT_APPROVALS_NOTE}` : ''}`
               // A learner who confirms must not be told afterwards that nothing will start.
               if (wikiUpdateRun.isRunning()) {
                 showWikiUpdateRunning()

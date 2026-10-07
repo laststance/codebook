@@ -30,6 +30,7 @@ import {
 import { STUDY_UI_OPTIONS } from '../ui/constants'
 import { describeUnansweredWikiChat } from '../utils/describeUnansweredWikiChat'
 import { describeWikiChatErrorReply } from '../utils/describeWikiChatErrorReply'
+import { describeWikiChatHandOver } from '../utils/describeWikiChatHandOver'
 import { savedLaterNote } from '../utils/savedLaterNote'
 import { tabWithoutEditorObstacle } from '../utils/tabWithoutEditorObstacle'
 
@@ -332,7 +333,7 @@ test('the packaged README says that a VS Code update sends its request into a ne
     "When Codebook sees no sign within those 30 seconds, it stops its request with the chat's own Cancel before it shows the sentence, so a chat that was only slow does not go on with no watch, and it removes nothing from a queue. Your own work in the window (a file you open, a command you run) is not taken for a sign.",
     'The Cancel acts on the chat you focused last and on the session it shows: if you showed another session there or focused another chat within those 30 seconds, it stops the request in progress there.',
     'If Codebook did not see its request end, the sentence reads `Codebook saw no sign of the update in the editor chat within 30 seconds and could not take its request back, so the request may still be in the chat. Stop or remove it in the Chat view, check that Copilot Chat is enabled and signed in, then retry.` instead.',
-    'Every supported VS Code (1.120 and later) has New Chat. An editor without that command gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, and the editor cancels a request that waits for a confirmation. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`',
+    "Every supported VS Code (1.120 and later) has New Chat. An editor without that command gets the request in the chat that is open, where it acts like a message you typed: it waits in the queue behind a request in progress, the editor cancels a request that waits for a confirmation, and a draft in the chat's input is replaced; the confirmation says so there. At the 30 seconds Codebook then removes the requests queued in that chat, its own and yours, before it uses the Cancel, and the sentence ends `The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.`",
   ])
   const retired = [
     'Codebook takes its request back before it shows the sentence',
@@ -358,6 +359,28 @@ test('the packaged README says that a VS Code update sends its request into a ne
     ),
     'Codebook saw no sign of the update in the editor chat within 30 seconds and took its request back, so no update is running. The chat may be working on another request: wait until it has finished, or check that Copilot Chat is enabled and signed in, then retry.',
   )
+})
+
+// Value: protects=a learner reading, before they press Update LLM Wiki, what the editor's confirmation will tell them: a new chat starts, the open chat keeps its place, a draft in an empty chat is replaced; fails_when=the README quotes another confirmation than the product shows, or says nothing about the command, which starts without one; why_new=Cycle 0046 rows 197 and 198; seam=none
+test('the packaged README quotes the confirmation of a VS Code update word for word and says that the command starts without it', async () => {
+  // Arrange
+  const readme = await readPackagedReadme()
+  const confirmation = describeWikiChatHandOver([
+    'workbench.action.chat.open',
+    'workbench.action.chat.newChat',
+  ])
+
+  // Act
+  const delivered = heldSentences(readme, [
+    `The button asks for confirmation in the editor first; in VS Code the confirmation says where the request goes: \`${confirmation}\` The command starts at once, without that confirmation, and does the same.`,
+  ])
+
+  // Assert
+  assert.equal(
+    confirmation,
+    'Copilot Chat receives the update request for this project in a new chat; the chat you have open keeps its place in the chat list. A draft you typed into an empty chat is replaced by the request; a draft in a chat with messages stays with that chat.',
+  )
+  assert.deepEqual(delivered, [true])
 })
 
 // Value: protects=a client author reading the same limit of explanations the service enforces and an agent reads in its refusal; fails_when=the README counts "explanation intents" again, or names another number than the budget; why_new=Cycle 0046 row 56: row 25 reworded the refusal to "explanation budget (32 keys)" and the README kept the old words; seam=none
