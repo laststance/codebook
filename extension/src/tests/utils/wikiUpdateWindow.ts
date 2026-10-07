@@ -73,6 +73,7 @@ export type HeldUpdateStep =
  * @param options.constants - Replaces numeric constants of the extension (the grace a closing window gives the Cursor agent, the Cursor run's two-second look interval, a bound), so a test need not wait for them. The replacement reaches `extension.ts` itself and no module it requires (a utility that reads the same constant keeps the real value), so a constant `extension.ts` never reads is refused ({@link assertConstantsReadBy}).
  * @param options.chooseAction - Presses a button of a notification: it gets the notification's text and its button labels and returns the label to press, or a promise of it for a press that comes later; no button is pressed when omitted.
  * @param options.workspaceState - The window's workspace state; two windows opened with the same map are one window before and after a reload.
+ * @param options.workspaceStateWrite - Stands in for the editor's storage at every write of the workspace state: it gets the function that writes the value into the map, and the key, and returns the promise the write settles with; a test rejects it without writing, or writes later.
  * @param options.publishTokenReadFails - Makes the read of the publish token among the start checks reject with this message.
  * @param options.openWikiFails - Makes the command that opens the browser Wiki (the button "Open LLM Wiki" of a notification runs it) reject with this message.
  * @param options.realFreshnessCheck - Runs the real freshness check against the project on disk instead of answering what `setFreshness` was given.
@@ -117,6 +118,7 @@ export async function openWikiUpdateWindow(options: {
     actions: string[],
   ) => string | undefined | Promise<string | undefined>
   workspaceState?: Map<string, unknown>
+  workspaceStateWrite?: (write: () => void, key: string) => Promise<void>
   publishTokenReadFails?: string
   realFreshnessCheck?: boolean
   openWikiFails?: string
@@ -467,7 +469,13 @@ export async function openWikiUpdateWindow(options: {
     workspaceState: {
       get: (key: string) => workspaceState.get(key),
       update: async (key: string, value: unknown) => {
-        workspaceState.set(key, value)
+        const write = (): void => {
+          workspaceState.set(key, value)
+        }
+        // A test's own storage decides when the value is written, or rejects the write.
+        if (options.workspaceStateWrite)
+          return options.workspaceStateWrite(write, key)
+        write()
       },
     },
   })

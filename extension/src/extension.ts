@@ -898,6 +898,15 @@ export function activate(
       describeSecondWikiUpdateStart(wikiProgressPlace()),
     )
   }
+  /** Keeps how this window's last Wiki update ended: in memory for this window's next start, and in the workspace state for the window after a reload; called by {@link finishWikiUpdate}. The write is not awaited by a window that stays open (the notice of the end must not wait for the editor's storage), and it never rejects: when the storage refuses it, the record stays in memory only, and a reloaded window then knows nothing of this run. @returns A promise that settles when the editor's storage took or refused the record. @example await rememberLastWikiRun({ outputDirectory: '/repo/.codebook/wiki', startedAtMs: 1_000, endedAtMs: 2_000, mayAgentStillWork: true, candidateNames: [] }) */
+  const rememberLastWikiRun = (record: WikiLastRun): Promise<void> => {
+    lastWikiRun = record
+    return Promise.resolve()
+      .then(() =>
+        context.workspaceState.update(WIKI_UPDATE_LAST_RUN_STATE_KEY, record),
+      )
+      .then(undefined, () => undefined)
+  }
   /** What a run hands to its end: what it observed itself, without a look at the disk. */
   type ObservedWikiRunEnd = Partial<
     Pick<
@@ -961,6 +970,25 @@ export function activate(
       isFailureCodebookSentence: observed.isFailureCodebookSentence,
       mayBeReplacedLater: observed.mayBeReplacedLater,
     })
+  /** Frees the Wiki for other windows at a run's end, or leaves the run's marker as the reservation of a chat that may still work; called by {@link finishWikiUpdate} last. It never rejects: a marker that cannot be written or removed is left to its own expiry. @param endedAtMs - When the run ended, which the reservation names as the end of the watch. @param mayAgentStillWork - Whether the run's chat can still publish ({@link mayWikiChatStillPublish}). @example await settleWikiRunMarker(run, Date.now(), false) */
+  const settleWikiRunMarker = async (
+    run: WikiRun,
+    endedAtMs: number,
+    mayAgentStillWork: boolean,
+  ): Promise<void> => {
+    if (!mayAgentStillWork) {
+      await run.releaseMarker().catch(() => undefined)
+      return
+    }
+    // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
+    await run.reserveMarker(endedAtMs).catch(() => undefined)
+    wikiReservation = {
+      release: run.releaseMarker,
+      timer: setTimeout(() => {
+        void dropWikiReservation()
+      }, WIKI_UPDATE_WATCH_TIMEOUT_MS).unref(),
+    }
+  }
   /** Records how a run of either host ended: lets {@link readWikiUpdateEnd} decide from the disk, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. It never rejects: a run whose end cannot be read from the disk is recorded as failed without a word about the site ({@link unreadWikiUpdateEnd}), so no window stays "already updating", and a notice that cannot be shown does not keep the run's marker in place. @example await finishWikiUpdate(run, { cancelled: true }) */
   const finishWikiUpdate = async (
     run: WikiRun,
@@ -981,33 +1009,22 @@ export function activate(
       // An end the run itself marks as one its chat can publish after (a watch that broke off, a request not taken back) leaves the reservation a stopped watch leaves.
       observed.mayBeReplacedLater ?? false,
     )
-    lastWikiRun = {
+    const recordWritten = rememberLastWikiRun({
       outputDirectory: run.outputDirectory,
       startedAtMs: run.startedAtMs,
       endedAtMs,
       mayAgentStillWork,
       candidateNames: [...run.seenCandidateNames],
-    }
-    void context.workspaceState.update(
-      WIKI_UPDATE_LAST_RUN_STATE_KEY,
-      lastWikiRun,
-    )
+    })
     // The editor tells the learner in the same turn the page's status changes; the marker's file work below would put the notice a turn or more behind the page.
     try {
       showWikiUpdateNotice()
     } catch {
       // A notice the editor cannot show has nobody to report to. The end is recorded and the page shows it; the marker below must still be freed or reserved.
     }
-    if (mayAgentStillWork) {
-      // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
-      await run.reserveMarker(endedAtMs).catch(() => undefined)
-      wikiReservation = {
-        release: run.releaseMarker,
-        timer: setTimeout(() => {
-          void dropWikiReservation()
-        }, WIKI_UPDATE_WATCH_TIMEOUT_MS).unref(),
-      }
-    } else await run.releaseMarker().catch(() => undefined)
+    await settleWikiRunMarker(run, endedAtMs, mayAgentStillWork)
+    // A closing window shows no notice, and its record is all its reloaded self gets of this run: the close waits until the editor's storage took it.
+    if (isExtensionStopping) await recordWritten
   }
   /** Looks at this run's candidates: notes on the run state that the agent staged one, and names the learner files it would overwrite. @example await probeWikiCandidates(run) // => ['pages/notes.html'] */
   const probeWikiCandidates = async (run: WikiRun): Promise<string[]> => {

@@ -939,6 +939,170 @@ test('a window that was reloaded while it watched a VS Code update starts the ne
   }
 })
 
+// Value: protects=the extension host's log and this window's next press when the editor's storage refuses the record of an ended update; fails_when=the rejected write is left unhandled, or the run does not end with its own sentence, or this window forgets its stopped watch although it has the record in memory; why_new=Cycle 0046 row 359. The last part states what a reloaded window knows then: nothing of that run (the record was not written, and the reservation left the disk when the window closed), so its press starts the update; seam=the editor's storage, which rejects every write
+test('a VS Code watch that is stopped while the editor’s storage refuses the record of the run leaves no unhandled rejection: the update ends with its own sentence, the next press in this window is still answered with the wait and Update anyway, and the window after a reload, which has neither a record nor a reservation, starts the update', async () => {
+  // Arrange
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  const workspaceState = new Map<string, unknown>()
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    workspaceState,
+    workspaceStateWrite: async () => {
+      throw new Error('The storage is not available.')
+    },
+  })
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  let reloaded: Awaited<ReturnType<typeof openWikiUpdateWindow>> | undefined
+  try {
+    await wiki.clickUpdate()
+
+    // Act: the watch is cancelled, the learner presses again in this window, and then the window is reloaded and the learner presses there.
+    progress[0]!.cancel()
+    const ended = await waitForEnd(wiki.status)
+    await wiki.clickUpdate()
+    const offeredInThisWindow = wiki.offeredActions.at(-1)?.actions
+    await wiki.closeWindow()
+    const markerAfterTheClose = await access(markerPath).then(
+      () => 'still there',
+      () => 'gone',
+    )
+    reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      workspaceState,
+    })
+    await reloaded.clickUpdate()
+    // A rejection nobody handles is reported once the turn's promise jobs are done.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50))
+
+    // Assert: the end and this window's next press.
+    assert.equal(ended.state, 'cancelled')
+    assert.match(
+      wiki.notices[0] ?? '',
+      new RegExp(
+        `^Stopped watching at ${CLOCK_TIME}\\. The VS Code chat may still be working and can still publish; stop it in the chat to cancel the update itself\\. Nothing has been replaced so far\\.$`,
+      ),
+    )
+    assert.match(
+      wiki.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.deepEqual(offeredInThisWindow, ['Update anyway', 'Open LLM Wiki'])
+    assert.equal(wiki.chatRequests.length, 1)
+    // What the reloaded window knows: no record, no reservation.
+    assert.equal(workspaceState.has('codebook.wikiUpdateLastRun'), false)
+    assert.equal(markerAfterTheClose, 'gone')
+    assert.equal(reloaded.status().state, 'running')
+    assert.equal(reloaded.chatRequests.length, 1)
+    assert.deepEqual(reloaded.errors, [])
+    assert.deepEqual(unhandledRejections, [])
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await reloaded?.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=what a window knows after a reload of the watch it had stopped before: the record of that run in its workspace state; fails_when=the record is no longer written or no longer read at activation, so the reloaded window sends a second request although Codebook still waits for the first chat (seen natively: a press after a reload was answered with the wait); why_new=Cycle 0046 row 359 (the counterpart of the test above: the write succeeded); seam=none
+test('a window that is reloaded after its VS Code watch was stopped still answers the next press with the wait for that chat and Update anyway, from the record of the run in its workspace state', async () => {
+  // Arrange: one window before and after its reload shares the workspace state.
+  const workspaceState = new Map<string, unknown>()
+  const progress: CancellableProgress[] = []
+  const wiki = await openWikiWindow({ cancellable: progress, workspaceState })
+  let reloaded: Awaited<ReturnType<typeof openWikiUpdateWindow>> | undefined
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    await wiki.closeWindow()
+
+    // Act
+    reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      workspaceState,
+    })
+    await reloaded.clickUpdate()
+
+    // Assert
+    assert.match(
+      reloaded.errors[0] ?? '',
+      new RegExp(
+        `^Update failed at ${CLOCK_TIME}: The VS Code chat this window asked at ${CLOCK_TIME}[^;]* may still be updating this Wiki; Codebook stopped watching it at ${CLOCK_TIME}[^.]* and waits for it until ${CLOCK_TIME}[^.]*\\. If that chat was stopped, choose Update anyway in the editor’s notification\\. Nothing had been replaced by then\\.$`,
+      ),
+    )
+    assert.deepEqual(reloaded.offeredActions.at(-1)?.actions, [
+      'Update anyway',
+      'Open LLM Wiki',
+    ])
+    assert.deepEqual(reloaded.chatRequests, [])
+  } finally {
+    await reloaded?.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
+// Value: protects=the first press after a window was reloaded during a watch it had started over an earlier stopped watch; fails_when=the closing window does not wait until the editor's storage took the record of the run it stops, so the reloaded window reads the older record, which says that a chat may still be updating, and refuses the press; why_new=Cycle 0046 row 359 (the write was started and never waited for); seam=the editor's storage, which takes a tenth of a second for a write once the window closes
+test('a window that closes while it watches a VS Code update waits until the record of the run it stops is written, so the reloaded window starts the next update and does not read the record of the stopped watch before it', async () => {
+  // Arrange: a first watch is stopped (its record says the chat may still work), then Update anyway starts a second watch.
+  const workspaceState = new Map<string, unknown>()
+  const progress: CancellableProgress[] = []
+  let isOverrideChosen = false
+  let isStorageSlow = false
+  const wiki = await openWikiWindow({
+    cancellable: progress,
+    workspaceState,
+    chooseAction: (_message, actions) =>
+      isOverrideChosen
+        ? actions.find((action) => action === 'Update anyway')
+        : undefined,
+    workspaceStateWrite: async (write) => {
+      if (isStorageSlow)
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+      write()
+    },
+  })
+  let reloaded: Awaited<ReturnType<typeof openWikiUpdateWindow>> | undefined
+  try {
+    await wiki.clickUpdate()
+    progress[0]!.cancel()
+    await waitForEnd(wiki.status)
+    isOverrideChosen = true
+    await wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests, 2)
+
+    // Act: the window is reloaded while the second update is watched; its storage is slow now.
+    isStorageSlow = true
+    await wiki.closeWindow()
+    const recordAtTheReload = workspaceState.get('codebook.wikiUpdateLastRun')
+    reloaded = await openWikiUpdateWindow({
+      projectRoot: wiki.projectRoot,
+      workspaceState,
+    })
+    await reloaded.clickUpdate()
+
+    // Assert
+    assert.equal(
+      typeof recordAtTheReload === 'object' &&
+        recordAtTheReload !== null &&
+        'mayAgentStillWork' in recordAtTheReload
+        ? recordAtTheReload.mayAgentStillWork
+        : 'no record',
+      false,
+    )
+    assert.equal(reloaded.status().state, 'running')
+    assert.deepEqual(reloaded.errors, [])
+  } finally {
+    await reloaded?.close()
+    await rm(wiki.projectRoot, { recursive: true, force: true })
+  }
+})
+
 // The bound is twice the default termination grace: an agent that is never started fails this test instead of hanging its file.
 test(
   'closing the window stops the Cursor agent and waits until its process has closed',
