@@ -3815,6 +3815,8 @@ export async function workspaceHarness(
     /**
      * Selects another frame of the paused thread, by one of the three gestures the editor offers. The debug adapter reports nothing: no `stopped` event comes with a selection.
      * - `click` (left out): the Call Stack view's row chosen with one click. The editor opens that frame's file in front of a group without giving it the keyboard, and reports the frame. The keyboard stays where it is (see `focusView`, or the chat).
+     * - `click-on-unopened-file-then-tab-update`: one click on a frame whose file was not open: the editor opens it as a preview tab without the keyboard and reports the frame; then it reports that tab once more with its state unchanged, as for a new label decoration.
+     * - `double-click-after-tab-model-update`: a double click between whose two clicks the editor sent its whole tab model to the extension host, which in Cursor 3.23 builds every group and tab object anew (`$acceptEditorTabModel`: `this._extHostTabGroups=e.map(c=>new …(c,…))`), while VS Code 1.140 keeps the object of a tab it knows (`_reconcileTabs`): the kept tab is another object than the preview tab the frame opened.
      * - `double-click`: the same, and then the second click, for which the editor opens the same file again, with the keyboard and as a kept tab (both editors: the tree's double click opens with `preserveFocus` off and `pinned` on). The frame is the selected one already, so the editor reports no frame, no active text editor and no selection for it: only the tab changes, from a preview tab to a kept one. The file must be opened in the active group, as the editor does. Enter on the selected row does the same as the second click.
      * - `navigation-command`: the editor's "Navigate Up/Down Call Stack" commands, which open the frame's file with the keyboard and then report the frame (both editors: `focusStackFrame` with `preserveFocus` off). What the editor reports is the same as for a click: the file's opening, then the frame.
      * @param filename - The frame's file.
@@ -3828,24 +3830,79 @@ export async function workspaceHarness(
     selectStackFrame(
       filename: string,
       column: number,
-      gesture: 'click' | 'double-click' | 'navigation-command' = 'click',
+      gesture:
+        | 'click'
+        | 'double-click'
+        | 'double-click-after-tab-model-update'
+        | 'click-on-unopened-file-then-tab-update'
+        | 'navigation-command' = 'click',
     ) {
       assert.ok(isFakeStackFrame(activeStackItem), 'No debug session is paused')
-      const opened = openDraftTab(filename, column, gesture === 'double-click')
+      const isDoubleClick = gesture.startsWith('double-click')
+      const opensPreview =
+        isDoubleClick || gesture.startsWith('click-on-unopened-file')
+      const opened = openDraftTab(filename, column, opensPreview)
       if (gesture === 'navigation-command') giveDraftKeyboard(opened)
       // Only the active group's editor is reported as the active text editor, and none while the chat's own part is the named one.
       else activeTextEditorChanged(focusedSourceEditor())
       activeStackItem = { ...activeStackItem, frameId: nextStackFrameId++ }
       for (const listener of [...activeStackItemListeners]) listener()
-      if (gesture !== 'double-click') return opened.document
+      // The editor reports the preview tab once more without a change of its state (its label got a decoration): it is a preview tab still.
+      if (gesture === 'click-on-unopened-file-then-tab-update')
+        for (const listener of tabChangeListeners)
+          listener({ opened: [], closed: [], changed: [opened.tab] })
+      if (!isDoubleClick) return opened.document
       // The second click: the same file, with the keyboard and kept open.
       assert.equal(opened.group, activeTabGroup)
-      opened.tab.isPreview = false
+      // Between the clicks the editor sent its whole tab model, and Cursor's extension host built every tab object anew: the group shows another object for the same tab, and the object of before answers what it answered last.
+      const keptTab =
+        gesture === 'double-click-after-tab-model-update'
+          ? { ...opened.tab }
+          : opened.tab
+      opened.group.tabs.splice(
+        opened.group.tabs.indexOf(opened.tab),
+        1,
+        keptTab,
+      )
+      opened.group.activeTab = keptTab
+      keptTab.isPreview = false
       keyboardInView = false
       keyboardOnBody = false
       for (const listener of tabChangeListeners)
-        listener({ opened: [], closed: [], changed: [opened.tab] })
+        listener({ opened: [], closed: [], changed: [keptTab] })
       return opened.document
+    },
+    /**
+     * Reports a fresh object for the active text tab before any frame, editor or selection event, for the third-sign regressions of {@link StudyWorkspace}.
+     * @param state - The current tab's preview and dirty values, and an optional replacement file or view column.
+     * @returns The previous tab object, whose values stay as last reported.
+     * @example harness.reportActiveTextTab({ isPreview: false, isDirty: false })
+     */
+    reportActiveTextTab(state: {
+      isPreview: boolean
+      isDirty: boolean
+      filename?: string
+      column?: number
+    }): Tab {
+      const previous = activeTabGroup.activeTab
+      assert.ok(previous?.input instanceof TabInputText)
+      const replacement = {
+        ...previous,
+        input: state.filename
+          ? new TabInputText(Uri.file(join(harness.directory, state.filename)))
+          : previous.input,
+        isPreview: state.isPreview,
+        isDirty: state.isDirty,
+      }
+      activeTabGroup.tabs = activeTabGroup.tabs.map((tab) =>
+        tab === previous ? replacement : tab,
+      )
+      activeTabGroup.activeTab = replacement
+      // A group move can change its column without any text-editor or selection event.
+      if (state.column !== undefined) activeTabGroup.viewColumn = state.column
+      for (const listener of tabChangeListeners)
+        listener({ opened: [], closed: [], changed: [replacement] })
+      return previous
     },
     /**
      * Gives the text editor in front of the active group the keyboard as a learner's click into its text does, or shows the learner at work in it with the keyboard (a cursor key, a typed letter): the editor reports the new selection as one made with the mouse or with the keyboard, and nothing else when that editor was the active text editor already (the active tab group, its tab and the active text editor stay as they are).

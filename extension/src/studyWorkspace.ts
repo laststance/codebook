@@ -637,8 +637,8 @@ export class StudyWorkspace {
   private learnerChoseEditorAtFrame = false
   /** The moment the learner last clicked or pressed a key in the active text editor ({@link noteLearnersSelection}); read while no frame is shown, where it counts for {@link LEARNER_SIGN_FRESH_MS} ({@link workedInEditorJustNow}). */
   private learnerWorkedInEditorAtMs?: number
-  /** The preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. */
-  private previewTabOfFrame?: vscode.Tab
+  /** The file and the editor group of the preview tab that was in front of the active group when the editor reported the stack item it shows now, if any; {@link keptPreviewTabOfFrame} reads from it whether the learner has kept that tab open since. The tab is known by its document and view column, never by its object: Cursor's extension host builds every tab object anew whenever the editor sends its whole tab model, and an object taken before then keeps answering what it answered last. */
+  private previewTabOfFrame?: { uri: string; column: vscode.ViewColumn }
   private moments?: vscode.WebviewView
   private viewport?: BrowserViewport
   private leaseId?: string
@@ -3104,29 +3104,50 @@ export class StudyWorkspace {
   }
 
   /**
-   * Names the tab in front of the active group when it is a preview tab; read by {@link judgeKeyboardAtStackItemChange} at every stack item, for {@link keptPreviewTabOfFrame}.
+   * Names the file and the group of the tab in front of the active group when it is a preview tab of a text document; read by {@link judgeKeyboardAtStackItemChange} at every stack item, for {@link keptPreviewTabOfFrame}.
    * A frame's file that was not open before is opened as a preview tab by one click in the Call Stack view, and stays one until the learner keeps it.
-   * @returns The tab, or `undefined` for a tab that is kept open and for an empty group.
+   * @returns The document's URI and the group's view column, or `undefined` for a tab that is kept open, a tab that shows no text document, and an empty group.
    * @example this.previewTabOfFrame = this.previewTabInFront()
    */
-  private previewTabInFront(): vscode.Tab | undefined {
-    const tab = vscode.window.tabGroups.activeTabGroup.activeTab
-    return tab?.isPreview ? tab : undefined
+  private previewTabInFront():
+    NonNullable<StudyWorkspace['previewTabOfFrame']> | undefined {
+    const group = vscode.window.tabGroups.activeTabGroup
+    const uri = this.textTabUri(group.activeTab)
+    return group.activeTab?.isPreview && uri !== undefined
+      ? { uri, column: group.viewColumn }
+      : undefined
   }
 
   /**
    * Says whether the preview tab the editor showed for the frame was kept open since and is still in front: the third sign of {@link noteLearnersSignAtFrame}.
-   * A double click on a frame in the Call Stack view, and Enter there, open the frame's file a second time, with the keyboard and as a tab that is kept: for a frame that is already the selected one, the editor reports nothing else of it (no new frame, no new active editor, and the selection stays on the frame's line). A tab that is kept because its file was changed says nothing about the keyboard, since an agent's edit does that too.
-   * @returns `true` when the tab noted at the frame is no preview tab any more, shows no unsaved change and is the tab in front of the active group; `false` otherwise, and when the frame's tab was no preview tab.
+   * A double click on a frame in the Call Stack view, and Enter there, open the frame's file a second time, with the keyboard and as a tab that is kept: for a frame that is already the selected one, the editor reports nothing else of it (no new frame, no new active editor, and the selection stays on the frame's line). A tab that is kept because its file was changed says nothing about the keyboard, since an agent's edit keeps a preview tab too.
+   * The current tab is read by document and view column: Cursor 3.23 rebuilds its tab objects on a whole-model update, leaving a remembered object's preview and dirty values stale. VS Code 1.140 reconciles existing tab IDs, but the third sign must work in both editors.
+   * @returns `true` when the tab in front of the active group shows the document noted at the frame in the same view column, is no preview tab and has no unsaved change; `false` otherwise, and when the frame's tab was no preview tab.
    * @example this.noteLearnersSignAtFrame(this.keptPreviewTabOfFrame())
    */
   private keptPreviewTabOfFrame(): boolean {
-    const tab = this.previewTabOfFrame
+    const noted = this.previewTabOfFrame
+    const group = vscode.window.tabGroups.activeTabGroup
+    return (
+      noted !== undefined &&
+      group.viewColumn === noted.column &&
+      this.isKeptTabOf(group.activeTab, noted.uri)
+    )
+  }
+
+  /**
+   * Says whether a tab shows a given document as a kept tab without unsaved changes; asked by {@link keptPreviewTabOfFrame} about the tab in front of the active group.
+   * @param tab - The tab, read from the editor now.
+   * @param uri - The document's URI as a string.
+   * @returns `true` for a text tab of that document that is no preview tab and not dirty; `false` otherwise, and without a tab.
+   * @example this.isKeptTabOf(group.activeTab, noted.uri)
+   */
+  private isKeptTabOf(tab: vscode.Tab | undefined, uri: string): boolean {
     return (
       tab !== undefined &&
+      this.textTabUri(tab) === uri &&
       !tab.isPreview &&
-      !tab.isDirty &&
-      vscode.window.tabGroups.activeTabGroup.activeTab === tab
+      !tab.isDirty
     )
   }
 
