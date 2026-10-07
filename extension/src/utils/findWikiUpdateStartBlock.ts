@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { lstat, readdir } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import { setTimeout as sleepFor } from 'node:timers/promises'
 
@@ -12,6 +12,8 @@ import {
 } from '../constants'
 
 import { hashFileSha256 } from './hashFileSha256'
+import { isFolderOfItsOwn } from './isFolderOfItsOwn'
+import { listFolderTreeWithoutFollowing } from './listFolderTreeWithoutFollowing'
 import { readWikiRegularFile } from './readWikiRegularFile'
 import { systemErrorCode } from './systemErrorCode'
 import type { WikiUpdateRefusal } from './wikiUpdateRun'
@@ -68,29 +70,52 @@ function readOwnedFileHashes(
 }
 
 /**
- * Says what blocks an update when the Wiki folder's own path holds something that is no folder; called by {@link findWikiUpdateStartBlock} before anything below that path is listed or read.
- * Why: the publisher looks at the Wiki folder itself before its journal and refuses a link or any other entry that is no directory of its own. Found here, the learner reads the reason at once, and no listing or read goes through a link a repository carries at that path.
+ * Names the block of a Wiki folder that is no folder of its own; called by {@link findFolderBlock} and {@link findEntriesBlock}.
  * @param outputDirectory - Resolved Wiki output folder.
- * @returns Cause `not-a-folder` with the folder's own name for a link (a junction on Windows), a file or a special file at that path; `undefined` for a real directory and for a path that holds nothing or cannot be looked at.
+ * @returns Cause `not-a-folder` with the folder's own name.
+ * @example
+ * folderBlockOf('/repo/.codebook/wiki') // => { cause: 'not-a-folder', paths: ['wiki'] }
+ */
+function folderBlockOf(outputDirectory: string): WikiUpdateStartBlock {
+  return { cause: 'not-a-folder', paths: [basename(outputDirectory)] }
+}
+
+/**
+ * Says what blocks an update when the Wiki folder's own path holds something that is no folder of its own; called by {@link findWikiUpdateStartBlock} before anything below that path is listed or read.
+ * Why: the publisher looks at the Wiki folder itself before its journal and refuses a link or any other entry that is no directory of its own. Found here, the learner reads the reason at once, and no listing or read goes through a link a repository carries at that path. The look is the one every listing of the Wiki folder makes ({@link isFolderOfItsOwn}).
+ * @param outputDirectory - Resolved Wiki output folder.
+ * @returns Cause `not-a-folder` with the folder's own name for a link (a junction on Windows), a file, a special file or a directory that leads elsewhere at that path; `undefined` for a directory of its parent's own and for a path that holds nothing or cannot be looked at.
  * @example
  * await findFolderBlock('/repo/.codebook/wiki') // => { cause: 'not-a-folder', paths: ['wiki'] } while `wiki` is a link
  */
 async function findFolderBlock(
   outputDirectory: string,
 ): Promise<WikiUpdateStartBlock | undefined> {
-  const folderEntry = await lstat(outputDirectory).catch(() => undefined)
-  return folderEntry && !folderEntry.isDirectory()
-    ? { cause: 'not-a-folder', paths: [basename(outputDirectory)] }
-    : undefined
+  const isOwnFolder = await isFolderOfItsOwn(outputDirectory).catch(
+    () => undefined,
+  )
+  return isOwnFolder === false ? folderBlockOf(outputDirectory) : undefined
 }
 
-/** Lists what lies under the Wiki folder that is neither a folder nor a regular file (a link, a named pipe, a socket, a device), as `/`-separated paths, sorted; empty when the folder cannot be listed. Entry types come from the folder itself, so nothing below it is followed or opened; the folder's own path was looked at before ({@link findFolderBlock}). */
-async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
-  const entries = await readdir(outputDirectory, {
-    recursive: true,
-    withFileTypes: true,
-  }).catch(() => [])
-  return entries
+/**
+ * Says what blocks an update among the entries under the Wiki folder; called by {@link findWikiUpdateStartBlock} after the journal's look, which can wait for a publish that is finishing.
+ * The folder is listed through {@link listFolderTreeWithoutFollowing}, whose look and listing are adjacent: a link that took the folder's place since the check's first look ({@link findFolderBlock}) is not listed through. Entry types come from the folder itself, so nothing below it is followed or opened.
+ * @param outputDirectory - Resolved Wiki output folder.
+ * @returns
+ * - The path came to hold a link, a file or a directory that leads elsewhere: cause `not-a-folder` with the folder's own name
+ * - Entries that are neither a folder nor a regular file (a link, a named pipe, a socket, a device): cause `special-file` with their `/`-separated paths, sorted
+ * - Otherwise, also when the folder is missing or cannot be listed: undefined
+ * @example
+ * await findEntriesBlock('/repo/.codebook/wiki') // => { cause: 'special-file', paths: ['assets/shared.css'] }
+ */
+async function findEntriesBlock(
+  outputDirectory: string,
+): Promise<WikiUpdateStartBlock | undefined> {
+  const entries = await listFolderTreeWithoutFollowing(outputDirectory).catch(
+    () => [],
+  )
+  if (!entries) return folderBlockOf(outputDirectory)
+  const specialEntries = entries
     .filter((entry) => !entry.isDirectory() && !entry.isFile())
     .map((entry) =>
       relative(outputDirectory, join(entry.parentPath, entry.name))
@@ -98,6 +123,9 @@ async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
         .join('/'),
     )
     .sort()
+  return specialEntries.length
+    ? { cause: 'special-file', paths: specialEntries }
+    : undefined
 }
 
 /**
@@ -110,7 +138,7 @@ async function listSpecialEntries(outputDirectory: string): Promise<string[]> {
  * @param options.now - Clock in epoch milliseconds; tests pass a fixed one.
  * @param options.wait - Waits before the one second look at a journal that was written a moment ago; tests pass their own.
  * @returns
- * - The Wiki folder's own path holds a link, a file or anything else that is no folder: cause `not-a-folder` with the folder's name; nothing below that path is listed or read
+ * - The Wiki folder's own path holds a link, a file or anything else that is no folder of its own, at the check's first look or when it lists the folder after the journal's look: cause `not-a-folder` with the folder's name; nothing below that path is listed
  * - `<output>.publish-journal.json` exists: cause `unfinished-publish` with the journal's file name. A journal written within the last {@link WIKI_PUBLISH_JOURNAL_FRESH_MS} belongs to a publish that may be finishing right now, so it is looked at once more after {@link WIKI_UPDATE_WATCH_POLL_MS}; when it is gone then, the check goes on
  * - A link, pipe, socket or device anywhere under the Wiki folder: cause `special-file` with the paths, sorted
  * - A manifest that is there and is not a JSON object Codebook can read: cause `unreadable-manifest` with the manifest's file name
@@ -151,9 +179,8 @@ export async function findWikiUpdateStartBlock(
   }
   if (journalStat)
     return { cause: 'unfinished-publish', paths: [basename(journalPath)] }
-  const specialEntries = await listSpecialEntries(outputDirectory)
-  if (specialEntries.length)
-    return { cause: 'special-file', paths: specialEntries }
+  const entriesBlock = await findEntriesBlock(outputDirectory)
+  if (entriesBlock) return entriesBlock
   const manifestPath = join(outputDirectory, WIKI_MANIFEST_FILE)
   const manifestFile = await readWikiRegularFile(manifestPath)
   if (!manifestFile) {
