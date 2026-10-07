@@ -1817,3 +1817,91 @@ test('a pause at the first position of another page script whose breakpoint was 
     'Unowned browser stop remained paused',
   )
 })
+
+// Cycle 0046 (row 295): red while every held page pause counted as a competing resume after 1,000 ms during the wait for an accepted browser stop's own pause: the debugger's own pause at the first position of another page script, which it resumes once it has read that script's source map, ended the run with "Manual or competing resume invalidated live pause: ... was resumed after more than 1000 ms ...".
+test('the debugger’s own pause at the first position of another page script, held while an accepted browser stop awaits its own pause and resumed after 1,500 ms, is not taken for a competing resume, and the browser stop is captured', async (context) => {
+  // Arrange: the server stop is captured and continued, the debugger announces the browser stop, and the wait for that stop's own pause is held open. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the wait for the browser stop’s own pause',
+  )
+  harness.announceScript(
+    'browser',
+    OTHER_PAGE_SCRIPT.scriptId,
+    OTHER_PAGE_SCRIPT.url,
+  )
+  // Act: the page pauses at the first position of the other script, at the debugger's breakpoint by the name "mode"; the debugger resumes it after 1,500 ms, and then the browser stop's own pause is read.
+  harness.emitUnannouncedPause('browser', {
+    scriptId: OTHER_PAGE_SCRIPT.scriptId,
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:mode'],
+  })
+  harness.advance(1_500)
+  harness.emitResume('browser')
+  const failuresAfterTheResume = harness.run.view().failures.join('; ')
+  nextStop.paused()
+  const browser = await pauseReady(harness, 'browser')
+  // Assert
+  assert.equal(failuresAfterTheResume, '')
+  assert.deepEqual([browser.source.line, browser.source.column], [1, 1])
+  assert.deepEqual(journaled(harness, 'cdp.unannounced-pause-resumed-late'), [])
+  assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 1)
+})
+
+// Cycle 0046 (row 295): the longer bound in that phase is the debugger's own breakpoint's alone; red if a held page pause with another breakpoint, which may be the announced stop's pause or one somebody else resumes, were given 3,000 ms there.
+test('a page pause at the first position of another page script whose breakpoint was set by that script’s address, held while an accepted browser stop awaits its own pause and resumed after 1,001 ms, ends the run as a manual or competing resume', async (context) => {
+  // Arrange: as above, but the breakpoint the pause hit is one set by the script's address, as a breakpoint on that line of the file is.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  await harness.run.continue('server', server.pause)
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.waitInProgress(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the wait for the browser stop’s own pause',
+  )
+  harness.announceScript(
+    'browser',
+    OTHER_PAGE_SCRIPT.scriptId,
+    OTHER_PAGE_SCRIPT.url,
+  )
+  harness.emitUnannouncedPause('browser', {
+    scriptId: OTHER_PAGE_SCRIPT.scriptId,
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: [
+      '1:0:0:webpack-internal:///(app-pages-browser)/./src/my-mode.ts',
+    ],
+  })
+  // Act
+  harness.advance(1_001)
+  harness.emitResume('browser')
+  await harness.run.stop()
+  // Assert
+  assert.equal(
+    harness.run.view().failures[0],
+    'Manual or competing resume invalidated live pause: the browser pause at webpack-internal:///(app-pages-browser)/./src/my-mode.ts 1:1 that no debugger stop announced was resumed after more than 1000 ms, longer than the debugger holds a pause of its own',
+  )
+})
