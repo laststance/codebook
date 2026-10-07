@@ -1991,3 +1991,50 @@ test('a pause held in the accepted browser stop’s own module, when that module
     'Manual or competing resume invalidated live pause: the browser pause at webpack-internal:///(app-pages-browser)/./src/mode.ts 11:116 that no debugger stop announced was resumed after more than 1000 ms, longer than the debugger holds a pause of its own',
   )
 })
+
+// Cycle 0046 (row 297): red while the debugger's own pause at the first position of the browser stop's own module, held since before that stop's turn for longer than 1,000 ms, ended the wait for the stop with "Declared stop src/theme.ts:1 paused at src/theme.ts:1 before its turn: its line ran before ..., so that pause is no observation of this stop; declare a line that runs only after ...", which tells the agent to declare another line for a pause that is the debugger's own.
+test('the debugger’s own pause at the first position of a browser stop’s own module, held since before that stop’s turn for 1,500 ms and then resumed, is not refused as an early run of the stop’s line, and the stop is captured at its own pause', async (context) => {
+  // Arrange: the server stop is captured, and the page pauses at the first position of the browser stop's module, at the debugger's breakpoint by the name "theme", while that stop is being armed; the wait for the stop's own pause is held open by the test. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(
+    context,
+    ['server', 'browser'],
+    { manualClock: true },
+  )
+  await harness.run.prepare()
+  const nextStop = harness.holdNextPause()
+  harness.holdSourceBoundWait()
+  harness.run.action('once', 'repository-click')
+  const server = await pauseReady(harness, 'server')
+  const lookup = harness.holdBindingLookup()
+  const continuation = harness.run.continue('server', server.pause)
+  await lookup.started
+  harness.emitUnannouncedPause('browser', {
+    scriptId: 'browser',
+    lineNumber: 0,
+    columnNumber: 0,
+    functionName: '',
+    hitBreakpoints: ['br:2:0:0:theme'],
+  })
+  lookup.release()
+  await continuation
+  // Act: 1,500 ms pass and the debugger announces the browser stop; the wait for the stop's own pause looks at the held pause, and the run is given a turn to end on it. Then the debugger resumes its own pause, and the stop's own pause is read.
+  harness.advance(1_500)
+  nextStop.stopped()
+  await waitUntil(
+    () => harness.waitEntered(SOURCE_BOUND_PAUSE_WAIT_DESCRIPTION),
+    'the wait for the browser stop’s own pause',
+  )
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve)
+  })
+  const failuresWhileHeld = harness.run.view().failures.join('; ')
+  harness.emitResume('browser')
+  nextStop.paused()
+  const browser = await pauseReady(harness, 'browser')
+  // Assert
+  assert.equal(failuresWhileHeld, '')
+  assert.deepEqual([browser.source.line, browser.source.column], [1, 1])
+  assert.deepEqual(journaled(harness, 'cdp.unannounced-pause-resumed-late'), [])
+  assert.equal(journaled(harness, 'cdp.adapter-pause-retired').length, 1)
+  assert.equal(harness.run.view().snapshots.length, 2)
+})

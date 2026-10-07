@@ -3090,7 +3090,7 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     )
   }
 
-  /** Tells {@link isAdaptersPagePause} whether a held pause is the page's pause at the debug adapter's own breakpoint at a module's first position ({@link isModuleEntryPause}, asked with the page's script addresses and the files of every declared stop); the rule was observed for the page only, so a server pause is never taken for one. @example this.isPageEntryPause('browser', held.event) // true for a pause at 1:1 of (app-pages-browser)/./app/lib/my-actions.ts that hit br:2:0:0:actions */
+  /** Tells {@link isAdaptersPagePause} and {@link pauseHeldBeforeTurn} whether a held pause is the page's pause at the debug adapter's own breakpoint at a module's first position ({@link isModuleEntryPause}, asked with the page's script addresses and the files of every declared stop); the rule was observed for the page only, so a server pause is never taken for one. @example this.isPageEntryPause('browser', held.event) // true for a pause at 1:1 of (app-pages-browser)/./app/lib/my-actions.ts that hit br:2:0:0:actions */
   private isPageEntryPause(
     name: Participant,
     event: Protocol.Debugger.PausedEvent,
@@ -4485,8 +4485,9 @@ export class ConfiguredBrowserRun implements StudyRuntime {
 
   /**
    * Finds a pause in an accepted stop's module that was held before that stop's turn, for {@link pauseOfAcceptedStop}: its line ran before the input was sent or before the preceding continuation was requested.
+   * The debug adapter's own pause at the first position of that module ({@link isPageEntryPause}) is not such a pause: no line of the stop ran, the adapter resumes it once it has read the module's source map, and its resume is measured by the adapter's own bound ({@link adapterPauseLimitMs}).
    * @param stop - The declared stop whose `stopped` was accepted.
-   * @returns The held pause, or `undefined` when none is held or it was held during the stop's turn or in another script.
+   * @returns The held pause, or `undefined` when none is held, it is the adapter's own pause at the module's first position, or it was held during the stop's turn or in another script.
    * @example
    * ```ts
    * this.pauseHeldBeforeTurn(stop) // the pause of a re-render that ran while the stop was being armed
@@ -4496,11 +4497,20 @@ export class ConfiguredBrowserRun implements StudyRuntime {
     stop: PreparedStop,
   ): DebugParticipant['unannouncedPause'] {
     const held = this.participants[stop.participant].unannouncedPause
-    return held &&
-      held.expectedStop !== stop &&
-      isPauseInScript(held.event, stop.script)
-      ? held
-      : undefined
+    // The adapter's own pause at the module's first position is no early run of the stop's line.
+    if (!held || this.isPageEntryPause(stop.participant, held.event))
+      return undefined
+    return this.isHeldBeforeTurnOf(stop, held) ? held : undefined
+  }
+
+  /** Tells {@link pauseHeldBeforeTurn} whether a held pause lies in a stop's module and was held while that stop was not the expected one. @example this.isHeldBeforeTurnOf(stop, held) // true for the pause of a re-render that ran while the stop was being armed */
+  private isHeldBeforeTurnOf(
+    stop: PreparedStop,
+    held: NonNullable<DebugParticipant['unannouncedPause']>,
+  ): boolean {
+    return (
+      held.expectedStop !== stop && isPauseInScript(held.event, stop.script)
+    )
   }
 
   /** Words the failure of an accepted stop whose only pause came before its turn, so the agent learns that the line ran early instead of reading a timeout. @example this.earlyPauseFailure(stop, held).message // 'Declared stop app/ui/form.tsx:22 paused at app/ui/form.tsx:22 before its turn: …' */
