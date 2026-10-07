@@ -2893,14 +2893,26 @@ const REMOVAL_TEST_SKILL =
   '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
 
 /**
- * Sets Cursor chat up for real in a temporary home (the skill, and the empty MCP config Codebook creates and owns) and loads the extension's removal command over it. The first cleanup of the MCP config is refused as it is while another window holds the storage lock; every later call reaches the real catalog.
- * @returns The command, the notifications it showed, the config's path, and the cleanup of the temporary folders.
+ * Sets Cursor chat up for real in a temporary home (the skill, and the empty MCP config Codebook creates and owns) and loads the extension's removal command over it, with the real skill removal and the real catalog.
+ * @param beforeFirstCleanup - What happens once, right before the command's first cleanup of the MCP config reaches the real catalog, given the path of the catalog's receipt: nothing, a refusal thrown in the cleanup's place ({@link refuseAsLockedStorage}), or a change another Cursor window made in the meantime.
+ * @returns The command, the notifications it showed, the paths of the skill, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
  */
-async function removalCommandWhoseFirstCleanupIsRefused(): Promise<{
+/** Refuses a cleanup of the Cursor MCP config as the catalog does while another window holds its storage lock; handed to {@link removalCommandOverATemporaryHome}. */
+async function refuseAsLockedStorage(): Promise<void> {
+  throw new Error(
+    'Learning storage is locked by another writer or an interrupted session (lock file: /storage/cursor-mcp-catalog/writer.lock). No data changed; retry after resolving the lock.',
+  )
+}
+
+async function removalCommandOverATemporaryHome(
+  beforeFirstCleanup: (catalogReceiptPath: string) => Promise<void>,
+): Promise<{
   runRemoval: () => Promise<void>
   informations: string[]
   warnings: string[]
+  skillPath: string
   configPath: string
+  catalogReceiptPath: string
   dispose: () => Promise<void>
 }> {
   const directory = await realpath(
@@ -2926,7 +2938,12 @@ async function removalCommandWhoseFirstCleanupIsRefused(): Promise<{
   const commands = new Map<string, () => Promise<void>>(),
     informations: string[] = [],
     warnings: string[] = []
-  let isFirstCleanupRefused = false
+  const catalogReceiptPath = join(
+    storageRoot,
+    'cursor-mcp-catalog',
+    'receipt.json',
+  )
+  let isFirstCleanup = true
   const boundary = await loadModule<typeof ExtensionModule>(
     resolve(__dirname, '../extension.js'),
     {
@@ -2975,23 +2992,31 @@ async function removalCommandWhoseFirstCleanupIsRefused(): Promise<{
           cursorSkillDeployment.removeManagedCursorSkill(storage, homeRoot),
       },
       './utils/refreshCursorMcpCatalog': {
-        captureOwnedCursorMcpCatalogGeneration: (storage: string) =>
-          captureOwnedCursorMcpCatalogGeneration(storage, cursorDirectory),
+        captureOwnedCursorMcpCatalogGeneration: (
+          storage: string,
+          _cursorDirectory: string | undefined,
+          commandToRunAgain: string,
+        ) =>
+          captureOwnedCursorMcpCatalogGeneration(
+            storage,
+            cursorDirectory,
+            commandToRunAgain,
+          ),
         removeOwnedCursorMcpCatalog: async (
           storage: string,
           _cursorDirectory: string | undefined,
           generation: string,
+          commandToRunAgain: string,
         ) => {
-          if (!isFirstCleanupRefused) {
-            isFirstCleanupRefused = true
-            throw new Error(
-              'Learning storage is locked by another writer or an interrupted session (lock file: /storage/cursor-mcp-catalog/writer.lock). No data changed; retry after resolving the lock.',
-            )
+          if (isFirstCleanup) {
+            isFirstCleanup = false
+            await beforeFirstCleanup(catalogReceiptPath)
           }
           return removeOwnedCursorMcpCatalog(
             storage,
             cursorDirectory,
             generation,
+            commandToRunAgain,
           )
         },
       },
@@ -3007,7 +3032,9 @@ async function removalCommandWhoseFirstCleanupIsRefused(): Promise<{
     runRemoval: commands.get('codebook.removeManagedCursorSkill')!,
     informations,
     warnings,
+    skillPath: join(cursorDirectory, 'skills', 'codebook', 'SKILL.md'),
     configPath: join(cursorDirectory, 'mcp.json'),
+    catalogReceiptPath,
     dispose: async (): Promise<void> => {
       await boundary.deactivate()
       await rm(directory, { recursive: true, force: true })
@@ -3018,7 +3045,7 @@ async function removalCommandWhoseFirstCleanupIsRefused(): Promise<{
 // Value: protects=a learner whose Remove Managed Cursor Skill removed the skill and could not retire Codebook's empty Cursor MCP config (another window held the storage lock); fails_when=a second removal ends with "No installed Codebook-owned Cursor skill was found; no file was changed." and never reaches the config, which then stays until the learner sets Cursor chat up and removes it again; why_new=Cycle 0046 row 222; seam=the removal command with the real skill and catalog over a temporary home, and a first cleanup that is refused
 test('a second Remove Managed Cursor Skill, after a first whose Cursor MCP config cleanup was refused, goes on to that cleanup: it retires the config Codebook created and says that the skill was already removed', async () => {
   // Arrange
-  const cursor = await removalCommandWhoseFirstCleanupIsRefused()
+  const cursor = await removalCommandOverATemporaryHome(refuseAsLockedStorage)
   try {
     // Act
     await cursor.runRemoval()
@@ -3055,7 +3082,7 @@ test('a second Remove Managed Cursor Skill, after a first whose Cursor MCP confi
 // Value: protects=a Cursor MCP config the learner changed after a removal could not retire it; fails_when=the second removal removes a config that is not the empty one Codebook created, or ends without saying why the config was left; why_new=Cycle 0046 row 222: the cleanup the second removal goes on to keeps the catalog's rule; seam=the removal command with the real skill and catalog over a temporary home, and a first cleanup that is refused
 test('a second Remove Managed Cursor Skill leaves a Cursor MCP config the learner changed after the first removal, and says that the skill was already removed and why the config stays', async () => {
   // Arrange
-  const cursor = await removalCommandWhoseFirstCleanupIsRefused()
+  const cursor = await removalCommandOverATemporaryHome(refuseAsLockedStorage)
   const changedConfig = '{"mcpServers":{"mine":{"command":"tool"}}}\n'
   try {
     // Act: between the two removals the learner adds a server of their own.
@@ -3074,6 +3101,73 @@ test('a second Remove Managed Cursor Skill leaves a Cursor MCP config the learne
           'The managed Cursor skill was already removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
         ],
         config: changedConfig,
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=a learner who asks Codebook to remove its Cursor setup while a record of the Cursor MCP catalog is damaged; fails_when=the command ends at its first step, the catalog's generation, with that record's refusal: the skill stays, and the sentence sends a learner who asked for a removal to Codebook: Set Up AI Chat; why_new=Cycle 0046 row 224; seam=the removal command with the real skill and catalog over a temporary home, whose catalog receipt is no JSON
+test('a Remove Managed Cursor Skill whose Cursor MCP catalog record is damaged removes the skill all the same and warns with that record’s refusal, which names the removal as the command to run again; after the learner deletes the record as told, a second removal says that the skill was already removed and leaves the config', async () => {
+  // Arrange: the catalog's receipt was cut off in the middle.
+  const cursor = await removalCommandOverATemporaryHome(async () => {})
+  await writeFile(cursor.catalogReceiptPath, '{"schemaVersion":1,')
+  try {
+    // Act: the warning is followed to the letter.
+    await cursor.runRemoval()
+    const skillAfterTheFirstRemoval = await access(cursor.skillPath).then(
+      () => 'still there',
+      (error: { code?: string }) => error.code,
+    )
+    const configAfterTheFirstRemoval = await readFile(cursor.configPath, 'utf8')
+    await rm(cursor.catalogReceiptPath)
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      {
+        warnings: cursor.warnings,
+        skillAfterTheFirstRemoval,
+        configAfterTheFirstRemoval,
+        informations: cursor.informations,
+        configAfterTheSecondRemoval: await readFile(cursor.configPath, 'utf8'),
+      },
+      {
+        warnings: [
+          `Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${cursor.catalogReceiptPath}, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.`,
+        ],
+        skillAfterTheFirstRemoval: 'ENOENT',
+        configAfterTheFirstRemoval: '{"mcpServers":{}}\n',
+        informations: [
+          'The managed Cursor skill was already removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+        ],
+        configAfterTheSecondRemoval: '{"mcpServers":{}}\n',
+      },
+    )
+  } finally {
+    await cursor.dispose()
+  }
+})
+
+// Value: protects=the same learner when the record is damaged only after the removal's first step read it (another Cursor window, or a hand edit while the confirmation stood open); fails_when=the cleanup's refusal names Codebook: Set Up AI Chat, because the command handed its own title to the catalog's first step only; why_new=Cycle 0046 row 224: both catalog calls of the removal command get the command to name; seam=the removal command with the real skill and catalog over a temporary home, whose catalog receipt is cut off right before the cleanup
+test('a Cursor MCP catalog record that is damaged between the two catalog steps of a Remove Managed Cursor Skill is refused by the cleanup with the removal as the command to run again', async () => {
+  // Arrange
+  const cursor = await removalCommandOverATemporaryHome((catalogReceiptPath) =>
+    writeFile(catalogReceiptPath, '{"schemaVersion":1,'),
+  )
+  try {
+    // Act
+    await cursor.runRemoval()
+
+    // Assert
+    assert.deepEqual(
+      { warnings: cursor.warnings, informations: cursor.informations },
+      {
+        warnings: [
+          `Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${cursor.catalogReceiptPath}, then run Codebook: Remove Managed Cursor Skill again. The managed Cursor skill itself was removed; Codebook left the Cursor MCP config in place and deleted no unverified file. When the cause above is resolved, run Codebook: Remove Managed Cursor Skill again: it goes on with the config.`,
+        ],
+        informations: [],
       },
     )
   } finally {

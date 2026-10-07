@@ -16,11 +16,16 @@ import { test, type TestContext } from 'node:test'
 
 import type * as CatalogModule from '../utils/refreshCursorMcpCatalog'
 import {
+  captureOwnedCursorMcpCatalogGeneration,
   refreshCursorMcpCatalog,
   removeOwnedCursorMcpCatalog,
 } from '../utils/refreshCursorMcpCatalog'
 import { systemErrorCode } from '../utils/systemErrorCode'
 
+import {
+  createLinkIfAllowed,
+  LINK_NOT_ALLOWED,
+} from './utils/createLinkIfAllowed'
 import { loadModule } from './utils/loadModule'
 
 /** The config Codebook creates for a first-time Cursor user. */
@@ -566,4 +571,79 @@ test('a Cursor MCP catalog receipt that is no JSON, and a creation record whose 
     noJson: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${receiptPath}, then run Codebook: Set Up AI Chat again.`,
     invalidOwner: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${creationPath}, then run Codebook: Set Up AI Chat again.`,
   })
+})
+
+// Value: protects=the learner who reads a refusal of the Cursor MCP catalog under the command they ran; fails_when=a refusal that names a command to run again names Codebook: Set Up AI Chat although the learner ran the removal, so the removal's warning leaves them with two different next steps; why_new=Cycle 0046 row 224: the catalog's refusals name the command their caller hands them; seam=none, the real files
+test('a damaged record and a record that is kept are refused with the command the caller ran as the one to run again: the removal under a removal, Codebook: Set Up AI Chat under a refresh', async (context) => {
+  // Arrange: one catalog whose receipt is no JSON, and one whose removal moved a changed config away while another config took its path.
+  const damaged = await catalogFolders(context),
+    kept = await catalogFolders(context)
+  for (const folders of [damaged, kept])
+    await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const receiptPath = join(damaged.recordDirectory, 'receipt.json')
+  await writeFile(receiptPath, '{"schemaVersion":1,')
+  const { pendingPath, retiredPath } = await writeRemovalRecord(kept)
+  await writeFile(kept.configPath, EDITED_CONFIG)
+  await rename(kept.configPath, retiredPath)
+  await writeFile(kept.configPath, '{"mcpServers":{"newer":{}}}\n')
+
+  // Act
+  const refusals = {
+    damagedUnderARemoval: await outcomeOf(
+      captureOwnedCursorMcpCatalogGeneration(
+        damaged.storageRoot,
+        damaged.cursorDirectory,
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+    damagedUnderARefresh: await outcomeOf(
+      refreshCursorMcpCatalog(damaged.storageRoot, damaged.cursorDirectory),
+    ),
+    keptUnderARemoval: await outcomeOf(
+      removeOwnedCursorMcpCatalog(
+        kept.storageRoot,
+        kept.cursorDirectory,
+        undefined,
+        'Codebook: Remove Managed Cursor Skill',
+      ),
+    ),
+    keptUnderARefresh: await outcomeOf(
+      refreshCursorMcpCatalog(kept.storageRoot, kept.cursorDirectory),
+    ),
+  }
+
+  // Assert
+  assert.deepEqual(refusals, {
+    damagedUnderARemoval: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${receiptPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+    damagedUnderARefresh: `refused: Cursor MCP catalog ownership record is invalid; Codebook preserved the config. To start over, delete ${receiptPath}, then run Codebook: Set Up AI Chat again.`,
+    keptUnderARemoval: `refused: Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Remove Managed Cursor Skill again.`,
+    keptUnderARefresh: `refused: Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}. To start over, delete ${pendingPath}, then run Codebook: Set Up AI Chat again.`,
+  })
+})
+
+// Value: protects=the same for a record path that holds a link; fails_when=the refusal of a link at a record names Codebook: Set Up AI Chat under a removal; why_new=Cycle 0046 row 224; seam=none, the real files
+test('a record of the Cursor MCP catalog that is a link is refused under a removal with the removal as the command to run again', async (context) => {
+  // Arrange: the receipt is moved away and a link to it stands at its path.
+  const folders = await catalogFolders(context)
+  await refreshCursorMcpCatalog(folders.storageRoot, folders.cursorDirectory)
+  const receiptPath = join(folders.recordDirectory, 'receipt.json')
+  const movedReceiptPath = join(folders.cursorDirectory, 'moved-receipt.json')
+  await rename(receiptPath, movedReceiptPath)
+  if (!(await createLinkIfAllowed(movedReceiptPath, receiptPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+
+  // Act
+  const refusal = await outcomeOf(
+    captureOwnedCursorMcpCatalogGeneration(
+      folders.storageRoot,
+      folders.cursorDirectory,
+      'Codebook: Remove Managed Cursor Skill',
+    ),
+  )
+
+  // Assert
+  assert.equal(
+    refusal,
+    `refused: Codebook will not read a Cursor MCP catalog ownership record through a link: ${receiptPath}. Remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+  )
 })

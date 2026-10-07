@@ -27,7 +27,7 @@ import { isRecordedFileId } from './isRecordedFileId'
 import { isSameFileId } from './isSameFileId'
 import { openWithoutFollowing } from './openWithoutFollowing'
 import { recordedFileId, type RecordedFileId } from './recordedFileId'
-import { startOverBy } from './startOverBy'
+import { SET_UP_AI_CHAT_COMMAND, startOverBy } from './startOverBy'
 import { systemErrorCode } from './systemErrorCode'
 import { withStorageLock } from './withStorageLock'
 
@@ -77,75 +77,101 @@ async function regularDirectory(path: string): Promise<void> {
  * Codebook deletes nothing on such a record: it proves no ownership. Deleting the record is enough for a setup to finish: without it Codebook treats the config as the learner's and only refreshes it.
  * @param subject - What is invalid, as the sentence begins: "Cursor MCP catalog ownership record", for example.
  * @param recordPath - The file that holds the invalid record.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again ({@link startOverBy}).
  * @returns The error, not thrown yet.
- * @example throw invalidCatalogRecord('Cursor MCP catalog ownership record', '/private/cursor-mcp-catalog/receipt.json')
+ * @example throw invalidCatalogRecord('Cursor MCP catalog ownership record', '/private/cursor-mcp-catalog/receipt.json', 'Codebook: Set Up AI Chat')
  */
-function invalidCatalogRecord(subject: string, recordPath: string): Error {
+function invalidCatalogRecord(
+  subject: string,
+  recordPath: string,
+  commandToRunAgain: string,
+): Error {
   return new Error(
-    `${subject} is invalid; Codebook preserved the config.${startOverBy(recordPath)}`,
+    `${subject} is invalid; Codebook preserved the config.${startOverBy(recordPath, commandToRunAgain)}`,
   )
 }
 
-/** What the learner reads for a record path that {@link openWithoutFollowing} did not open, by the code of its refusal; each sentence names the path, which lies in Codebook's own storage. A pipe, a device or a folder reads as it does where the open lets it through and its status refuses it. */
-const RECORD_REFUSAL_SENTENCES: ReadonlyMap<string, (path: string) => string> =
-  new Map([
-    [
-      'ELOOP',
-      (path: string) =>
-        `Codebook will not read a Cursor MCP catalog ownership record through a link: ${path}. Remove the link, then run Codebook: Set Up AI Chat again.`,
-    ],
-    [
-      'ENOTREG',
-      (path: string) =>
-        invalidCatalogRecord('Cursor MCP catalog ownership record', path)
-          .message,
-    ],
-    [
-      'EREPLACED',
-      (path: string) =>
-        `A Cursor MCP catalog ownership record was replaced while Codebook opened it, so it was not read: ${path}. Run Codebook: Set Up AI Chat again.`,
-    ],
-  ])
+/** What the learner reads for a record path that {@link openWithoutFollowing} did not open, by the code of its refusal; each sentence names the path, which lies in Codebook's own storage, and the command the learner ran as the one to run again. A pipe, a device or a folder reads as it does where the open lets it through and its status refuses it. */
+const RECORD_REFUSAL_SENTENCES: ReadonlyMap<
+  string,
+  (path: string, commandToRunAgain: string) => string
+> = new Map([
+  [
+    'ELOOP',
+    (path: string, commandToRunAgain: string) =>
+      `Codebook will not read a Cursor MCP catalog ownership record through a link: ${path}. Remove the link, then run ${commandToRunAgain} again.`,
+  ],
+  [
+    'ENOTREG',
+    (path: string, commandToRunAgain: string) =>
+      invalidCatalogRecord(
+        'Cursor MCP catalog ownership record',
+        path,
+        commandToRunAgain,
+      ).message,
+  ],
+  [
+    'EREPLACED',
+    (path: string, commandToRunAgain: string) =>
+      `A Cursor MCP catalog ownership record was replaced while Codebook opened it, so it was not read: ${path}. Run ${commandToRunAgain} again.`,
+  ],
+])
 
 /**
  * Turns a refusal to open an ownership record into the sentence that fits it, for {@link privateJson}.
  * @param error - What {@link openWithoutFollowing} threw.
  * @param path - The record's path.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
  * @returns An error with the sentence of a link, of what is no regular file or of a replaced file ({@link RECORD_REFUSAL_SENTENCES}), with the refusal as its cause; every other failure itself.
- * @example throw refusalOfRecordOpen(error, '/private/cursor-mcp-catalog/receipt.json')
+ * @example throw refusalOfRecordOpen(error, '/private/cursor-mcp-catalog/receipt.json', 'Codebook: Set Up AI Chat')
  */
-function refusalOfRecordOpen(error: unknown, path: string): unknown {
+function refusalOfRecordOpen(
+  error: unknown,
+  path: string,
+  commandToRunAgain: string,
+): unknown {
   const sentence = RECORD_REFUSAL_SENTENCES.get(systemErrorCode(error))
-  return sentence ? new Error(sentence(path), { cause: error }) : error
+  return sentence
+    ? new Error(sentence(path, commandToRunAgain), { cause: error })
+    : error
 }
 
 /**
  * Parses the text of a catalog record, for {@link privateJson}; text that is no JSON is an invalid record like one with a wrong field.
  * @param text - The record file's text.
  * @param recordPath - The record file.
+ * @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again.
  * @returns The parsed value, not validated yet.
  * @throws With the sentence of an invalid record ({@link invalidCatalogRecord}) when the text is no JSON.
- * @example parseRecordText('{"schemaVersion":1}', '/private/cursor-mcp-catalog/receipt.json') // => { schemaVersion: 1 }
+ * @example parseRecordText('{"schemaVersion":1}', '/private/cursor-mcp-catalog/receipt.json', 'Codebook: Set Up AI Chat') // => { schemaVersion: 1 }
  */
-function parseRecordText(text: string, recordPath: string): unknown {
+function parseRecordText(
+  text: string,
+  recordPath: string,
+  commandToRunAgain: string,
+): unknown {
   try {
     return JSON.parse(text)
   } catch {
     throw invalidCatalogRecord(
       'Cursor MCP catalog ownership record',
       recordPath,
+      commandToRunAgain,
     )
   }
 }
 
-/** Reads a bounded private journal without following a replaced record path ({@link openWithoutFollowing}: a link is refused on every system, also where the open has no flag for it). @returns The parsed record, or undefined when the path holds nothing. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened ({@link refusalOfRecordOpen}). @example await privateJson('/private/receipt.json') */
-async function privateJson(path: string): Promise<unknown | undefined> {
+/** Reads a bounded private journal without following a replaced record path ({@link openWithoutFollowing}: a link is refused on every system, also where the open has no flag for it). @returns The parsed record, or undefined when the path holds nothing. @param commandToRunAgain - The command the learner ran, which a refusal names as the one to run again. @throws With the sentence that fits a link, a path that is no regular file or a file that was replaced while it was opened ({@link refusalOfRecordOpen}). @example await privateJson('/private/receipt.json', 'Codebook: Set Up AI Chat') */
+async function privateJson(
+  path: string,
+  commandToRunAgain: string,
+): Promise<unknown | undefined> {
   let handle
   try {
     handle = await openWithoutFollowing(path)
   } catch (error) {
     if (isMissing(error)) return undefined
-    throw refusalOfRecordOpen(error, path)
+    throw refusalOfRecordOpen(error, path, commandToRunAgain)
   }
   try {
     const status = await handle.stat()
@@ -153,18 +179,27 @@ async function privateJson(path: string): Promise<unknown | undefined> {
       !status.isFile() ||
       status.size > CURSOR_MCP_CATALOG_RECEIPT_LIMIT_BYTES
     )
-      throw invalidCatalogRecord('Cursor MCP catalog ownership record', path)
-    return parseRecordText(await handle.readFile('utf8'), path)
+      throw invalidCatalogRecord(
+        'Cursor MCP catalog ownership record',
+        path,
+        commandToRunAgain,
+      )
+    return parseRecordText(
+      await handle.readFile('utf8'),
+      path,
+      commandToRunAgain,
+    )
   } finally {
     await handle.close()
   }
 }
 
-/** Validates the exact config identity before {@link removeOwnedCursorMcpCatalog} can retire it. @param recordPath - The file the value was read from (the receipt, or the creation or removal record that holds it as its owner), which the refusal names ({@link invalidCatalogRecord}). @example parseReceipt(record, '/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/receipt.json') */
+/** Validates the exact config identity before {@link removeOwnedCursorMcpCatalog} can retire it. @param recordPath - The file the value was read from (the receipt, or the creation or removal record that holds it as its owner), which the refusal names ({@link invalidCatalogRecord}). @param commandToRunAgain - The command the learner ran, which the refusal names as the one to run again. @example parseReceipt(record, '/home/user/.cursor/mcp.json', '/private/cursor-mcp-catalog/receipt.json', 'Codebook: Set Up AI Chat') */
 function parseReceipt(
   value: unknown,
   targetPath: string,
   recordPath: string,
+  commandToRunAgain: string,
 ): CatalogReceipt {
   const retiredPath =
     typeof value === 'object' && value !== null && 'retiredPath' in value
@@ -196,6 +231,7 @@ function parseReceipt(
     throw invalidCatalogRecord(
       'Cursor MCP catalog ownership record',
       recordPath,
+      commandToRunAgain,
     )
   return {
     schemaVersion: 1,
@@ -449,14 +485,20 @@ async function setTimesOfOpenConfig(
   }
 }
 
-/** Advances a verified empty config's private generation so a later cleanup cannot retire a newer window's refresh. @example await advanceOwnedRefreshId(receiptPath, targetPath) */
+/** Advances a verified empty config's private generation so a later cleanup cannot retire a newer window's refresh. @param commandToRunAgain - The command the learner ran, which a refusal of the receipt names as the one to run again. @example await advanceOwnedRefreshId(receiptPath, targetPath, 'Codebook: Set Up AI Chat') */
 async function advanceOwnedRefreshId(
   receiptPath: string,
   targetPath: string,
+  commandToRunAgain: string,
 ): Promise<string | undefined> {
-  const rawOwner = await privateJson(receiptPath)
+  const rawOwner = await privateJson(receiptPath, commandToRunAgain)
   if (rawOwner === undefined) return undefined
-  const owner = parseReceipt(rawOwner, targetPath, receiptPath)
+  const owner = parseReceipt(
+    rawOwner,
+    targetPath,
+    receiptPath,
+    commandToRunAgain,
+  )
   if (!owner.installed || !(await ownedFile(targetPath, owner)))
     return undefined
   const refreshId = randomUUID()
@@ -468,14 +510,15 @@ async function advanceOwnedRefreshId(
   return refreshId
 }
 
-/** Completes ownership after an atomic config publication, or discards only its verified unpublished staging file. @example await recoverCreation(pending, receipt, target, cursorDirectory) */
+/** Completes ownership after an atomic config publication, or discards only its verified unpublished staging file. @param commandToRunAgain - The command the learner ran, which a refusal of the creation record names as the one to run again. @example await recoverCreation(pending, receipt, target, cursorDirectory, 'Codebook: Set Up AI Chat') */
 async function recoverCreation(
   pendingPath: string,
   receiptPath: string,
   targetPath: string,
   cursorDirectory: string,
+  commandToRunAgain: string,
 ): Promise<void> {
-  const record = await privateJson(pendingPath)
+  const record = await privateJson(pendingPath, commandToRunAgain)
   if (record === undefined) return
   if (
     typeof record !== 'object' ||
@@ -491,12 +534,19 @@ async function recoverCreation(
     throw invalidCatalogRecord(
       'Cursor MCP catalog creation record',
       pendingPath,
+      commandToRunAgain,
     )
-  const owner = parseReceipt(record.owner, targetPath, pendingPath)
+  const owner = parseReceipt(
+    record.owner,
+    targetPath,
+    pendingPath,
+    commandToRunAgain,
+  )
   if (!owner.installed || owner.retiredPath !== undefined)
     throw invalidCatalogRecord(
       'Cursor MCP catalog creation record',
       pendingPath,
+      commandToRunAgain,
     )
   const published = await ownedFile(targetPath, owner),
     staged = await ownedFile(record.stagedPath, owner)
@@ -518,17 +568,19 @@ async function recoverCreation(
  * @param targetPath - The config's path.
  * @param retiredPath - The name in Codebook's storage that the removal moved the config to.
  * @param pendingPath - The removal's recovery record, which the caller removes afterwards.
+ * @param commandToRunAgain - The command the learner ran, which the sentence names as the one to run again.
  * @throws When the config's path holds another file than the one that was moved away: both files and the record stay, and the sentence names the kept file and what the learner does next.
- * @example await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath)
+ * @example await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath, 'Codebook: Remove Managed Cursor Skill')
  */
 async function leaveChangedConfigInPlace(
   targetPath: string,
   retiredPath: string,
   pendingPath: string,
+  commandToRunAgain: string,
 ): Promise<void> {
   if ((await dropSecondNameOfMovedFile(targetPath, retiredPath)) === 'kept')
     throw new Error(
-      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath)}`,
+      `Cursor MCP catalog changed during interrupted cleanup; Codebook preserved the config and recovery record. The file Codebook had moved away is kept as ${retiredPath}.${startOverBy(pendingPath, commandToRunAgain)}`,
     )
 }
 
@@ -537,16 +589,18 @@ async function leaveChangedConfigInPlace(
  * @returns
  * - `removed`: the config Codebook created stands under its retired name; the receipt now says so
  * - undefined: nothing to finish (no record), or the record is dropped: the config Codebook created is still at its path, or the config changed under the removal and stays in place as the learner's ({@link leaveChangedConfigInPlace})
+ * @param commandToRunAgain - The command the learner ran, which a refusal names as the one to run again.
  * @throws For an invalid record, and when the config's path and the retired name hold two different files of which neither is the config Codebook created.
- * @example await recoverRemoval(pending, receipt, target, storage)
+ * @example await recoverRemoval(pending, receipt, target, storage, 'Codebook: Remove Managed Cursor Skill')
  */
 async function recoverRemoval(
   pendingPath: string,
   receiptPath: string,
   targetPath: string,
   storageDirectory: string,
+  commandToRunAgain: string,
 ): Promise<CursorCatalogCleanup | undefined> {
-  const record = await privateJson(pendingPath)
+  const record = await privateJson(pendingPath, commandToRunAgain)
   if (record === undefined) return undefined
   if (
     typeof record !== 'object' ||
@@ -559,8 +613,17 @@ async function recoverRemoval(
     dirname(record.retiredPath) !== storageDirectory ||
     !/^retired-[a-f0-9-]+\.mcp\.json$/.test(basename(record.retiredPath))
   )
-    throw invalidCatalogRecord('Cursor MCP catalog removal record', pendingPath)
-  const owner = parseReceipt(record.owner, targetPath, pendingPath)
+    throw invalidCatalogRecord(
+      'Cursor MCP catalog removal record',
+      pendingPath,
+      commandToRunAgain,
+    )
+  const owner = parseReceipt(
+    record.owner,
+    targetPath,
+    pendingPath,
+    commandToRunAgain,
+  )
   if (await ownedFile(record.retiredPath, owner)) {
     await atomicPrivateWrite(
       receiptPath,
@@ -572,7 +635,12 @@ async function recoverRemoval(
   }
   // Neither name holds the config Codebook created: it changed under the removal and stays the learner's.
   if (!(await ownedFile(targetPath, owner)))
-    await leaveChangedConfigInPlace(targetPath, record.retiredPath, pendingPath)
+    await leaveChangedConfigInPlace(
+      targetPath,
+      record.retiredPath,
+      pendingPath,
+      commandToRunAgain,
+    )
   await unlink(pendingPath)
   return undefined
 }
@@ -620,16 +688,18 @@ export async function refreshCursorMcpCatalog(
         receiptPath,
         targetPath,
         cursorDirectory,
+        SET_UP_AI_CHAT_COMMAND,
       )
       await recoverRemoval(
         join(storageDirectory, 'pending-removal.json'),
         receiptPath,
         targetPath,
         storageDirectory,
+        SET_UP_AI_CHAT_COMMAND,
       )
-      const previous = await privateJson(receiptPath)
+      const previous = await privateJson(receiptPath, SET_UP_AI_CHAT_COMMAND)
       if (previous !== undefined)
-        parseReceipt(previous, targetPath, receiptPath)
+        parseReceipt(previous, targetPath, receiptPath, SET_UP_AI_CHAT_COMMAND)
       let handle
       try {
         handle = await openConfigForRefresh(targetPath)
@@ -681,6 +751,7 @@ export async function refreshCursorMcpCatalog(
             receiptPath,
             targetPath,
             cursorDirectory,
+            SET_UP_AI_CHAT_COMMAND,
           )
           handle = await openPublishedConfig(targetPath)
         }
@@ -718,7 +789,11 @@ export async function refreshCursorMcpCatalog(
             ),
           ),
         )
-        return advanceOwnedRefreshId(receiptPath, targetPath)
+        return advanceOwnedRefreshId(
+          receiptPath,
+          targetPath,
+          SET_UP_AI_CHAT_COMMAND,
+        )
       } finally {
         await handle.close()
       }
@@ -726,10 +801,11 @@ export async function refreshCursorMcpCatalog(
   )
 }
 
-/** Reserves the current owned catalog generation before explicit skill removal without creating or touching a user config. @example await captureOwnedCursorMcpCatalogGeneration('/private') */
+/** Reserves the current owned catalog generation before explicit skill removal without creating or touching a user config. @param commandToRunAgain - The command the learner ran, which a refusal of one of the catalog's records names as the one to run again: the removal command hands in its own title, so that its warning leaves one next step. @example await captureOwnedCursorMcpCatalogGeneration('/private') */
 export async function captureOwnedCursorMcpCatalogGeneration(
   storageRoot: string,
   cursorDirectory = join(homedir(), '.cursor'),
+  commandToRunAgain: string = SET_UP_AI_CHAT_COMMAND,
 ): Promise<string | undefined> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
   return withCatalogLockRetry(() =>
@@ -742,23 +818,26 @@ export async function captureOwnedCursorMcpCatalogGeneration(
         receiptPath,
         targetPath,
         cursorDirectory,
+        commandToRunAgain,
       )
       await recoverRemoval(
         join(storageDirectory, 'pending-removal.json'),
         receiptPath,
         targetPath,
         storageDirectory,
+        commandToRunAgain,
       )
-      return advanceOwnedRefreshId(receiptPath, targetPath)
+      return advanceOwnedRefreshId(receiptPath, targetPath, commandToRunAgain)
     }),
   )
 }
 
-/** Retires only Codebook's unchanged empty Cursor catalog, optionally limited to one refresh generation. @example await removeOwnedCursorMcpCatalog('/private', '/home/user/.cursor') */
+/** Retires only Codebook's unchanged empty Cursor catalog, optionally limited to one refresh generation. @param commandToRunAgain - The command the learner ran, which a refusal of one of the catalog's records names as the one to run again: the removal command hands in its own title, so that its warning leaves one next step. @example await removeOwnedCursorMcpCatalog('/private', '/home/user/.cursor') */
 export async function removeOwnedCursorMcpCatalog(
   storageRoot: string,
   cursorDirectory = join(homedir(), '.cursor'),
   expectedRefreshId?: string,
+  commandToRunAgain: string = SET_UP_AI_CHAT_COMMAND,
 ): Promise<CursorCatalogCleanup> {
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
   return withCatalogLockRetry(() =>
@@ -772,17 +851,24 @@ export async function removeOwnedCursorMcpCatalog(
         receiptPath,
         targetPath,
         cursorDirectory,
+        commandToRunAgain,
       )
       const recovered = await recoverRemoval(
         pendingPath,
         receiptPath,
         targetPath,
         storageDirectory,
+        commandToRunAgain,
       )
       if (recovered) return recovered
-      const rawReceipt = await privateJson(receiptPath)
+      const rawReceipt = await privateJson(receiptPath, commandToRunAgain)
       if (rawReceipt === undefined) return 'not-owned'
-      const owner = parseReceipt(rawReceipt, targetPath, receiptPath)
+      const owner = parseReceipt(
+        rawReceipt,
+        targetPath,
+        receiptPath,
+        commandToRunAgain,
+      )
       if (
         expectedRefreshId !== undefined &&
         owner.refreshId !== expectedRefreshId
@@ -809,7 +895,12 @@ export async function removeOwnedCursorMcpCatalog(
       await rename(targetPath, retiredPath)
       if (!(await ownedFile(retiredPath, owner))) {
         // The config changed between the check and the move: it goes back to its place and stays the learner's.
-        await leaveChangedConfigInPlace(targetPath, retiredPath, pendingPath)
+        await leaveChangedConfigInPlace(
+          targetPath,
+          retiredPath,
+          pendingPath,
+          commandToRunAgain,
+        )
         await unlink(pendingPath)
         return 'preserved'
       }
