@@ -2903,7 +2903,7 @@ const REMOVAL_TEST_SKILL =
 /**
  * Sets Cursor chat up for real in a temporary home (the skill, and the empty MCP config Codebook creates and owns) and loads the extension's removal command over it, with the real skill removal and the real catalog.
  * @param beforeFirstCleanup - What happens once, right before the command's first cleanup of the MCP config reaches the real catalog, given the path of the catalog's receipt: nothing, a refusal thrown in the cleanup's place ({@link refuseAsLockedStorage}), or a change another Cursor window made in the meantime.
- * @param isCursorChatSetUp - Whether Cursor chat was set up in that home before the command is loaded; without it the home holds an empty `.cursor` folder alone, as Cursor leaves it.
+ * @param isCursorChatSetUp - Whether Cursor chat was set up in that home before the command is loaded; without it the home holds nothing, not even a `.cursor` folder.
  * @returns The command, the notifications it showed, the paths of the skill, of its receipt, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
  */
 /** Refuses a cleanup of the Cursor MCP config as the catalog does while another window holds its storage lock; handed to {@link removalCommandOverATemporaryHome}. */
@@ -2947,7 +2947,7 @@ async function removalCommandOverATemporaryHome(
       homeRoot,
     )
     await refreshCursorMcpCatalog(storageRoot, cursorDirectory)
-  } else await mkdir(cursorDirectory)
+  }
   const commands = new Map<string, () => Promise<void>>(),
     informations: string[] = [],
     warnings: string[] = []
@@ -3303,7 +3303,7 @@ test('a Remove Managed Cursor Skill whose skill receipt is invalid says to delet
   }
 })
 
-// Value: protects=a learner who runs Remove Managed Cursor Skill in a Cursor where Codebook's chat was never set up; fails_when=the command ends with an error ("No installed Codebook-owned Cursor skill was found; no file was changed.", or a refusal of the missing skills folder) instead of a notice that nothing was there to remove; why_new=Cycle 0046 row 244; seam=the removal command with the real skill and catalog over a temporary home that holds an empty .cursor folder
+// Value: protects=a learner who runs Remove Managed Cursor Skill in a Cursor where Codebook's chat was never set up; fails_when=the command ends with an error ("No installed Codebook-owned Cursor skill was found; no file was changed.", or a refusal of the missing skills folder) instead of a notice that nothing was there to remove; why_new=Cycle 0046 row 244; seam=the removal command with the real skill and catalog over a temporary home that holds nothing
 test('a Remove Managed Cursor Skill in a Cursor where Codebook was never set up ends with the notice that nothing was there to remove, and changes no file', async () => {
   // Arrange
   const cursor = await removalCommandOverATemporaryHome(async () => {}, false)
@@ -3316,14 +3316,14 @@ test('a Remove Managed Cursor Skill in a Cursor where Codebook was never set up 
       {
         informations: cursor.informations,
         warnings: cursor.warnings,
-        cursorFolder: await readdir(dirname(cursor.configPath)),
+        home: await readdir(dirname(dirname(cursor.configPath))),
       },
       {
         informations: [
           'Nothing to remove: no Codebook-owned Cursor skill was found and Codebook owns no Cursor MCP config. No file was changed.',
         ],
         warnings: [],
-        cursorFolder: [],
+        home: [],
       },
     )
   } finally {

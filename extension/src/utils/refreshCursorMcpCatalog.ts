@@ -506,6 +506,23 @@ async function setTimesOfOpenConfig(
 }
 
 /**
+ * Says whether a path holds nothing, without following a link, for {@link whyNothingIsRetired} (the config's path) and {@link captureOwnedCursorMcpCatalogGeneration} (Cursor's settings folder).
+ * @param path - The path.
+ * @returns `true` when nothing is there; `false` for any entry.
+ * @throws Every failure of the look but a missing path.
+ * @example await holdsNothing('/home/user/.cursor/mcp.json') // => true after the learner deleted the config
+ */
+async function holdsNothing(path: string): Promise<boolean> {
+  return lstat(path).then(
+    () => false,
+    (error: unknown) => {
+      if (isMissing(error)) return true
+      throw error
+    },
+  )
+}
+
+/**
  * Says why a removal retires nothing for a receipt whose config is not the unchanged file Codebook created at its path, for {@link whyNoConfigIsOwned} and {@link removeOwnedCursorMcpCatalog}; the removal's notice words the answer ({@link cursorRemovalNotice}).
  * @param owner - The catalog's receipt.
  * @param targetPath - The config's path.
@@ -520,14 +537,7 @@ async function whyNothingIsRetired(
   targetPath: string,
 ): Promise<UnretiredCatalogCleanup> {
   if (!owner.installed) return 'already-retired'
-  const isPathEmpty = await lstat(targetPath).then(
-    () => false,
-    (error: unknown) => {
-      if (isMissing(error)) return true
-      throw error
-    },
-  )
-  return isPathEmpty ? 'not-owned' : 'preserved'
+  return (await holdsNothing(targetPath)) ? 'not-owned' : 'preserved'
 }
 
 /**
@@ -890,9 +900,18 @@ export async function captureOwnedCursorMcpCatalogGeneration(
   const storageDirectory = join(storageRoot, 'cursor-mcp-catalog')
   return withCatalogLockRetry(() =>
     withStorageLock(storageDirectory, async () => {
-      await regularDirectory(cursorDirectory)
       const targetPath = join(cursorDirectory, 'mcp.json'),
         receiptPath = join(storageDirectory, 'receipt.json')
+      // Without Cursor's settings folder no config stands in it: nothing is recovered or reserved, and that is no refusal.
+      if (await holdsNothing(cursorDirectory))
+        return {
+          unowned: await whyNoConfigIsOwned(
+            receiptPath,
+            targetPath,
+            commandToRunAgain,
+          ),
+        }
+      await regularDirectory(cursorDirectory)
       await recoverCreation(
         join(storageDirectory, 'pending-creation.json'),
         receiptPath,

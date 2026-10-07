@@ -650,8 +650,8 @@ test('a record of the Cursor MCP catalog that is a link is refused under a remov
 })
 
 // Value: protects=the notice of a Cursor removal that retires no config; fails_when=the catalog answers one word for every such removal, so the notice calls a config preserved that an earlier removal retired, that the learner deleted, or that Codebook never created; why_new=Cycle 0046 row 246; seam=none, the real files
-test('before a removal the Cursor MCP catalog says why there is no config to retire: Codebook never created one, an earlier removal retired it, it is gone from its path, or it was changed', async (context) => {
-  // Arrange: four homes. One was never set up; in the others Codebook created the config, which was then retired, deleted by the learner, or changed.
+test('before a removal the Cursor MCP catalog says why there is no config to retire: Codebook never created one, also where Cursor’s settings folder is not there, an earlier removal retired it, it is gone from its path, or it was changed', async (context) => {
+  // Arrange: four homes. One was never set up; in the others Codebook created the config, which was then retired, deleted by the learner, or changed. And a fifth place: a settings folder that does not exist.
   const neverSetUp = await catalogFolders(context),
     retired = await catalogFolders(context),
     deleted = await catalogFolders(context),
@@ -687,6 +687,10 @@ test('before a removal the Cursor MCP catalog says why there is no config to ret
       retired.storageRoot,
       retired.cursorDirectory,
     ),
+    withoutASettingsFolder: await captureOwnedCursorMcpCatalogGeneration(
+      join(neverSetUp.cursorDirectory, 'storage-of-another-home'),
+      join(neverSetUp.cursorDirectory, 'no-such-folder'),
+    ),
   }
 
   // Assert
@@ -696,6 +700,7 @@ test('before a removal the Cursor MCP catalog says why there is no config to ret
     deleted: { unowned: 'not-owned' },
     changed: { unowned: 'preserved' },
     retiredAndRemovedAgain: 'already-retired',
+    withoutASettingsFolder: { unowned: 'not-owned' },
   })
 })
 
