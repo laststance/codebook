@@ -79,6 +79,11 @@ import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
 import { failureOfWikiChatReplyEnd } from './utils/failureOfWikiChatReplyEnd'
 import { findWikiUpdateStartBlock } from './utils/findWikiUpdateStartBlock'
+import {
+  folderChangeCleanupNotice,
+  type FolderChangeCleanupFailure,
+  type FolderChangeCleanupStep,
+} from './utils/folderChangeCleanupNotice'
 import { formatClockTime } from './utils/formatClockTime'
 import { inspectDeepWikiFreshness } from './utils/inspectDeepWikiFreshness'
 import {
@@ -429,6 +434,63 @@ export function activate(
       if (stopping === attempt) stopping = undefined
     }
   }
+  /**
+   * Handles one change of the workspace's folders: clears the saved AI chat setup, stops the agent server, closes both readers and the DeepWiki reader, and makes both readers anew; called by the folders' listener, one change after the one before it.
+   * Every step runs whatever the step before it did. A step that threw used to end the handling: after a stop or a Repository Wiki reader that failed, that reader stayed in its variable, disposed, so every later start failed with "Repository reader is disposed.", and the Study reader of the folders that were left stayed in use. The failures are told together in one notice ({@link folderChangeCleanupNotice}).
+   * A server whose resources could not be released is still owned afterwards and keeps waiting for Stop Agent Server, which retires it on the Study reader made here.
+   * @returns Nothing, and it does not reject: a failed step is in the notice.
+   * @example replacingReaders = (replacingReaders ?? Promise.resolve()).then(replaceReadersAfterFolderChange)
+   */
+  const replaceReadersAfterFolderChange = async (): Promise<void> => {
+    const failures: FolderChangeCleanupFailure[] = []
+    /** Runs one step and keeps what it threw for the notice, so that the steps after it run all the same. */
+    const attempt = async (
+      step: FolderChangeCleanupStep,
+      run: () => unknown,
+    ): Promise<void> => {
+      try {
+        await run()
+      } catch (thrown) {
+        failures.push({ step, thrown })
+      }
+    }
+    await attempt('chat-setup', () =>
+      context.workspaceState.update('codebook.aiChatSetup', undefined),
+    )
+    const closingWikiReader = deepWikiReader
+    deepWikiReader = undefined
+    try {
+      await stop()
+    } catch (thrown) {
+      // A server that is still owned could not release its resources; any other failure of the stop left no server behind.
+      failures.push({
+        step: running ? 'server-still-owned' : 'server-stopped',
+        thrown,
+      })
+    }
+    const closingRepositoryReader = repositoryReader
+    await attempt('repository-reader', () => closingRepositoryReader?.dispose())
+    // A reader whose dispose threw is disposed all the same and refuses every use, so it is replaced like one whose dispose ended.
+    repositoryReader = undefined
+    const closingStudyReader = reader
+    await attempt('study-reader', async () => {
+      // What the reader could not save is taken before its dispose, so a dispose that throws loses none of it.
+      unsavedStudies.push(
+        ...(closingStudyReader?.releaseUnsavedStudies() ?? []),
+      )
+      await closingStudyReader?.dispose()
+    })
+    reader = undefined
+    // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
+    await attempt('new-readers', () => {
+      workspace()
+      repository()
+    })
+    await attempt('wiki-reader', () => closingWikiReader?.close())
+    // The notice stays until the learner closes it, so it is not waited for.
+    if (failures.length)
+      void showNotice('error', folderChangeCleanupNotice(failures))
+  }
   /** Stops the server because the learner or the closing window asked for it, and counts that for a start that waits ({@link awaitReplacedReaders}); the stop a change of the workspace's folders makes on its own way is not counted. Called by Stop Agent Server and by the extension's shutdown. @example registerCommand('codebook.stopAgentServer', stopOnRequest) */
   const stopOnRequest = (): Promise<void> => {
     stopsAskedFor += 1
@@ -691,33 +753,43 @@ export function activate(
       ),
     )
   }
-  // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
+  /**
+   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, and releases the Wiki reservation and the DeepWiki reader; called by {@link deactivate}.
+   * Every step runs whatever the step before it did. A stop that threw used to end the first three steps, so the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, did not run, and a write under way was not waited for before the extension host ended.
+   * It is kept apart from {@link replaceReadersAfterFolderChange}: the two share only "stop, then dispose two readers", and that handling also hands archives over, clears the readers' variables, makes new readers and names each failed step for its notice, none of which a closing window may do.
+   * @throws The first failure of its steps, after all of them ran, so that the editor still logs it.
+   * @example await stopExtension()
+   */
   stopExtension = async (): Promise<void> => {
     isExtensionStopping = true
     // A closing window must not leave a watch or an unattended agent behind.
     const stoppedWikiRun = activeWikiRun
     stoppedWikiRun?.controller.abort(WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON)
-    try {
-      await stopOnRequest()
-      await repositoryReader?.dispose()
-      await reader?.dispose()
-    } finally {
+    const failures: unknown[] = []
+    for (const step of [
+      // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
+      (): Promise<void> => stopOnRequest(),
+      // Waits for the accepted publications and the learner's writes.
+      (): Promise<void> | undefined => repositoryReader?.dispose(),
+      // Ends the reader's run and saves the playback position.
+      (): Promise<void> | undefined => reader?.dispose(),
+      // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer. How the run ended is recorded by the run itself; shutdown only waits for it.
+      (): Promise<unknown> | undefined =>
+        stoppedWikiRun &&
+        settledWithin(
+          stoppedWikiRun.settled.catch(() => undefined),
+          WIKI_CURSOR_TERMINATION_GRACE_MS,
+        ),
+      (): Promise<void> => dropWikiReservation(),
+      (): Promise<void> | undefined => deepWikiReader?.close(),
+    ]) {
       try {
-        // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer.
-        if (stoppedWikiRun)
-          await settledWithin(
-            // How the run ended is recorded by the run itself; shutdown only waits for it.
-            stoppedWikiRun.settled.catch(() => undefined),
-            WIKI_CURSOR_TERMINATION_GRACE_MS,
-          )
-      } finally {
-        try {
-          await dropWikiReservation()
-        } finally {
-          await deepWikiReader?.close()
-        }
+        await step()
+      } catch (thrown) {
+        failures.push(thrown)
       }
     }
+    if (failures.length) throw failures[0]
   }
   /** Resolves the opened project and the Wiki folder its setting names, without reading the folder. @example await wikiLocation() // => { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' } */
   const wikiLocation = async (): Promise<{
@@ -1770,49 +1842,16 @@ export function activate(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       // One change is handled after the one before it: handled at once, the second would clear the readers the first had just made, without disposing them.
       const replacement = (replacingReaders ?? Promise.resolve()).then(
-        async () => {
-          try {
-            await context.workspaceState.update(
-              'codebook.aiChatSetup',
-              undefined,
-            )
-          } finally {
-            const closingReader = deepWikiReader
-            deepWikiReader = undefined
-            try {
-              await stop()
-              await repositoryReader?.dispose()
-              repositoryReader = undefined
-              // What the reader could not save is taken before its dispose, so a dispose that throws loses none of it.
-              unsavedStudies.push(...(reader?.releaseUnsavedStudies() ?? []))
-              try {
-                await reader?.dispose()
-              } finally {
-                // A reader whose dispose threw is disposed all the same and refuses every command, so it is replaced like one whose dispose ended; the failure is still told below.
-                reader = undefined
-                // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
-                workspace()
-                repository()
-              }
-            } finally {
-              await closingReader?.close()
-            }
-          }
-        },
+        replaceReadersAfterFolderChange,
       )
       /** Ends the mark of this change, unless a later change has chained itself to it and keeps the mark. */
       const endReplacement = (): void => {
         if (replacingReaders === settled) replacingReaders = undefined
       }
-      const settled: Promise<void> = replacement
-        .catch((error: unknown) => {
-          // The notice stays until the learner closes it, so it is not waited for.
-          void showNotice(
-            'error',
-            `Codebook cleanup incomplete: ${String(error)}`,
-          )
-        })
-        .then(endReplacement, endReplacement)
+      const settled: Promise<void> = replacement.then(
+        endReplacement,
+        endReplacement,
+      )
       replacingReaders = settled
     }),
   )

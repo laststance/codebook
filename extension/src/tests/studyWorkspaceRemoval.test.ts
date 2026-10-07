@@ -5096,6 +5096,134 @@ test('a Retry storage / refresh that writes one of two studies whose saves faile
   }
 })
 
+/**
+ * Leaves a reader with the archive of a stopped run that could not be saved and whose server has ended, listed in Saved studies as what exists of it, and starts the learner's confirmed removal of that study with the Trash holding its first move and refusing every move.
+ * Only the reader's waiting archive can still save such a study: no service holds its run any more, so Retry storage / refresh has no run to capture again.
+ * @param context - The test whose mocks the caller restores.
+ * @param harness - A harness with a deterministic clock.
+ * @returns The unsaved run ({@link stopRunOnRefusingDisk}), the removal in progress, and `refuseTheMove`, which lets the held move go on to its refusal.
+ * @example
+ * const held = await removeUnsavedStudyOnRefusingTrash(context, harness)
+ * held.refuseTheMove()
+ * await held.removal // => the removal failed and nothing was deleted
+ */
+async function removeUnsavedStudyOnRefusingTrash(
+  context: TestContext,
+  harness: Harness,
+) {
+  const unsaved = await stopRunOnRefusingDisk(context, harness)
+  await harness.reader.retire(harness.service).catch(() => undefined)
+  // A Retry storage / refresh on the disk that still refuses lists what exists of the study.
+  await harness.reader.action('retry')
+  harness.answerWarningDialogs(async ([confirm]) => confirm)
+  harness.rejectTrashMoves(() => true)
+  const heldMove = harness.holdTrashMove()
+  const removal = requestRemoval(harness, unsaved.studyId)
+  await heldMove.started
+  return { unsaved, removal, refuseTheMove: heldMove.release }
+}
+
+// Value: protects=the line "History not saved: …" and Retry storage / refresh for a study whose archive still waits when the learner presses Retry while that study is on its way to the Trash and the Trash then refuses the move; fails_when=the Retry ends during the move, skips the archive that is held back and retires the line, and nothing brings the line back when the move fails, so a study is unsaved without a line and without Retry; why_new=Cycle 0046 row 313 (read in the code while working on row 300; this is the row's own order of events, and it holds without a change: the Retry waits for the move, which holds the library's storage lock, and then tries the archive itself); seam=the fake editor's Trash, which holds and then refuses the move, and the library's study save, which fails until the disk is writable again
+test('a Retry storage / refresh pressed while a study whose archive still waits is on its way to the Trash does not retire the line during the move, and when the Trash refuses the move the line and Retry are there for the archive that still waits', async (context) => {
+  // Arrange: the learner deletes the study of a stopped run whose archive could not be saved and whose server has ended; the Trash holds the move.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const { unsaved, removal, refuseTheMove } =
+      await removeUnsavedStudyOnRefusingTrash(context, harness)
+    // Act: the learner presses Retry storage / refresh during the move; the Trash refuses the move; the disk writes again and the learner presses Retry once more.
+    let hasRetryEnded = false
+    const retry = harness.reader.action('retry').finally(() => {
+      hasRetryEnded = true
+    })
+    // A Retry that does not wait for the move has ended long before this.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    const duringTheMove = structuredClone({
+      hasRetryEnded,
+      removal: harness.reader.inspect().view!.studyRemoval?.status,
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+    })
+    refuseTheMove()
+    await removal
+    await retry
+    const afterTheRefusedMove = structuredClone({
+      removal: harness.reader.inspect().view!.studyRemoval?.status,
+      queued: readerSeams(harness).queuedStudyWrites(),
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+    })
+    unsaved.makeDiskWritable()
+    await harness.reader.action('retry')
+    // Assert
+    assert.deepEqual(duringTheMove, {
+      hasRetryEnded: false,
+      removal: 'moving',
+      queued: 1,
+      // The archive's line of the Retry before the removal, and the line of the selection, which names the unsaved study.
+      errors: [
+        'Error: disk is read-only',
+        'Error: Study archive is unavailable.',
+      ],
+    })
+    assert.deepEqual(afterTheRefusedMove, {
+      removal: 'failed',
+      queued: 1,
+      // The Retry tried the archive once the move had ended: its line, with Retry storage / refresh beside it.
+      errors: ['Error: disk is read-only'],
+      unretryableErrorCount: 0,
+    })
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 0)
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+    assert.deepEqual(
+      (await (await harness.reader.learningStorage()).list()).map((entry) => [
+        entry.id,
+        entry.format,
+      ]),
+      [[unsaved.studyId, 'v3']],
+    )
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the line "History not saved: …" and Retry storage / refresh for an archive a removal held back, when that removal moved nothing: the reader tries the archive by itself, and a write that still fails is told again, also when the line was retired while the files were moving; fails_when=a removal that moved nothing leaves the archive it held back unwritten and untold, so a study is unsaved without a line and without Retry until something else writes it; why_new=Cycle 0046 row 313 (what brings the line back by itself when the move fails); seam=the fake editor's Trash, which holds and then refuses the move, the reader's archive line dropped during the move as the Retry action's last step drops it, and the library's study save, which fails
+test('a removal that moved nothing tries the archive it held back by itself, and when that write still fails the line “History not saved: …” and Retry storage / refresh are there again, also when the line was retired during the move', async (context) => {
+  // Arrange: the learner deletes the study of a stopped run whose archive could not be saved and whose server has ended; the Trash holds the move, and the archive's line is retired meanwhile.
+  const harness = await workspaceHarness(true, true)
+  try {
+    const { removal, refuseTheMove } = await removeUnsavedStudyOnRefusingTrash(
+      context,
+      harness,
+    )
+    readerSeams(harness).dropErrorOfKind('archive')
+    const hadArchiveLineDuringTheMove =
+      readerSeams(harness).hasErrorOfKind('archive')
+    // Act: the Trash refuses the move.
+    refuseTheMove()
+    await removal
+    await waitUntil(
+      () => readerSeams(harness).hasErrorOfKind('archive'),
+      'the line of the archive that was held back',
+      1_000,
+    ).catch(() => undefined)
+    // Assert
+    assert.equal(hadArchiveLineDuringTheMove, false)
+    assert.equal(harness.reader.inspect().view!.studyRemoval?.status, 'failed')
+    assert.equal(readerSeams(harness).queuedStudyWrites(), 1)
+    const view = harness.reader.inspect().view!
+    // The archive's line, written again by the reader itself. (The selection's line of before is gone: a removal that moved nothing reads the ledger again, and it could be read.)
+    assert.deepEqual(structuredClone(view.errors), [
+      'Error: History not saved: Error: disk is read-only',
+    ])
+    assert.equal(view.unretryableErrorCount, 0)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
 // Value: protects=the study of a stopped run whose archive could not be saved when a new reader is attached to the same service: Retry storage / refresh in the new reader saves the study, and it opens; fails_when=the new reader no longer captures the run again from the service, so the archive that waits in the disposed reader is the only copy of the study, or the new reader takes the run's recording without an archive for a study removed by hand; either way the press writes nothing and the study can no longer be saved; why_new=Cycle 0046 row 267 (named while working on row 248, not stated by a test until now; the extension stops its service before it replaces its reader after a change of the workspace's folders, so the product attaches no second reader to a living service today, and this states what holds if it ever does); seam=the workspace harness's createReader (a second reader from the same loaded module, attached to the same service) and the library's study save, which fails until the disk is writable again
 test('after the archive of a stopped run could not be saved, a reader made again over the same service writes it at Retry storage / refresh without the archive the disposed reader held, and the study opens with the run’s history saved', async (context) => {
   // Arrange: a stopped run whose archive waits in the reader that could not save it; that reader is disposed and a new one is attached to the same service.
