@@ -935,6 +935,45 @@ test('a dirty target buffer rejects preparation before application effects witho
   assert.equal(document.isDirty, true)
 })
 
+// Cycle 0046 (row 314): red while the refusal named no file and told nobody what to do ("An open cited source document differs from the accepted article. Keep or discard your edits explicitly before a new deliberate study.").
+test('a start whose cited source is open in the editor with other text than the article cites is refused before the application starts, naming the file and what the learner and the agent do', async (context) => {
+  // Arrange
+  const { run, documents, releases, mouse } =
+      await configuredRuntimeHarness(context),
+    document = documents[0]!
+  document.text = 'const nextTheme = "light";\n'
+  document.isDirty = true
+  // Act
+  const refusal: unknown = await run.prepare().catch((error: unknown) => error)
+  await run.stop()
+  // Assert
+  assert.equal(
+    thrownMessage(refusal),
+    'The cited source src/theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+  )
+  assert.equal(releases.includes('application acquired'), false)
+  assert.equal(mouse.length, 0)
+  assert.equal(document.text, 'const nextTheme = "light";\n')
+  assert.equal(document.isDirty, true)
+})
+
+// Cycle 0046 (row 314): the document the editor restored in the native round was marked as modified with the file's own text; such a document refuses nothing, and since the debuggers start without saving it is not written either.
+test('a cited source that is marked as modified in the editor with the text the article cites, in other line ends, does not refuse the start', async (context) => {
+  // Arrange
+  const { run, documents } = await configuredRuntimeHarness(context),
+    document = documents[0]!
+  document.text = '\uFEFFconst nextTheme = "dark";\r\n'
+  document.isDirty = true
+  // Act
+  await run.prepare()
+  // Assert
+  assert.equal(run.view().status, 'ready')
+  assert.equal(run.view().failures.length, 0)
+  assert.equal(document.text, '\uFEFFconst nextTheme = "dark";\r\n')
+  assert.equal(document.isDirty, true)
+  await run.stop()
+})
+
 test('a target buffer changed during the hold rejects Continue and preserves the first captured source and dirty text', async (context) => {
   // Arrange
   const { run, documents, commands } = await configuredRuntimeHarness(context)

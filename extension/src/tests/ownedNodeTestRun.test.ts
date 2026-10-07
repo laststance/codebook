@@ -41,6 +41,7 @@ const LEARNER_BREAKPOINT_ID = 12
  * @param options.budgetMs - Replaces the 45 s per-phase budget so deadline behavior can be observed quickly.
  * @param options.acknowledgements - Uses the real breakpoint tracker instead of the stand-in: the adapter's registration reply for each owned breakpoint in the order they are armed, passed through the run's own tracker as the editor would send it.
  * @param options.listingNotReleased - The preparation asks the run for its Vitest listing, as the real one does, and the listing answers that its release failed with this report.
+ * @param options.openDocumentText - The text the editor holds for the cited source `theme.ts`, whose file and article text is `export const nextTheme = "dark";\n`; without it the editor has no document open.
  *
  * @example
  * ```ts
@@ -65,6 +66,7 @@ async function nodeRunHarness({
   listingNotReleased,
   declaredColumn = 14,
   verifiedByNews,
+  openDocumentText,
 }: {
   declaredStops?: number
   observedLine?: number
@@ -104,6 +106,7 @@ async function nodeRunHarness({
       | 'right after the binding read'
       | 'after the continuation'
   }
+  openDocumentText?: string
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'codebook-owned-node-run-'))
   const reportDirectory = await mkdtemp(
@@ -138,7 +141,11 @@ async function nodeRunHarness({
   }
   const calls: string[] = [],
     verified: unknown[][] = [],
-    events: Array<{ type: string; detail: unknown }> = []
+    events: Array<{ type: string; detail: unknown }> = [],
+    // What the run asked of the editor beside the configuration of each debug session it started.
+    debugStartOptions: (vscode.DebugSessionOptions | undefined)[] = []
+  // How often the run began to check and seal its test, the step that asks Vitest for its files: nothing of the test is listed, launched or attached before it.
+  let launchPreparations = 0
   let trackerFactory: vscode.DebugAdapterTrackerFactory | undefined,
     tracker: vscode.DebugAdapterTracker | undefined,
     continued = 0,
@@ -392,7 +399,19 @@ async function nodeRunHarness({
     Position,
     Location,
     SourceBreakpoint,
-    workspace: { getWorkspaceFolder: () => undefined },
+    workspace: {
+      getWorkspaceFolder: () => undefined,
+      textDocuments:
+        openDocumentText === undefined
+          ? []
+          : [
+              {
+                uri: { scheme: 'file', fsPath: sourceFile },
+                isDirty: true,
+                getText: () => openDocumentText,
+              },
+            ],
+    },
     debug: {
       breakpoints: editorBreakpoints,
       addBreakpoints(added: SourceBreakpoint[]): void {
@@ -433,7 +452,9 @@ async function nodeRunHarness({
       async startDebugging(
         _folder: unknown,
         configuration: vscode.DebugConfiguration,
+        startOptions?: vscode.DebugSessionOptions,
       ) {
+        debugStartOptions.push(startOptions)
         // The run recognizes only sessions carrying its own configuration name.
         session.name = configuration.name
         session.configuration = {
@@ -478,6 +499,7 @@ async function nodeRunHarness({
           _configuration: NodeTestConfiguration,
           listTestFiles: (request: ListVitestTestFilesRequest) => unknown,
         ) => {
+          launchPreparations += 1
           // Only a test of the listing's release asks for the listing; every other test gets its launch at once.
           if (listingNotReleased)
             await listTestFiles({
@@ -562,12 +584,15 @@ async function nodeRunHarness({
     (type, detail) => {
       events.push({ type, detail })
     },
+    [{ path: 'theme.ts', hash: source.hash, text: sourceText, lineCount: 2 }],
   )
   return {
     run,
     calls,
     verified,
     events,
+    debugStartOptions,
+    launchPreparations: (): number => launchPreparations,
     launch,
     reportDirectory,
     sourceFile,
@@ -1530,6 +1555,78 @@ test('a second Node test stop that the adapter verifies by news at another colum
       refusal,
       'Error: Declared breakpoint 1:1 is bound at 1:14; this stop is captured at its declared position, so declare 1:14 or another statement.',
     )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 314): red while the run attached to its test process without the option, so the editor saved every modified editor of the learner when a chat request started a test.
+test('a Node test run attaches its debugger without making the editor save the learner’s unsaved documents', async () => {
+  // Arrange
+  const harness = await nodeRunHarness()
+  try {
+    // Act
+    await harness.run.prepare()
+
+    // Assert: one session was started, and it was told not to save.
+    assert.deepEqual(
+      harness.debugStartOptions.map(
+        (startOptions) => startOptions?.suppressSaveBeforeStart,
+      ),
+      [true],
+    )
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 314): red while a Node test run never looked at the editor's documents: the test ran the saved file while the editor's debugger showed the unsaved lines at its pause.
+test('a Node test run whose cited source is open in the editor with other text than the article cites is refused before the test is listed, launched or attached, naming the file and what the learner and the agent do', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    openDocumentText: 'export const nextTheme = "light";\n',
+  })
+  try {
+    // Act
+    const refusal: unknown = await harness.run
+      .prepare()
+      .catch((error: unknown) => error)
+
+    // Assert
+    assert.deepEqual(
+      refusal instanceof Error && 'code' in refusal
+        ? { code: refusal.code, message: refusal.message }
+        : refusal,
+      {
+        code: 'SOURCE_CHANGED',
+        message:
+          'The cited source theme.ts is open in the editor with text that differs from the text the article cites, and Codebook neither saves nor reverts a document of the learner. Ask the learner to save or revert the file: after a save read the source again and publish the article again, after a revert change nothing; then start a new run.',
+      },
+    )
+    assert.equal(harness.launchPreparations(), 0)
+    assert.equal(harness.debugStartOptions.length, 0)
+    assert.deepEqual(harness.events, [])
+  } finally {
+    await harness.run.stop()
+    await harness.cleanup()
+  }
+})
+
+// Cycle 0046 (row 314): the guard of the refusal above. A document the editor marks as modified while it holds the cited text (here with a byte order mark and other line ends) is no other text.
+test('a Node test run whose cited source is marked as modified in the editor with the text the article cites, in other line ends, reaches its declared stop', async () => {
+  // Arrange
+  const harness = await nodeRunHarness({
+    openDocumentText: '\uFEFFexport const nextTheme = "dark";\r\n',
+  })
+  try {
+    // Act
+    const firstStop = await harness.run.prepare()
+
+    // Assert
+    assert.equal(firstStop.index, 0)
+    assert.equal(harness.launchPreparations(), 1)
   } finally {
     await harness.run.stop()
     await harness.cleanup()

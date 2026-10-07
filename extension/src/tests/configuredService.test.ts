@@ -1314,6 +1314,31 @@ test('configured help tells an agent that only the learner removes a saved study
   )
 })
 
+// Cycle 0046 (row 314): red while neither help said that a start saves no document of the learner and that a cited source open in the editor with other text refuses the start before anything runs.
+test('the repository-browser help and the node-test help tell an agent that a start saves no document of the learner, that a cited source open in the editor with other text refuses the start, and what the learner and the agent do then', async (context) => {
+  // Arrange
+  const { service } = await configuredServiceHarness(context)
+  const sentence =
+    'Codebook starts its debuggers without saving a document of the learner, and a start is refused with SOURCE_CHANGED, before the application, the test, the browser or a debugger is started, while a cited source is open in the editor with text that differs from the text the article cites (a document that is only marked as modified and holds the cited text refuses nothing): the message names the file, so ask the learner to save it, then read the source again and publish the article again, or to revert it, and start a new run.'
+  // Act
+  const recoveries: string[] = []
+  for (const uri of [
+    'codebook://help/repository-browser',
+    'codebook://help/node-test',
+  ]) {
+    const help = await readResource(service, uri)
+    assert.ok('text' in help)
+    recoveries.push(
+      z.object({ recovery: z.string() }).parse(JSON.parse(help.text)).recovery,
+    )
+  }
+  // Assert: once in each help, whole.
+  assert.deepEqual(
+    recoveries.map((recovery) => recovery.split(sentence).length - 1),
+    [1, 1],
+  )
+})
+
 // Value: protects=each observation of a multi-stop run reporting the position its own stop declared as requestedSource; fails_when=the inspection resource pairs a later observation with the first declared stop, or with a stop at another index; why_new=the only requestedSource test reads a single-stop run, where every index resolves to the same declared stop; seam=none
 test('the second observation of a two-stop run reports the position its own stop declared as requestedSource, not the first stop’s', async (context) => {
   // Arrange: the second stop is declared at 1:7 and the debugger committed it at 1:9 of the same line.
