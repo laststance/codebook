@@ -15,7 +15,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { hostname, tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { test } from 'node:test'
 
 import * as constants from '../constants'
@@ -1532,6 +1532,56 @@ test('a link that takes the managed Cursor skill’s path between the look at it
   )
 })
 
+// Value: protects=a learner in a Windows editor whose skill file is replaced by a link in the instant a removal opens it; fails_when=the removal reads the link's target as the skill, or its refusal names the setup as the command to run again although the learner ran the removal, or the removal run again and its step do not end in a finished removal; why_new=Cycle 0046 row 348: the removal's sentence for a replaced file was stated by no test, which showed when each sentence's command name was traced to its constant; seam=the open flags and node:fs/promises lstat of the opener the loaded deployment reads through, after whose look a prepared link takes the skill's path
+test('a link that takes the managed Cursor skill’s path between a removal’s look at it and its open, where the system’s open cannot refuse a link, is not read through: the removal answers that another file took the place of the skill and names itself as the command to run again; run again it names the link, and after the learner removes the link it finishes', async (context) => {
+  // Arrange: the installed skill, a note of the learner, and a link to that note that takes the skill's path right after the removal looked at it, on a system without O_NOFOLLOW.
+  const paths = await fixture(context)
+  await deployCursorSkill(
+    paths.extensionPath,
+    paths.storageRoot,
+    paths.homeRoot,
+  )
+  const notePath = join(paths.homeRoot, 'a-note.md')
+  const preparedLinkPath = join(paths.homeRoot, 'prepared-link')
+  await writeFile(notePath, 'A note of the learner.\n')
+  if (!(await createLinkIfAllowed(notePath, preparedLinkPath)))
+    return context.skip(LINK_NOT_ALLOWED)
+  const { window, readsByNameAfterTheSwap } =
+    await skillWindowWhosePathIsSwapped({
+      path: paths.targetPath,
+      swap: () => rename(preparedLinkPath, paths.targetPath),
+      openConstants: OPEN_FLAGS_WITHOUT_NOFOLLOW,
+    })
+  const remove = (): Promise<string> =>
+    statusOrRefusalOf(
+      window.removeManagedCursorSkill(paths.storageRoot, paths.homeRoot),
+    )
+
+  // Act: the removal during which the link takes the path, and then each sentence to the letter.
+  const removal = await remove()
+  const removalRunAgain = await remove()
+  await unlink(paths.targetPath)
+  const removalAfterTheLinkWasRemoved = await remove()
+
+  // Assert
+  assert.deepEqual(
+    {
+      removal,
+      removalRunAgain,
+      removalAfterTheLinkWasRemoved,
+      readsByNameAfterTheSwap,
+      note: await readFile(notePath, 'utf8'),
+    },
+    {
+      removal: `Another file took the place of ${paths.targetPath} while Codebook opened it, so it was not read. Run Codebook: Remove Managed Cursor Skill again.`,
+      removalRunAgain: `Codebook will not read through a link: ${paths.targetPath}. To finish the removal, remove the link, then run Codebook: Remove Managed Cursor Skill again.`,
+      removalAfterTheLinkWasRemoved: 'removed',
+      readsByNameAfterTheSwap: [],
+      note: 'A note of the learner.\n',
+    },
+  )
+})
+
 // Value: protects=the recovery of an interrupted setup, which adopts the published skill only when it is the recorded file; fails_when=the comparison looks at the path and then reads the path by name, so a link that took the path is read through and another file's bytes are hashed as the published skill's; why_new=Cycle 0046 row 142 (the second place that looked first and read by name); seam=node:fs/promises lstat and the opener of the loaded deployment, at which a prepared link takes the skill's path
 test('the published skill of an interrupted setup that a link replaces while Codebook compares it is not read through the link, and setup answers for a skill folder that is not Codebook’s', async (context) => {
   // Arrange: a setup that was interrupted after it published the skill and before it wrote its receipt; a link to a copy with the same bytes takes the skill's path at the moment of the comparison.
@@ -2842,11 +2892,15 @@ test('a removal whose skill folder the learner deleted finishes: the receipt rec
 })
 
 /**
- * The sentence of a record of the skill setup that cannot be trusted, as the learner reads it.
+ * States the whole refusal when setup-record regression tests compare what a learner reads for an untrusted record.
  * @param subject - What is invalid, as the sentence begins.
  * @param recordPath - The record file the sentence names.
  * @param paths - The test's setup, for the skill folder the sentence names.
+ * @param commandToRunAgain - The command the sentence names as the one to run again: the setup, unless the test ran the removal.
  * @returns The whole sentence.
+ * @example
+ * sentenceOfAnInvalidRecord('Cursor skill receipt', '/private/receipt.json', { homeRoot: '/home/user' })
+ * // => 'Cursor skill receipt is invalid; no skill file was changed. To start over, delete /private/receipt.json and the folder /home/user/.cursor/skills/codebook (first copy anything of yours out of that folder), then run Codebook: Set Up AI Chat again.'
  */
 function sentenceOfAnInvalidRecord(
   subject: string,
@@ -5340,6 +5394,99 @@ test('a folder where Codebook keeps the copy of the installed skill in its stora
   )
 })
 
+// Value: protects=a learner whose copy of the installed skill in Codebook's storage was moved elsewhere and left as a link (a tool that moves files and links them back does that); fails_when=an update reads the copy through the link, or its refusal says what the skill file's sentence says ("Remove the link") and not that the file itself may be put there, or names no command, or one of the two steps it names does not end in a finished update; why_new=Cycle 0046 row 348: the sentence for a link at the copy's path was stated by no test, which showed when each sentence's command name was traced to its constant; seam=none, the real link
+test('a link where Codebook keeps the copy of the installed skill in its storage is refused by an update with a sentence that says to put the file itself there or to remove the link and names the setup: after the learner puts the file in the link’s place, and after the learner removes the link, setup updates the skill', async (context) => {
+  // Arrange: two homes with an installed skill and an extension that brings a new one; the copy of the installed skill lies outside Codebook's storage and a link to it stands under the copy's name.
+  const homeThatPutsTheFileBack = await fixture(context),
+    homeThatRemovesTheLink = await fixture(context)
+  const copyName = `${createHash('sha256').update(INITIAL_SKILL).digest('hex')}.SKILL.md`
+  const copyPathOf = (paths: { storageRoot: string }): string =>
+    join(paths.storageRoot, 'cursor-skill', copyName)
+  const movedCopyPathOf = (paths: { homeRoot: string }): string =>
+    join(paths.homeRoot, 'moved-copy.SKILL.md')
+  for (const paths of [homeThatPutsTheFileBack, homeThatRemovesTheLink]) {
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+    await writeFile(paths.sourcePath, NEXT_SKILL)
+    await writeFile(movedCopyPathOf(paths), INITIAL_SKILL)
+    if (!(await createLinkIfAllowed(movedCopyPathOf(paths), copyPathOf(paths))))
+      return context.skip(LINK_NOT_ALLOWED)
+  }
+  const setUp = (paths: {
+    extensionPath: string
+    storageRoot: string
+    homeRoot: string
+  }): Promise<string> =>
+    statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
+
+  // Act
+  const refusals = {
+    homeThatPutsTheFileBack: await setUp(homeThatPutsTheFileBack),
+    homeThatRemovesTheLink: await setUp(homeThatRemovesTheLink),
+  }
+  const afterTheRefusal = {
+    skill: await readFile(homeThatPutsTheFileBack.targetPath, 'utf8'),
+    files: await filesOfTheSetup(homeThatPutsTheFileBack),
+  }
+  // Each step of the sentence is followed to the letter.
+  await rename(
+    movedCopyPathOf(homeThatPutsTheFileBack),
+    copyPathOf(homeThatPutsTheFileBack),
+  )
+  await unlink(copyPathOf(homeThatRemovesTheLink))
+  const setupsAfterTheStep = {
+    homeThatPutsTheFileBack: await setUp(homeThatPutsTheFileBack),
+    homeThatRemovesTheLink: await setUp(homeThatRemovesTheLink),
+  }
+
+  // Assert
+  assert.deepEqual(
+    {
+      refusals,
+      afterTheRefusal,
+      setupsAfterTheStep,
+      skills: {
+        homeThatPutsTheFileBack: await readFile(
+          homeThatPutsTheFileBack.targetPath,
+          'utf8',
+        ),
+        homeThatRemovesTheLink: await readFile(
+          homeThatRemovesTheLink.targetPath,
+          'utf8',
+        ),
+      },
+      movedCopyOfTheHomeThatRemovedTheLink: await readFile(
+        movedCopyPathOf(homeThatRemovesTheLink),
+        'utf8',
+      ),
+    },
+    {
+      refusals: {
+        homeThatPutsTheFileBack: `Codebook will not read through a link: ${copyPathOf(homeThatPutsTheFileBack)}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+        homeThatRemovesTheLink: `Codebook will not read through a link: ${copyPathOf(homeThatRemovesTheLink)}. Put the file itself at that path or remove the link, then run Codebook: Set Up AI Chat again.`,
+      },
+      afterTheRefusal: {
+        skill: INITIAL_SKILL,
+        files: { skillFolder: ['SKILL.md'], temporaryNames: [], records: [] },
+      },
+      setupsAfterTheStep: {
+        homeThatPutsTheFileBack: 'updated',
+        homeThatRemovesTheLink: 'updated',
+      },
+      skills: {
+        homeThatPutsTheFileBack: NEXT_SKILL,
+        homeThatRemovesTheLink: NEXT_SKILL,
+      },
+      movedCopyOfTheHomeThatRemovedTheLink: INITIAL_SKILL,
+    },
+  )
+})
+
 // Value: protects=a learner who edited the installed skill file and then runs the setup; fails_when=the refusal says "Restore or remove that edit manually before updating." and names no command, or a way it names does not end in a finished setup, or the learner's renamed file is changed; why_new=Cycle 0046 row 285 (the edited skill); seam=none, the real files
 test('an edited Cursor skill is left alone by setup, which says how to go on and names the setup as the command to run again: after the learner undoes the edit in the file, setup updates the skill; after the learner deletes the file, or renames it, setup restores the skill and the renamed file is unchanged', async (context) => {
   // Arrange: three homes with an installed skill that the learner edited in place; the extension of the first brings a new skill.
@@ -6013,9 +6160,20 @@ test('an update of the Cursor skill in a home folder whose path is so long that 
   // Arrange: an installed skill in a home folder whose path is 3,900 bytes long, and an extension that brings a new skill.
   const paths = await fixture(context)
   let homeRoot = join(paths.homeRoot, 'long')
-  while (Buffer.byteLength(homeRoot) + 256 <= 3_900)
-    homeRoot = join(homeRoot, 'd'.repeat(255))
+  // Each step adds 255 bytes, a separator and a name of 254, and the steps end while 2 to 256 bytes are missing: a separator and a last name of 1 to 255 bytes, the longest name a file system takes.
+  while (3_900 - Buffer.byteLength(homeRoot) > 256)
+    homeRoot = join(homeRoot, 'd'.repeat(254))
   homeRoot = join(homeRoot, 'e'.repeat(3_900 - Buffer.byteLength(homeRoot) - 1))
+  // The path is the one the title names before anything is made of it: 3,900 bytes, and no name in it longer than a file system takes.
+  assert.deepEqual(
+    {
+      homePathBytes: Buffer.byteLength(homeRoot),
+      namesLongerThan255Bytes: homeRoot
+        .split(sep)
+        .filter((name) => Buffer.byteLength(name) > 255).length,
+    },
+    { homePathBytes: 3_900, namesLongerThan255Bytes: 0 },
+  )
   const isHomeMade = await mkdir(homeRoot, { recursive: true }).then(
     () => true,
     () => false,
@@ -6052,7 +6210,6 @@ test('an update of the Cursor skill in a home folder whose path is so long that 
   // Assert
   assert.deepEqual(
     {
-      homePathBytes: Buffer.byteLength(homeRoot),
       firstSetup,
       update,
       afterTheRefusal,
@@ -6061,7 +6218,6 @@ test('an update of the Cursor skill in a home folder whose path is so long that 
       skill: await readFile(targetPath, 'utf8'),
     },
     {
-      homePathBytes: 3_900,
       firstSetup: 'installed',
       update:
         "Cursor skill could not be updated: the record Codebook keeps of an update would be larger than it writes (16384 bytes), because the paths of this home folder, of the editor's storage and of the installed extension are very long. No skill file was changed. Run Codebook: Remove Managed Cursor Skill, then Codebook: Set Up AI Chat: the skill is installed anew then, which needs no such record.",

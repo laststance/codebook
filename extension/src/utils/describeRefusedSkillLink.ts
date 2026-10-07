@@ -1,6 +1,7 @@
+import { SET_UP_AI_CHAT_COMMAND } from './startOverBy'
+
 /** What every refused link of the Cursor skill setup ends with: what the folder must allow, and the command to run again. A file system without hard links (exFAT, FAT, some network shares) refuses every such link. */
-export const ALLOW_LINKS_THEN_SET_UP_AGAIN =
-  'Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.'
+export const ALLOW_LINKS_THEN_SET_UP_AGAIN = `Check that this folder allows new files and hard links, then run ${SET_UP_AI_CHAT_COMMAND} again.`
 
 /**
  * Words the refusal of the hard link that puts Codebook's new Cursor skill in place; called by {@link deployCursorSkill} when the file system refuses that link, and by the README's test, which compares the README's quotation with it.

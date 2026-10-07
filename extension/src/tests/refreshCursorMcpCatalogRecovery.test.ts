@@ -20,6 +20,7 @@ import {
   refreshCursorMcpCatalog,
   removeOwnedCursorMcpCatalog,
 } from '../utils/refreshCursorMcpCatalog'
+import * as setupRecovery from '../utils/startOverBy'
 import { systemErrorCode } from '../utils/systemErrorCode'
 
 import {
@@ -220,6 +221,47 @@ test('a new Cursor MCP config that the file system refuses to link into place en
       entriesOfTheCursorFolder: ['mcp.json', 'storage'],
       removal: 'answered removed',
     },
+  )
+})
+
+// Value: protects=the recovery command a learner reads after a refused Cursor MCP config publication; fails_when=the sentence writes the setup title literally and becomes stale when the shared title changes; why_new=Cycle 0046 row 348; seam=the catalog's shared setup-command constant and its refused hard link
+test('a refused Cursor MCP config publication names the shared setup command when its title changes', async (context) => {
+  // Arrange: a first publication refused by the file system and a renamed shared setup command.
+  const folders = await catalogFolders(context)
+  const catalog = await loadModule<typeof CatalogModule>(
+    resolve(__dirname, '../utils/refreshCursorMcpCatalog.js'),
+    {
+      'node:fs/promises': {
+        ...fileSystem,
+        link: async () => {
+          throw Object.assign(
+            new Error('EPERM: operation not permitted, link'),
+            {
+              code: 'EPERM',
+            },
+          )
+        },
+      },
+      './startOverBy': {
+        ...setupRecovery,
+        SET_UP_AI_CHAT_COMMAND: 'Codebook: Set Up AI Chat (renamed)',
+      },
+    },
+    { Error },
+  )
+
+  // Act
+  const refresh = await outcomeOf(
+    catalog.refreshCursorMcpCatalog(
+      folders.storageRoot,
+      folders.cursorDirectory,
+    ),
+  )
+
+  // Assert
+  assert.equal(
+    refresh,
+    `refused: Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${folders.configPath} (EPERM). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat (renamed) again.`,
   )
 })
 

@@ -124,6 +124,7 @@ import {
 } from './utils/selectActiveWikiCandidate'
 import { settledWithin } from './utils/settledWithin'
 import { showPlainNotice, type NoticeSeverity } from './utils/showPlainNotice'
+import { SET_UP_AI_CHAT_COMMAND } from './utils/startOverBy'
 import {
   startWikiChatUpdate,
   type WikiChatStart,
@@ -393,7 +394,7 @@ export function activate(
               noticeWithSetupStep(
                 'Codebook agent server started, but Cursor MCP registration failed',
                 error,
-                'Run Codebook: Set Up AI Chat to repair the connection.',
+                `Run ${SET_UP_AI_CHAT_COMMAND} to repair the connection.`,
               ),
             )
         }
@@ -536,17 +537,17 @@ export function activate(
   ): Promise<void> => {
     if (cursorRemoving)
       throw new Error(
-        'Codebook Cursor setup was removed while its connection was starting. Run Codebook: Set Up AI Chat again.',
+        `Codebook Cursor setup was removed while its connection was starting. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const server = running
     if (!server)
       throw new Error(
-        'Codebook server is not running. Run Codebook: Set Up AI Chat again.',
+        `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const cursorMcp = vscode.cursor?.mcp
     if (!cursorMcp?.registerServer)
       throw new Error(
-        'This Cursor version does not expose MCP registration to Codebook. Update Cursor, then run Codebook: Set Up AI Chat again. For an external MCP client, run Codebook: Start Agent Server and Codebook: Copy Agent Connection.',
+        `This Cursor version does not expose MCP registration to Codebook. Update Cursor, then run ${SET_UP_AI_CHAT_COMMAND} again. For an external MCP client, run Codebook: Start Agent Server and Codebook: Copy Agent Connection.`,
       )
     const previous = cursorRegistration
     if (previous?.server === server) return previous.attempt
@@ -555,7 +556,7 @@ export function activate(
       if (previous) await previous.attempt.catch(() => {})
       if (running !== server || stopping || cursorRemoving)
         throw new Error(
-          'Codebook server or Cursor setup changed before MCP registration. Run Codebook: Set Up AI Chat again.',
+          `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
         )
       // Another Cursor window may remove the shared skill while this window starts its server.
       await verifyManagedCursorSkill(
@@ -564,7 +565,7 @@ export function activate(
       )
       if (running !== server || stopping || cursorRemoving)
         throw new Error(
-          'Codebook server or Cursor setup changed before MCP registration. Run Codebook: Set Up AI Chat again.',
+          `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
         )
       const name = `codebook-${server.service.instanceId}`
       if (registeredCursorServer !== name) {
@@ -581,7 +582,7 @@ export function activate(
         )
         if (running !== server || stopping || cursorRemoving)
           throw new Error(
-            'Codebook server or Cursor setup changed before MCP registration. Run Codebook: Set Up AI Chat again.',
+            `Codebook server or Cursor setup changed before MCP registration. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
           )
         if (registeredCursorServer)
           cursorMcp.unregisterServer(registeredCursorServer)
@@ -629,7 +630,7 @@ export function activate(
               )
           } catch (cleanupError) {
             throw new Error(
-              'Cursor skill changed and its owned MCP catalog cleanup is incomplete. Run Codebook: Set Up AI Chat to repair the connection.',
+              `Cursor skill changed and its owned MCP catalog cleanup is incomplete. Run ${SET_UP_AI_CHAT_COMMAND} to repair the connection.`,
               { cause: cleanupError },
             )
           }
@@ -647,7 +648,7 @@ export function activate(
   const assertCursorSetupAvailable = (): void => {
     if (cursorRemoving)
       throw new Error(
-        'Codebook Cursor setup was removed while starting. Run Codebook: Set Up AI Chat again.',
+        `Codebook Cursor setup was removed while starting. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
   }
   const performSetupAiChat = async (): Promise<void> => {
@@ -678,7 +679,7 @@ export function activate(
     }
     if (!running)
       throw new Error(
-        'Codebook server is not running. Run Codebook: Set Up AI Chat again.',
+        `Codebook server is not running. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
       )
     const setupCursorServer = isCursorHost ? registeredCursorServer : undefined
     await context.workspaceState.update('codebook.aiChatSetup', {
@@ -748,7 +749,7 @@ export function activate(
           resolveMcpServerDefinition: async (definition) => {
             if (!setupMatchesCurrentWorkspace())
               throw new Error(
-                'Run Codebook: Set Up AI Chat for this workspace.',
+                `Run ${SET_UP_AI_CHAT_COMMAND} for this workspace.`,
               )
             if (!(definition instanceof vscode.McpHttpServerDefinition))
               throw new Error('Codebook requires an HTTP MCP definition.')
@@ -1959,7 +1960,7 @@ export function activate(
         noticeWithSetupStep(
           'Codebook AI chat did not reconnect',
           error,
-          'Run Codebook: Set Up AI Chat.',
+          `Run ${SET_UP_AI_CHAT_COMMAND}.`,
         ),
       )
     })

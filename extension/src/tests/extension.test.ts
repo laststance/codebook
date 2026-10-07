@@ -4099,18 +4099,28 @@ const REMOVAL_TEST_SKILL =
   '---\nname: codebook\ndescription: Explain a current study.\nmetadata:\n  version: "1.0.0"\n---\n\nUse codebook_status first.\n'
 
 /**
- * Sets Cursor chat up for real in a temporary home (the skill, and the empty MCP config Codebook creates and owns) and loads the extension's removal command over it, with the real skill removal and the real catalog.
- * @param beforeFirstCleanup - What happens once, right before the command's first cleanup of the MCP config reaches the real catalog, given the path of the catalog's receipt: nothing, a refusal thrown in the cleanup's place ({@link refuseAsLockedStorage}), or a change another Cursor window made in the meantime.
- * @param isCursorChatSetUp - Whether Cursor chat was set up in that home before the command is loaded; without it the home holds nothing, not even a `.cursor` folder.
- * @returns The command, the notifications it showed, the paths of the skill, of its receipt, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
+ * Simulates the catalog's locked-storage refusal when {@link removalCommandOverATemporaryHome} first runs cleanup.
+ * @returns Never resolves; the cleanup rejects with the storage-lock refusal.
+ * @throws Always, with the sentence of a catalog held by another writer.
+ * @example
+ * await refuseAsLockedStorage() // => rejects with 'Learning storage is locked by another writer or an interrupted session ...'
  */
-/** Refuses a cleanup of the Cursor MCP config as the catalog does while another window holds its storage lock; handed to {@link removalCommandOverATemporaryHome}. */
 async function refuseAsLockedStorage(): Promise<void> {
   throw new Error(
     'Learning storage is locked by another writer or an interrupted session (lock file: /storage/cursor-mcp-catalog/writer.lock). No data changed; retry after resolving the lock.',
   )
 }
 
+/**
+ * Prepares the real skill and catalog in a temporary home when command regression tests need a removal with an interrupted first cleanup.
+ * @param beforeFirstCleanup - What happens once, right before the command's first cleanup of the MCP config reaches the real catalog, given the path of the catalog's receipt: nothing, a refusal thrown in the cleanup's place ({@link refuseAsLockedStorage}), or a change another Cursor window made in the meantime.
+ * @param isCursorChatSetUp - Whether Cursor chat was set up in that home before the command is loaded; without it the home holds nothing, not even a `.cursor` folder.
+ * @returns The command, the notifications it showed, the paths of the skill, of its receipt, of the config and of the catalog's receipt, and the cleanup of the temporary folders.
+ * @example
+ * const removal = await removalCommandOverATemporaryHome(refuseAsLockedStorage)
+ * await removal.runRemoval() // => the skill is removed and the locked catalog is reported
+ * await removal.dispose()
+ */
 async function removalCommandOverATemporaryHome(
   beforeFirstCleanup: (catalogReceiptPath: string) => Promise<void>,
   isCursorChatSetUp = true,

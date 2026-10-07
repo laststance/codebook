@@ -542,7 +542,7 @@ function refusalOfConfigLink(error: unknown, targetPath: string): unknown {
   const code = systemErrorCode(error)
   return code
     ? new Error(
-        `Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${targetPath} (${code}). No existing file was changed. Check that this folder allows new files and hard links, then run Codebook: Set Up AI Chat again.`,
+        `Cursor MCP config could not be created: the file system refused to put Codebook's new file in place as ${targetPath} (${code}). No existing file was changed. Check that this folder allows new files and hard links, then run ${SET_UP_AI_CHAT_COMMAND} again.`,
         { cause: error },
       )
     : error
