@@ -43,6 +43,7 @@ import type { NodeTestSourceStop } from './ownedNodeTestRun'
 import { sha256 } from './runtimeSupport/utils/sha256'
 import { atomicPrivateWrite } from './utils/atomicPrivateWrite'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
+import { withStorageLock } from './utils/withStorageLock'
 type NodeTestHistoryEntryInput = NodeTestHistoryEntry extends infer Entry
   ? Entry extends NodeTestHistoryEntry
     ? Omit<Entry, 'sequence'>
@@ -73,7 +74,7 @@ export class NodeTestHistoryStore {
   >()
 
   constructor(
-    learningDirectory: string,
+    private readonly learningDirectory: string,
     readonly workspaceKey: string,
     private readonly capacity: () => number = () => 64,
     private readonly savedArtifactCount: () => Promise<number> = async () => 0,
@@ -83,9 +84,10 @@ export class NodeTestHistoryStore {
 
   /**
    * Reserves a private history before the owned test process can start; called by {@link StudyService} when it admits a Node test run.
+   * The admission and the creation of the history's folder with its header run under the storage lock of the learning directory ({@link withStorageLock}), as the start of a recording does, so two windows of one workspace never both take the last place: the lock is held from the count until the header is written, and a start in another window meets either the lock or the header. Under the lock the start reads the directory and the headers of the histories and writes one header and one empty journal, all on the local disk; it waits for nothing else.
    * @param input - The history's header without its version; its study id names the history's folder.
    * @returns The writer of the reserved history.
-   * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, and when the history's first files cannot be written. Only a history the list shows counts, and one this store is starting ({@link takenPlaces}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
+   * @throws When the header belongs to another workspace or exceeds its storage limit, when the saved studies and the histories together reach the saved study limit, and when the history's first files cannot be written; "Learning storage is locked …", naming the lock file, while another window holds the storage lock or a lock stays that cannot be judged: nothing was written then. Only a history the list shows counts, and one this store is starting ({@link takenPlaces}): a stray entry of the history directory and a folder without a readable header take no place of the limit. A start that fails leaves no folder behind: the header's size is checked before the folder is made, and a folder whose first files could not be written is removed again.
    * @example const writer = await store.start(header)
    */
   async start(
@@ -98,14 +100,16 @@ export class NodeTestHistoryStore {
     const startedBefore = [...this.starting]
     this.starting.add(header.studyId)
     try {
-      return await this.reserve(header, startedBefore)
+      return await withStorageLock(this.learningDirectory, () =>
+        this.reserve(header, startedBefore),
+      )
     } finally {
       this.starting.delete(header.studyId)
     }
   }
 
   /**
-   * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}.
+   * Admits one history under the saved study limit and makes its folder with its first files; the body of {@link start}, run while the storage lock is held.
    * @param header - The validated header of this workspace.
    * @param startedBefore - The histories this store was starting when this start was asked for.
    * @returns The writer of the reserved history.
