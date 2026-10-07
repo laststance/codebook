@@ -81,6 +81,10 @@ const SKILL_CHANGED_DURING_REMOVAL = `The Cursor skill changed during removal; C
 const SKILL_REPLACED_AFTER_SETUP =
   "The managed Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again."
 
+/** What setup answers for the skill file a removal had taken away when it stands at the skill's path again (moved back by hand): the receipt says removed, so setup does not adopt it, and installs its skill once the path is free. */
+const SKILL_BACK_AFTER_REMOVAL =
+  "A codebook skill appeared after managed removal; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again."
+
 /** What removal answers for a file that took the place of the skill Codebook installed. */
 const SKILL_REPLACED_BEFORE_REMOVAL = `The Cursor skill was replaced after setup; Codebook preserved it. Codebook leaves that file alone as long as it is there. ${FINISH_REMOVAL_WITHOUT_THAT_FILE}`
 
@@ -1462,9 +1466,7 @@ async function deploySkill(
         'The managed Cursor skill was edited after setup; Codebook preserved it. Restore or remove that edit manually before updating.',
       )
     if (receipt && current && !receipt.installed)
-      throw new Error(
-        'A codebook skill appeared after managed removal; Codebook preserved it.',
-      )
+      throw new Error(SKILL_BACK_AFTER_REMOVAL)
     if (receipt && current && receipt.skillSha256 === packaged.sha256)
       return {
         status: 'current',
@@ -1481,7 +1483,7 @@ async function deploySkill(
       const backup = await regularFile(backupPath)
       if (backup && sha256(backup) !== receipt.skillSha256)
         throw new Error(
-          'The previous managed skill backup differs from its receipt; no replacement was made.',
+          `The copy of the installed Cursor skill that Codebook keeps as ${backupPath} differs from its receipt; no skill file was changed. Delete that copy, then run Codebook: Set Up AI Chat again.`,
         )
       if (!backup) {
         const stagedBackup = await writeStagedBytes(

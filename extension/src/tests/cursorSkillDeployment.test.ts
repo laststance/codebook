@@ -4021,3 +4021,65 @@ test('a setup that keeps its record because another file took the skill’s path
     },
   )
 })
+
+// Value: protects=a learner who moved the skill file a removal had retained back to the skill's path, and one whose copy of the installed skill in Codebook's storage was damaged; fails_when=setup answers "A codebook skill appeared after managed removal; Codebook preserved it." or "The previous managed skill backup differs from its receipt; no replacement was made.", which name no next step, at every try; why_new=Cycle 0046, found beside rows 242 and 247: both sentences say what to do, and the step ends in a finished setup; seam=none, the real files
+test('setup says what to do about a skill file that is back after a removal, and about a damaged copy of the installed skill in its storage: after the learner deletes the file, setup restores the skill, and after the learner deletes the copy, setup updates it', async (context) => {
+  // Arrange: one skill that was removed and whose retained file the learner moved back; one installed skill whose extension brings a new one, with other bytes under the name of its copy.
+  const movedBack = await fixture(context),
+    damagedCopy = await fixture(context)
+  for (const paths of [movedBack, damagedCopy])
+    await deployCursorSkill(
+      paths.extensionPath,
+      paths.storageRoot,
+      paths.homeRoot,
+    )
+  await removeManagedCursorSkill(movedBack.storageRoot, movedBack.homeRoot)
+  const storageOfTheRemoved = join(movedBack.storageRoot, 'cursor-skill')
+  const retainedName = (await readdir(storageOfTheRemoved)).find((name) =>
+    name.startsWith('retired-'),
+  )
+  await mkdir(join(movedBack.homeRoot, '.cursor', 'skills', 'codebook'))
+  await rename(
+    join(storageOfTheRemoved, retainedName ?? 'no retained file'),
+    movedBack.targetPath,
+  )
+  await writeFile(damagedCopy.sourcePath, NEXT_SKILL)
+  const copyPath = join(
+    damagedCopy.storageRoot,
+    'cursor-skill',
+    `${createHash('sha256').update(INITIAL_SKILL).digest('hex')}.SKILL.md`,
+  )
+  await writeFile(copyPath, 'Other bytes.\n')
+  const setUp = (paths: typeof movedBack): Promise<string> =>
+    statusOrRefusalOf(
+      deployCursorSkill(paths.extensionPath, paths.storageRoot, paths.homeRoot),
+    )
+
+  // Act: each refusal, and then its sentence followed to the letter.
+  const setupOfTheMovedBack = await setUp(movedBack)
+  await rm(movedBack.targetPath)
+  const setupAfterTheFileWasDeleted = await setUp(movedBack)
+  const setupOfTheDamagedCopy = await setUp(damagedCopy)
+  const skillAfterTheRefusal = await readFile(damagedCopy.targetPath, 'utf8')
+  await rm(copyPath)
+  const setupAfterTheCopyWasDeleted = await setUp(damagedCopy)
+
+  // Assert
+  assert.deepEqual(
+    {
+      setupOfTheMovedBack,
+      setupAfterTheFileWasDeleted,
+      setupOfTheDamagedCopy,
+      skillAfterTheRefusal,
+      setupAfterTheCopyWasDeleted,
+    },
+    {
+      setupOfTheMovedBack:
+        "A codebook skill appeared after managed removal; Codebook preserved it. Codebook leaves that file alone as long as it is there. To install Codebook's skill again, delete or rename that file, then run Codebook: Set Up AI Chat again.",
+      setupAfterTheFileWasDeleted: 'restored',
+      setupOfTheDamagedCopy: `The copy of the installed Cursor skill that Codebook keeps as ${copyPath} differs from its receipt; no skill file was changed. Delete that copy, then run Codebook: Set Up AI Chat again.`,
+      skillAfterTheRefusal: INITIAL_SKILL,
+      setupAfterTheCopyWasDeleted: 'updated',
+    },
+  )
+})
