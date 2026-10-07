@@ -4645,6 +4645,12 @@ export function readerSeams(harness: {
       ]),
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Asks the reader which command gives a remembered tab's group the keyboard back, as the function its focus return runs does once it may give the focus back: after an arrangement, or at a pause. @example await readerSeams(harness).focusReturnCommand(harness.groups[0], false) // => undefined while the group's editor part is not known */
+    focusReturnCommand: (
+      group: { viewColumn: number },
+      atPause: boolean,
+    ): Promise<string | undefined> =>
+      Reflect.apply(reader['focusReturnCommand'], reader, [group, atPause]),
     /** Publishes the reader's state to its panes and its status bar item, as every change of the reader does. */
     publish: (): void => reader['publish'](),
     /** Leaves the reader without a selected study, as the removal of the last study that could be opened does. */

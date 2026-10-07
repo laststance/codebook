@@ -8934,7 +8934,7 @@ export class StudyWorkspace {
    * @example if (tookKeyboard && !gaveBack) this.tellPaneTookPausedFocus()
    */
   private tellPaneTookPausedFocus(): void {
-    if (this.disposed || keyboardNoticesTold.has('pause')) return
+    if (keyboardNoticesTold.has('pause')) return
     keyboardNoticesTold.add('pause')
     void showPlainNotice(
       vscode.window,

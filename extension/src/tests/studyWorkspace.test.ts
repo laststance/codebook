@@ -4720,6 +4720,40 @@ test("a learner in Cursor whose own debug session stops and goes on, with no liv
   }
 })
 
+// Value: protects=the keyboard of a learner who replays a recording in Cursor beside the Agent chat's tab: a stop the editor reports while the recording is open sends no keyboard to the chat; fails_when=the return made for a pause of a live run also runs for a frame the editor reports during a replay, where the historical debugger shows a recorded stop and nobody's keyboard was taken by a run; why_new=Cycle 0046 row 166 (the return's bound: only at a pause beside a live run; no test held it); seam=workspace harness with a live run's viewport, addSeparateEditorPart, focusMutableDraft, pauseDebugger, the reader's recording state, revealApplicationPaneOverPausedFile
+test("a stop the editor reports while a recording is open does not send the keyboard to Cursor's chat when the Application pane comes to the front over the paused file", async () => {
+  // Arrange: Cursor with the Agent chat as a tab of another editor part; the learner typed in the chat, a file is opened with the keyboard and the editor reports a stack frame, while the reader holds a recording open.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  let live: { close(): void } | undefined
+  try {
+    await harness.reader.open()
+    live = harness.reader.presentation.createViewport(
+      randomUUID(),
+      () => {},
+      () => {},
+      'normal',
+    )
+    chat.focusTab()
+    harness.focusMutableDraft('actions.ts', 1)
+    harness.pauseDebugger()
+    harness.reader['recordingActive'] = true
+
+    // Act
+    await harness.revealApplicationPaneOverPausedFile()
+
+    // Assert
+    assert.equal(chat.focused(), false)
+    assert.equal(harness.commands.includes('composer.focusComposer'), false)
+  } finally {
+    harness.reader['recordingActive'] = false
+    live?.close()
+    await harness.close()
+  }
+})
+
 // Value: protects=the keyboard of a learner in Cursor who went from the Agent chat's tab to a file while no debug session is paused: it stays in that file when the reader shows a captured source; fails_when=the return made for a pause runs at every reveal of a captured source, so a learner who left the chat for a file is thrown back into the chat input whenever the reader shows a source; why_new=Cycle 0046 row 140 (the return's bound: only at a pause beside a live run; no test held it); seam=workspace harness with the controlled runtime, addSeparateEditorPart, focusMutableDraft
 test("a learner in Cursor who went from the chat to a file while no debug session is paused keeps the keyboard in that file when the reader shows a captured source, and the chat's tab does not take it", async () => {
   // Arrange: Cursor with the Agent chat as a tab of another editor part; the reader follows a live run, the learner typed in the chat and then went to a file.
@@ -5504,6 +5538,47 @@ test("a settings page of the main editor that was in front before a pause of a l
         'The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.',
       ],
     )
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=the keyboard of a learner in Cursor whose settings page (a tab of the main editor) is to get the focus back, while the editor's layout read is no proof of the main editor because neither a text editor nor a pane is reported as active: nothing is run for that page's group, and the chat's group still gets Cursor's own command; fails_when=a group count without proof is answered like "the group is in another editor part" for every group, so the chat's focus command runs for a remembered tab of the main editor, against the rule that nothing is guessed; why_new=Cycle 0046 row 173 (delegated review, finding 10: the count is unknown whenever the main editor's focus is not proven, not only when the layout cannot be read); seam=the workspace harness's addSeparateEditorPart, addOpaqueTab, focusOpaqueTab, and the reader's choice of the return's command
+test("the focus return runs no command for a group of the main editor, and Cursor's own for the chat's group, while the editor's layout read is no proof of which editor part answered", async () => {
+  // Arrange: Cursor with two groups of the main editor and the Agent chat as a tab of another editor part; a settings page in the first group has the keyboard, so no text editor and no pane is reported as active.
+  const harness = await workspaceHarness(false)
+  harness.useNativeLayout({ orientation: 0, groups: [{}, {}] })
+  harness.useHostAppName('Cursor')
+  const chat = harness.addSeparateEditorPart()
+  try {
+    harness.focusOpaqueTab(harness.addOpaqueTab('Cursor Settings', 1))
+    const groups = harness.editor.window.tabGroups.all
+    const settingsGroup = groups.find((group) => group.viewColumn === 1)
+    const chatGroup = groups.find((group) => group.tabs.includes(chat.tab))
+    assert.ok(settingsGroup && chatGroup)
+
+    // Act
+    const commands = {
+      settingsPageAfterAnArrangement: await readerSeams(
+        harness,
+      ).focusReturnCommand(settingsGroup, false),
+      chatAfterAnArrangement: await readerSeams(harness).focusReturnCommand(
+        chatGroup,
+        false,
+      ),
+      chatAtAPause: await readerSeams(harness).focusReturnCommand(
+        chatGroup,
+        true,
+      ),
+    }
+
+    // Assert
+    assert.equal(harness.editor.window.activeTextEditor, undefined)
+    assert.deepEqual(commands, {
+      settingsPageAfterAnArrangement: undefined,
+      chatAfterAnArrangement: 'composer.focusComposer',
+      chatAtAPause: 'composer.focusComposer',
+    })
   } finally {
     await harness.close()
   }
