@@ -68,7 +68,10 @@ import {
   currentStorageOwner,
   useEditorMachineId,
 } from './utils/currentStorageOwner'
-import { cursorCatalogCleanupNotice } from './utils/cursorCatalogCleanupNotice'
+import {
+  cursorCatalogCleanupNotice,
+  REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+} from './utils/cursorCatalogCleanupNotice'
 import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
 import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { describeWikiChatWatch } from './utils/describeWikiChatWatch'
@@ -1446,10 +1449,15 @@ export function activate(
           // Setup and auto reconnect must finish before removing their shared skill, registration, and catalog.
           await cursorSetup?.catch(() => {})
           await cursorRegistration?.attempt.catch(() => {})
-          const ownedCatalogGeneration =
-            await captureOwnedCursorMcpCatalogGeneration(
-              context.globalStorageUri.fsPath,
-            )
+          // A refusal of the catalog's first step does not end the removal: the skill goes all the same, and the refusal is shown below as the cleanup's warning.
+          const catalogCapture = await captureOwnedCursorMcpCatalogGeneration(
+            context.globalStorageUri.fsPath,
+            undefined,
+            REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
+          ).then(
+            (ownedGeneration) => ({ ownedGeneration }),
+            (refusal: unknown) => ({ refusal }),
+          )
           // A skill an earlier removal took away is no refusal: this removal goes on to what that one could not finish.
           const wasSkillAlreadyRemoved =
             (await removeManagedCursorSkill(context.globalStorageUri.fsPath))
@@ -1460,11 +1468,13 @@ export function activate(
             registeredCursorServer = undefined
           }
           try {
-            const catalogCleanup = ownedCatalogGeneration
+            if ('refusal' in catalogCapture) throw catalogCapture.refusal
+            const catalogCleanup = catalogCapture.ownedGeneration
               ? await removeOwnedCursorMcpCatalog(
                   context.globalStorageUri.fsPath,
                   undefined,
-                  ownedCatalogGeneration,
+                  catalogCapture.ownedGeneration,
+                  REMOVE_MANAGED_CURSOR_SKILL_COMMAND,
                 )
               : 'not-owned'
             void showNotice(

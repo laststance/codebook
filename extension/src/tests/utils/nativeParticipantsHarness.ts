@@ -1126,6 +1126,43 @@ export async function nativeParticipantsHarness(
       })
     },
     /**
+     * Pauses the page in its stub of the server module and keeps the adapter's `stopped` back: the runtime's pause is read now, and the `stopped` that names the server breakpoint only when the test calls `stopped`, as an adapter that first resolves which breakpoints were hit reports it.
+     * @example const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!); harness.advance(300); stub.stopped()
+     */
+    pauseBrowserInServerStub(serverBreakpoint: { id: string }): {
+      stopped(): void
+    } {
+      browserAtServerBreakpoint = true
+      listeners.browser.get('Debugger.scriptParsed')?.({
+        scriptId: 'server-module-stub',
+        url: `webpack-internal:///(app-pages-browser)/./${server.source.path}`,
+        executionContextId: 1,
+      })
+      listeners.browser.get('Debugger.paused')?.(
+        debuggerPausedEvent({
+          callFrameId: 'server-module-stub',
+          scriptId: 'server-module-stub',
+          lineNumber: 0,
+          columnNumber: 0,
+          hitBreakpoints: ['2:0:0:mode'],
+        }),
+      )
+      return {
+        stopped: (): void => {
+          run.onEvent(sessions.browser, {
+            type: 'event',
+            seq: ++sequence,
+            event: 'stopped',
+            body: {
+              reason: 'breakpoint',
+              threadId: 1,
+              hitBreakpointIds: [adapterId(serverBreakpoint)],
+            },
+          })
+        },
+      }
+    },
+    /**
      * Announces the page's pause at a server stop's breakpoint in the order the two channels were read natively: the adapter's `stopped`, which names the server breakpoint, first, and the runtime's pause only when the test calls `paused`.
      * @example const stub = harness.announceBrowserStopAtServerBreakpoint(harness.breakpoints[0]!); stub.paused()
      */

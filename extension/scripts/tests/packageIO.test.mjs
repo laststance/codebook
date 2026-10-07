@@ -408,6 +408,28 @@ test('a tracked document outside the extension that changes during compilation r
   assert.equal(await readFile(fixture.output, 'utf8'), 'previous good artifact')
 })
 
+// Cycle 0046 row 239: the earlier path of a rename stands alone after its entry in Git's answer, and it was cut like an entry with status letters when its third character was a space, so "my file.md" was named as "file.md".
+test('a tracked document renamed during compilation is named in the refusal by its new path and by its whole earlier path, also when the earlier name has a space as its third character', async (context) => {
+  // Arrange: a committed document whose name has a space after its second character.
+  const fixture = await sourceFixture(context)
+  await writeFile(join(fixture.repository, 'my file.md'), 'A document.\n')
+  await runPackageCommand('git', ['add', 'my file.md'], fixture.repository)
+  await runPackageCommand(
+    'git',
+    [...FIXTURE_AUTHOR, 'commit', '--quiet', '-m', 'document'],
+    fixture.repository,
+  )
+  // Act: another process renames it with Git while the stand-in build runs.
+  const failure = await failureOfBuildDuringWhich(fixture, () =>
+    runPackageCommand('git', ['mv', 'my file.md', 'x.md'], fixture.repository),
+  )
+  // Assert: the new path, then the earlier one as Git gives it.
+  assert.equal(
+    failure?.message,
+    'The checkout changed during compilation: Git reported no change before and reports changes now ("x.md", "my file.md"). Retry from a stable checkout.',
+  )
+})
+
 test('a commit made during compilation refuses the package with one sentence that names the revision before and the revision now', async (context) => {
   // Arrange
   const fixture = await sourceFixture(context)

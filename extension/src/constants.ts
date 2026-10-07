@@ -886,6 +886,8 @@ export const REPOSITORY_PAUSE_FUNCTION_NAME_LIMIT_CHARS = 256
 export const REPOSITORY_ADAPTER_PAUSE_JOURNAL_LIMIT = 100
 /** The longest a pause no debugger stop announced may last for its resume to count as the debug adapter's own; the adapter resumes its pauses within milliseconds, and a pause that outlasts the wait for a stop's own pause is taken as announced, so this bound is that wait's bound ({@link CAPTURE_TIMEOUT_MS}) and follows it. */
 export const REPOSITORY_ADAPTER_PAUSE_LIMIT_MS = CAPTURE_TIMEOUT_MS
+/** The longest a page pause may last in a run that declares no browser stop before the run ends as "Unowned browser stop remained paused": the debug adapter resumes a pause of its own within milliseconds, and nobody else may pause the page of such a run. A pause in the page's stub of a declared server stop's module has {@link REPOSITORY_ADAPTER_PAUSE_LIMIT_MS} instead, because the adapter first reports that pause as a stop, which the run then resumes itself. */
+export const REPOSITORY_UNOWNED_PAGE_PAUSE_LIMIT_MS = 250
 /** The same bound while the participant's stop is accepted and its own pause is still awaited: the held pause may then be the announced one, which the adapter never resumes by itself. */
 export const REPOSITORY_ANNOUNCED_PAUSE_RESUME_LIMIT_MS = 1_000
 /** Where a participant is paused when its pause has an empty stack, in the sentence a deadline adds for a pause no debugger stop announced. */

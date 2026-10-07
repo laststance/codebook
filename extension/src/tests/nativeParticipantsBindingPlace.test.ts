@@ -915,3 +915,100 @@ test('a server stop whose reported place the map refuses and whose module is not
     false,
   )
 })
+
+// Cycle 0046 (row 209): red while every page pause of a run without browser stops had 250 ms until someone resumed it: the pause in the stub of a declared server stop's module, whose `stopped` the adapter sent later than that, ended the run with "Unowned browser stop remained paused" before the run could know whose pause it was.
+test('a page pause in the stub of a declared server stop’s module whose stopped event is read 300 ms later is resumed by the run, and the server stop is captured', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet. The run's clock moves only when the test advances it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  // Act: the page pauses in its stub of the server module; 300 ms pass before the adapter reports the stop that names the server breakpoint.
+  const stub = harness.pauseBrowserInServerStub(harness.breakpoints[0]!)
+  harness.advance(300)
+  const failuresBeforeTheStop = harness.run.view().failures.join('; ')
+  stub.stopped()
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+      .length
+  }, 'the run resumed the page')
+  harness.emitPause('server')
+  const server = await pauseReady(harness, 'server')
+  // Assert
+  assert.equal(failuresBeforeTheStop, '')
+  assert.deepEqual([server.source.line, server.source.column], [1, 1])
+  assert.equal(
+    journaled(harness, 'cdp.browser-adapter-pause-retired').length,
+    1,
+  )
+})
+
+// Cycle 0046 (row 209): the stub's pause is bounded too, by the 3,000 ms the debug adapter may take for a pause of its own; red if it had no bound, or another one.
+test('a page pause in the stub of a declared server stop’s module that nobody resumes and no stopped event names ends the run after 3,000 ms, not earlier', async (context) => {
+  // Arrange: as above; no `stopped` follows the page's pause.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.pauseBrowserInServerStub(harness.breakpoints[0]!)
+  // Act
+  harness.advance(2_999)
+  const failuresJustBeforeTheBound = harness.run.view().failures.join('; ')
+  harness.advance(1)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the unowned pause ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(failuresJustBeforeTheBound, '')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unowned browser stop remained paused',
+  )
+})
+
+// Cycle 0046 (row 209): the longer bound is the stub's alone; red if every page pause of a run without browser stops were given 3,000 ms.
+test('a page pause outside the stub of a declared server stop’s module still ends a run without browser stops after 250 ms', async (context) => {
+  // Arrange: the action is accepted; the page pauses in a script of the debug adapter's own, and nobody resumes it.
+  const harness = await nativeParticipantsHarness(context, ['server'], {
+    manualClock: true,
+  })
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  harness.emitBrowserAdapterPause()
+  // Act
+  harness.advance(249)
+  const failuresJustBeforeTheBound = harness.run.view().failures.join('; ')
+  harness.advance(1)
+  await waitUntil(
+    () => harness.run.view().status === 'failed',
+    'the unowned pause ended the run',
+  )
+  await harness.run.stop()
+  // Assert
+  assert.equal(failuresJustBeforeTheBound, '')
+  assert.equal(
+    harness.run.view().failures[0],
+    'Unowned browser stop remained paused',
+  )
+})
