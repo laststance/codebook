@@ -693,6 +693,43 @@ test('a page pause at a server stop’s breakpoint whose resume the adapter refu
   )
 })
 
+// Cycle 0046 (row 271): the order the help states for the entries of a page pause the run resumes itself. Red if the request were journaled after the page's resume, or the answered entry before the debugger answered: here the debugger resumes the page first and answers the request afterwards, so the answered entry follows the page's resume.
+test('the journal of a page pause at a server stop’s breakpoint holds Codebook’s resume request before the page’s resume, and the answered entry only after the debugger’s answer, which follows the page’s resume here', async (context) => {
+  // Arrange: the action is accepted and the server stop has not paused yet; the debugger answers the run's resume at once, after it resumed the page.
+  const harness = await nativeParticipantsHarness(context, ['server'])
+  await harness.run.prepare()
+  harness.holdFirstPause()
+  harness.run.action('once', 'repository-click')
+  await waitUntil(
+    () => harness.run.view().operation?.inputDispatched,
+    'input sent',
+  )
+  // Act: the page pauses in its stub of the server module, naming the server breakpoint, and the run resumes it.
+  harness.pauseBrowserAtServerBreakpoint(harness.breakpoints[0]!)
+  await waitUntil(() => {
+    const view = harness.run.view()
+    if (view.failures.length) throw new Error(view.failures.join('; '))
+    return journaled(harness, 'dap.server-breakpoint-browser-stop-resumed')
+      .length
+  }, 'the debugger answered the run’s resume')
+  // Assert
+  const entriesOfThePause = harness.run
+    .view()
+    .events.map((event) => event.type)
+    .filter((type) =>
+      [
+        'dap.server-breakpoint-browser-resume-requested',
+        'cdp.browser-adapter-pause-retired',
+        'dap.server-breakpoint-browser-stop-resumed',
+      ].includes(type),
+    )
+  assert.deepEqual(entriesOfThePause, [
+    'dap.server-breakpoint-browser-resume-requested',
+    'cdp.browser-adapter-pause-retired',
+    'dap.server-breakpoint-browser-stop-resumed',
+  ])
+})
+
 // Cycle 0046 (row 157): red while a page pause that comes after the action was accepted, in a run without browser stops, kept its 250 ms timer although the run itself was resuming it: a resume slower than that ended the run with "Unowned browser stop remained paused".
 test('a page pause at a server stop’s breakpoint after the action was accepted is not ended by the 250 ms bound of an unowned page pause while the run’s own resume is under way, in a run that declares only a server stop', async (context) => {
   // Arrange: the action is accepted and the server stop has not paused yet; the browser adapter answers the run's resume only when the test lets it. The run's clock moves only when the test advances it.
