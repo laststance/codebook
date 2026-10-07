@@ -2575,8 +2575,7 @@ test('an edited Cursor skill is left alone by removal, which says what to do: af
       fileAfterTheRefusedRemoval: 'An edit made by the learner.\n',
       removalAfterTheFileWasDeleted: 'removed',
       skillFolderAfterThatRemoval: [],
-      removalOnceMore:
-        'No installed Codebook-owned Cursor skill was found; no file was changed.',
+      removalOnceMore: 'already-removed',
       laterSetup: 'restored',
     },
   )

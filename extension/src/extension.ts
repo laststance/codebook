@@ -69,6 +69,7 @@ import {
   useEditorMachineId,
 } from './utils/currentStorageOwner'
 import { cursorCatalogCleanupNotice } from './utils/cursorCatalogCleanupNotice'
+import { cursorRemovalNotice } from './utils/cursorRemovalNotice'
 import { describeWikiChatHandOver } from './utils/describeWikiChatHandOver'
 import { detectWikiPublishConflicts } from './utils/detectWikiPublishConflicts'
 import { endOfWikiChatStart } from './utils/endOfWikiChatStart'
@@ -1444,7 +1445,10 @@ export function activate(
             await captureOwnedCursorMcpCatalogGeneration(
               context.globalStorageUri.fsPath,
             )
-          await removeManagedCursorSkill(context.globalStorageUri.fsPath)
+          // A skill an earlier removal took away is no refusal: this removal goes on to what that one could not finish.
+          const wasSkillAlreadyRemoved =
+            (await removeManagedCursorSkill(context.globalStorageUri.fsPath))
+              .status === 'already-removed'
           await context.workspaceState.update('codebook.aiChatSetup', undefined)
           if (registeredCursorServer) {
             vscode.cursor?.mcp?.unregisterServer(registeredCursorServer)
@@ -1460,12 +1464,13 @@ export function activate(
               : 'not-owned'
             void showNotice(
               'information',
-              catalogCleanup === 'removed'
-                ? 'Managed Cursor skill removed; Codebook-owned empty MCP catalog config retired. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.'
-                : 'Managed Cursor skill removed. Existing or changed Cursor MCP config preserved. Codebook: Restore Managed Cursor Skill can reinstall the bundled version.',
+              cursorRemovalNotice(wasSkillAlreadyRemoved, catalogCleanup),
             )
           } catch (error) {
-            void showNotice('warning', cursorCatalogCleanupNotice(error))
+            void showNotice(
+              'warning',
+              cursorCatalogCleanupNotice(error, wasSkillAlreadyRemoved),
+            )
           }
         } finally {
           cursorRemoving = false

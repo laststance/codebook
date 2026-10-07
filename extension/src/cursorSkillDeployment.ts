@@ -122,7 +122,14 @@ type ManagedSkillState =
   | { kind: 'current' | 'newer' | 'outdated'; receipt: SkillReceipt }
 
 export type CursorSkillResult = {
-  status: 'installed' | 'updated' | 'restored' | 'current' | 'removed'
+  /** What the call did. `already-removed` is a removal's answer for a skill an earlier removal had taken away: nothing was left to do for the skill. */
+  status:
+    | 'installed'
+    | 'updated'
+    | 'restored'
+    | 'current'
+    | 'removed'
+    | 'already-removed'
   path: string
   sha256: string
   version: string
@@ -1440,7 +1447,16 @@ async function finishRemovalOfMissingSkill(
   }
 }
 
-/** Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. @example await removeManagedCursorSkill('/private', '/home') */
+/**
+ * Removes only the exact receipted Cursor skill after an explicit user command; setup can restore it later. Called by the removal command of {@link activate}, which then goes on to Codebook's empty Cursor MCP config.
+ * @param storageRoot - Codebook's private storage, which holds the receipt and the storage lock.
+ * @param homeRoot - The home folder whose `.cursor/skills/codebook/SKILL.md` is managed; tests pass a temporary one.
+ * @returns
+ * - `removed`: Codebook's skill was moved away and retained privately, or its file or folder was already gone and the receipt now says so
+ * - `already-removed`: the receipt says an earlier removal took the skill away; nothing was changed, and the command goes on to what that removal could not finish
+ * @throws When no receipt exists ("No installed Codebook-owned Cursor skill was found; no file was changed."), when the file at the skill's path is not the one Codebook installed (it stays, and the sentence says what to do), and when a record of an interrupted setup or removal is in the way.
+ * @example await removeManagedCursorSkill('/private', '/home') // => { status: 'removed', path, sha256, version }
+ */
 export async function removeManagedCursorSkill(
   storageRoot: string,
   homeRoot = homedir(),
@@ -1482,10 +1498,18 @@ export async function removeManagedCursorSkill(
         version: recovered.owner.skillVersion,
       }
     const receipt = await readReceipt(receiptPath, targetPath)
-    if (!receipt?.installed)
+    if (!receipt)
       throw new Error(
         'No installed Codebook-owned Cursor skill was found; no file was changed.',
       )
+    // An earlier removal took the skill away: nothing is left to do for it, and the command goes on to what that removal could not finish.
+    if (!receipt.installed)
+      return {
+        status: 'already-removed',
+        path: targetPath,
+        sha256: receipt.skillSha256,
+        version: receipt.skillVersion,
+      }
     // The skill's folder is gone (the learner took it away): nothing is left to remove, and the receipt says so.
     if (!(await inspectedPath(directory)))
       return finishRemovalOfMissingSkill(receipt, receiptPath, directory)
