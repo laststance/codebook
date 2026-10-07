@@ -1363,6 +1363,69 @@ test('a VS Code watch that itself breaks off ends the update with the sentence t
   }
 })
 
+// Value: protects=the learner's next press, and every other window, after a watched VS Code update ended while a step of recording that end threw; fails_when=the end is recorded inside the watch's own guard, so a throw of the end is taken for a watch that broke off: the run is recorded again as one whose chat still works, the next press is refused with "may still be updating this Wiki" although the chat's reply had ended, the run's marker stays beside the Wiki and a rejection is left unhandled; why_new=Cycle 0046 row 353 (review finding on the watch's try/catch); seam=the editor's notification, whose call throws for the notice of the end
+test('a watched VS Code update whose chat finishes its reply without publishing, at a moment the editor cannot show the notice of that end, is not recorded as a watch that broke off: the page has the sentence of the finished reply, the marker is gone, nothing is left unhandled, and the next press sends a request', async () => {
+  // Arrange: the first chat shows a sign and later completes its reply; a later chat works. The editor's call for a notice with a button throws once, at the notice of the first end.
+  const unhandledRejections: string[] = []
+  const noteUnhandled = (reason: unknown): void => {
+    unhandledRejections.push(String(reason))
+  }
+  process.on('unhandledRejection', noteUnhandled)
+  let completeTheReply = (): void => {}
+  let replyCount = 0
+  let noticeThrowsLeft = 1
+  const wiki = await openWikiWindow({
+    chatReply: () => {
+      replyCount += 1
+      return replyCount === 1
+        ? new Promise((resolveReply) => {
+            completeTheReply = (): void => resolveReply({})
+          })
+        : Promise.resolve({ type: 'confirmation', kind: 'toolInvocation' })
+    },
+    chooseAction: () => {
+      noticeThrowsLeft -= 1
+      if (noticeThrowsLeft === 0)
+        throw new Error('The notification could not be shown.')
+      return undefined
+    },
+  })
+  const markerPath = `${wiki.outputDirectory}.update-run.json`
+  try {
+    const press = wiki.clickUpdate()
+    await waitForChatRequest(wiki.chatRequests)
+    wiki.openDocument(wiki.manifestPath)
+    await press
+
+    // Act: the reply ends without a publish; then the learner presses again.
+    completeTheReply()
+    const ended = await waitForEnd(wiki.status)
+    const markerDeadline = Date.now() + 2_000
+    let markerAfterTheEnd = 'still there'
+    while (markerAfterTheEnd === 'still there' && Date.now() < markerDeadline) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10))
+      markerAfterTheEnd = await access(markerPath).then(
+        () => 'still there',
+        () => 'gone',
+      )
+    }
+    await wiki.clickUpdate()
+
+    // Assert
+    assert.equal(
+      ended.state === 'failed' ? ended.reason : ended.state,
+      'The editor chat finished its reply without publishing a new Wiki. Read its reply in the Chat view, then press Update LLM Wiki again.',
+    )
+    assert.equal(markerAfterTheEnd, 'gone')
+    assert.deepEqual(unhandledRejections, [])
+    assert.equal(wiki.status().state, 'running')
+    assert.equal(wiki.chatRequests.length, 2)
+  } finally {
+    process.off('unhandledRejection', noteUnhandled)
+    await wiki.close()
+  }
+})
+
 // Value: protects=the Update button of a window whose watched run ends at a moment the Wiki folder cannot be read, and the chat of that run, which was not stopped; fails_when=the end rejects where it reads the disk, the watch's own catch runs into the same read, and the run stays "running", so every later press is answered with "already updating" until the window is reloaded; or the run ends without the reservation of a cancelled watch and the next press sends a second request; why_new=Cycle 0046 row 344; seam=the read of the publish token, which rejects while the run ends
 test('a VS Code watch the learner cancels at a moment the Wiki folder cannot be read does not stay running: the update ends with the sentence that Codebook could not read how it ended, claims nothing about the site, and the next press is answered with the wait for the chat and Update anyway', async () => {
   // Arrange

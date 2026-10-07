@@ -963,7 +963,7 @@ export function activate(
       isFailureCodebookSentence: observed.isFailureCodebookSentence,
       mayBeReplacedLater: observed.mayBeReplacedLater,
     })
-  /** Records how a run of either host ended: lets {@link readWikiUpdateEnd} decide from the disk, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. It never rejects: a run whose end cannot be read from the disk is recorded as failed without a word about the site ({@link unreadWikiUpdateEnd}), so no window stays "already updating". @example await finishWikiUpdate(run, { cancelled: true }) */
+  /** Records how a run of either host ended: lets {@link readWikiUpdateEnd} decide from the disk, stores its answer for the reader, frees the Wiki for other windows and keeps how the run ended for this window's next start. It never rejects: a run whose end cannot be read from the disk is recorded as failed without a word about the site ({@link unreadWikiUpdateEnd}), so no window stays "already updating", and a notice that cannot be shown does not keep the run's marker in place. @example await finishWikiUpdate(run, { cancelled: true }) */
   const finishWikiUpdate = async (
     run: WikiRun,
     observed: ObservedWikiRunEnd,
@@ -994,7 +994,11 @@ export function activate(
       lastWikiRun,
     )
     // The editor tells the learner in the same turn the page's status changes; the marker's file work below would put the notice a turn or more behind the page.
-    showWikiUpdateNotice()
+    try {
+      showWikiUpdateNotice()
+    } catch {
+      // A notice the editor cannot show has nobody to report to. The end is recorded and the page shows it; the marker below must still be freed or reserved.
+    }
     if (mayAgentStillWork) {
       // Another window sees neither a run nor, before the chat staged anything, a candidate: the marker stays as a reservation until the watch bound.
       await run.reserveMarker(endedAtMs).catch(() => undefined)
@@ -1053,40 +1057,48 @@ export function activate(
     run: WikiRun,
     { reply }: WatchedWikiChat,
   ): Promise<void> =>
-    withCancellableProgress(WIKI_CHAT_WATCH_TITLE, run, async () => {
-      try {
-        const result = await waitForWikiPublish({
-          // Only a new publication counts as the publish; a manifest rewritten by anything else does not.
-          startToken: run.publicationAtStart,
-          readStamp: () => readWikiWatchStamp(run.outputDirectory),
-          readToken: () => readWikiPublicationIdentity(run.outputDirectory),
-          readPublished: () =>
-            inspectPublishedWiki(run.projectRoot, run.outputDirectory),
-          unreadableGraceMs: WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
-          findBlockingFiles: () => probeWikiCandidates(run),
-          // A chat whose reply ended has said its last word: the look after it decides, and the bound is not waited out.
-          replyEnded: reply.ended,
-          signal: run.controller.signal,
-          timeoutMs: run.timeoutMs,
-          pollMs: WIKI_UPDATE_WATCH_POLL_MS,
-        })
-        await finishWikiUpdate(run, {
-          cancelled: result.outcome === 'cancelled',
-          timedOut: result.outcome === 'timed-out',
-          blockingPaths: result.outcome === 'blocked' ? result.paths : [],
-          publish: result.outcome === 'published' ? result : undefined,
-          ...failureOfWikiChatReplyEnd(result.outcome, reply.end()),
-        })
-      } catch (error) {
-        // The watch broke off, not the chat: the end says so, and the next press is held back as after a stopped watch, so no second chat starts beside the first.
-        await finishWikiUpdate(run, {
-          failure: describeBrokenWikiWatch(thrownMessage(error)),
-          isFailureCodebookSentence: true,
-          mayBeReplacedLater: true,
-          didWatchBreak: true,
-        })
+    withCancellableProgress(WIKI_CHAT_WATCH_TITLE, run, async () =>
+      // The end is recorded outside the watch's guard: only what the watch itself threw is a watch that broke off.
+      finishWikiUpdate(run, await watchForWikiPublish(run, reply)),
+    )
+  /** Watches the Wiki's output for the publish of a VS Code update and says what the run observed; called by {@link watchVsCodeWikiUpdate}, which records the end. It never rejects: a watch that throws is answered as a watch that broke off, in whose end the chat goes on. @param reply - The watch of the chat's reply. @example await watchForWikiPublish(run, reply) // => { cancelled: false, timedOut: true, blockingPaths: [], publish: undefined } */
+  const watchForWikiPublish = async (
+    run: WikiRun,
+    reply: WatchedWikiChat['reply'],
+  ): Promise<ObservedWikiRunEnd> => {
+    try {
+      const result = await waitForWikiPublish({
+        // Only a new publication counts as the publish; a manifest rewritten by anything else does not.
+        startToken: run.publicationAtStart,
+        readStamp: () => readWikiWatchStamp(run.outputDirectory),
+        readToken: () => readWikiPublicationIdentity(run.outputDirectory),
+        readPublished: () =>
+          inspectPublishedWiki(run.projectRoot, run.outputDirectory),
+        unreadableGraceMs: WIKI_UPDATE_UNREADABLE_MANIFEST_GRACE_MS,
+        findBlockingFiles: () => probeWikiCandidates(run),
+        // A chat whose reply ended has said its last word: the look after it decides, and the bound is not waited out.
+        replyEnded: reply.ended,
+        signal: run.controller.signal,
+        timeoutMs: run.timeoutMs,
+        pollMs: WIKI_UPDATE_WATCH_POLL_MS,
+      })
+      return {
+        cancelled: result.outcome === 'cancelled',
+        timedOut: result.outcome === 'timed-out',
+        blockingPaths: result.outcome === 'blocked' ? result.paths : [],
+        publish: result.outcome === 'published' ? result : undefined,
+        ...failureOfWikiChatReplyEnd(result.outcome, reply.end()),
       }
-    })
+    } catch (error) {
+      // The watch broke off, not the chat: the end says so, and the next press is held back as after a stopped watch, so no second chat starts beside the first.
+      return {
+        failure: describeBrokenWikiWatch(thrownMessage(error)),
+        isFailureCodebookSentence: true,
+        mayBeReplacedLater: true,
+        didWatchBreak: true,
+      }
+    }
+  }
   /** Runs the Cursor Agent CLI for one update and records the run's result for the reader; settles when the agent process has closed. @example await runCursorWikiAgent(run, '/codebook Update LLM Wiki …') */
   const runCursorWikiAgent = async (
     run: WikiRun,
