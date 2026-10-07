@@ -339,6 +339,8 @@ Found by these packages beside their rows and now rows 185 to 198: a link at the
 
 138 of 198 rows are closed. Open: 20 rows that owe a native check, 8 whose fix is on a branch that is not merged, and 32 that their packages work on or that were just added.
 
+**The merged tree with those seven merges, verified at `684a9c4`** (the merges, the follow-up `358362e` and this record's commit; the checkout was not changed while it ran): the build passes, the full suite 3,538 of 3,538 with none skipped, ESLint, Prettier and the three Fallow gates pass, the package and script tests 277 of 277, the hook test 4 of 4, the Study pane's DOM check 167 of 167 and the Wiki reader's 36 of 36. It is pushed for the Windows job. The account's weekly usage limit was reached while it ran (2026-10-06 about 01:30 JST), which ended the nine packages' agents in the middle of their rows; the work continued when the limit was lifted on 2026-10-07 at noon, each package from its worktree and its closure file.
+
 ## Result and decision
 
 - Result: pending
