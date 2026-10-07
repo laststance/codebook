@@ -1,8 +1,10 @@
 import { resolve } from 'node:path'
+import { setTimeout as sleepFor } from 'node:timers/promises'
 
 import * as constants from '../../constants'
 import { readDeepWikiManifest } from '../../deepWikiReader'
 import type * as ExtensionModule from '../../extension'
+import { findWikiUpdateStartBlock } from '../../utils/findWikiUpdateStartBlock'
 import {
   inspectDeepWikiFreshness,
   type WikiFreshness,
@@ -40,11 +42,12 @@ type NumericConstantName = {
     : never
 }[keyof typeof constants]
 
-/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
+/** An awaited step of an update that a test can keep open: the freshness inspection among the start checks, VS Code's chat command that carries the request, one listing of the candidates (the next listing after `hold` is kept open once it has read the folder; later ones pass), the wait of the start check before its second look at a publish journal written a moment ago (held, it lasts until the release and no real time), or a read of the publish token (the start checks read it and so does the end of a run, so a hold set after the start keeps the end open). */
 export type HeldUpdateStep =
   | 'freshness-inspection'
   | 'chat-open'
   | 'candidate-listing'
+  | 'journal-wait'
   | 'publish-token-read'
 
 /**
@@ -339,6 +342,16 @@ export async function openWikiUpdateWindow(options: {
       ...(options.constants
         ? { './constants': { ...constants, ...options.constants } }
         : {}),
+      // The real start check runs; a test that holds its wait at a fresh journal decides when the second look comes, and otherwise the real time passes.
+      './utils/findWikiUpdateStartBlock': {
+        findWikiUpdateStartBlock: (outputDirectory: string) =>
+          findWikiUpdateStartBlock(outputDirectory, {
+            wait: async (delayMs: number) => {
+              if (holds.has('journal-wait')) await passHold('journal-wait')
+              else await sleepFor(delayMs)
+            },
+          }),
+      },
       // The real listing runs; the window only counts how often a look parsed the candidates, and can keep one listing open after it has read the folder.
       './utils/listWikiCandidates': {
         listWikiCandidates: async (outputDirectory: string) => {

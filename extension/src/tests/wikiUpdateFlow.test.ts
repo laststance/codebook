@@ -3179,16 +3179,23 @@ test(
     // Another chat's publish is in progress: its journal was written just now.
     await writeFile(journalPath, '{}')
     try {
+      const journalWait = wiki.hold('journal-wait')
+
       // Act: that publish lands while the start check waits for its second look at the journal.
       const press = wiki.clickUpdate()
-      await new Promise((resolveWait) => setTimeout(resolveWait, 300))
+      const reached = await Promise.race([
+        journalWait.started.then(() => 'the start check waits at the journal'),
+        press.then(() => 'the start ended without a wait at the journal'),
+      ])
       await wiki.publish('c'.repeat(64))
       await rm(journalPath)
+      journalWait.release()
       await press
       // The watch takes a whole look at the folder.
       await waitForStampReads(wiki.looks, wiki.looks.stampReadsDone + 3)
 
       // Assert
+      assert.equal(reached, 'the start check waits at the journal')
       assert.equal(wiki.status().state, 'running')
       assert.equal(wiki.chatRequests.length, 1)
       assert.deepEqual(wiki.notices, [])
