@@ -2893,7 +2893,7 @@ interface RecordedStudyReader {
  * Activates the extension over fake readers that record what the extension does with them, with the listener of changed workspace folders and the commands reachable, and with the real agent server over a temporary project.
  * No other test of this file reaches the extension's handling of a changed workspace folder with a server: the fakes here are what that needs.
  * @param behavior - `disposeStudyReader` runs inside every dispose of a Study reader, before the reader counts as disposed: a test holds it open, as while the reader's panes close, or throws from it. `beforeStudyReaderIsMade` runs first in every construction of a Study reader, with the number that reader would get: a test throws from it. `disposeRepositoryReader` runs inside every dispose of a Repository reader, with that reader's number, after the reader counts as disposed, as the real one marks itself first: a test throws from it. `retireStudyReader` runs inside every retirement of a server on a Study reader, after it was recorded: a test throws from it, as a reader whose last history save fails does.
- * @returns The commands by name, `changeWorkspaceFolders` (the editor's event), every Study reader the extension made, what happened in order (`events`), how many environments a server start has built, the error notices, the services the extension started with the runtimes and the configuration of the temporary project (for a test that runs a study on a server), and `close`, which deactivates the extension and removes the temporary project.
+ * @returns The commands by name, `changeWorkspaceFolders` (the editor's event), every Study reader the extension made, what happened in order (`events`), how many environments a server start has built, the error notices, the services the extension started with the runtimes and the configuration of the temporary project (for a test that runs a study on a server), `deactivate` (the extension's own shutdown, for a test of it), and `close`, which deactivates the extension and removes the temporary project.
  * @example
  * const editor = await activateOverRecordedReaders()
  * editor.changeWorkspaceFolders()
@@ -3036,9 +3036,15 @@ async function activateOverRecordedReaders(
     services,
     runtimes: harness.runtimes,
     configuration: harness.configuration,
+    /** Shuts the extension down as a closing window does; a test that calls it reads how the shutdown ended. */
+    deactivate: (): Promise<void> => boundary.deactivate(),
     async close(): Promise<void> {
-      await boundary.deactivate()
-      await harness.close()
+      // The temporary project is removed also when the shutdown fails.
+      try {
+        await boundary.deactivate()
+      } finally {
+        await harness.close()
+      }
     },
   }
 }
@@ -3287,6 +3293,102 @@ test('when the agent server cannot be released for a change of the workspace’s
     )
   } finally {
     restoreRuntimeStop?.()
+    await editor.close()
+  }
+})
+
+// Value: protects=the learner's writes and playback position when the window closes while the agent server's stop fails: the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, both run and are waited for, and the editor is still told the stop's failure; fails_when=the stop's failure ends the shutdown before either dispose, so a write that is under way is not waited for before the extension host ends; why_new=Cycle 0046 row 315 (read in the code while working on row 312, whose fault it shares); seam=the extension's deactivation over fake readers (activateOverRecordedReaders) whose disposes record what they save, with a server whose retirement fails
+test('when the agent server’s stop fails as the window closes, the Repository Wiki reader’s dispose still waits for the learner’s write under way and the Study reader’s dispose still saves the playback position, and the shutdown ends with the stop’s failure', async () => {
+  // Arrange: an agent server runs; its last history save fails when it is retired; a learner write is under way that the Repository Wiki reader's dispose waits for, and the Study reader's dispose saves the playback position.
+  const saved: string[] = []
+  let retirements = 0
+  const editor = await activateOverRecordedReaders({
+    retireStudyReader: async (): Promise<void> => {
+      retirements += 1
+      if (retirements === 1)
+        throw new Error(
+          'Runtime released; final reader history was not saved: Error: disk is read-only',
+        )
+    },
+    disposeRepositoryReader: async (): Promise<void> => {
+      // The write ends a moment after the dispose began to wait for it.
+      await new Promise<void>((resolveWrite) => setTimeout(resolveWrite, 20))
+      saved.push('the learner’s write under way')
+    },
+    disposeStudyReader: async (): Promise<void> => {
+      saved.push('the playback position')
+    },
+  })
+  try {
+    await editor.commands.get('codebook.startAgentServer')!()
+    // Act: the window closes.
+    const shutdown = await editor.deactivate().then(
+      () => 'shut down without a failure',
+      (error: unknown) => String(error),
+    )
+    const savedWhenTheShutdownEnded = [...saved]
+    // Assert
+    assert.equal(
+      shutdown,
+      'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+    )
+    assert.deepEqual(savedWhenTheShutdownEnded, [
+      'the learner’s write under way',
+      'the playback position',
+    ])
+    assert.deepEqual(editor.events, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+    ])
+  } finally {
+    await editor.close()
+  }
+})
+
+// Value: protects=the editor's log of a shutdown in which several steps fail naming the failure that came first, the one the later failures may follow from, while every later step still runs; fails_when=the last failure replaces the first, as nested finally blocks do, or a failed dispose keeps the next reader from being disposed; why_new=Cycle 0046 row 315 (the first failure is thrown at the end); seam=the extension's deactivation over fake readers (activateOverRecordedReaders) whose server's retirement and Repository Wiki reader's dispose both fail
+test('when the agent server’s stop and the Repository Wiki reader’s dispose both fail as the window closes, the Study reader is still disposed and the shutdown ends with the first failure, the stop’s', async () => {
+  // Arrange: an agent server runs; its retirement fails, and so does the Repository Wiki reader's dispose.
+  let retirements = 0,
+    disposals = 0
+  const editor = await activateOverRecordedReaders({
+    retireStudyReader: async (): Promise<void> => {
+      retirements += 1
+      if (retirements === 1)
+        throw new Error(
+          'Runtime released; final reader history was not saved: Error: disk is read-only',
+        )
+    },
+    disposeRepositoryReader: async (): Promise<void> => {
+      disposals += 1
+      if (disposals === 1)
+        throw new Error(
+          "EBUSY: resource busy or locked, rmdir '/storage/books'",
+        )
+    },
+  })
+  try {
+    await editor.commands.get('codebook.startAgentServer')!()
+    // Act: the window closes.
+    const shutdown = await editor.deactivate().then(
+      () => 'shut down without a failure',
+      (error: unknown) => String(error),
+    )
+    const eventsWhenTheShutdownEnded = [...editor.events]
+    // Assert
+    assert.equal(
+      shutdown,
+      'Error: Runtime released; final reader history was not saved: Error: disk is read-only',
+    )
+    assert.deepEqual(eventsWhenTheShutdownEnded, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Study reader 1: dispose started',
+      'Study reader 1 disposed',
+    ])
+  } finally {
     await editor.close()
   }
 })

@@ -753,33 +753,43 @@ export function activate(
       ),
     )
   }
-  // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
+  /**
+   * Shuts the extension down when the window closes: stops the agent server, disposes both readers, waits for a Wiki update it stopped, and releases the Wiki reservation and the DeepWiki reader; called by {@link deactivate}.
+   * Every step runs whatever the step before it did. A stop that threw used to end the first three steps, so the Repository Wiki reader's dispose, which waits for accepted publications and learner writes, and the Study reader's dispose, which ends its run and saves the playback position, did not run, and a write under way was not waited for before the extension host ended.
+   * It is kept apart from {@link replaceReadersAfterFolderChange}: the two share only "stop, then dispose two readers", and that handling also hands archives over, clears the readers' variables, makes new readers and names each failed step for its notice, none of which a closing window may do.
+   * @throws The first failure of its steps, after all of them ran, so that the editor still logs it.
+   * @example await stopExtension()
+   */
   stopExtension = async (): Promise<void> => {
     isExtensionStopping = true
     // A closing window must not leave a watch or an unattended agent behind.
     const stoppedWikiRun = activeWikiRun
     stoppedWikiRun?.controller.abort(WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON)
-    try {
-      await stopOnRequest()
-      await repositoryReader?.dispose()
-      await reader?.dispose()
-    } finally {
+    const failures: unknown[] = []
+    for (const step of [
+      // Owned runtimes are released first; an in-flight or failing browser reader close cannot strand them.
+      (): Promise<void> => stopOnRequest(),
+      // Waits for the accepted publications and the learner's writes.
+      (): Promise<void> | undefined => repositoryReader?.dispose(),
+      // Ends the reader's run and saves the playback position.
+      (): Promise<void> | undefined => reader?.dispose(),
+      // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer. How the run ended is recorded by the run itself; shutdown only waits for it.
+      (): Promise<unknown> | undefined =>
+        stoppedWikiRun &&
+        settledWithin(
+          stoppedWikiRun.settled.catch(() => undefined),
+          WIKI_CURSOR_TERMINATION_GRACE_MS,
+        ),
+      (): Promise<void> => dropWikiReservation(),
+      (): Promise<void> | undefined => deepWikiReader?.close(),
+    ]) {
       try {
-        // The Cursor agent gets its termination grace to close; an agent that does not is not waited for longer.
-        if (stoppedWikiRun)
-          await settledWithin(
-            // How the run ended is recorded by the run itself; shutdown only waits for it.
-            stoppedWikiRun.settled.catch(() => undefined),
-            WIKI_CURSOR_TERMINATION_GRACE_MS,
-          )
-      } finally {
-        try {
-          await dropWikiReservation()
-        } finally {
-          await deepWikiReader?.close()
-        }
+        await step()
+      } catch (thrown) {
+        failures.push(thrown)
       }
     }
+    if (failures.length) throw failures[0]
   }
   /** Resolves the opened project and the Wiki folder its setting names, without reading the folder. @example await wikiLocation() // => { projectRoot: '/repo', outputDirectory: '/repo/.codebook/wiki' } */
   const wikiLocation = async (): Promise<{
