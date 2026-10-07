@@ -495,7 +495,7 @@ test('the packaged README names the rail entry Open in VS Code or Open in Cursor
   assert.equal(MAX_EXPLANATIONS, 32)
 })
 
-// Value: protects=a learner who reads one of the two keyboard notices finding in the README when Codebook shows it, in which editor and chat layout, and that it comes once in an editor session; fails_when=the README loses a notice, quotes another sentence than the reader shows, or still says that a close beside the learner's own file shows nothing and that Cursor shows no sentence at a pause; why_new=Cycle 0046, found by package DOA: rows 1 and 5 added the two notices and no document named them; rewritten with rows 5 (Cursor half) and 66, which changed both sentences and when they are told, and with row 226 (since row 140 the Close notice is also told beside a page that is no text editor); seam=none
+// Value: protects=a learner who reads one of the two keyboard notices finding in the README when Codebook shows it, in which editor and chat layout, and that it comes once in an editor session; fails_when=the README loses a notice, quotes another sentence than the reader shows, or still says that a close beside the learner's own file shows nothing and that Cursor shows no sentence at a pause; why_new=Cycle 0046, found by package DOA: rows 1 and 5 added the two notices and no document named them; rewritten with rows 5 (Cursor half) and 66, which changed both sentences and when they are told, and with row 226 (since row 140 the Close notice is also told beside a page that is no text editor), and with row 317 (a close that ends an enlarged reading shows the side bars again, which moves the keyboard: the README said that such a close beside the chat tab and in an unfocused window moves nothing); seam=none
 test('the packaged README quotes the notice of Close Study Workspace about the keyboard and the notice of a Codebook pane that took the keyboard at a pause as the reader shows them, and says in which editor and chat layout each is told', async () => {
   // Arrange
   const readme = await readPackagedReadme()
@@ -504,14 +504,27 @@ test('the packaged README quotes the notice of Close Study Workspace about the k
   const delivered = heldSentences(readme, [
     "**Codebook: Close Study Workspace** run in the focused window while a Codebook pane, the captured source or your own file is the active editor, or a page that is no text editor (the editor's Settings, an image) in a window without editor tabs outside the main editor area, gives the active editor group the keyboard once the panes are closed, in VS Code and in Cursor: closing the panes can otherwise leave the keyboard on no element.",
     'The first time in an editor session, Codebook says so: `Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.`',
-    'A close made while Cursor shows its Agent chat as an editor tab and that chat has the keyboard moves nothing and shows nothing, and so does a close in a window that does not have the focus.',
+    'A close made while Cursor shows its Agent chat as an editor tab and that chat has the keyboard moves nothing and shows nothing, and so does a close in a window that does not have the focus, with one exception.',
+    "A close that ends an enlarged reading (the Study pane's **App**, **Source** or **Explanation** button, or **Codebook: Read Application**, **Codebook: Read Captured Source** or **Codebook: Read Explanation**) shows the side bars that reading hid again, and the editor shows a side bar only with a command that gives it the keyboard.",
+    "When Codebook can tell from the editor's tabs that Cursor's chat, shown as an editor tab of the focused window, had the keyboard, it gives the keyboard back to the chat after showing the side bars and shows nothing.",
+    'In every other case in which that close showed a side bar, also in a window that does not have the focus, the active editor group has the keyboard afterwards and Codebook says so with the sentence above, the first time in an editor session; the editor keeps that notification in a window without the focus until you return to it.',
     "When a live run pauses, the editor's debugger opens the paused file with the keyboard. The first time in an editor session that a Codebook pane (the Application pane or the captured source) takes that file's place and Codebook knows of no chat to give the keyboard back to, it says where the keyboard is: `The debugger opened the paused file with the keyboard, and the Codebook pane shown in its place (the Application pane or the captured source) has the keyboard now. If you were typing in the chat, click its input to continue there: this editor does not tell Codebook whether the chat had the keyboard.`",
     'That is so in VS Code, in Cursor while its Agent chat is a pane of the secondary side bar, and in Cursor with the chat as an editor tab when you were working in a file or another tab before the pause.',
     'Where Cursor shows its Agent chat as an editor tab and that chat had the keyboard before the pause, Codebook gives the keyboard back to the chat at that pause, and shows no sentence.',
   ])
 
   // Assert: the README holds each sentence, and the reader shows the sentences it quotes.
-  assert.deepEqual(delivered, [true, true, true, true, true, true])
+  assert.deepEqual(delivered, [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+  ])
   assert.equal(
     STUDY_CLOSE_KEYBOARD_MESSAGE,
     'Study workspace closed. The keyboard is in the active editor group now: closing the panes can leave it nowhere, and the editor does not tell Codebook whether it was in a pane, a file, the terminal, a view or the chat. If you were typing outside the editor, click there to type again.',
