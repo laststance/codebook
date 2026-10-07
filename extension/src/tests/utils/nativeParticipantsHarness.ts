@@ -1171,6 +1171,7 @@ export async function nativeParticipantsHarness(
      */
     announceBrowserStopAtServerBreakpoint(serverBreakpoint: { id: string }): {
       paused(): void
+      pausedAtBreakpoint(lineNumber: number, columnNumber: number): void
     } {
       stubPausesAwaitingResume++
       listeners.browser.get('Debugger.scriptParsed')?.({
@@ -1197,6 +1198,21 @@ export async function nativeParticipantsHarness(
               lineNumber: 0,
               columnNumber: 0,
               hitBreakpoints: ['2:0:0:mode'],
+            }),
+          )
+        },
+        /** Sends the runtime's pause at the breakpoint itself, at this zero-based generated place of the stub, as the native journal shows it after the debugger's own pause at the module's first position (`paused`, which the debugger resumes itself): the breakpoint the debugger set in that script by its id. */
+        pausedAtBreakpoint: (
+          lineNumber: number,
+          columnNumber: number,
+        ): void => {
+          listeners.browser.get('Debugger.paused')?.(
+            debuggerPausedEvent({
+              callFrameId: 'server-module-stub',
+              scriptId: 'server-module-stub',
+              lineNumber,
+              columnNumber,
+              hitBreakpoints: [`4:${lineNumber}:0:server-module-stub`],
             }),
           )
         },
