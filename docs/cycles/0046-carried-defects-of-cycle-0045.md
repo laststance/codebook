@@ -574,6 +574,10 @@ Not run in Cursor on this candidate: the checks in the chat's tab layout (rows 5
 
 298 of 359 rows are closed. Open: 45 rows that owe a native check (the 34 named before, of which the rounds above have seen 29 on candidate 4 in VS Code and seven of them in Cursor too, and rows 314, 326, 327, 329 to 332, 335, 336, 341 and 343), and rows 338 to 340, 342 and 348 to 359, which their fixers work on.
 
+### Codex handoff, first integration: row 357 (2026-10-07)
+
+SPD's preserved partial fix was inspected and completed, then merged without conflict as `d5b8564` from `f6ca270`. Expected/actual: a new reader with a handed-over pending archive and no run record keeps the learning item selected and shows its captured source before Retry; Retry writes the archive and keeps the selection. The regression passes, and independently disabling each of its three parts fails the regression assertion: pending-write check before the run lookup, the initialization selection guard and the handed-over archive used for the initial rendering. Every control restored the compiled file to SHA-256 `85801bed6082753c85470c0b9f3868de3670ac65864111a1d610f7ab489d3ef7`. All Study workspace partitions on the preserved branch: 1,077 of 1,077, zero skips; compiler/type check, ESLint, Prettier and all three Fallow gates pass with their baselines unchanged. Private evidence: `c46-work/impl/scratch-spd/row357-codex/` (the three control logs, workspace log and source/log hashes in `verification.json`), and the latest SPD closure section. No new native claim is made; the integrated full suite/package verification remains owed after the remaining branches are completed. The table now has 359 rows, 299 closed. Next: STC row 349 and its unreported rows 351 and 352, then the remaining packages and every native-pending task.
+
 ## Result and decision
 
 - Result: pending
