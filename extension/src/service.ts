@@ -104,6 +104,7 @@ import { historyExclusionReason } from './utils/historyExclusionReason'
 import { historyExclusionState } from './utils/historyExclusionState'
 import { initialStudyRemovalAvailability } from './utils/initialStudyRemovalAvailability'
 import { isPausedAtSnapshot } from './utils/isPausedAtSnapshot'
+import { isStudyRemovalExclusion } from './utils/isStudyRemovalExclusion'
 import { journaledBindingOfSnapshot } from './utils/journaledBindingOfSnapshot'
 import type { NodeTestOutputEvent } from './utils/launchNodeTest'
 import { namesLineNumber } from './utils/namesLineNumber'
@@ -159,10 +160,13 @@ export type StudyRecord = StudyRecordState &
  * Why the reader must not checkpoint a retained run and why its state reports no saved history.
  * - `awaiting-admission`: the study library has not answered yet whether it can keep this run's study.
  * - `refused-at-admission`: the library was full or its limit setting invalid, so the run never started.
- * - `removed-by-learner`: the learner moved the run's saved study to the system Trash.
+ * - `removed-by-learner`: the learner moved the run's saved study to the system Trash with this window's delete.
+ * - `archive-removed`: the run's saved study left the library without a removal of this window, so its archive is gone: its files were removed by hand (a window without a Trash offers nothing else), or another window removed it.
  */
 export type HistoryExclusion =
-  'awaiting-admission' | 'refused-at-admission' | 'removed-by-learner'
+  'awaiting-admission' | 'refused-at-admission' | StudyRemovalExclusion
+/** The two exclusions that say a run's saved study was removed; each has its own sentence for the agent that reads the run, see {@link historyExclusionReason}. */
+export type StudyRemovalExclusion = 'removed-by-learner' | 'archive-removed'
 interface StudyRecordState {
   id: string
   signature: string
@@ -1598,28 +1602,33 @@ export class StudyService {
   }
 
   /**
-   * Ends a retained run's history after the learner removed its saved study, so the reader stops checkpointing it and {@link StudyService.state} stops reporting saved history; called by {@link StudyWorkspace} once a removal has moved something to the system Trash.
+   * Ends a retained run's history after its saved study was removed, so the reader stops checkpointing it and {@link StudyService.state} stops reporting saved history; called by {@link StudyWorkspace} once a removal has moved something to the system Trash, and when Retry storage / refresh finds that the study's archive left the library without such a removal.
    * A record this service no longer retains is left alone.
-   * @param record - The run whose study was removed; it is marked `removed-by-learner`, the only exclusion set outside preparation.
+   * @param record - The run whose study was removed; the removal exclusions are the only ones set outside preparation.
+   * @param exclusion - How the study was removed, which decides the sentence an agent reads for the run: by this window's delete unless the caller says that the archive was removed outside it.
    * @example
    * service.excludeHistory(record)
    * service.beginHistory(record, service.state(record).materialSignature) // => undefined
+   * service.excludeHistory(record, 'archive-removed') // the run's reason names the archive, not the Trash
    */
-  excludeHistory(record: StudyRecord): void {
+  excludeHistory(
+    record: StudyRecord,
+    exclusion: StudyRemovalExclusion = 'removed-by-learner',
+  ): void {
     if (this.records.get(record.id) !== record) return
-    record.historyExcluded = 'removed-by-learner'
+    record.historyExcluded = exclusion
   }
 
   /**
-   * Refuses to read or extend the raw evidence of a run whose saved study the learner removed, because the evidence directory went to the system Trash with it; called by {@link assertEvidenceReadable} and by {@link StudyService.explain}.
+   * Refuses to read or extend the raw evidence of a run whose saved study was removed: the evidence directory went to the system Trash with it, or is among the files a removal by hand takes; called by {@link assertEvidenceReadable} and by {@link StudyService.explain}.
    * The bare run resource stays readable and names the same reason.
    * @param record - The retained run that is being read or explained.
-   * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError} with the removal sentence for a `removed-by-learner` run.
+   * @throws An `EVIDENCE_UNAVAILABLE` {@link StudyError} with the sentence of the removal ({@link historyExclusionReason}) for a run whose study was removed either way.
    * @example
    * service.assertEvidenceAvailable(record) // throws after service.excludeHistory(record)
    */
   assertEvidenceAvailable(record: StudyRecord): void {
-    if (record.historyExcluded === 'removed-by-learner')
+    if (isStudyRemovalExclusion(record.historyExcluded))
       throw new StudyError(
         'EVIDENCE_UNAVAILABLE',
         historyExclusionReason(record.historyExcluded),
@@ -1747,10 +1756,9 @@ export class StudyService {
   state(record: StudyRecord) {
     const runtime = record.runtime?.view()
     // A write that failed because a removed run's evidence directory went to the Trash is no failure of the run, and its message names the storage path.
-    const evidenceFailure =
-      record.historyExcluded === 'removed-by-learner'
-        ? undefined
-        : record.runtime?.evidence.failure
+    const evidenceFailure = isStudyRemovalExclusion(record.historyExcluded)
+      ? undefined
+      : record.runtime?.evidence.failure
     // A runtime failure can quote adapter text of any length; the saved study's reason holds at most MAX_UI_TEXT_CHARS.
     const runtimeFailure = runtime?.failures[0]?.slice(0, MAX_UI_TEXT_CHARS)
     const terminalReason =
@@ -2098,7 +2106,7 @@ export class StudyService {
     const capture = record.recording?.state()
     // The recording a removed study had went to the system Trash with it.
     const recordingRemoved =
-      record.historyExcluded === 'removed-by-learner' &&
+      isStudyRemovalExclusion(record.historyExcluded) &&
       record.recording !== undefined
     const recording = {
       capture,

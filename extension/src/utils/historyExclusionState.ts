@@ -6,7 +6,7 @@ import type { HistoryExclusion } from '../service'
  * @returns
  * - `'kept'`: no exclusion, the run is a checkpoint candidate
  * - `'awaiting'`: the library has not answered the admission yet
- * - `'ended'`: the run was refused at its admission or its study was removed, so it never holds history again
+ * - `'ended'`: the run was refused at its admission or its study was removed (by this window's delete or outside it), so it never holds history again
  * @example
  * historyExclusionState(undefined) // => 'kept'
  * historyExclusionState('awaiting-admission') // => 'awaiting'

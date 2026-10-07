@@ -19,6 +19,7 @@ import { StudyError } from '../errors'
 import { LearningLibrary } from '../learningLibrary'
 import { NodeTestHistoryStore } from '../nodeTestHistoryStore'
 import { RecordingStore } from '../recordingStore'
+import { readResource } from '../resources'
 import { sha256 } from '../runtimeSupport/utils/sha256'
 import { waitUntil } from '../runtimeSupport/utils/waitUntil'
 import { systemTrashName } from '../utils/systemTrashName'
@@ -4663,6 +4664,50 @@ test('after the archive of the study of this window’s own stopped run was remo
       [[harness.studyId, 'archive-missing']],
     )
     assert.deepEqual(readerSeams(harness).errorLines(), [])
+  } finally {
+    await harness.close()
+  }
+})
+
+// Value: protects=an agent that reads a run of this window after the learner removed the study's files by hand: the run and its evidence answer with what Codebook found; fails_when=the reader forgets such a run as "removed by the learner", so the run resource and every evidence read say "The learner moved this saved study to the Trash.", which names a Trash the study never went to and a window without a Trash does not have; why_new=Cycle 0046 row 201; seam=the file system, on which the test removes the archive, and the resources an agent reads
+test('after the archive of the study of this window’s own stopped run was removed by hand and Retry storage / refresh was pressed, an agent that reads the run or its evidence is told that the archive is no longer in the library, not that the study went to the Trash', async () => {
+  // Arrange: a recorded run of this window that was stopped and saved.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.learningStorage()
+    const service = harness.service,
+      runUri = service.uri(harness.record.id),
+      eventsUri = service.uri(harness.record.id, 'events/0')
+    const eventsBefore = await readResource(service, eventsUri)
+    // Act: the learner removes the archive and presses Retry storage / refresh; the agent reads the run and its events.
+    await rm(
+      join(
+        harness.reader.inspect().libraryDirectory!,
+        `${harness.studyId}.study.v3.json`,
+      ),
+    )
+    await harness.reader.action('retry')
+    const run = await readResource(service, runUri)
+    const eventsAfter = await readResource(service, eventsUri).then(
+      () => 'answered',
+      (error: unknown) =>
+        error instanceof StudyError ? [error.code, error.message] : error,
+    )
+    // Assert
+    assert.ok('text' in eventsBefore)
+    assert.ok('text' in run)
+    const { status, reason } = JSON.parse(run.text).historyOutcome
+    assert.deepEqual(
+      [status, reason],
+      [
+        'unavailable',
+        "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+      ],
+    )
+    assert.deepEqual(eventsAfter, [
+      'EVIDENCE_UNAVAILABLE',
+      "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+    ])
   } finally {
     await harness.close()
   }

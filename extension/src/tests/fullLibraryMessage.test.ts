@@ -53,6 +53,20 @@ test('the system Trash is called Recycle Bin on Windows and Trash elsewhere', ()
   )
 })
 
+// Value: protects=an agent that reads a run whose saved study was removed by hand (a window without a Trash offers nothing else) being told what Codebook found, not that the study went to a Trash; fails_when=a study that left the library without this window's delete has no sentence of its own and the agent reads "The learner moved this saved study to the Trash." in a window that has none; why_new=Cycle 0046 row 201; seam=none
+test('a run whose study left the library without this window’s delete is told that the archive is gone and how, and a run whose study was deleted here is told of the Trash', () => {
+  // Arrange / Act
+  const removedOutsideThisDelete = historyExclusionReason('archive-removed'),
+    deletedHere = historyExclusionReason('removed-by-learner', 'Trash')
+
+  // Assert
+  assert.equal(
+    removedOutsideThisDelete,
+    "The archive of this run's saved study is no longer in the study library: its files were removed by hand or by another Codebook window.",
+  )
+  assert.equal(deletedHere, 'The learner moved this saved study to the Trash.')
+})
+
 test('a run that is still awaiting its admission, or is not excluded, has no exclusion reason', () => {
   // Arrange / Act / Assert
   assert.equal(historyExclusionReason('awaiting-admission'), undefined)
