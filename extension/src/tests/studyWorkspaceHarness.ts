@@ -4946,6 +4946,11 @@ export function readerSeams(harness: {
     followedDebugSessions: (): string[] => [...reader['followedSessions']],
     /** Runs one reader refresh, as the reader's timer does. */
     refresh: (): Promise<void> => reader['refresh'](),
+    /** Stops the reader's own refresh timer, which runs in real time once a service is attached, so that the refreshes a test asks for are the only ones. A refresh a test asks for while one of the timer's is under way is answered when that one's reading ends, before the entry or the look that follows it. @example readerSeams(harness).stopOwnTimer() */
+    stopOwnTimer: (): void => {
+      clearInterval(reader['timer'])
+      reader['timer'] = undefined
+    },
     /** Asks the reader which command gives a remembered tab's group the keyboard back, as the function its focus return runs does once it may give the focus back: after an arrangement, or at a pause. @example await readerSeams(harness).focusReturnCommand(harness.groups[0], false) // => undefined while the group's editor part is not known */
     focusReturnCommand: (
       group: { viewColumn: number },

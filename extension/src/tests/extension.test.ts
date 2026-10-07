@@ -2884,6 +2884,8 @@ interface RecordedStudyReader {
   handedOver: unknown[]
   /** The study archives this reader could not save: a test puts them here, and the reader hands them on when the extension asks. */
   unsaved: unknown[]
+  /** How many Study commands the extension passed to this reader. */
+  commands: number
   isDisposed: boolean
 }
 
@@ -2955,6 +2957,7 @@ async function activateOverRecordedReaders(
           readonly retiredServices: StudyService[] = []
           readonly handedOver: unknown[]
           unsaved: unknown[] = []
+          commands = 0
           isDisposed = false
           presentation = undefined
           constructor(
@@ -2967,7 +2970,9 @@ async function activateOverRecordedReaders(
             readers.push(this)
             events.push(`Study reader ${this.number} made`)
           }
-          async action(): Promise<void> {}
+          async action(): Promise<void> {
+            this.commands += 1
+          }
           releaseUnsavedStudies(): unknown[] {
             events.push(
               `Study reader ${this.number} handed its unsaved studies on`,
@@ -3080,6 +3085,62 @@ test('a server started while a change of the workspace’s folders is handled wa
   }
 })
 
+// Value: protects=the learner who runs Stop Agent Server while a start still waits for a change of the workspace's folders: no server comes up afterwards, the start says why, and the next start works; fails_when=the stop finds nothing running and the start that waited goes on once the readers are replaced, so a server runs after the learner stopped it; why_new=Cycle 0046 row 301 (named as a limit of row 279's fix); seam=the listener of changed workspace folders with Start and Stop Agent Server over fake readers (activateOverRecordedReaders), with the first reader's dispose held open as while its panes close
+test('a start that waits for a change of the workspace’s folders does not go on when Stop Agent Server is run during the wait: no server comes up, the start says why, and the next start works', async () => {
+  // Arrange: the workspace's folders changed, the first Study reader is still closing its panes, and the learner's Start Agent Server waits.
+  let finishDispose!: () => void
+  const disposeHeld = new Promise<void>((resolveHeld) => {
+    finishDispose = resolveHeld
+  })
+  const editor = await activateOverRecordedReaders({
+    disposeStudyReader: (reader) =>
+      reader.number === 1 ? disposeHeld : Promise.resolve(),
+  })
+  try {
+    editor.changeWorkspaceFolders()
+    await waitUntil(
+      () => editor.events.includes('Study reader 1: dispose started'),
+      'the dispose of the first Study reader',
+      1_000,
+    )
+    const waitingStart = editor.commands.get(
+      'codebook.startAgentServer',
+    )!().then(
+      () => 'started',
+      (error: unknown) => String(error),
+    )
+    // Act: the learner runs Stop Agent Server during the wait; the panes have closed; then the learner runs Start Agent Server again.
+    await editor.commands.get('codebook.stopAgentServer')!()
+    finishDispose()
+    const outcomeOfWaitingStart = await waitingStart
+    const serversAfterTheStop = {
+      environmentsBuilt: editor.environments(),
+      attached: editor.readers.map((reader) => reader.attachedServices.length),
+    }
+    const descriptorPath = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!()
+    // Assert
+    assert.equal(
+      outcomeOfWaitingStart,
+      "Error: Codebook server was not started: a stop was asked for while the start waited for the workspace's folders to change. Run Codebook: Start Agent Server to start it.",
+    )
+    assert.deepEqual(serversAfterTheStop, {
+      environmentsBuilt: 0,
+      attached: [0, 0],
+    })
+    assert.equal(typeof descriptorPath, 'string')
+    assert.deepEqual(
+      editor.readers.map((reader) => reader.attachedServices.length),
+      [0, 1],
+    )
+    assert.deepEqual(editor.errors, [])
+  } finally {
+    finishDispose()
+    await editor.close()
+  }
+})
+
 // Value: protects=two changes of the workspace's folders in a row each replacing the readers in full: every reader is disposed once before the next is made; fails_when=the second change is handled while the first still disposes, so both dispose the same Study reader and the later one clears a reader the earlier one had just made, without disposing it; why_new=Cycle 0046 row 279 (the changes are handled one after the other, which a waiting start relies on); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), with the first Study reader's dispose held open
 test('a second change of the workspace’s folders that arrives while the first is handled is handled after it, so no reader is disposed twice or cleared without being disposed', async () => {
   // Arrange: the first change is disposing the first Study reader.
@@ -3168,9 +3229,9 @@ test('after a change of the workspace’s folders the Study reader is made again
   }
 })
 
-// Value: protects=the study archives a Study reader could not save on the way through a change of the workspace's folders on which the reader's dispose fails: they are not lost with the reader, the Study reader made after the next change has them; fails_when=the archives are dropped when the handling fails, or stay with a reader that is never asked for them again; why_new=Cycle 0046 row 278 (no way through the handling may lose an archive); seam=the listener of changed workspace folders over fake readers (activateOverRecordedReaders), whose first dispose of the first Study reader throws
-test('when the dispose of the Study reader fails during a change of the workspace’s folders, the archives it could not save are not lost: the Study reader made after the next change is given them', async () => {
-  // Arrange: the Study reader holds one archive it could not save, and its panes cannot be closed once.
+// Value: protects=the learner after a change of the workspace's folders on which the Study reader's panes could not be closed: the failure is told, a new Study reader stands in its place at once, has the archives the old one could not save, answers the next Study command, and is the reader a server started afterwards is attached to; fails_when=the reader whose dispose threw stays in its place, disposed, so every Study command answers "The study workspace was closed; repeat the action explicitly if needed." and a later server is attached to it, until the folders change again; why_new=Cycle 0046 row 298 (found while working on row 278, whose test of this way waited for a second change); seam=the listener of changed workspace folders, a Study command and Start Agent Server over fake readers (activateOverRecordedReaders), whose first dispose of the first Study reader throws
+test('when the dispose of the Study reader fails during a change of the workspace’s folders, the learner is told, and the Study reader made in its place is given the archives the old one could not save, answers the next Study command and is the one a server started afterwards is attached to', async () => {
+  // Arrange: the Study reader holds one archive it could not save, and its panes cannot be closed at the first attempt.
   let disposals = 0
   const editor = await activateOverRecordedReaders({
     disposeStudyReader: async (): Promise<void> => {
@@ -3181,30 +3242,47 @@ test('when the dispose of the Study reader fails during a change of the workspac
   const unsavedStudy = { archive: { id: 'unsaved-study' } }
   try {
     editor.readers[0]!.unsaved = [unsavedStudy]
-    // Act: the workspace's folders change, the dispose fails and the learner is told; the folders change again.
+    // Act: the workspace's folders change and the dispose fails; then the learner presses Retry storage / refresh and runs Start Agent Server.
     editor.changeWorkspaceFolders()
     await waitUntil(
       () => editor.errors.length === 1,
       'the notice of the failed dispose',
       1_000,
     )
-    const readersAfterFailedDispose = editor.readers.length
-    editor.changeWorkspaceFolders()
-    await waitUntil(
-      () => editor.events.includes('Repository reader 2 made'),
-      'the readers made again',
-      1_000,
-    ).catch(() => undefined)
+    const eventsAfterFailedDispose = [...editor.events]
+    await editor.commands.get('codebook.study.retry')!()
+    const descriptorPath = await editor.commands.get(
+      'codebook.startAgentServer',
+    )!()
     // Assert
     assert.deepEqual(editor.errors, [
       'Codebook cleanup incomplete: Error: The panes could not be closed.',
     ])
-    assert.equal(readersAfterFailedDispose, 1)
+    assert.deepEqual(eventsAfterFailedDispose, [
+      'Study reader 1 made',
+      'Repository reader 1 made',
+      'Repository reader 1 disposed',
+      'Study reader 1 handed its unsaved studies on',
+      'Study reader 1: dispose started',
+      'Study reader 2 made',
+      'Repository reader 2 made',
+    ])
     // Cloned: the list a reader was given was made inside the loaded extension.
     assert.deepEqual(
-      structuredClone(editor.readers.map((reader) => reader.handedOver)),
-      [[], [unsavedStudy]],
+      structuredClone(
+        editor.readers.map((reader) => ({
+          number: reader.number,
+          handedOver: reader.handedOver,
+          commands: reader.commands,
+          attached: reader.attachedServices.length,
+        })),
+      ),
+      [
+        { number: 1, handedOver: [], commands: 0, attached: 0 },
+        { number: 2, handedOver: [unsavedStudy], commands: 1, attached: 1 },
+      ],
     )
+    assert.equal(typeof descriptorPath, 'string')
   } finally {
     await editor.close()
   }

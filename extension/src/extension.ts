@@ -191,6 +191,8 @@ export function activate(
   let repositoryReader: RepositoryReader | undefined
   /** Set while a change of the workspace's folders is handled, and settled when the readers have been replaced; it never rejects. Each change is handled after the one before it, and {@link start} waits for it: a server made meanwhile would be attached to the Study reader that is being disposed. */
   let replacingReaders: Promise<void> | undefined
+  /** How often the server was asked to stop from outside the handling of changed folders: by Stop Agent Server and by the closing window ({@link stopOnRequest}). A start that waited for that handling reads it before and after its wait. */
+  let stopsAskedFor = 0
   let deepWikiReader: DeepWikiReader | undefined
   let wikiUpdate: Promise<void> | undefined
   // One update run per window, shared by the command, the `/update` link and the browser button.
@@ -271,9 +273,23 @@ export function activate(
       evidence: (binding, recording, signal, origin) =>
         workspace().openRepositoryEvidence(binding, recording, signal, origin),
     }))
+  /**
+   * Waits for a start until the handling of changed workspace folders has replaced the readers, and ends the start when the server was asked to stop meanwhile; called by {@link start} only while such a handling is under way.
+   * A stop asked for during the wait finds nothing running, so it cannot end the start itself: gone on with, the start would bring up a server after the learner stopped it, or in a window that is closing.
+   * @throws When Stop Agent Server was run or the window began to close during the wait.
+   * @example if (replacingReaders) await awaitReplacedReaders()
+   */
+  const awaitReplacedReaders = async (): Promise<void> => {
+    const stopsAskedBefore = stopsAskedFor
+    while (replacingReaders) await replacingReaders
+    if (stopsAskedFor !== stopsAskedBefore)
+      throw new Error(
+        "Codebook server was not started: a stop was asked for while the start waited for the workspace's folders to change. Run Codebook: Start Agent Server to start it.",
+      )
+  }
   const start = async () => {
     // A start asked for while the readers are replaced waits for the reader that will live; nothing is awaited otherwise, so a stop that follows a start at once still finds it.
-    while (replacingReaders) await replacingReaders
+    if (replacingReaders) await awaitReplacedReaders()
     requireWorkspace()
     if (stopping)
       throw new Error(
@@ -412,6 +428,11 @@ export function activate(
     } finally {
       if (stopping === attempt) stopping = undefined
     }
+  }
+  /** Stops the server because the learner or the closing window asked for it, and counts that for a start that waits ({@link awaitReplacedReaders}); the stop a change of the workspace's folders makes on its own way is not counted. Called by Stop Agent Server and by the extension's shutdown. @example registerCommand('codebook.stopAgentServer', stopOnRequest) */
+  const stopOnRequest = (): Promise<void> => {
+    stopsAskedFor += 1
+    return stop()
   }
   const connect = async (): Promise<void> => {
     const descriptorPath = await start()
@@ -677,7 +698,7 @@ export function activate(
     const stoppedWikiRun = activeWikiRun
     stoppedWikiRun?.controller.abort(WIKI_UPDATE_WINDOW_CLOSING_ABORT_REASON)
     try {
-      await stop()
+      await stopOnRequest()
       await repositoryReader?.dispose()
       await reader?.dispose()
     } finally {
@@ -1449,7 +1470,7 @@ export function activate(
     )
   context.subscriptions.push(
     registerCommand('codebook.startAgentServer', start),
-    registerCommand('codebook.stopAgentServer', stop),
+    registerCommand('codebook.stopAgentServer', stopOnRequest),
     registerCommand('codebook.copyAgentConnection', connect),
     registerCommand('codebook.setupAiChat', setupAiChat),
     registerCommand('codebook.removeManagedCursorSkill', async () => {
@@ -1764,11 +1785,15 @@ export function activate(
               repositoryReader = undefined
               // What the reader could not save is taken before its dispose, so a dispose that throws loses none of it.
               unsavedStudies.push(...(reader?.releaseUnsavedStudies() ?? []))
-              await reader?.dispose()
-              reader = undefined
-              // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
-              workspace()
-              repository()
+              try {
+                await reader?.dispose()
+              } finally {
+                // A reader whose dispose threw is disposed all the same and refuses every command, so it is replaced like one whose dispose ended; the failure is still told below.
+                reader = undefined
+                // The new Study reader is made at once, as at activation: it registers its views again and shows what still waits to be saved.
+                workspace()
+                repository()
+              }
             } finally {
               await closingReader?.close()
             }

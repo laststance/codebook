@@ -3825,7 +3825,8 @@ test('a saved study chosen with the bottom panel maximized is shown when the pan
       },
       'moments',
     )
-    const startedAtMs = performance.now()
+    // A whole millisecond: added to a reading with a fraction, a wait of 1,000 ms can come out a hair under 1,000 (the sum is rounded), and the reader then takes the tick one second later for one that is too early.
+    const startedAtMs = Math.ceil(performance.now())
     let waitedMs = 0
     context.mock.method(performance, 'now', () => startedAtMs + waitedMs)
     /** Runs the reader's timer once at a moment of the wait and counts the layout requests it sent. */

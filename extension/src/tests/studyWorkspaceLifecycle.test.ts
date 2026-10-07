@@ -2078,6 +2078,31 @@ test("a reader that is disposed while its Study workspace is open beside the lea
   }
 })
 
+// Value: protects=the editor after a Study reader's dispose failed while it closed its panes: the reader's listeners are released all the same, so the reader the extension makes in its place does not share the editor's events with a disposed one; fails_when=the dispose stops at the failure and leaves what the reader registered with the editor in place, so two readers answer the same views and events, or the next reader cannot register its views at all; why_new=Cycle 0046 row 298 (a reader's dispose releases its registrations whatever throws); seam=the workspace harness's count of the reader's listeners in the fake editor, and the reader's close replaced by one that fails
+test('a reader whose dispose fails while it closes its panes releases what it registered with the editor all the same, and tells the failure', async () => {
+  // Arrange: a reader that listens to the editor, and whose panes cannot be closed.
+  const harness = await workspaceHarness(false)
+  const close = harness.reader.close.bind(harness.reader)
+  try {
+    const listenersBefore = harness.focusListenerCount()
+    harness.reader.close = async (): Promise<void> => {
+      throw new Error('The panes could not be closed.')
+    }
+    // Act: the workspace folders change, and the extension disposes its reader.
+    const disposal = await harness.reader.dispose().then(
+      () => 'disposed',
+      (error: unknown) => String(error),
+    )
+    // Assert
+    assert.equal(listenersBefore, 7)
+    assert.equal(disposal, 'Error: The panes could not be closed.')
+    assert.equal(harness.focusListenerCount(), 0)
+  } finally {
+    harness.reader.close = close
+    await harness.close()
+  }
+})
+
 // Value: protects=the learner whose reader is disposed during a Read (a folder is added to the workspace while a pane is maximized and the learner types in the terminal): the side bars the Read hid are shown again, and because the editor's commands that show a bar give it the keyboard, the active editor group takes the keyboard and the learner is told where it is, as after a Close; fails_when=the disposal shows the side bars, moves the keyboard into the editor group and tells nothing, against "a reader that is disposed moves no keyboard", so the learner's typing stops in the terminal without a word; why_new=Cycle 0046 row 255 (delegated review, finding 8: the exception of a disposal during a Read is stated and told); seam=the workspace harness's side bar model, focusView for the terminal, the reader's Read and its disposal, command log and information messages
 test('a reader that is disposed during a Read shows the side bars the Read hid again, and tells the learner that the keyboard is in the active editor group now', async () => {
   // Arrange: the primary side bar is open; the learner reads the explanation enlarged, which hides it, and then types in the terminal.

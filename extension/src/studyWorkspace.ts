@@ -68,6 +68,7 @@ import {
   UNMAXIMIZE_FOCUS_SETTLE_MS,
   UNRETRYABLE_READER_ERROR_KINDS,
   UNSAVED_STUDY_HANDED_OVER_REASON,
+  UNSAVED_UNDERSTANDING_WAITS_MESSAGE,
 } from './constants'
 import { requireWorkspace, type StudyPresentation } from './environment'
 import { StudyError } from './errors'
@@ -6732,7 +6733,17 @@ export class StudyWorkspace {
     this.selection = selectStudy(archive, this.selection)
   }
 
-  /** Saves explicit reader/outline choices to their displayed source context, retaining the saved value on failure. @example await workspace.understand(true) */
+  /**
+   * Saves an explicit understanding choice of the learner to its displayed source context; called for the Study pane's checkbox, the Learning outline's checkbox and the Mark Understanding command.
+   * A choice the ledger refuses is kept as it was made and waits for Retry storage / refresh, which the progress line "Not saved: …" offers; the saved value stays as it is until then. While one waits, another choice is not taken and the progress line says so: taken, it would replace the one that waits.
+   * @param understood - The learner's choice; omitted, the opposite of the saved value.
+   * @param itemId - The learning item; omitted, the selected one.
+   * @param sourceHash - The source the choice was made on; omitted, the displayed source.
+   * @param scope - `current` for the outline, whose choices apply to the current citations only.
+   * @returns Nothing, also when the ledger refused the write or an earlier choice still waits: both are told by the progress line and not by a rejection, which a pane would show as a control line that no Retry answers.
+   * @throws When the choice cannot be made at all: a write or a load is in progress, the source or the storage is unreadable, or the choice does not belong to the displayed article.
+   * @example await workspace.understand(true)
+   */
   async understand(
     understood?: boolean,
     itemId?: RetainedStudySelection['itemId'],
@@ -6754,6 +6765,11 @@ export class StudyWorkspace {
       throw new Error(
         'Understanding requires readable source and learning storage.',
       )
+    // A choice that still waits is never replaced by a later one: the learner's earlier decision would be lost.
+    if (this.pendingDecision) {
+      this.report('progress', new Error(UNSAVED_UNDERSTANDING_WAITS_MESSAGE))
+      return
+    }
     const decision = {
       id: randomUUID(),
       sourceHash: sourceHash ?? selected.source.hash,
@@ -6789,8 +6805,8 @@ export class StudyWorkspace {
       this.pendingDecision = undefined
       this.errors.delete('progress')
     } catch (error) {
+      // The choice waits for Retry storage / refresh, which this line offers. Thrown on, the failure became a control line beside which no Retry is offered and which outlived the Retry that wrote the choice.
       this.report('progress', new Error(`Not saved: ${String(error)}`))
-      throw error
     } finally {
       this.saving = false
       this.publish()
@@ -7097,12 +7113,28 @@ export class StudyWorkspace {
     }
   }
 
-  /** Releases observers after extension shutdown has retired its service; read-only harnesses inspect state via {@link inspect}. @example await workspace.dispose() */
+  /**
+   * Ends this reader after the extension has retired its service: closes its panes and its playback and releases what it registered with the editor; called when the window closes and when a change of the workspace's folders replaces the reader. Read-only harnesses inspect state via {@link inspect}.
+   * The registrations are released whatever the closing did: a reader that kept its views, its source provider and its listeners after a close that threw would share them with the reader made in its place.
+   * @throws What closing the panes or the playback threw, after the registrations were released.
+   * @example await workspace.dispose()
+   */
   async dispose(): Promise<void> {
     this.disposed = true
     clearInterval(this.timer)
-    await this.close()
-    await this.playback?.dispose()
+    try {
+      await this.close()
+    } finally {
+      try {
+        await this.playback?.dispose()
+      } finally {
+        this.releaseRegistrations()
+      }
+    }
+  }
+
+  /** Releases what this reader registered with the editor (its citation watchers, its views, providers and listeners, its highlight and its outline's change event); called by {@link dispose} whatever closing the panes did. @example this.releaseRegistrations() */
+  private releaseRegistrations(): void {
     this.citationRevision++
     for (const watcher of this.citationWatchers.splice(0)) watcher.dispose()
     for (const disposable of this.disposables) disposable.dispose()
@@ -7566,7 +7598,9 @@ export class StudyWorkspace {
               this.selectedArchive = archive
             if (this.pendingArchives.get(id) === checkpoint)
               this.pendingArchives.delete(id)
-            if (current) this.errors.delete('archive')
+            // The line stays while another archive still waits: retired by this save, it would take Retry storage / refresh from the pane although a study is unsaved.
+            if (current && this.pendingArchives.size === 0)
+              this.errors.delete('archive')
             this.publish()
           } catch (error) {
             this.reportCheckpoint(
@@ -8502,7 +8536,8 @@ export class StudyWorkspace {
       this.assertLifetime(lifetime)
       this.progress = progress
       this.repositoryOrigin = progress.repositoryReturn
-      this.errors.delete('progress')
+      // A ledger that can be read again has not written the understanding choice that waits: its line, and Retry with it, stay until it is written.
+      if (!this.pendingDecision) this.errors.delete('progress')
     } catch (error) {
       if (!this.closing && !this.disposed && lifetime === this.lifetime)
         this.report('progress', error)

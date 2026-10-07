@@ -2033,6 +2033,8 @@ test('a live entry in Cursor stays confirmed when the editor rebuilds the source
 test("a live entry from the three-pane Study layout stays confirmed when the context pane's group closes and the editor replaces every group object", async () => {
   // Arrange: as the editor API reported it in Cursor before the start: a selection made with the learner's file focused arranged the three panes, the Application pane shares the first group with that file, the captured source is in the second, the Study pane in the third and the Agent chat's group is the fourth.
   const harness = await workspaceHarness()
+  // The test enters the run with its own refresh: a tick of the reader's timer just before it would enter the run first, and the assertions would read a layout that is still being arranged.
+  readerSeams(harness).stopOwnTimer()
   harness.useNativeLayout({ orientation: 1, groups: [{}, {}] })
   harness.groups.at(-1)!.tabs = []
   harness.groups.at(-1)!.activeTab = undefined

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 
 import { REPOSITORY_BROWSER_PROFILE as PROFILE_ID } from '../constants'
 import { LearningLibrary } from '../learningLibrary'
@@ -1910,3 +1910,182 @@ test(
     }
   },
 )
+
+/**
+ * Makes the ledger of every library refuse a learner's decision until the test lets it write again, and counts the attempts.
+ * @param context - The test whose mocks the caller restores.
+ * @returns `isWritable`, which a test sets once the ledger can be written, and `attempts`, the number of decisions the reader tried to write.
+ * @example
+ * const ledger = refuseDecisions(context)
+ * ledger.isWritable = true // the next decision, or Retry storage / refresh, reaches the ledger
+ */
+function refuseDecisions(context: TestContext) {
+  const decide = LearningLibrary.prototype.decide
+  const ledger = { isWritable: false, attempts: 0 }
+  context.mock.method(
+    LearningLibrary.prototype,
+    'decide',
+    function (
+      this: LearningLibrary,
+      decision: Parameters<LearningLibrary['decide']>[0],
+    ) {
+      ledger.attempts += 1
+      return ledger.isWritable
+        ? decide.call(this, decision)
+        : Promise.reject(new Error('ledger is read-only'))
+    },
+  )
+  return ledger
+}
+
+/**
+ * Sends the Study pane's understanding choice through the pane's own webview, whose listener shows a rejected message as a control line, and waits until the reader has tried to write it and the listener has run.
+ * @param harness - The reader whose open Study pane sends.
+ * @param understood - The learner's choice.
+ * @param settled - Tells when the reader has handled the choice.
+ * @example await chooseUnderstandingInPane(harness, true, () => ledger.attempts === 1)
+ */
+async function chooseUnderstandingInPane(
+  harness: Awaited<ReturnType<typeof recordedReaderHarness>>,
+  understood: boolean,
+  settled: () => boolean,
+): Promise<void> {
+  harness.receive({
+    type: 'understanding',
+    revision: harness.reader.inspect().view!.revision,
+    understood,
+  })
+  await waitUntil(
+    () => settled() && !harness.reader.inspect().view!.saving,
+    'the understanding choice to be handled',
+    1_000,
+  )
+  // The webview listener reports a rejected message one task after its handling ended.
+  await new Promise<void>((resolve) => setImmediate(resolve))
+}
+
+// Value: protects=a learner's understanding choice that the ledger refuses: it waits as it was made, the pane tells it in the progress line "Not saved: …" with Retry storage / refresh beside it, nothing is marked meanwhile, and the Retry that writes it saves that very choice and leaves no line; fails_when=the failure is thrown on into a control line beside which no Retry is offered and which outlives the Retry that wrote the choice, or the next ledger read retires the progress line while the choice still waits, or the choice is saved with another item, value or time than the learner's; why_new=Cycle 0046 row 299 (observed with a probe while working on row 280); seam=the Study pane's own webview route and the library's decision write, which fails until the ledger is writable again
+test('an understanding choice the ledger refuses waits with the line “Not saved: …” and Retry storage / refresh, marks nothing by itself, and the Retry that writes it saves the choice the learner made and leaves no line', async (context) => {
+  // Arrange: a saved study is shown in the Study pane, not marked as understood, and the ledger refuses every decision.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.open()
+    const ledger = refuseDecisions(context),
+      library = await harness.reader.learningStorage(),
+      shown = structuredClone(harness.reader.inspect().view!.model)
+    const decisionsBefore = (await library.readProgress()).decisions.length
+    // Act: the learner marks the article as understood in the pane and opens the Study workspace again, which reads the ledger, and it can be read; Retry storage / refresh is pressed while the ledger still refuses decisions, and again once it writes.
+    const earliestChoiceMs = Date.now()
+    await chooseUnderstandingInPane(harness, true, () => ledger.attempts === 1)
+    const latestChoiceMs = Date.now()
+    await harness.reader.open()
+    const whileWaiting = structuredClone({
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+      isShownAsUnderstood:
+        harness.reader.inspect().view!.model.selectedUnderstanding.understood,
+      decisionsInLedger: (await library.readProgress()).decisions.length,
+    })
+    await harness.reader.action('retry')
+    const afterRefusedRetry = structuredClone({
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+      decisionsInLedger: (await library.readProgress()).decisions.length,
+    })
+    // The Retry that writes the choice happens measurably later than the choice.
+    await new Promise<void>((resolve) => setTimeout(resolve, 5))
+    ledger.isWritable = true
+    await harness.reader.action('retry')
+    const saved = structuredClone((await library.readProgress()).decisions)
+    // Assert
+    assert.equal(decisionsBefore, 0)
+    assert.equal(shown.selectedUnderstanding.understood, false)
+    assert.deepEqual(whileWaiting, {
+      errors: ['Error: Not saved: Error: ledger is read-only'],
+      // Retry storage / refresh is offered beside the line.
+      unretryableErrorCount: 0,
+      isShownAsUnderstood: false,
+      decisionsInLedger: 0,
+    })
+    assert.deepEqual(afterRefusedRetry, {
+      // The line of the Retry whose write of the choice failed; Retry is still offered.
+      errors: ['Error: ledger is read-only'],
+      unretryableErrorCount: 0,
+      decisionsInLedger: 0,
+    })
+    // One decision is saved, the learner's: the article that was shown, understood, on the source and the citations that were shown, at the time of the choice and not of the Retry.
+    assert.deepEqual(
+      saved.map((decision) => ({
+        item: decision.item,
+        understood: decision.understood,
+        sourceHash: decision.sourceHash,
+        context: 'context' in decision ? decision.context : undefined,
+      })),
+      [
+        {
+          item: 'repository/interface/theme',
+          understood: true,
+          sourceHash: shown.source.hash,
+          context: shown.selectedUnderstanding.context,
+        },
+      ],
+    )
+    const savedAtMs = Date.parse(saved[0]!.at)
+    assert.equal(
+      earliestChoiceMs <= savedAtMs && savedAtMs <= latestChoiceMs,
+      true,
+    )
+    const view = harness.reader.inspect().view!
+    assert.deepEqual(structuredClone(view.errors), [])
+    assert.equal(view.model.selectedUnderstanding.understood, true)
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
+
+// Value: protects=the understanding choice that waits to be written when the learner chooses again before Retry: the waiting choice is kept as it was made and saved by Retry, and the learner is told in the progress line that the new choice was not taken and what to press; fails_when=a later choice replaces the one that waits, so the earlier decision of the learner is lost or changed without a word; why_new=Cycle 0046 row 299 (the learner's decision is never lost or changed by the failure); seam=the Study pane's own webview route and the library's decision write, which fails until the ledger is writable again
+test('an understanding choice made while an earlier one still waits to be written is not taken and does not replace it: the progress line says so, and Retry storage / refresh saves the earlier choice alone', async (context) => {
+  // Arrange: a saved study is shown in the Study pane; the learner marked it as understood while the ledger refused, so that choice waits.
+  const harness = await recordedReaderHarness()
+  try {
+    await harness.reader.open()
+    const ledger = refuseDecisions(context),
+      library = await harness.reader.learningStorage()
+    await chooseUnderstandingInPane(harness, true, () => ledger.attempts === 1)
+    // Act: a second choice, the opposite one, reaches the reader before Retry; then the ledger writes and the learner presses Retry storage / refresh.
+    await chooseUnderstandingInPane(
+      harness,
+      false,
+      () => harness.reader.inspect().view!.errors.length > 0,
+    )
+    const afterSecondChoice = structuredClone({
+      errors: harness.reader.inspect().view!.errors,
+      unretryableErrorCount:
+        harness.reader.inspect().view!.unretryableErrorCount,
+      attempts: ledger.attempts,
+    })
+    ledger.isWritable = true
+    await harness.reader.action('retry')
+    const saved = structuredClone((await library.readProgress()).decisions)
+    // Assert
+    assert.deepEqual(afterSecondChoice, {
+      errors: [
+        'Error: Not saved: an earlier understanding choice still waits to be written, and this one was not taken. Press Retry storage / refresh to write the earlier one, then choose again.',
+      ],
+      unretryableErrorCount: 0,
+      // The second choice was never sent to the ledger.
+      attempts: 1,
+    })
+    assert.deepEqual(
+      saved.map((decision) => [decision.item, decision.understood]),
+      [['repository/interface/theme', true]],
+    )
+    assert.deepEqual(structuredClone(harness.reader.inspect().view!.errors), [])
+  } finally {
+    context.mock.restoreAll()
+    await harness.close()
+  }
+})
