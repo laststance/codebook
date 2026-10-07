@@ -462,8 +462,7 @@ test('a Cursor MCP config that is rewritten right after Codebook published it is
       config: await readFile(folders.configPath, 'utf8'),
     },
     {
-      refresh:
-        'refused: Cursor MCP config changed during publication; Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.',
+      refresh: `refused: Cursor MCP config changed during publication: ${folders.configPath}. Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.`,
       nextRefresh: 'answered undefined',
       entriesOfTheCursorFolder: ['mcp.json', 'storage'],
       records: [],

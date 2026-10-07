@@ -951,7 +951,7 @@ export async function refreshCursorMcpCatalog(
         if (!handle) {
           if (!(await ownedFile(targetPath, owner)))
             throw new Error(
-              'Cursor MCP config changed during publication; Codebook preserved it and its recovery record. Run Codebook: Set Up AI Chat again.',
+              `Cursor MCP config changed during publication: ${targetPath}. Codebook preserved it and its recovery record. Run ${SET_UP_AI_CHAT_COMMAND} again.`,
             )
           await atomicPrivateWrite(
             receiptPath,
