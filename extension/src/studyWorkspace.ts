@@ -13179,7 +13179,7 @@ export class StudyWorkspace {
    * Follows studies that left the library without a removal of this reader, as after the learner removed the listed files by hand; called by Retry storage / refresh before it reads the ledger and writes the selection.
    * The file lists kept for "Remove by hand" are forgotten first, also when a later step fails: a list made before the learner removed files names paths that may be gone ({@link forgetListedStudyFiles}).
    * Such a study is one the reader listed before and the library no longer holds, or one the ledger still named. The ledger's references are dropped under the storage lock, a run of this window is forgotten like a removed one (so it is not written back), and a reader that selects the study selects none. A study that was never saved is in neither group and is left alone.
-   * A study of which only a rest without its archive is listed ({@link isRestWithoutArchive}) has left the library in the same way: its entry stays, so the rest can be removed, and Retry does not write its archive again.
+   * A study of which only a rest without its archive is listed ({@link isRestWithoutArchive}) has left the library in the same way: its entry stays, so the rest can be removed, and Retry does not write its archive again. The library lists the same kind of entry for the finished recording of a run whose archive was never written; such a study has not left, and Retry writes it ({@link awaitsArchiveOfThisWindow}).
    * @example await this.forgetStudiesRemovedByHand()
    */
   private async forgetStudiesRemovedByHand(): Promise<void> {
@@ -13188,10 +13188,8 @@ export class StudyWorkspace {
     const namedByLedger = await this.library!.forgetAbsentStudies()
     this.catalog = await this.library!.list()
     const gone = new Set(
-      [...listedBefore, ...namedByLedger].filter(
-        (studyId) =>
-          this.isRestWithoutArchive(studyId) ||
-          !this.catalog.some((entry) => entry.id === studyId),
+      [...listedBefore, ...namedByLedger].filter((studyId) =>
+        this.hasLeftLibrary(studyId),
       ),
     )
     for (const studyId of gone) {
@@ -13202,6 +13200,39 @@ export class StudyWorkspace {
       this.selectedArchive = withoutStudy(this.selectedArchive, studyId)
       if (this.selection.studyId === studyId) this.selectNoStudy()
     }
+  }
+
+  /**
+   * Says whether a study the reader knew has left the library, by the list that was just read; asked by {@link forgetStudiesRemovedByHand} for every study it listed before and every study the ledger still named.
+   * @param studyId - The study.
+   * @returns
+   * - No entry lists it: `true`
+   * - Only what is left of it without its archive is listed: `true`, unless that is the study of a run of this window whose archive this window has not saved ({@link awaitsArchiveOfThisWindow})
+   * - Its archive is listed: `false`
+   * @example this.hasLeftLibrary(study.id) // => true once the study's files were removed by hand
+   */
+  private hasLeftLibrary(studyId: string): boolean {
+    if (!this.catalog.some((entry) => entry.id === studyId)) return true
+    return (
+      this.isRestWithoutArchive(studyId) &&
+      !this.awaitsArchiveOfThisWindow(studyId)
+    )
+  }
+
+  /**
+   * Says whether a study is the one of a run of this window whose archive this window still has to write; asked by {@link hasLeftLibrary} for a study of which the library lists no archive.
+   * The library lists the finished recording of such a run like what is left of a study whose archive was removed. The two are told apart by the run's own receipt: an archive that was removed had been saved (the receipt says `saved` and no write is waiting), while one that could not be written has a failed or pending receipt, or a write that waits for Retry storage / refresh.
+   * @param studyId - The study of which no archive is listed.
+   * @returns `true` for a run of this window whose last archive write did not end as `saved`, or whose archive waits to be written; `false` for a study of no run of this window, and for a run whose archive this window had saved.
+   * @example this.awaitsArchiveOfThisWindow(studyId) // => true after "History not saved: …" for a stopped run
+   */
+  private awaitsArchiveOfThisWindow(studyId: string): boolean {
+    const record = this.recordOfStudy(studyId)
+    if (!record) return false
+    return (
+      record.historyReceipt?.status !== 'saved' ||
+      !this.hasNoArchiveWriteOutstanding(studyId)
+    )
   }
 
   /**
